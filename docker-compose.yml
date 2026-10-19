@@ -1,0 +1,22 @@
+services:
+  agent:
+    # Built by scripts/build.sh (host-network build; see the comment there).
+    image: jobagent-harness:latest
+    pull_policy: never
+    container_name: jobagent
+    # Host networking: reaches host Ollama on localhost:11434 (it binds 127.0.0.1 only) and
+    # serves noVNC on http://localhost:6080. VNC/noVNC bind to 127.0.0.1, so nothing is exposed to the LAN.
+    network_mode: host
+    init: true
+    shm_size: 2gb  # Chrome needs more than Docker's 64 MB default /dev/shm
+    env_file: .env
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY must be set in the host shell (Voyager key)}
+      TZ: ${TZ:-America/Phoenix}
+    volumes:
+      - ./data:/app/data
+      - ./state:/app/state
+      - ./outputs:/app/outputs
+    stdin_open: true
+    tty: true
+    restart: unless-stopped

@@ -1,0 +1,29 @@
+% Placeholder resume template — replace data/templates/resume.tex with your own.
+% Tailoring (step 9) keeps your preamble and layout and rewrites only the content sections.
+\documentclass[10pt,letterpaper]{article}
+\usepackage[margin=0.6in]{geometry}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem,titlesec}
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\setlist[itemize]{leftmargin=*,nosep}
+\pagestyle{empty}
+
+\begin{document}
+\begin{center}
+  {\LARGE\bfseries First Last}\\[2pt]
+  email@example.com \;|\; +1 480 555 1234 \;|\; \href{https://linkedin.com/in/you}{linkedin.com/in/you}
+\end{center}
+
+\section*{Education}
+\textbf{University} \hfill YYYY--YYYY\\
+Degree, Field
+
+\section*{Experience}
+\textbf{Title}, Company \hfill YYYY--YYYY
+\begin{itemize}
+  \item Achievement with a measurable result.
+\end{itemize}
+
+\section*{Skills}
+Languages: Python, Java \quad Tools: Docker, Git
+\end{document}

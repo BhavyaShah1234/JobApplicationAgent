@@ -1,0 +1,49 @@
+# Pre-written answers to questions applications commonly ask.
+# Matching uses the question, its aliases and embeddings; select/radio answers are fuzzy-matched to
+# the form's actual options (e.g. "USA" → "United States of America").
+#
+# Fields per entry:
+#   question:            canonical wording
+#   aliases:             other wordings you've seen
+#   answer:              what to fill (string, number or bool)
+#   type:                text | select | bool | number
+#   agent_instructions:  optional free-form guidance for the agent (e.g. "keep under 100 words").
+#                        Instructions to make up personal facts (such as a fake address) are ignored and flagged at review.
+
+- question: "Are you legally authorized to work in the United States?"
+  aliases: ["Work authorization", "Authorized to work in the US?"]
+  answer: true
+  type: bool
+
+- question: "Will you now or in the future require sponsorship for employment visa status?"
+  aliases: ["Do you require visa sponsorship?", "Sponsorship required?"]
+  answer: false
+  type: bool
+
+- question: "Country of residence"
+  aliases: ["Country", "Current country"]
+  answer: "United States"
+  type: select
+
+- question: "How did you hear about this position?"
+  aliases: ["Source", "Where did you find this job?"]
+  answer: "Company careers page"
+  type: select
+  agent_instructions: "If a referral contact with consent exists for this company, choose 'Referral' instead."
+
+- question: "Desired salary"
+  aliases: ["Salary expectations", "Expected compensation"]
+  answer: ""
+  type: text
+  agent_instructions: "If the JD lists a pay range, answer 'Open / within the posted range'. Otherwise use preferences.yaml salary.min."
+
+- question: "Why do you want to work here?"
+  aliases: ["Why are you interested in this role?", "Why this company?"]
+  answer: ""
+  type: text
+  agent_instructions: "Write 80-150 words from the company research (mission, products) tied to my matching experience. No clichés."
+
+- question: "Are you willing to relocate?"
+  aliases: ["Open to relocation?"]
+  answer: true
+  type: bool

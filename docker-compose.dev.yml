@@ -1,0 +1,8 @@
+# Development override: run the current source without rebuilding the image.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Mounted read-only, so the agent still can't modify its own code.
+services:
+  agent:
+    volumes:
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro

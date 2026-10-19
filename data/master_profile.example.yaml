@@ -1,0 +1,33 @@
+# Everything the resume and cover letter can draw from. Tailoring picks, reorders and rephrases from here.
+# New skills a JD asks for are added to the resume and listed at review; approved ones are appended
+# to `skills` automatically.
+
+summary: ""
+
+skills:
+  languages: []          # e.g. [Python, Java, TypeScript]
+  frameworks: []
+  tools: []
+  cloud: []
+  other: []
+  # Optional detail: {name: Kubernetes, proficiency: intermediate, years: 2}
+
+experience:
+  - company: ""
+    title: ""
+    location: ""
+    start: ""            # YYYY-MM
+    end: ""              # YYYY-MM or present
+    bullets:
+      - ""               # write achievements with numbers; tailoring rephrases, it doesn't invent outcomes
+    tech: []
+
+projects:
+  - name: ""
+    link: ""
+    bullets: [""]
+    tech: []
+
+publications: []
+certifications: []
+awards: []

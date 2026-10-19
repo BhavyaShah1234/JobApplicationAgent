@@ -218,3 +218,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- JobApplicationAgent ---
+# Host-mounted runtime state and generated documents
+state/
+outputs/
+# User data: only the committed *.example.* templates are tracked
+data/*
+!data/README.md
+!data/*.example.*
+!data/templates/
+data/templates/*
+!data/templates/*.example.*

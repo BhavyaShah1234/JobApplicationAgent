@@ -1,0 +1,3 @@
+company,contact_name,contact_email,referral_consent
+Example Corp,Jane Doe,jane.doe@example.com,yes
+Another Inc,,,no

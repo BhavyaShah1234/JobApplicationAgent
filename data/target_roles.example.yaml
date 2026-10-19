@@ -1,0 +1,29 @@
+# Roles to look for on careers pages. Matching runs regex → semantic similarity → LLM judge.
+#   patterns:          regexes matched against the posting title (case-insensitive)
+#   exclude_patterns:  regexes that reject a posting outright
+#   description:       plain-English description used for semantic matching and by the LLM judge
+#   priority:          higher is applied to first
+
+semantic_threshold: 0.6
+global_exclude_patterns:
+  - "(?i)\\b(senior|sr\\.?|staff|principal|lead|director|manager|head of)\\b"
+
+roles:
+  - id: swe
+    title: "Software Engineer"
+    patterns:
+      - "(?i)\\bsoftware (engineer|developer)\\b"
+      - "(?i)\\bSWE\\b"
+    exclude_patterns: []
+    description: "General software engineering: backend or full-stack services, APIs, Python/Java/Go, cloud."
+    seniority: ["new grad", "entry", "I", "II"]
+    priority: 3
+
+  - id: ml
+    title: "Machine Learning Engineer"
+    patterns:
+      - "(?i)\\b(machine learning|ML|AI) (engineer|scientist)\\b"
+    exclude_patterns: []
+    description: "Training, evaluating and deploying ML/LLM models; PyTorch, data pipelines, MLOps."
+    seniority: ["new grad", "entry", "I"]
+    priority: 3

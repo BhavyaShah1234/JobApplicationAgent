@@ -1,0 +1,28 @@
+# Job-search preferences used by role matching, form answers and tailoring.
+
+locations:
+  preferred: ["Phoenix, AZ", "Remote (US)"]
+  acceptable: ["Seattle, WA", "San Francisco Bay Area, CA", "New York, NY"]
+  remote_ok: true
+  hybrid_ok: true
+  onsite_ok: true
+
+relocation:
+  willing_to_relocate: true
+  relocation_note: "Open to relocating for the right role."
+
+salary:
+  currency: USD
+  min: null          # annual base; leave null to answer "open"
+  target: null
+
+seniority: ["intern", "new grad", "entry", "junior", "mid"]
+employment_types: ["full-time", "internship"]
+
+exclude:
+  companies: []
+  title_keywords: []
+
+documents:
+  resume_max_pages: 1
+  cover_letter: true      # generate and upload a cover letter when the form accepts one

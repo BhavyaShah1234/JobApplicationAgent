@@ -1,0 +1,57 @@
+# Your real personal details, used to fill application forms.
+# This folder is bind-mounted from the host, so edits survive container rebuilds.
+# The agent never invents values here; anything left empty is asked about at the pre-submit review.
+
+name:
+  first: ""
+  middle: ""
+  last: ""
+  preferred: ""          # name you go by, if different
+  pronouns: ""           # optional
+
+contact:
+  email: ""              # your personal email for recruiters (the agent's own Gmail is used for portal accounts)
+  phone: ""              # E.164 preferred, e.g. +14805551234
+  phone_country_code: "+1"
+
+# Current home address — always filled exactly as written here.
+address:
+  street: ""
+  street2: ""
+  city: ""
+  state: ""              # full name or 2-letter code; select fields are fuzzy-matched
+  postal_code: ""
+  country: "United States"
+
+links:
+  linkedin: ""
+  github: ""
+  portfolio: ""
+  other: []
+
+work_authorization:
+  authorized_us: true                 # legally authorized to work in the US
+  requires_sponsorship_now: false
+  requires_sponsorship_future: false
+  visa_status: ""                     # e.g. F-1 OPT, H-1B, US citizen, permanent resident
+  citizenship: ""
+
+education:
+  - school: ""
+    degree: ""                        # e.g. M.S.
+    field: ""                         # e.g. Computer Science
+    start: ""                         # YYYY-MM
+    end: ""                           # YYYY-MM or expected
+    gpa: ""
+
+availability:
+  start_date: ""                      # YYYY-MM-DD or "2 weeks notice"
+  notice_period: ""
+
+# Voluntary self-identification. "Decline to self-identify" is used when empty.
+eeo:
+  gender: ""
+  race_ethnicity: ""
+  hispanic_latino: ""
+  veteran_status: ""
+  disability_status: ""

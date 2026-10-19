@@ -1,0 +1,9 @@
+.git
+.claude
+.env
+data
+state
+outputs
+**/__pycache__
+.pytest_cache
+.venv
