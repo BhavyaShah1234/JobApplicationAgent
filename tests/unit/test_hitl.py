@@ -41,6 +41,18 @@ def test_done_when_resolves_without_answer(tmp_path):
     assert hitl.list_pending() == []
 
 
+def test_requests_of_dead_processes_are_pruned(tmp_path):
+    import json
+    import subprocess
+
+    hitl = Hitl(tmp_path, notify=lambda _: None)
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    (hitl.pending / "stale.json").write_text(json.dumps({"id": "stale", "prompt": "old", "pid": dead.pid}))
+    assert hitl.list_pending() == []
+    assert not (hitl.pending / "stale.json").exists()
+
+
 def test_timeout(tmp_path):
     with pytest.raises(HitlTimeout):
         Hitl(tmp_path, notify=lambda _: None).ask("?", timeout_s=0.05, poll_s=0.01)

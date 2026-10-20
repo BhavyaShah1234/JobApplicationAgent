@@ -28,7 +28,10 @@ from jobagent.tools.vault import Vault, open_vault
 SIGNUP_URL = "https://accounts.google.com/signup"
 APP_PASSWORDS_URL = "https://myaccount.google.com/apppasswords"
 TWO_SV_URL = "https://myaccount.google.com/signinoptions/twosv"
-BLOCKED = re.compile(r"(?i)this browser or app may not be secure|couldn.t create your google account|couldn.t sign you in")
+BLOCKED = re.compile(
+    r"(?i)this browser or app may not be secure|could(?:n.t| not) create your google account|"
+    r"could(?:n.t| not) sign you in|sorry, we could not"
+)
 MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
           "September", "October", "November", "December"]
 
@@ -108,7 +111,7 @@ def _fill_birthday(page: Page, ident: Identity, _: Vault) -> bool:
 
 
 def _fill_username(page: Page, ident: Identity, vault: Vault) -> bool:
-    own = page.get_by_text(re.compile(r"(?i)create your own gmail address"))
+    own = page.get_by_text(re.compile(r"create your own gmail address", re.I))
     if own.count():
         own.first.click()
         pause(0.3, 0.8)
@@ -138,12 +141,63 @@ def _click_next(page: Page) -> None:
 
 
 def _signed_in(url: str) -> bool:
-    host = urlparse(url).netloc
-    return host in ("myaccount.google.com", "mail.google.com") or "ManageAccount" in url
+    # Host only: signup URLs carry `continue=...ManageAccount`, so substring checks give false positives.
+    return urlparse(url).netloc in ("myaccount.google.com", "mail.google.com")
 
 
-def _username_rejected(page: Page) -> bool:
-    return page.get_by_text(re.compile(r"(?i)that username is taken|username .*(not allowed|isn.t allowed)")).count() > 0
+def _visible_errors(page: Page) -> list[str]:
+    """Visible, short error-like messages on the page (hidden stale messages are ignored)."""
+    return page.evaluate(r"""() => {
+        const out = new Set();
+        for (const el of document.querySelectorAll('[aria-live], [role=alert], div, span')) {
+            // Leaf-ish text nodes only, so containers (e.g. the suggestion list) don't match.
+            if ([...el.children].some(c => (c.innerText || '').trim())) continue;
+            const t = (el.innerText || '').trim();
+            if (!t || t.length > 200) continue;
+            const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+            if (!r.width || !r.height || cs.visibility === 'hidden' || cs.display === 'none') continue;
+            if (/taken|not allowed|isn.t allowed|try another|between 6 and 30|only letters|can.t|invalid|already/i.test(t)) out.add(t);
+        }
+        return [...out];
+    }""")
+
+
+_SUGGESTION = re.compile(r"^([a-z0-9.]{6,30})@gmail\.com$", re.I)
+
+
+def _suggested_usernames(page: Page) -> list[str]:
+    """Usernames Google offers as radio options on the username page (available at that moment)."""
+    texts = page.get_by_role("radio").evaluate_all(
+        "els => els.map(e => (e.closest('[data-value]')?.innerText || e.parentElement?.innerText || e.getAttribute('aria-label') || '').trim())"
+    )
+    texts += page.locator("text=/@gmail\\.com$/").all_inner_texts()
+    seen, out = set(), []
+    for t in texts:
+        m = _SUGGESTION.match(t.strip())
+        if m and m.group(1).lower() not in seen:
+            seen.add(m.group(1).lower())
+            out.append(m.group(1))
+    return out
+
+
+def _username_diagnosis(page: Page) -> str:
+    shot = str(get_settings().state_dir / "logs" / "gmail-username.png")
+    screenshot(page, shot)
+    field = page.locator("input[name=Username]")
+    value = field.input_value() if field.count() else "<no username field>"
+    errors = _visible_errors(page)
+    return (f"field value {value!r}; visible errors: {errors or 'none'}; "
+            f"url path {urlparse(page.url).path}; screenshot {shot}")
+
+
+def _capture(page: Page, name: str, log=print) -> tuple[str, str]:
+    """Screenshot + short visible-text excerpt, logged, so unknown pages can be diagnosed without noVNC."""
+    shot = str(get_settings().state_dir / "logs" / f"{name}-{datetime.now(UTC):%H%M%S}.png")
+    screenshot(page, shot)
+    text = " ".join(page.locator("body").inner_text(timeout=10_000).split())
+    excerpt = text[:300]
+    log(f"signup: page '{page.title()}' {urlparse(page.url).path} | {excerpt} | screenshot {shot}")
+    return shot, excerpt
 
 
 def drive_signup(page: Page, ident: Identity, vault: Vault, hitl: Hitl, log=print) -> None:
@@ -152,8 +206,10 @@ def drive_signup(page: Page, ident: Identity, vault: Vault, hitl: Hitl, log=prin
         pause()
         if _signed_in(page.url):
             return
-        if BLOCKED.search(page.locator("body").inner_text(timeout=10_000)):
-            raise ManualTakeover("Google refused the automated browser")
+        body = page.locator("body").inner_text(timeout=10_000)
+        if BLOCKED.search(body) or page.title().strip().lower() == "error":
+            _capture(page, "gmail-signup-blocked", log)
+            raise ManualTakeover("Google refused the automated signup")
         url = page.url
         filled = next((h.__name__ for h in HANDLERS if h(page, ident, vault)), None)
         if filled:
@@ -163,11 +219,22 @@ def drive_signup(page: Page, ident: Identity, vault: Vault, hitl: Hitl, log=prin
             try:
                 page.wait_for_url(lambda u: u != url, timeout=15_000)
             except PlaywrightTimeout:
-                if filled == "_fill_username" and _username_rejected(page):
-                    new = hitl.ask(f"Gmail username '{vault.get('gmail')['username']}' is taken or not allowed. "
-                                   "Answer with another username (without @gmail.com).")
-                    vault.set("gmail", username=new.strip(), email=f"{new.strip()}@gmail.com")
-                    continue
+                if filled == "_fill_username":
+                    diagnosis = _username_diagnosis(page)
+                    log(f"signup: username not accepted: {diagnosis}")
+                    if _visible_errors(page):
+                        # The user prefers Google's own suggestions over being asked; ask only if there are none.
+                        suggestions = _suggested_usernames(page)
+                        if suggestions:
+                            new = suggestions[0]
+                            log(f"signup: '{vault.get('gmail')['username']}' taken; using Google's suggestion '{new}'")
+                        else:
+                            new = hitl.ask(f"Google didn't accept username '{vault.get('gmail')['username']}' "
+                                           f"({diagnosis}) and offered no suggestions. Answer with another username "
+                                           "(without @gmail.com).")
+                        new = new.strip().removesuffix("@gmail.com")
+                        vault.set("gmail", username=new, email=f"{new}@gmail.com")
+                        continue
                 shot = str(get_settings().state_dir / "logs" / "gmail-signup-stuck.png")
                 screenshot(page, shot)
                 hitl.ask(f"Signup page didn't advance after filling {filled.removeprefix('_fill_')} "
@@ -176,8 +243,10 @@ def drive_signup(page: Page, ident: Identity, vault: Vault, hitl: Hitl, log=prin
             continue
         # Verification (phone/QR/CAPTCHA), recovery options, review and Google's terms: the user handles these.
         title = page.title()
-        hitl.ask(f"Google signup needs you on '{title}' ({urlparse(url).path.rsplit('/', 1)[-1]}): "
-                 "complete this page in noVNC (http://localhost:6080). Answer 'done' if it doesn't continue on its own.",
+        shot, excerpt = _capture(page, "gmail-signup-page", log)
+        hitl.ask(f"Google signup needs you on '{title}' ({urlparse(url).path.rsplit('/', 1)[-1]}; page says: {excerpt!r}; "
+                 f"screenshot {shot}): complete this page in noVNC (http://localhost:6080). "
+                 "Answer 'done' if it doesn't continue on its own.",
                  done_when=lambda: page.url != url)
     raise RuntimeError("signup did not finish within 40 pages")
 
@@ -193,9 +262,11 @@ def ensure_account(s: Settings, vault: Vault, hitl: Hitl, log=print) -> None:
         return
     ident = load_identity(s, hitl)
     if not entry.get("password"):
-        vault.set("gmail", password=_generate_password(), status="signup_in_progress",
-                  username=ident.desired_username, email=f"{ident.desired_username}@gmail.com",
-                  first_name=ident.first_name, last_name=ident.last_name)
+        vault.set("gmail", password=_generate_password(), status="signup_in_progress")
+    # data/agent_account.yaml is the source of truth at the start of every run; usernames given
+    # through HITL during the run override it only for that run.
+    vault.set("gmail", username=ident.desired_username, email=f"{ident.desired_username}@gmail.com",
+              first_name=ident.first_name, last_name=ident.last_name)
     try:
         with persistent_context(s) as ctx:
             drive_signup(ctx.pages[0], ident, vault, hitl, log)
@@ -219,8 +290,13 @@ def ensure_account(s: Settings, vault: Vault, hitl: Hitl, log=print) -> None:
 _APP_PW = re.compile(r"\b([a-z]{4} [a-z]{4} [a-z]{4} [a-z]{4})\b")
 
 
-def _reauth_if_needed(page: Page, password: str) -> None:
+def _reauth_if_needed(page: Page, email: str, password: str) -> None:
+    if _visible(page, "input[type=email]"):
+        raise RuntimeError(f"not signed in as {email} (Google asks for an account); refusing to continue")
     if _visible(page, "input[name=Passwd]"):
+        # Only type the password into a re-auth prompt for our own account.
+        if email.lower() not in page.locator("body").inner_text().lower():
+            raise RuntimeError(f"password prompt is not for {email}; refusing to type the password")
         type_human(page.locator("input[name=Passwd]"), password)
         _click_next(page)
         page.wait_for_load_state("domcontentloaded")
@@ -235,20 +311,20 @@ def ensure_app_password(s: Settings, vault: Vault, hitl: Hitl, log=print) -> Non
         page = ctx.pages[0]
         page.goto(APP_PASSWORDS_URL, wait_until="domcontentloaded")
         pause(2, 3)
-        _reauth_if_needed(page, entry["password"])
-        name_box = page.get_by_role("textbox", name=re.compile(r"(?i)app name"))
+        _reauth_if_needed(page, entry["email"], entry["password"])
+        name_box = page.get_by_role("textbox", name=re.compile(r"app name", re.I))
         if not name_box.count():
             page.goto(TWO_SV_URL, wait_until="domcontentloaded")
             hitl.ask("App passwords need 2-Step Verification. Turn it on in noVNC (http://localhost:6080) — "
                      "the 2-Step Verification page is open — then answer 'done'.")
             page.goto(APP_PASSWORDS_URL, wait_until="domcontentloaded")
             pause(2, 3)
-            _reauth_if_needed(page, entry["password"])
-            name_box = page.get_by_role("textbox", name=re.compile(r"(?i)app name"))
+            _reauth_if_needed(page, entry["email"], entry["password"])
+            name_box = page.get_by_role("textbox", name=re.compile(r"app name", re.I))
         app_pw = None
         if name_box.count():
             type_human(name_box.first, "jobagent")
-            page.get_by_role("button", name=re.compile(r"(?i)^create$")).first.click()
+            page.get_by_role("button", name=re.compile(r"^create$", re.I)).first.click()
             try:
                 page.get_by_text(_APP_PW).first.wait_for(timeout=20_000)
                 m = _APP_PW.search(page.locator("body").inner_text())
@@ -257,7 +333,7 @@ def ensure_app_password(s: Settings, vault: Vault, hitl: Hitl, log=print) -> Non
                 app_pw = None
         if app_pw:
             vault.set("gmail", app_password=app_pw.replace(" ", ""))
-            page.get_by_role("button", name=re.compile(r"(?i)^done$")).first.click()
+            page.get_by_role("button", name=re.compile(r"^done$", re.I)).first.click()
             log("app password created and stored in the vault")
             return
     hitl.ask("Couldn't create the app password automatically. In noVNC, create one named 'jobagent' at "

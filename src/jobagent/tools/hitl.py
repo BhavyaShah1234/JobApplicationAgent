@@ -6,6 +6,7 @@ Secret answers go straight into the vault; only a marker is written to the answe
 """
 
 import json
+import os
 import time
 import uuid
 from collections.abc import Callable
@@ -29,6 +30,18 @@ class Request:
     # For secrets: where `jobagent hitl answer` stores the value, e.g. ["gmail", "app_password"].
     vault_target: list[str] | None = None
     created: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
+    # Process waiting for the answer; requests of dead processes (killed runs) are pruned.
+    pid: int = field(default_factory=os.getpid)
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 class Hitl:
@@ -73,7 +86,13 @@ class Hitl:
 
     # --- user side --------------------------------------------------------------
     def list_pending(self) -> list[Request]:
-        reqs = [Request(**json.loads(p.read_text())) for p in self.pending.glob("*.json")]
+        reqs = []
+        for p in self.pending.glob("*.json"):
+            req = Request(**json.loads(p.read_text()))
+            if _alive(req.pid):
+                reqs.append(req)
+            else:  # the asking run was killed before it could clean up
+                p.unlink(missing_ok=True)
         return sorted(reqs, key=lambda r: r.created)
 
     def answer(self, req_id: str | None, value: str) -> Request:
