@@ -36,6 +36,102 @@ def step_harness(
     console.print("[green]All harness checks passed.[/]")
 
 
+@step_app.command("gmail")
+def step_gmail() -> None:
+    """Step 1: create/verify the agent's Gmail account, app password and inbox access (idempotent)."""
+    from jobagent.steps.gmail import setup
+
+    setup(log=lambda m: console.print(m, highlight=False))
+    console.print("[green]Gmail account ready.[/]")
+
+
+@step_app.command("gmail-check")
+def step_gmail_check() -> None:
+    """Step 1 e2e: vault entry, SMTP→IMAP round-trip with trashing, browser session still signed in."""
+    from jobagent.config import get_settings
+    from jobagent.steps.gmail import check_browser_session, check_imap_roundtrip
+    from jobagent.tools.vault import open_vault
+
+    vault = open_vault()
+    entry = vault.get("gmail") or {}
+    if entry.get("status") != "ready":
+        console.print(f"[red]gmail not set up (status={entry.get('status')!r}); run `jobagent step gmail`[/]")
+        raise typer.Exit(1)
+    failed = False
+    for name, fn in (("imap/smtp", lambda: check_imap_roundtrip(vault)),
+                     ("browser session", lambda: check_browser_session(get_settings()))):
+        try:
+            console.print(f"[green]PASS[/] {name}: {fn()}", highlight=False)
+        except Exception as e:
+            failed = True
+            console.print(f"[red]FAIL[/] {name}: {type(e).__name__}: {e}", highlight=False)
+    console.print(f"account: {entry['email']}")
+    if failed:
+        raise typer.Exit(1)
+
+
+hitl_app = typer.Typer(no_args_is_help=True, help="Answer the agent's human-in-the-loop requests.")
+app.add_typer(hitl_app, name="hitl")
+
+
+@hitl_app.command("list")
+def hitl_list() -> None:
+    """Show pending requests."""
+    from jobagent.tools.hitl import open_hitl
+
+    reqs = open_hitl().list_pending()
+    if not reqs:
+        console.print("no pending requests")
+    for r in reqs:
+        console.print(f"[bold]{r.id}[/] {r.created} {'(secret) ' if r.secret else ''}{r.prompt}", highlight=False)
+
+
+@hitl_app.command("answer")
+def hitl_answer(
+    req_id: str = typer.Argument(None, help="Request id (default: oldest pending)."),
+    value: str = typer.Argument(None, help="Answer text (prompted if omitted; hidden for secrets)."),
+) -> None:
+    """Answer a pending request. Secrets are read hidden and stored straight into the vault."""
+    from jobagent.tools.hitl import open_hitl
+
+    hitl = open_hitl()
+    reqs = hitl.list_pending()
+    req = next((r for r in reqs if r.id == req_id), reqs[0] if reqs and not req_id else None)
+    if req is None:
+        console.print("[red]no matching pending request[/]")
+        raise typer.Exit(1)
+    if value is None:
+        console.print(req.prompt, highlight=False)
+        value = typer.prompt("answer", hide_input=req.secret, default=req.default or "")
+    hitl.answer(req.id, value)
+    console.print(f"answered {req.id}" + (" (stored in vault)" if req.secret else ""))
+
+
+@hitl_app.command("done")
+def hitl_done(req_id: str = typer.Argument(None)) -> None:
+    """Tell the agent you finished what it asked (e.g. a step in noVNC)."""
+    from jobagent.tools.hitl import open_hitl
+
+    req = open_hitl().answer(req_id, "done")
+    console.print(f"marked {req.id} done")
+
+
+inbox_app = typer.Typer(no_args_is_help=True, help="The agent's Gmail inbox.")
+app.add_typer(inbox_app, name="inbox")
+
+
+@inbox_app.command("sweep")
+def inbox_sweep(max_age_h: float = 24) -> None:
+    """Trash unused verification mail older than --max-age-h hours (never application mail)."""
+    from jobagent.tools.inbox import open_inbox
+
+    with open_inbox() as inbox:
+        trashed = inbox.sweep_stale_verification(max_age_h)
+    console.print(f"trashed {len(trashed)} stale verification mail(s)")
+    for subject in trashed:
+        console.print(f"  - {subject}", highlight=False)
+
+
 @vault_app.command("list")
 def vault_list() -> None:
     """List entry names (no secrets)."""

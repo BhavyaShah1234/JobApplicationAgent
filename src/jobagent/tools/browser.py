@@ -3,10 +3,15 @@
 Step 0 only needs launch; navigation/snapshot/form tools land in step 2.
 """
 
+import os
+import random
+import signal
+import subprocess
+import time
 from contextlib import contextmanager
 from collections.abc import Iterator
 
-from playwright.sync_api import BrowserContext, Page, sync_playwright
+from playwright.sync_api import BrowserContext, Locator, Page, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
 
 from jobagent.config import Settings, get_settings
@@ -43,6 +48,43 @@ def persistent_context(settings: Settings | None = None) -> Iterator[BrowserCont
             yield ctx
         finally:
             ctx.close()
+
+
+def type_human(locator: Locator, text: str) -> None:
+    """Type with human-like, slightly varied keystroke timing."""
+    locator.click()
+    locator.fill("")
+    for ch in text:
+        locator.press_sequentially(ch, delay=0)
+        time.sleep(random.uniform(0.05, 0.16))
+
+
+def pause(lo: float = 0.6, hi: float = 1.8) -> None:
+    time.sleep(random.uniform(lo, hi))
+
+
+@contextmanager
+def plain_chrome(url: str, settings: Settings | None = None) -> Iterator[subprocess.Popen]:
+    """Open regular Chrome (no automation) on the agent's profile, for the user to drive in noVNC.
+
+    The Playwright context must be closed first: a profile can only be open in one Chrome at a time.
+    Chrome is closed gracefully afterwards so cookies and the session are flushed to the profile.
+    """
+    s = settings or get_settings()
+    proc = subprocess.Popen(
+        ["google-chrome", f"--user-data-dir={s.chrome_profile_dir}", "--no-first-run",
+         "--no-default-browser-check", "--window-position=0,0", "--window-size=1920,1080", url],
+        env={**os.environ, "DISPLAY": s.display},
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        yield proc
+    finally:
+        proc.send_signal(signal.SIGTERM)
+        try:
+            proc.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 def screenshot(page: Page, path: str, attempts: int = 3) -> None:
