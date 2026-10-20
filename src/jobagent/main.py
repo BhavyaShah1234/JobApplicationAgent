@@ -37,11 +37,13 @@ def step_harness(
 
 
 @step_app.command("gmail")
-def step_gmail() -> None:
-    """Step 1: create/verify the agent's Gmail account, app password and inbox access (idempotent)."""
+def step_gmail(
+    existing: str = typer.Option(None, "--existing", help="Use this already-created Gmail address instead of signing up."),
+) -> None:
+    """Step 1: set up the agent's Gmail account, app password and inbox access (idempotent)."""
     from jobagent.steps.gmail import setup
 
-    setup(log=lambda m: console.print(m, highlight=False))
+    setup(existing_email=existing, log=lambda m: console.print(m, highlight=False))
     console.print("[green]Gmail account ready.[/]")
 
 
@@ -58,8 +60,9 @@ def step_gmail_check() -> None:
         console.print(f"[red]gmail not set up (status={entry.get('status')!r}); run `jobagent step gmail`[/]")
         raise typer.Exit(1)
     failed = False
+    log = lambda m: console.print(m, highlight=False)  # noqa: E731
     for name, fn in (("imap/smtp", lambda: check_imap_roundtrip(vault)),
-                     ("browser session", lambda: check_browser_session(get_settings()))):
+                     ("browser session", lambda: check_browser_session(get_settings(), vault, log=log))):
         try:
             console.print(f"[green]PASS[/] {name}: {fn()}", highlight=False)
         except Exception as e:
@@ -139,6 +142,21 @@ def vault_list() -> None:
 
     for name in open_vault().names():
         console.print(name)
+
+
+@vault_app.command("set")
+def vault_set(
+    name: str,
+    field: str,
+    value: str = typer.Argument(None, help="Omit to be prompted (hidden) — keeps secrets out of shell history."),
+) -> None:
+    """Set one field of a vault entry, e.g. `jobagent vault set gmail password`."""
+    from jobagent.tools.vault import open_vault
+
+    if value is None:
+        value = typer.prompt(f"{name}.{field}", hide_input=True, confirmation_prompt=True)
+    open_vault().set(name, **{field: value})
+    console.print(f"stored {name}.{field}")
 
 
 @vault_app.command("show")

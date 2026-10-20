@@ -20,6 +20,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from jobagent import db
 from jobagent.config import Settings, get_settings
+from jobagent.tools import google_auth
 from jobagent.tools.browser import pause, persistent_context, plain_chrome, screenshot, type_human
 from jobagent.tools.hitl import Hitl, open_hitl
 from jobagent.tools.inbox import Inbox
@@ -256,9 +257,30 @@ def _wait_manual_finish(s: Settings, hitl: Hitl, url: str, prompt: str) -> str:
         return hitl.ask(prompt)
 
 
+def use_existing_account(email: str, vault: Vault, log=print) -> None:
+    """Point the agent at an already-created Gmail account (signs in instead of signing up)."""
+    email = email.strip().lower()
+    if "@" not in email:
+        email = f"{email}@gmail.com"
+    entry = vault.get("gmail") or {}
+    if entry.get("email", "").lower() != email:
+        # A different account: drop credentials that belonged to the previous one.
+        vault.delete("gmail")
+        entry = {}
+    vault.set("gmail", email=email, username=email.split("@")[0],
+              status="ready" if entry.get("status") == "ready" else "existing")
+    log(f"gmail: using existing account {email}")
+
+
 def ensure_account(s: Settings, vault: Vault, hitl: Hitl, log=print) -> None:
     entry = vault.get("gmail") or {}
     if entry.get("status") in ("created", "ready"):
+        return
+    if entry.get("status") == "existing":
+        with persistent_context(s) as ctx:
+            how = google_auth.ensure_session(ctx.pages[0], vault, hitl, log)
+        log(f"gmail: {entry['email']} {how}")
+        vault.set("gmail", status="created")
         return
     ident = load_identity(s, hitl)
     if not entry.get("password"):
@@ -290,15 +312,14 @@ def ensure_account(s: Settings, vault: Vault, hitl: Hitl, log=print) -> None:
 _APP_PW = re.compile(r"\b([a-z]{4} [a-z]{4} [a-z]{4} [a-z]{4})\b")
 
 
-def _reauth_if_needed(page: Page, email: str, password: str) -> None:
-    if _visible(page, "input[type=email]"):
-        raise RuntimeError(f"not signed in as {email} (Google asks for an account); refusing to continue")
-    if _visible(page, "input[name=Passwd]"):
-        # Only type the password into a re-auth prompt for our own account.
-        if email.lower() not in page.locator("body").inner_text().lower():
-            raise RuntimeError(f"password prompt is not for {email}; refusing to type the password")
-        type_human(page.locator("input[name=Passwd]"), password)
-        _click_next(page)
+def _reauth_if_needed(page: Page, vault: Vault, log=print) -> None:
+    """Google re-asks for the password (and maybe 2SV) on sensitive pages; answer with the sign-in steps."""
+    entry = vault.get("gmail")
+    for _ in range(4):
+        did = google_auth._step(page, entry["email"], entry["password"], entry.get("totp_secret"), log)
+        if not did:
+            return
+        log(f"google-auth (re-auth): {did}")
         page.wait_for_load_state("domcontentloaded")
         pause(2, 3)
 
@@ -309,9 +330,10 @@ def ensure_app_password(s: Settings, vault: Vault, hitl: Hitl, log=print) -> Non
         return
     with persistent_context(s) as ctx:
         page = ctx.pages[0]
+        google_auth.ensure_session(page, vault, hitl, log)
         page.goto(APP_PASSWORDS_URL, wait_until="domcontentloaded")
         pause(2, 3)
-        _reauth_if_needed(page, entry["email"], entry["password"])
+        _reauth_if_needed(page, vault, log)
         name_box = page.get_by_role("textbox", name=re.compile(r"app name", re.I))
         if not name_box.count():
             page.goto(TWO_SV_URL, wait_until="domcontentloaded")
@@ -319,7 +341,7 @@ def ensure_app_password(s: Settings, vault: Vault, hitl: Hitl, log=print) -> Non
                      "the 2-Step Verification page is open — then answer 'done'.")
             page.goto(APP_PASSWORDS_URL, wait_until="domcontentloaded")
             pause(2, 3)
-            _reauth_if_needed(page, entry["email"], entry["password"])
+            _reauth_if_needed(page, vault, log)
             name_box = page.get_by_role("textbox", name=re.compile(r"app name", re.I))
         app_pw = None
         if name_box.count():
@@ -360,22 +382,32 @@ def check_imap_roundtrip(vault: Vault, log=print) -> str:
     return f"sent → received in {took:.0f}s → trashed; audit rows (self_test) = {row}"
 
 
-def check_browser_session(s: Settings) -> str:
+def check_browser_session(s: Settings, vault: Vault | None = None, hitl: Hitl | None = None, log=print) -> str:
+    """Gmail opens signed in — re-signing in automatically if the session expired."""
+    vault, hitl = vault or open_vault(), hitl or open_hitl(log)
     with persistent_context(s) as ctx:
         page = ctx.pages[0]
-        page.goto("https://mail.google.com/mail/u/0/", wait_until="domcontentloaded")
-        pause(3, 4)
+        how = google_auth.ensure_session(page, vault, hitl, log)
+        pause(2, 3)
         shot = s.state_dir / "logs" / "gmail-session.png"
         screenshot(page, str(shot))
         host = urlparse(page.url).netloc
     if host != "mail.google.com":
-        raise RuntimeError(f"not signed in: landed on {host} (screenshot {shot})")
-    return f"signed in, Gmail open without a new sign-in (screenshot {shot})"
+        raise RuntimeError(f"not in Gmail: landed on {host} (screenshot {shot})")
+    return f"Gmail open — {how} (screenshot {shot})"
 
 
-def setup(log=print) -> None:
+def setup(existing_email: str | None = None, log=print) -> None:
     s, vault = get_settings(), open_vault()
     hitl = open_hitl(log)
+    if existing_email:
+        use_existing_account(existing_email, vault, log)
+    entry = vault.get("gmail") or {}
+    if entry.get("status") == "existing" and not entry.get("password"):
+        hitl.ask(f"Store the password of {entry['email']} with `jobagent vault set gmail password` "
+                 "(and optionally the authenticator setup key with `jobagent vault set gmail totp_secret` "
+                 "for fully automatic 2-Step Verification), then answer 'done'.",
+                 done_when=lambda: bool((vault.get("gmail") or {}).get("password")))
     ensure_account(s, vault, hitl, log)
     ensure_app_password(s, vault, hitl, log)
     log(check_imap_roundtrip(vault, log))
