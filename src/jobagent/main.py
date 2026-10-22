@@ -113,6 +113,54 @@ def step_overleaf_check() -> None:
         raise typer.Exit(1)
 
 
+def _print_bootstrap(result: dict) -> None:
+    for line in result["messages"][-1].content.splitlines()[1:]:
+        console.print(("[yellow]" if line.startswith("warning") else "") + line, highlight=False)
+    console.print(f"changed: {result['changed'] or 'nothing'}", highlight=False)
+
+
+@app.command("bootstrap")
+def bootstrap() -> None:
+    """Global default action: check/repair the harness and accounts (resumes after a crash)."""
+    from jobagent.graph.bootstrap import run
+
+    _print_bootstrap(run(log=lambda m: console.print(m, highlight=False)))
+
+
+@step_app.command("bootstrap-check")
+def step_bootstrap_check() -> None:
+    """Step 5 e2e: idempotent (2nd run changes nothing) and resumes after a crash without redoing done nodes."""
+    import os
+
+    from jobagent.graph.bootstrap import CRASH_ENV, BootstrapCrash, run
+
+    quiet = lambda m: None  # noqa: E731
+    checks = []
+    first = run(log=quiet)
+    checks.append(("first run", True, f"ran {first['ran_now']}; changed {first['changed'] or 'nothing'}; "
+                                      f"warnings {len(first['warnings'])}"))
+    second = run(log=quiet)
+    checks.append(("idempotent", not second["changed"], f"second run changed {second['changed'] or 'nothing'}"))
+    os.environ[CRASH_ENV] = "browser"
+    try:
+        run(log=quiet)
+        checks.append(("crash/resume", False, "the simulated crash did not happen"))
+    except BootstrapCrash:
+        os.environ.pop(CRASH_ENV)
+        resumed = run(log=quiet)
+        ok = resumed["resumed"] and resumed["ran_now"] == ["browser", "linkedin", "overleaf"] and not resumed["changed"]
+        checks.append(("crash/resume", ok, f"resumed={resumed['resumed']}; re-ran only {resumed['ran_now']}"))
+    finally:
+        os.environ.pop(CRASH_ENV, None)
+    failed = False
+    for name, ok, detail in checks:
+        failed |= not ok
+        console.print(f"{'[green]PASS[/]' if ok else '[red]FAIL[/]'} {name}: {detail}", highlight=False)
+    _print_bootstrap(second)
+    if failed:
+        raise typer.Exit(1)
+
+
 browser_app = typer.Typer(no_args_is_help=True, help="The agent's Chrome profile.")
 app.add_typer(browser_app, name="browser")
 
