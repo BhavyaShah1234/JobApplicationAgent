@@ -14,8 +14,6 @@ from pathlib import Path
 from urllib.parse import quote, urljoin, urlparse
 
 import httpx
-from typing import Annotated
-
 from pydantic import BaseModel, Field
 
 from jobagent import db
@@ -45,23 +43,24 @@ class NewsItem(BaseModel):
     sources: list[int]
 
 
-Item = Annotated[str, Field(max_length=220)]
+class Cited(BaseModel):
+    text: str = Field(max_length=200, description="One short factual sentence")
+    sources: list[int] = Field(min_length=1, max_length=4, description="Ids of the sources that state it")
 
 
 class ProfileDraft(BaseModel):
-    """What the model fills in: short sentences, each ending with [n] source ids. Sent as an enforced JSON schema
-    (server-side maxItems / maxLength): with free-form tool calls the fast model looped until the token cap."""
+    """What the model fills in. Sent as an enforced JSON schema: maxItems/maxLength stop the fast model's repetition
+    loops, and `sources` (minItems 1) makes citations structural — trailing '[n]' markers were sometimes forgotten."""
 
     name: str = Field(max_length=120, description="The company's brand name")
-    what_they_do: list[Item] = Field(min_length=1, max_length=4,
-                                    description="What the company does / sells / its business, ending with [n] ids")
-    mission: list[Item] = Field(default_factory=list, max_length=4, description="Mission / purpose as they state it, with [n]")
-    products: list[Item] = Field(min_length=1, max_length=6, description="Main products, services, brands, with [n]")
-    values: list[Item] = Field(default_factory=list, max_length=6, description="Stated values / culture, with [n]")
-    facts: list[Item] = Field(default_factory=list, max_length=6,
-                             description="Only what fits nowhere above: HQ, size, founding year, locations, with [n]")
-    recent_news: list[Item] = Field(default_factory=list, max_length=5,
-                                    description="'YYYY-MM-DD title — one sentence [n]', newest first")
+    what_they_do: list[Cited] = Field(min_length=1, max_length=4, description="What the company does / its business")
+    mission: list[Cited] = Field(default_factory=list, max_length=4, description="Mission / purpose as they state it")
+    products: list[Cited] = Field(min_length=1, max_length=6, description="Main products, services, brands")
+    values: list[Cited] = Field(default_factory=list, max_length=6, description="Stated values / culture")
+    facts: list[Cited] = Field(default_factory=list, max_length=6,
+                               description="Only what fits nowhere above: HQ, size, founding year, locations")
+    recent_news: list[Cited] = Field(default_factory=list, max_length=5,
+                                     description="'YYYY-MM-DD title — one sentence', newest first, from (news) sources only")
 
 
 class StoredProfile(BaseModel):
@@ -262,8 +261,8 @@ def gather_sources(company: str, hint_text: str = "") -> tuple[str | None, list[
 
 
 RESEARCH_PROMPT = """Write a company profile using ONLY the numbered sources below.
-- Each list item is one short sentence that ends with the ids of the sources stating it, e.g. "Headquartered in
-  Springfield [4]" or "Founded in 1950 [1][3]". Anything no source states is left out.
+- Each item is one short sentence plus `sources`: the ids of the sources that state it. Anything no source states
+  is left out.
 - At most 6 items per list, each at most 25 words. Keep the company's own wording for mission and values.
   No speculation, no marketing fluff.
 - Fields: what_they_do = the business itself; mission = their stated mission/purpose; products = products,
@@ -336,12 +335,21 @@ def research(company: str, hint_text: str = "", refresh: bool = False, log=print
     if draft is None:
         raise RuntimeError(f"no profile could be written for {company!r}")
     ids = set(numbered)
+    def claims(items: list[Cited], allowed: set[int]) -> list[Claim]:
+        out = []
+        for it in items:
+            srcs = list(dict.fromkeys(i for i in it.sources if i in allowed))
+            if srcs and it.text.strip():
+                out.append(Claim(text=_CITE.sub("", it.text).strip().rstrip("."), sources=srcs))
+        return out
+
+    news_ids = {i for i in ids if numbered[i]["kind"] == "news"}  # news must cite an actual news source
+    dates = {i: numbered[i].get("date", "") for i in ids}
     profile = CompanyProfile(
         name=draft.name or company,
-        **{f: parse_cited(getattr(draft, f), ids) for f in ("what_they_do", "mission", "products", "values", "facts")},
-        # news must cite an actual news source, not the company's own pages
-        recent_news=parse_news(draft.recent_news, {i for i in ids if numbered[i]["kind"] == "news"},
-                               {i: numbered[i].get("date", "") for i in ids}),
+        **{f: claims(getattr(draft, f), ids) for f in ("what_they_do", "mission", "products", "values", "facts")},
+        recent_news=parse_news([f"{c.text} " + "".join(f"[{i}]" for i in c.sources)
+                                for c in claims(draft.recent_news, news_ids)], news_ids, dates),
     )
     cited = {i for f in ("what_they_do", "mission", "products", "values", "facts", "recent_news")
              for c in getattr(profile, f) for i in c.sources}
