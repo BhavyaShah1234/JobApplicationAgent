@@ -69,7 +69,25 @@ def signed_in(page: Page) -> bool:
     return urlparse(page.url).netloc in ("mail.google.com", "myaccount.google.com")
 
 
-SIGNIN_FIELDS = "input[type=email], #identifierId, input[type=password], input[name=totpPin], #totpPin"
+# Visible fields only: Google keeps hidden inputs with the same ids/types on later pages (e.g. a hidden
+# id=identifierId on the password page), and matching those stalls a click for 30 s.
+EMAIL_FIELD = "input[type=email]:visible, input[name=identifier]:not([type=hidden]):visible"
+PASSWORD_FIELD = "input[type=password]:visible"
+TOTP_FIELD = "input[name=totpPin]:visible, input#totpPin:visible"
+SIGNIN_FIELDS = f"{EMAIL_FIELD}, {PASSWORD_FIELD}, {TOTP_FIELD}"
+
+
+class PasswordRejected(RuntimeError):
+    """Google showed the password field again after the password was submitted; never retry blindly."""
+
+
+def _wait_gone(page: Page, selector: str, timeout_ms: int = 20_000) -> bool:
+    """After submitting a field, wait until it is no longer visible (the page moved on)."""
+    try:
+        page.locator(selector).first.wait_for(state="hidden", timeout=timeout_ms)
+        return True
+    except PlaywrightTimeout:
+        return False
 
 
 def _wait_for_form(page: Page, timeout_ms: int = 10_000) -> None:
@@ -82,8 +100,13 @@ def _wait_for_form(page: Page, timeout_ms: int = 10_000) -> None:
         pass  # not a form page (chooser, challenge, landing page): the caller inspects it
 
 
-def _step(page: Page, email: str, password: str, totp_secret: str | None, log) -> str:
-    """Perform at most one sign-in action on the current page; returns what it did ('' if nothing)."""
+def _step(page: Page, email: str, password: str, totp_secret: str | None, log, done: set[str] | None = None) -> str:
+    """Perform at most one sign-in action on the current page; returns what it did ('' if nothing).
+
+    `done` holds the actions already taken in this sign-in, so a page that comes back (rejected
+    email/password) is reported instead of retried.
+    """
+    done = set() if done is None else done
     _wait_for_form(page)
     body = page.locator("body").inner_text(timeout=10_000)
     if BLOCKED.search(body):
@@ -95,23 +118,34 @@ def _step(page: Page, email: str, password: str, totp_secret: str | None, log) -
         if chooser.count():
             chooser.first.click()
             return "chose account"
-    if _visible(page, "input[type=email], #identifierId"):
-        type_human(page.locator("input[type=email], #identifierId").first, email)
+    if _visible(page, EMAIL_FIELD):
+        if "entered email" in done:
+            return ""  # Google didn't accept the address: let the caller capture the message and ask
+        type_human(page.locator(EMAIL_FIELD).first, email)
         _click_next(page)
+        _wait_gone(page, EMAIL_FIELD)
+        done.add("entered email")
         return "entered email"
-    if _visible(page, "input[type=password]"):
+    if _visible(page, PASSWORD_FIELD):
         # Only ever type the password where Google shows our own address.
         if email.lower() not in body.lower():
             raise RuntimeError(f"password prompt is not for {email}; refusing to type the password")
-        type_human(page.locator("input[type=password]").first, password)
+        if "entered password" in done:
+            _capture(page, "google-signin-password-rejected", log)
+            raise PasswordRejected(f"Google asked for the password of {email} again after it was entered; "
+                                   "check it with `jobagent vault set gmail password` (not retrying, to avoid a lockout)")
+        type_human(page.locator(PASSWORD_FIELD).first, password)
         _click_next(page)
+        _wait_gone(page, PASSWORD_FIELD)
+        done.add("entered password")
         return "entered password"
-    totp_box = page.locator("input[name=totpPin], input#totpPin")
-    if totp_box.count() and totp_box.first.is_visible():
-        if not totp_secret:
+    if _visible(page, TOTP_FIELD):
+        if not totp_secret or "entered authenticator code" in done:
             return ""
-        type_human(totp_box.first, totp(totp_secret))
+        type_human(page.locator(TOTP_FIELD).first, totp(totp_secret))
         _click_next(page)
+        _wait_gone(page, TOTP_FIELD)
+        done.add("entered authenticator code")
         return "entered authenticator code"
     # A product/landing page (e.g. the Gmail marketing page) with a "Sign in" link: follow it.
     if urlparse(page.url).netloc != "accounts.google.com":
@@ -151,17 +185,15 @@ def ensure_session(page: Page, vault: Vault, hitl: Hitl, log=print, max_steps: i
                  "jobagent vault set gmail password — then answer 'done'.")
         password = vault.get("gmail").get("password")
     helped = False
+    done: set[str] = set()
     for _ in range(max_steps):
         if signed_in(page):
             break
         url = page.url
-        did = _step(page, email, password, entry.get("totp_secret"), log)
+        did = _step(page, email, password, entry.get("totp_secret"), log, done)
         if did:
             log(f"google-auth: {did}")
-            try:
-                page.wait_for_url(lambda u: u != url, timeout=20_000)
-            except PlaywrightTimeout:
-                pause(2, 3)  # some steps update in place; the next loop re-reads the page
+            pause(1, 2)  # _step already waited for its field to go away; let the next page settle
             continue
         # A challenge the agent can't answer itself.
         shot, excerpt = _capture(page, "google-signin-challenge", log)
