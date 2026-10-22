@@ -40,7 +40,7 @@ def test_memory_round_trip_and_notes(tmp_path):
      ("Responsibilities", "responsibilities"), ("Who you are", "values"), ("Benefits", "benefits"),
      ("What you'll need", "basic_qualifications"), ("What We Value", "values"),
      ("What We Require", "basic_qualifications"), ("Core Responsiblities", "responsibilities"),
-     ("About Stripe", None)],
+     ("Technologies We Use", "technical_skills"), ("About Stripe", None)],
 )
 def test_classify_heading(heading, field):
     from jobagent.tools.scrape import classify_heading
@@ -60,6 +60,28 @@ def test_apply_sections_replaces_lists_with_page_bullets():
     assert apply_sections(jd, bullets) == ["Our offices"]
     assert jd.basic_qualifications == ["BS in CS", "Programming experience"]
     assert jd.preferred_qualifications == ["Code review"] and jd.technical_skills == ["Go"]
+
+
+def test_model_items_misfiled_from_other_page_lists_are_dropped():
+    from jobagent.tools.scrape import apply_sections
+
+    # Lever-like: no preferred heading; the model copied the "What We Value" bullets into preferred.
+    jd = JobDescription(title="SWE", company="Palantir",
+                        preferred_qualifications=["Deep understanding of distributed systems.", "UK clearance"])
+    apply_sections(jd, [{"heading": "What We Value", "text": "Deep understanding of distributed systems"}])
+    assert jd.values == ["Deep understanding of distributed systems"]
+    assert jd.preferred_qualifications == ["UK clearance"]
+
+
+def test_jsonld_locations():
+    from jobagent.tools.scrape import jsonld_locations
+
+    assert jsonld_locations({"jobLocation": [
+        {"address": {"addressLocality": "London", "addressCountry": "United Kingdom"}},
+        {"address": {"addressLocality": "Denver", "addressRegion": "CO", "addressCountry": {"name": "US"}}},
+    ]}) == ["London, United Kingdom", "Denver, CO, US"]
+    assert jsonld_locations({"jobLocationType": "TELECOMMUTE"}) == ["Remote"]
+    assert jsonld_locations({}) == []
 
 
 def test_missing_core():

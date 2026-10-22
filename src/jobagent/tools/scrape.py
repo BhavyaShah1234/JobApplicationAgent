@@ -81,6 +81,33 @@ def _jsonld_text(posting: dict) -> str:
     return f"[schema.org JobPosting fields]\n{json.dumps(hints, default=str)[:3000]}\n\n[description]\n{desc}"
 
 
+def jsonld_locations(posting: dict) -> list[str]:
+    places = posting.get("jobLocation") or []
+    out = []
+    for place in places if isinstance(places, list) else [places]:
+        addr = place.get("address", {}) if isinstance(place, dict) else {}
+        if isinstance(addr, str):
+            out.append(addr)
+            continue
+        parts = [addr.get(k) for k in ("addressLocality", "addressRegion", "addressCountry")]
+        parts = [p.get("name") if isinstance(p, dict) else p for p in parts]
+        if text := ", ".join(p for p in parts if p):
+            out.append(text)
+    if not out and "TELECOMMUTE" in str(posting.get("jobLocationType", "")).upper():
+        out.append("Remote")
+    return list(dict.fromkeys(out))
+
+
+def _fill_from_jsonld(jd: JobDescription, posting: dict) -> None:
+    if not jd.locations:
+        jd.locations = jsonld_locations(posting)
+    if not jd.title and posting.get("title"):
+        jd.title = str(posting["title"])
+    org = posting.get("hiringOrganization")
+    if not jd.company and isinstance(org, dict) and org.get("name"):
+        jd.company = str(org["name"])
+
+
 def _best_text(page: Page, remembered: str | None) -> tuple[str | None, str]:
     """Return (selector, text) of the richest visible block, trying the remembered selector first."""
     tried = ([remembered] if remembered else []) + [s for s in CANDIDATE_SELECTORS if s != remembered]
@@ -107,11 +134,12 @@ def _best_text(page: Page, remembered: str | None) -> tuple[str | None, str]:
 # Heading → JD list. First match wins; order matters ("preferred qualifications" before "qualifications").
 SECTION_RULES = [
     ("preferred_qualifications", re.compile(r"(?i)prefer|nice[- ]to[- ]have|bonus|plus\b|ideal(ly)?|desired|stand out")),
-    ("basic_qualifications", re.compile(r"(?i)minimum|basic|required|requirement|must[- ]have|qualifications|"
+    ("basic_qualifications", re.compile(r"(?i)minimum|basic|require|must[- ]have|qualifications|"
                                         r"what you('ll)? (need|bring)|you (have|bring)|skills (and|&) experience")),
     ("responsibilities", re.compile(r"(?i)responsib|what you('ll| will)? do|your role|the role|in this role|"
                                     r"day[- ]to[- ]day|you will|key duties|what you('ll| will) work on")),
     ("benefits", re.compile(r"(?i)benefit|perks|we offer|compensation (and|&) benefits|what we offer")),
+    ("technical_skills", re.compile(r"(?i)technolog(y|ies)( we use)?|tech stack|our stack|tools (we use|and technologies)")),
     ("values", re.compile(r"(?i)who you are|about you|we('re| are) looking for|what we look for|our values|"
                           r"what we value|traits")),
 ]
@@ -162,7 +190,17 @@ def apply_sections(jd: JobDescription, bullets: list[dict]) -> list[str]:
             unmapped.append(b["heading"])
     for field_name, items in grouped.items():
         setattr(jd, field_name, items)
+    # Lists the page didn't cover keep the model's version, minus items the model misfiled there that
+    # are really page bullets of another list (e.g. Lever's "What We Value" also put under preferred).
+    page_items = {_norm_item(t) for items in grouped.values() for t in items}
+    for field_name in ("responsibilities", "basic_qualifications", "preferred_qualifications", "values", "benefits"):
+        if field_name not in grouped:
+            setattr(jd, field_name, [t for t in getattr(jd, field_name) if _norm_item(t) not in page_items])
     return unmapped
+
+
+def _norm_item(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()[:120]
 
 
 def _vision_text(page: Page) -> str:
@@ -241,6 +279,8 @@ def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
     except Exception as e:
         log(f"scrape: fast model failed ({type(e).__name__}); using the planner model")
         jd = None
+    if jd is not None and posting:
+        _fill_from_jsonld(jd, posting)  # cheap, exact fixes before paying for the large model
     if jd is None or not (jd.title and jd.company and jd.locations):
         jd = llm.structured(JobDescription, "planner").invoke(messages)
         memory.note("fast model missed core fields; planner model used")
