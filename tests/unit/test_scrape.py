@@ -38,7 +38,9 @@ def test_memory_round_trip_and_notes(tmp_path):
      ("Preferred qualifications", "preferred_qualifications"), ("Nice to have", "preferred_qualifications"),
      ("Bonus points", "preferred_qualifications"), ("What you'll do", "responsibilities"),
      ("Responsibilities", "responsibilities"), ("Who you are", "values"), ("Benefits", "benefits"),
-     ("What you'll need", "basic_qualifications"), ("About Stripe", None)],
+     ("What you'll need", "basic_qualifications"), ("What We Value", "values"),
+     ("What We Require", "basic_qualifications"), ("Core Responsiblities", "responsibilities"),
+     ("About Stripe", None)],
 )
 def test_classify_heading(heading, field):
     from jobagent.tools.scrape import classify_heading

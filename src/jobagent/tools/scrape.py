@@ -41,7 +41,9 @@ EXTRACT_PROMPT = """You extract job postings into a schema. Rules:
 - Unknown → null or an empty list.
 - One list item per bullet/requirement, lightly trimmed, keeping the posting's wording.
 - technical_skills: concrete technologies, languages, frameworks, tools and platforms named anywhere in the posting.
-- Separate basic/minimum/required qualifications from preferred/nice-to-have ones as the posting does."""
+- Separate basic/minimum/required qualifications from preferred/nice-to-have ones as the posting does.
+- company: the employer's brand name as people know it ("NVIDIA", "General Mills"), never a legal entity,
+  subsidiary code or payroll name ("2100 NVIDIA USA", "Genl Mills India P")."""
 
 
 @dataclass
@@ -110,7 +112,8 @@ SECTION_RULES = [
     ("responsibilities", re.compile(r"(?i)responsib|what you('ll| will)? do|your role|the role|in this role|"
                                     r"day[- ]to[- ]day|you will|key duties|what you('ll| will) work on")),
     ("benefits", re.compile(r"(?i)benefit|perks|we offer|compensation (and|&) benefits|what we offer")),
-    ("values", re.compile(r"(?i)who you are|about you|we('re| are) looking for|what we look for|our values|traits")),
+    ("values", re.compile(r"(?i)who you are|about you|we('re| are) looking for|what we look for|our values|"
+                          r"what we value|traits")),
 ]
 
 
