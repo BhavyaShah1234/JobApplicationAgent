@@ -74,6 +74,57 @@ def step_gmail_check() -> None:
         raise typer.Exit(1)
 
 
+@step_app.command("browser-check")
+def step_browser_check() -> None:
+    """Step 2 e2e: profile/cookie persistence, challenge detection and hand-off, Google session state."""
+    from jobagent.steps.browser import check
+
+    failed = False
+    for name, ok, detail in check(log=lambda m: console.print(m, highlight=False)):
+        failed |= not ok
+        console.print(f"{'[green]PASS[/]' if ok else '[red]FAIL[/]'} {name}: {detail}", highlight=False)
+    if failed:
+        raise typer.Exit(1)
+
+
+browser_app = typer.Typer(no_args_is_help=True, help="The agent's Chrome profile.")
+app.add_typer(browser_app, name="browser")
+
+
+@browser_app.command("google-login")
+def browser_google_login() -> None:
+    """Sign in to the agent's Google account by hand, once, in plain (non-automated) Chrome via noVNC."""
+    from jobagent.steps.browser import google_login
+    from jobagent.tools.hitl import open_hitl
+    from jobagent.tools.vault import open_vault
+
+    log = lambda m: console.print(m, highlight=False)  # noqa: E731
+    state = google_login(open_vault(), open_hitl(log), log)
+    if state != "ok":
+        console.print("[red]the agent's browser is still signed out (Google may have rejected the session)[/]")
+        raise typer.Exit(1)
+    console.print("[green]the agent's browser opens Gmail signed in[/]")
+
+
+@browser_app.command("warm-up")
+def browser_warm_up(minutes: float = typer.Option(5, help="How long to browse.")) -> None:
+    """Ordinary browsing so the profile collects normal cookies and history (optional)."""
+    from jobagent.steps.browser import warm_up
+    from jobagent.tools.hitl import open_hitl
+
+    log = lambda m: console.print(m, highlight=False)  # noqa: E731
+    warm_up(minutes, open_hitl(log), log)
+
+
+@browser_app.command("status")
+def browser_status() -> None:
+    """Profile size, cookie count and whether Gmail opens signed in."""
+    from jobagent.steps.browser import status
+
+    for k, v in status().items():
+        console.print(f"{k}: {v}", highlight=False)
+
+
 hitl_app = typer.Typer(no_args_is_help=True, help="Answer the agent's human-in-the-loop requests.")
 app.add_typer(hitl_app, name="hitl")
 

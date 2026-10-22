@@ -1,7 +1,4 @@
-"""Playwright persistent Chrome context (real Chrome, headful under Xvfb by default).
-
-Step 0 only needs launch; navigation/snapshot/form tools land in step 2.
-"""
+"""Playwright persistent Chrome context (real Chrome, headful under Xvfb by default) and helpers."""
 
 import os
 import random
@@ -10,17 +7,59 @@ import subprocess
 import time
 from contextlib import contextmanager
 from collections.abc import Iterator
+from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Locator, Page, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
 
 from jobagent.config import Settings, get_settings
 
+LOCK_FILES = ("SingletonLock", "SingletonSocket", "SingletonCookie")
+
+
+class ProfileInUse(RuntimeError):
+    """Another live Chrome has the agent's profile open (a profile can be used by one Chrome at a time)."""
+
+
+def _lock_pid(profile: Path) -> int | None:
+    """Chrome's SingletonLock is a symlink to '<hostname>-<pid>'."""
+    lock = profile / "SingletonLock"
+    try:
+        return int(os.readlink(lock).rsplit("-", 1)[1])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def clear_stale_lock(profile: Path) -> str:
+    """Remove a lock left by a killed Chrome; refuse if the owner is still running.
+
+    Returns 'none', 'stale lock removed' (raises ProfileInUse if the profile is genuinely open).
+    """
+    if not (profile / "SingletonLock").is_symlink():
+        return "none"
+    pid = _lock_pid(profile)
+    if pid is not None and _pid_alive(pid):
+        raise ProfileInUse(f"the browser profile is open in another Chrome (pid {pid}); close it first")
+    for name in LOCK_FILES:
+        (profile / name).unlink(missing_ok=True)
+    return "stale lock removed"
+
 
 @contextmanager
 def persistent_context(settings: Settings | None = None) -> Iterator[BrowserContext]:
     s = settings or get_settings()
     s.chrome_profile_dir.mkdir(parents=True, exist_ok=True)
+    clear_stale_lock(s.chrome_profile_dir)
     with sync_playwright() as pw:
         ctx = pw.chromium.launch_persistent_context(
             user_data_dir=str(s.chrome_profile_dir),
@@ -71,6 +110,7 @@ def plain_chrome(url: str, settings: Settings | None = None) -> Iterator[subproc
     Chrome is closed gracefully afterwards so cookies and the session are flushed to the profile.
     """
     s = settings or get_settings()
+    clear_stale_lock(s.chrome_profile_dir)
     proc = subprocess.Popen(
         ["google-chrome", f"--user-data-dir={s.chrome_profile_dir}", "--no-first-run",
          "--no-default-browser-check", "--window-position=0,0", "--window-size=1920,1080", url],

@@ -433,8 +433,19 @@ def check_ownership_guard(vault: Vault) -> str:
 def check_browser_session(s: Settings, vault: Vault | None = None, hitl: Hitl | None = None, log=print) -> str:
     """Gmail opens signed in — re-signing in automatically if the session expired."""
     vault, hitl = vault or open_vault(), hitl or open_hitl(log)
-    if (vault.get("gmail") or {}).get("browser_session") == "blocked":
-        return "unavailable: Google blocks automated browser sign-in (mail works over IMAP/SMTP)"
+    unavailable = ("unavailable: Google blocks automated browser sign-in (mail works over IMAP/SMTP); "
+                   "run `jobagent browser google-login` to sign in by hand")
+    session = (vault.get("gmail") or {}).get("browser_session")
+    if session == "blocked":
+        return unavailable
+    if session in ("signed-out", "ok"):
+        # Google blocks automated sign-in, so the session can only come from the user signing in by hand.
+        # Report it live; never attempt an automated sign-in here.
+        from jobagent.steps.browser import google_session_state
+
+        if google_session_state(s or get_settings()) == "ok":
+            return "Gmail opens signed in (session from the user's one-time manual sign-in)"
+        return unavailable
     with persistent_context(s) as ctx:
         page = ctx.pages[0]
         how = google_auth.ensure_session(page, vault, hitl, log)
