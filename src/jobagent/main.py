@@ -87,6 +87,32 @@ def step_browser_check() -> None:
         raise typer.Exit(1)
 
 
+@step_app.command("overleaf")
+def step_overleaf() -> None:
+    """Step 4 (optional): log in to Overleaf with the agent's Google session and detect the plan's features."""
+    from jobagent.steps.overleaf import setup
+
+    try:
+        setup(log=lambda m: console.print(m, highlight=False))
+    except Exception as e:  # optional step: report, don't break the rest of the agent
+        console.print(f"[yellow]Overleaf unavailable: {type(e).__name__}: {e}[/]")
+        raise typer.Exit(1)
+    console.print("[green]Overleaf ready.[/]")
+
+
+@step_app.command("overleaf-check")
+def step_overleaf_check() -> None:
+    """Step 4 e2e: create a project from the resume template, compile on Overleaf, compare, read back, delete."""
+    from jobagent.steps.overleaf import check
+
+    failed = False
+    for name, ok, detail in check(log=lambda m: console.print(m, highlight=False)):
+        failed |= not ok
+        console.print(f"{'[green]PASS[/]' if ok else '[red]FAIL[/]'} {name}: {detail}", highlight=False)
+    if failed:
+        raise typer.Exit(1)
+
+
 browser_app = typer.Typer(no_args_is_help=True, help="The agent's Chrome profile.")
 app.add_typer(browser_app, name="browser")
 
