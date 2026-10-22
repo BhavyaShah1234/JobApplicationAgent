@@ -170,12 +170,24 @@ def step_scrape_check(
     table = Table(title="Scrape check")
     for col in ("portal", "title / company", "locs", "pay", "resp", "basic", "pref", "skills", "complete", "2nd pass"):
         table.add_column(col)
-    with persistent_context() as ctx:
-        page = ctx.pages[0]
+    from playwright.sync_api import Error as PlaywrightError
+
+    def twice(url):
+        # A fresh browser per posting (one bad page can't take the rest down), retried once if it dies.
+        for attempt in (1, 2):
+            try:
+                with persistent_context() as ctx:
+                    page = ctx.pages[0]
+                    return scrape(page, url, open_hitl(log), log), scrape(page, url, open_hitl(log), log)
+            except PlaywrightError as e:
+                if attempt == 2 or "closed" not in str(e):
+                    raise
+                console.print(f"[yellow]browser closed while reading {url[:60]}; retrying once[/]", highlight=False)
+
+    if True:
         for url in urls:
             try:
-                first = scrape(page, url, open_hitl(log), log)
-                second = scrape(page, url, open_hitl(log), log)
+                first, second = twice(url)
                 jd, missing = first.jd, first.jd.missing_core()
                 stable = second.used_memory and second.jd.title == jd.title
                 failed |= bool(missing) or not stable

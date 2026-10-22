@@ -1,0 +1,6 @@
+# One live posting per company in data/test.csv (found 2026-10-22 via each company's own careers site / ATS API).
+https://genmills.wd1.myworkdayjobs.com/en-US/GMI_External_Careers/job/Powai-Mumbai-MH/Software-Engineer-II_10128543  # General Mills — Workday
+https://www.kpmguscareers.com/jobdetail/?jobId=133129  # KPMG LLP — custom portal (kpmguscareers.com)
+https://recruiting2.ultipro.com/DOW1001DOWL/JobBoard/e88601aa-9d30-45ca-b6e4-610b5a4d6ead/OpportunityDetail?opportunityId=e313c510-8511-4fac-b22c-d35fafa70083  # DOWL — UKG UltiPro
+https://intel.wd1.myworkdayjobs.com/en-US/External/job/US-California-Santa-Clara/Software-Engineer---Datacenter_JR0287686  # Intel — Workday
+https://cafevalleyjobs.com/project-engineer-marion-in-179452/  # Cafe Valley, Inc. — custom WordPress job site

@@ -4,6 +4,7 @@ import os
 import random
 import signal
 import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from collections.abc import Iterator
@@ -56,9 +57,51 @@ def clear_stale_lock(profile: Path) -> str:
 
 
 @contextmanager
+def browser_lock(settings: Settings | None = None, log=print, poll_s: float = 5.0) -> Iterator[None]:
+    """Exclusive use of the agent's single Chrome profile across processes (flock: released if a run dies).
+
+    A second run waits its turn instead of colliding (collisions close the other run's browser).
+    """
+    import fcntl
+
+    s = settings or get_settings()
+    path = s.state_dir / "browser.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+") as f:
+        waited = 0.0
+        while True:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if waited % 60 == 0:
+                    f.seek(0)
+                    holder = f.read().strip() or "another run"
+                    log(f"browser busy ({holder}); waiting for it to finish")
+                time.sleep(poll_s)
+                waited += poll_s
+        f.seek(0)
+        f.truncate()
+        f.write(f"pid {os.getpid()}: {' '.join(sys.argv[1:])[:120]}")
+        f.flush()
+        try:
+            yield
+        finally:
+            f.seek(0)
+            f.truncate()
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+@contextmanager
 def persistent_context(settings: Settings | None = None) -> Iterator[BrowserContext]:
     s = settings or get_settings()
     s.chrome_profile_dir.mkdir(parents=True, exist_ok=True)
+    with browser_lock(s), _persistent_context(s) as ctx:
+        yield ctx
+
+
+@contextmanager
+def _persistent_context(s: Settings) -> Iterator[BrowserContext]:
     clear_stale_lock(s.chrome_profile_dir)
     with sync_playwright() as pw:
         ctx = pw.chromium.launch_persistent_context(
@@ -110,6 +153,12 @@ def plain_chrome(url: str, settings: Settings | None = None) -> Iterator[subproc
     Chrome is closed gracefully afterwards so cookies and the session are flushed to the profile.
     """
     s = settings or get_settings()
+    with browser_lock(s), _plain_chrome(url, s) as proc:
+        yield proc
+
+
+@contextmanager
+def _plain_chrome(url: str, s: Settings) -> Iterator[subprocess.Popen]:
     clear_stale_lock(s.chrome_profile_dir)
     log_path = s.state_dir / "logs" / "plain-chrome.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
