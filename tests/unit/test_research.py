@@ -37,3 +37,22 @@ def test_render_md_lists_cited_sources():
                          sources={1: {"kind": "official", "url": "https://cafevalley.com"}})
     md = r.render_md(p)
     assert "- Bakes cakes [1]" in md and "1. (official) https://cafevalley.com" in md
+
+
+def test_parse_cited_keeps_only_valid_citations():
+    items = ["Bakes cakes and muffins [2][3].", "Invented with no source", "Cites an unfetched source [9]",
+             "Mixed [1][9]"]
+    claims = r.parse_cited(items, {1, 2, 3})
+    assert [(c.text, c.sources) for c in claims] == [("Bakes cakes and muffins", [2, 3]), ("Mixed", [1])]
+
+
+def test_parse_news():
+    news = r.parse_news(["2026-10-20 Q3 results — Sales fell 3% [4]", "Undated headline [2]", "No source"], {2, 4})
+    assert [(n.date, n.title, n.summary, n.sources) for n in news] == [
+        ("2026-10-20", "Q3 results", "Sales fell 3%", [4]), (None, "Undated headline", "Undated headline", [2])]
+
+
+@pytest.mark.parametrize("name,core", [("Cafe Valley, Inc.", "Cafe Valley"), ("KPMG LLP", "KPMG"),
+                                        ("Palantir Technologies", "Palantir"), ("General Mills", "General Mills")])
+def test_core_name(name, core):
+    assert r.core_name(name) == core

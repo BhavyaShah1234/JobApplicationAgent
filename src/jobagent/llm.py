@@ -18,14 +18,16 @@ from jobagent.config import Settings, get_settings
 Role = Literal["planner", "vision", "fast"]
 
 
-def _primary(role: Role, s: Settings, temperature: float | None = None) -> BaseChatModel:
+def _primary(role: Role, s: Settings, temperature: float | None = None, timeout: float | None = None,
+             max_tokens: int | None = None) -> BaseChatModel:
     return ChatOpenAI(
         model=getattr(s, f"model_{role}"),
         base_url=s.openai_base_url,
         api_key=s.openai_api_key,
-        max_retries=s.llm_max_retries,
-        timeout=s.llm_timeout_s,
+        max_retries=s.llm_max_retries if timeout is None else 1,
+        timeout=timeout or s.llm_timeout_s,
         temperature=temperature,
+        max_tokens=max_tokens,
     )
 
 
@@ -40,14 +42,16 @@ def chat(role: Role = "planner", settings: Settings | None = None) -> Runnable:
 
 
 def structured(schema: type[BaseModel], role: Role = "planner", settings: Settings | None = None,
-               method: str = "function_calling") -> Runnable:
+               method: str = "function_calling", timeout: float | None = None,
+               max_tokens: int | None = None) -> Runnable:
     """Chat model that returns `schema` instances, with fallback (structured output is bound per model).
 
     function_calling is the default: on Voyager all three methods work, and it was the fastest (~4x).
+    `timeout` (seconds, one retry) and `max_tokens` keep a stuck or rambling call from blocking a run.
     """
     s = settings or get_settings()
     # Extraction/classification must be repeatable: temperature 0.
-    return _primary(role, s, 0).with_structured_output(schema, method=method).with_fallbacks(
+    return _primary(role, s, 0, timeout, max_tokens).with_structured_output(schema, method=method).with_fallbacks(
         [_fallback(role, s, 0).with_structured_output(schema, method=method)]
     )
 

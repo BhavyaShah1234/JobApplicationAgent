@@ -44,23 +44,40 @@ class NewsItem(BaseModel):
 
 
 class ProfileDraft(BaseModel):
-    """What the model fills in (claims with source ids only)."""
+    """What the model fills in: short sentences, each ending with [n] source ids (flat lists are fast and
+    reliable; a nested claims/sources schema made the fast model time out)."""
 
     name: str = Field(description="The company's brand name")
-    what_they_do: list[Claim] = Field(default_factory=list, description="What the company does, 1-3 claims")
-    mission: list[Claim] = Field(default_factory=list, description="Mission / purpose statements, as they state them")
-    products: list[Claim] = Field(default_factory=list, description="Main products, services, brands")
-    values: list[Claim] = Field(default_factory=list, description="Stated values / culture")
-    facts: list[Claim] = Field(default_factory=list, description="Size, HQ, founding year, industry, notable facts")
-    recent_news: list[NewsItem] = Field(default_factory=list, description="Up to 5 recent, notable news items")
+    what_they_do: list[str] = Field(default_factory=list, description="1-4 sentences ending with [n] source ids")
+    mission: list[str] = Field(default_factory=list, description="Mission / purpose as they state it, with [n]")
+    products: list[str] = Field(default_factory=list, description="Main products, services, brands, with [n]")
+    values: list[str] = Field(default_factory=list, description="Stated values / culture, with [n]")
+    facts: list[str] = Field(default_factory=list, description="HQ, size, founding year, industry, with [n]")
+    recent_news: list[str] = Field(default_factory=list,
+                                   description="Up to 5: 'YYYY-MM-DD title — one sentence [n]', newest first")
 
 
-class CompanyProfile(ProfileDraft):
+class StoredProfile(BaseModel):
+    name: str
+    what_they_do: list[Claim] = Field(default_factory=list)
+    mission: list[Claim] = Field(default_factory=list)
+    products: list[Claim] = Field(default_factory=list)
+    values: list[Claim] = Field(default_factory=list)
+    facts: list[Claim] = Field(default_factory=list)
+    recent_news: list[NewsItem] = Field(default_factory=list)
+
+
+class CompanyProfile(StoredProfile):
     """Stored profile: the draft plus what the code fills in."""
 
     website: str | None = None
     sources: dict[int, dict] = Field(default_factory=dict)
     researched_at: str = ""
+
+
+def core_name(name: str) -> str:
+    """'Cafe Valley, Inc.' → 'Cafe Valley'; 'KPMG LLP' → 'KPMG'."""
+    return re.sub(r"(?i)[,.]?\s*\b(inc|llc|ltd|corp|corporation|co|company|plc|llp|lp|technologies)\b\.?", "", name).strip(" ,.")
 
 
 def slug(name: str) -> str:
@@ -164,7 +181,7 @@ def gather_sources(company: str, hint_text: str = "") -> tuple[str | None, list[
             if text and all(s["url"] != url for s in sources):
                 sources.append({"kind": "official", "url": url, "text": text})
     wiki = _wikipedia(company)
-    if wiki and wiki[1] and company.split()[0].lower() in wiki[1].lower():
+    if wiki and wiki[1] and core_name(company).lower() in wiki[1].lower():
         sources.append({"kind": "wikipedia", "url": wiki[0], "text": wiki[1]})
     cutoff = datetime.now(UTC) - timedelta(days=365)
     for n in _news(company):
@@ -174,22 +191,47 @@ def gather_sources(company: str, hint_text: str = "") -> tuple[str | None, list[
                 continue
         except ValueError:
             pass
-        if company.split()[0].lower() not in f"{n.get('title', '')} {n.get('body', '')}".lower():
-            continue
+        if core_name(company).lower() not in f"{n.get('title', '')} {n.get('body', '')}".lower():
+            continue  # must mention the company itself ("Cafe Valley", not just "cafe")
         sources.append({"kind": "news", "url": n.get("url", ""), "date": date[:10],
                         "text": f"{n.get('title', '')} ({n.get('source', '')}, {date[:10]}): {n.get('body', '')}"})
     return website, sources[:14]
 
 
 RESEARCH_PROMPT = """Write a company profile using ONLY the numbered sources below.
-- Every claim and news item must list the ids of the sources that state it. No source → leave it out.
-- Keep the company's own wording for mission/values where possible. No speculation, no marketing fluff.
-- recent_news: up to 5 notable items (products, results, leadership, layoffs, acquisitions), newest first."""
+- Each list item is one short sentence that ends with the ids of the sources stating it, e.g. "Headquartered in
+  Springfield [4]" or "Founded in 1950 [1][3]". Anything no source states is left out.
+- Keep the company's own wording for mission and values. No speculation, no marketing fluff.
+- recent_news: up to 5 notable items (products, results, leadership, layoffs, acquisitions), newest first.
+/no_think"""
+
+_CITE = re.compile(r"\[(\d+)\]")
+
+
+def parse_cited(items: list[str], ids: set[int]) -> list[Claim]:
+    """'Text [2][3]' → Claim(text, sources); items citing nothing valid are dropped."""
+    out = []
+    for item in items:
+        sources = [int(n) for n in _CITE.findall(item) if int(n) in ids]
+        text = _CITE.sub("", item).strip().rstrip(".").strip()
+        if sources and text:
+            out.append(Claim(text=text, sources=list(dict.fromkeys(sources))))
+    return out
+
+
+def parse_news(items: list[str], ids: set[int]) -> list[NewsItem]:
+    out = []
+    for claim in parse_cited(items, ids):
+        m = re.match(r"(\d{4}-\d{2}-\d{2})\s+(.*)", claim.text)
+        date, rest = (m.group(1), m.group(2)) if m else (None, claim.text)
+        title, _, summary = rest.partition(" — ")
+        out.append(NewsItem(title=title.strip(), date=date, summary=summary.strip() or title.strip(), sources=claim.sources))
+    return out
 
 
 def _valid(claims: list, ids: set[int]) -> list:
     out = []
-    for c in claims:
+    for c in claims:  # (kept for stored claims)
         c.sources = [i for i in c.sources if i in ids]
         if c.sources:
             out.append(c)
@@ -214,12 +256,18 @@ def research(company: str, hint_text: str = "", refresh: bool = False, log=print
         raise RuntimeError(f"no sources found for {company!r}")
     numbered = {i + 1: src for i, src in enumerate(sources)}
     text = "\n\n".join(f"[{i}] ({src['kind']}) {src['url']}\n{src['text'][:MAX_SOURCE_CHARS]}" for i, src in numbered.items())
-    draft = llm.structured(ProfileDraft, "fast").invoke(
-        [SystemMessage(RESEARCH_PROMPT), HumanMessage(f"Company: {company}\n\nSources:\n{text}")])
-    profile = CompanyProfile(**draft.model_dump())
+    messages = [SystemMessage(RESEARCH_PROMPT), HumanMessage(f"Company: {company}\n\nSources:\n{text}")]
+    try:
+        draft = llm.structured(ProfileDraft, "fast", timeout=90, max_tokens=2000).invoke(messages)
+    except Exception as e:
+        log(f"research: fast model failed ({type(e).__name__}); using the planner model")
+        draft = llm.structured(ProfileDraft, "planner", timeout=180, max_tokens=2500).invoke(messages)
     ids = set(numbered)
-    for field_name in ("what_they_do", "mission", "products", "values", "facts", "recent_news"):
-        setattr(profile, field_name, _valid(getattr(profile, field_name), ids))
+    profile = CompanyProfile(
+        name=draft.name or company,
+        **{f: parse_cited(getattr(draft, f), ids) for f in ("what_they_do", "mission", "products", "values", "facts")},
+        recent_news=parse_news(draft.recent_news, ids),
+    )
     cited = {i for f in ("what_they_do", "mission", "products", "values", "facts", "recent_news")
              for c in getattr(profile, f) for i in c.sources}
     profile.website = website
