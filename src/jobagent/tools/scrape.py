@@ -20,7 +20,7 @@ from playwright.sync_api import Page
 from jobagent import db, llm
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
-from jobagent.tools import challenge
+from jobagent.tools import challenge, jdtext
 from jobagent.tools.hitl import Hitl
 from jobagent.tools.memory import PortalMemory, portal_key
 
@@ -199,6 +199,32 @@ def apply_sections(jd: JobDescription, bullets: list[dict]) -> list[str]:
     return unmapped
 
 
+LIST_CATEGORIES = ("basic_qualifications", "preferred_qualifications", "responsibilities", "values", "benefits",
+                   "technical_skills")
+
+
+def apply_labeled(jd: JobDescription, secs: list, labels: dict[int, str]) -> None:
+    """Fill JD lists with the items of the sections labelled for them, verbatim and in order. Lists no section
+    covers keep the model's version, minus items that are really another section's (misfiled)."""
+    grouped: dict[str, list[str]] = {}
+    for i, sec in enumerate(secs):
+        cat = labels.get(i)
+        if cat in LIST_CATEGORIES:
+            items = grouped.setdefault(cat, [])
+            items += [t for t in sec.items if t not in items]
+    if "technical_skills" in grouped:  # keep skills the model found elsewhere in the text too
+        grouped["technical_skills"] += [s for s in jd.technical_skills if s not in grouped["technical_skills"]]
+    for cat, items in grouped.items():
+        setattr(jd, cat, items)
+    page_items = {_norm_item(t) for items in grouped.values() for t in items}
+    for cat in LIST_CATEGORIES:
+        if cat not in grouped:
+            setattr(jd, cat, [t for t in getattr(jd, cat) if _norm_item(t) not in page_items])
+    if not jd.role_summary:
+        summary = next((" ".join(s.paragraphs) for i, s in enumerate(secs) if labels.get(i) == "role_summary"), "")
+        jd.role_summary = summary[:1500] or None
+
+
 def _norm_item(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()[:120]
 
@@ -222,12 +248,14 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60] or "unknown"
 
 
-def save(jd: JobDescription, url: str) -> tuple[str, Path]:
+def save(jd: JobDescription, url: str, jd_text: str = "") -> tuple[str, Path]:
     s = get_settings()
     job_id = job_id_for(url, jd)
     out = s.outputs_dir / _slug(jd.company) / job_id
     out.mkdir(parents=True, exist_ok=True)
     (out / "jd.json").write_text(jd.model_dump_json(indent=2))
+    if jd_text:  # the posting text exactly as written: what the ATS step submits
+        (out / "jd.txt").write_text(jd_text)
     md = [f"# {jd.title} — {jd.company}", "", f"- URL: {url}", f"- Locations: {', '.join(jd.locations) or '—'}",
           f"- Workplace / type / seniority: {jd.workplace_type or '—'} / {jd.employment_type or '—'} / {jd.seniority or '—'}",
           f"- Pay: {jd.pay_range.raw if jd.pay_range and jd.pay_range.raw else '—'}",
@@ -241,11 +269,11 @@ def save(jd: JobDescription, url: str) -> tuple[str, Path]:
     conn = db.connect()
     with conn:
         conn.execute(
-            "INSERT INTO jobs (url, job_id, company, title, location, portal, jd_json, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, 'scraped') ON CONFLICT(url) DO UPDATE SET job_id=excluded.job_id, "
+            "INSERT INTO jobs (url, job_id, company, title, location, portal, jd_json, jd_text, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scraped') ON CONFLICT(url) DO UPDATE SET job_id=excluded.job_id, "
             "company=excluded.company, title=excluded.title, location=excluded.location, portal=excluded.portal, "
-            "jd_json=excluded.jd_json, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
-            (url, job_id, jd.company, jd.title, "; ".join(jd.locations), jd.portal, jd.model_dump_json()),
+            "jd_json=excluded.jd_json, jd_text=excluded.jd_text, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+            (url, job_id, jd.company, jd.title, "; ".join(jd.locations), jd.portal, jd.model_dump_json(), jd_text),
         )
     return job_id, out
 
@@ -266,11 +294,32 @@ def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
     posting = _jsonld_jobposting(page)
     selector, text = _best_text(page, memory.data["content_selector"])
     via_vision = False
-    if len(text) < MIN_TEXT and not posting:
+    # jd.txt: the posting's description exactly as written (no model). The JSON-LD description is the cleanest
+    # copy of the body when it's substantial; otherwise the page's description element.
+    ld_html = str((posting or {}).get("description") or "")
+    blocks = jdtext.blocks(page, html=unescape(ld_html)) if len(re.sub(r"<[^>]+>", "", ld_html)) >= 400 else []
+    if not blocks and selector not in (None, "body") and len(text) >= MIN_TEXT:
+        blocks = jdtext.blocks(page, selector=selector)
+    if not blocks and len(text) >= MIN_TEXT:
+        blocks = jdtext.blocks(page, selector="body")
+    jd_text = jdtext.render(blocks) if blocks else ""
+    if len(jd_text) < MIN_TEXT and not posting:
         log(f"scrape: only {len(text)} chars of page text; reading the page with the vision model")
         text, selector, via_vision = _vision_text(page), "vision", True
+        jd_text, blocks = text.strip() + "\n", []
         memory.note("page text too thin; needed the vision model")
-    source = (_jsonld_text(posting) + "\n\n" if posting else "") + f"[page text]\n{text}"
+    for href, label in jdtext.attachment_links(page, selector):
+        try:
+            got = page.request.get(href, timeout=60_000)
+            attached = jdtext.attachment_text(got.body(), href) if got.ok else ""
+        except Exception as e:
+            attached, label = "", f"{label} (download failed: {type(e).__name__})"
+        jd_text += f"\n[Attachment: {label}]\n{attached or '(could not convert this file to text)'}\n"
+        if attached:
+            blocks += [jdtext.Block("h", f"Attachment: {label}")] + [
+                jdtext.Block("p", line.strip()) for line in attached.splitlines() if line.strip()]
+        memory.note("postings can link the job description as a file")
+    source = (_jsonld_text(posting).split("[description]")[0] + "\n" if posting else "") + f"[job description]\n{jd_text}"
     messages = [SystemMessage(EXTRACT_PROMPT), HumanMessage(f"Posting URL: {url}\n\n{source[:MAX_LLM_CHARS]}")]
     # The fast model (~8x quicker, same quality in the benchmark) does the extraction; the large one is the
     # fallback when it errors or misses title/company/locations.
@@ -286,25 +335,27 @@ def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
         memory.note("fast model missed core fields; planner model used")
     jd.source_url, jd.portal = url, portal
     jd.apply_url = jd.apply_url or (posting or {}).get("url") or url
-    # The page's own bullets (under recognised headings) replace the model's lists: verbatim and complete.
-    bullets = [] if via_vision else _sections(page, selector)
-    unmapped = apply_sections(jd, bullets)
-    if unmapped:
-        memory.note(f"headings not mapped to a JD list (kept the model's version): {', '.join(unmapped[:5])}")
+    # Sections of jd.txt, labelled by the fast model (content, not just heading wording), fill the lists verbatim.
+    secs = jdtext.sections(blocks)
+    labels = jdtext.classify_sections(secs, log) if secs else {}
+    apply_labeled(jd, secs, labels)
+    unlabeled = [s.heading for i, s in enumerate(secs) if labels.get(i) == "other" and s.heading]
+    if unlabeled:
+        memory.note(f"sections labelled 'other': {', '.join(unlabeled[:5])}")
     missing = jd.missing_core()
-    page_reqs = sum(1 for b in bullets if classify_heading(b["heading"] or "") in
-                    ("basic_qualifications", "preferred_qualifications"))
+    page_reqs = sum(len(s.items) for i, s in enumerate(secs)
+                    if labels.get(i) in ("basic_qualifications", "preferred_qualifications"))
     if page_reqs and len(jd.basic_qualifications) + len(jd.preferred_qualifications) < page_reqs:
-        missing.append("requirement bullets shown on the page")
+        missing.append("requirement items from the job description")
     if missing:
         memory.note(f"extraction missed {', '.join(missing)} at {url}")
     if selector and selector not in ("body", "vision") and memory.data["content_selector"] != selector:
         memory.note(f"job description lives in `{selector}`")
     memory.record_visit(url, ok=not missing, content_selector=selector if selector not in ("vision",) else None,
                         has_jsonld=posting is not None)
-    job_id, out = save(jd, url)
+    job_id, out = save(jd, url, jd_text)
     log(f"scrape: {jd.title} @ {jd.company} → {out} ({'complete' if not missing else 'missing ' + ', '.join(missing)})")
-    return ScrapeResult(jd, job_id, out, portal, used_memory, selector, len(text), via_vision)
+    return ScrapeResult(jd, job_id, out, portal, used_memory, selector, len(jd_text), via_vision)
 
 
 def already_scraped(url: str) -> JobDescription | None:

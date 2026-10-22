@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     location     TEXT,
     portal       TEXT,
     jd_json      TEXT,
+    jd_text      TEXT,                              -- the posting text as written (jd.txt)
     status       TEXT NOT NULL DEFAULT 'queued',   -- queued | scraped | applied | failed | skipped | needs_review
     discovered_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -38,6 +39,8 @@ CREATE TABLE IF NOT EXISTS agent_domains (
     last_seen   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 """
+
+MIGRATIONS = [("jobs", "jd_text", "TEXT")]
 
 # Registrable domains under multi-label public suffixes we are likely to meet.
 _TWO_LABEL_SUFFIXES = {"co.uk", "co.in", "com.au", "co.jp", "com.br", "co.nz", "com.sg", "ac.uk", "org.uk"}
@@ -79,6 +82,9 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path, timeout=30)  # parallel workers wait for each other's writes
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    for table, column, decl in MIGRATIONS:  # columns added after a table already existed
+        if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
     return conn
 
 
