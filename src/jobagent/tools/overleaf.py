@@ -56,6 +56,11 @@ def login_with_google(page: Page, email: str, hitl: Hitl, log=print, max_steps: 
         if url.netloc == "www.overleaf.com" and url.path.startswith("/project") and meta(page, "ol-user_id"):
             return "signed up with Google" if signed_up else "logged in with Google"
         body = page.locator("body").inner_text(timeout=10_000)
+        if url.netloc == "www.overleaf.com" and (url.path.startswith("/registration/") or "try-premium" in url.path):
+            # Post-sign-up onboarding/upsell pages: stay on the free plan and go to the project list.
+            log(f"overleaf: skipping {url.path} (staying on the free plan)")
+            page.goto(f"{BASE}/project", wait_until="domcontentloaded")
+            continue
         if url.netloc == "www.overleaf.com" and re.search(r"(?i)not registered", body) and not signed_up:
             # No Overleaf account for this Google account yet: "sign up with Google" creates one.
             log("overleaf: no account for this Google account yet; signing up with Google")
