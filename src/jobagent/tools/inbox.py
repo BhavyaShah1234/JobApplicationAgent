@@ -257,7 +257,15 @@ class Inbox:
         """Trash unused verification mail older than `max_age_h`. Returns trashed subjects."""
         cutoff = datetime.now(UTC) - timedelta(hours=max_age_h)
         trashed = []
-        for uid in self.search(f'BEFORE "{(cutoff + timedelta(days=1)).strftime("%d-%b-%Y")}"'):
+        domains = sorted(db.agent_domains(self.conn)) if self.conn is not None else []
+        if not domains:
+            return trashed  # the agent hasn't used any site yet: nothing of its own to sweep
+        # Filter on the server by sender, so the user's own mail is never even downloaded.
+        sender = f'FROM "{domains[0]}"'
+        for d in domains[1:]:
+            sender = f'OR FROM "{d}" {sender}'
+        before = (cutoff + timedelta(days=1)).strftime("%d-%b-%Y")
+        for uid in self.search(f'({sender}) BEFORE "{before}"'):
             mail = self.fetch(uid)
             if mail.date is None or mail.date > cutoff or not self.is_agent_mail(mail):
                 continue  # too new, or the user's own mail

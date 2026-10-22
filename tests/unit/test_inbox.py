@@ -67,6 +67,7 @@ class FakeImap:
             self.mails.pop(args[0], None)
             return "OK", [None]
         if cmd == "SEARCH":
+            self.searches = getattr(self, "searches", []) + [args[1]]
             return "OK", [" ".join(self.mails).encode()]
         raise AssertionError(cmd)
 
@@ -106,6 +107,19 @@ def test_users_own_verification_mail_is_never_trashed(tmp_path):
         inbox.consume_and_trash(own, "otp")
     assert inbox.sweep_stale_verification(max_age_h=24) == []
     assert inbox._imap.moved == []
+
+
+def test_sweep_filters_by_agent_senders_on_the_server(tmp_path):
+    mails = {"1": _mail("Your verification code", "code 111111", age_h=30, uid="1")}
+    inbox = _inbox(tmp_path, mails)
+    inbox.sweep_stale_verification(max_age_h=24)
+    assert all("FROM" in s for s in inbox._imap.searches)
+    assert any('FROM "greenhouse.io"' in s for s in inbox._imap.searches)
+
+    own = _mail("Your verification code", "code 999999", sender="no-reply@some-shop.com", age_h=30, uid="9")
+    empty = _inbox(tmp_path / "other", {"9": own}, agent_sites=())
+    assert empty.sweep_stale_verification(max_age_h=0) == []
+    assert not getattr(empty._imap, "searches", [])  # no agent sites → the inbox isn't even searched
 
 
 def test_self_test_mail_counts_as_agent_mail(tmp_path):
