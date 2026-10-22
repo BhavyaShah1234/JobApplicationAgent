@@ -49,12 +49,19 @@ def login_with_google(page: Page, email: str, hitl: Hitl, log=print, max_steps: 
     if logged_in(page):
         return "already logged in"
     page.goto(f"{BASE}/auth/google?intent=sign_in", wait_until="domcontentloaded")
+    signed_up = False
     for _ in range(max_steps):
         page.wait_for_timeout(2500)
         url = urlparse(page.url)
         if url.netloc == "www.overleaf.com" and url.path.startswith("/project") and meta(page, "ol-user_id"):
-            return "logged in with Google"
+            return "signed up with Google" if signed_up else "logged in with Google"
         body = page.locator("body").inner_text(timeout=10_000)
+        if url.netloc == "www.overleaf.com" and re.search(r"(?i)not registered", body) and not signed_up:
+            # No Overleaf account for this Google account yet: "sign up with Google" creates one.
+            log("overleaf: no account for this Google account yet; signing up with Google")
+            signed_up = True
+            page.goto(f"{BASE}/auth/google?intent=sign_up", wait_until="domcontentloaded")
+            continue
         if url.netloc == "accounts.google.com":
             if GOOGLE_BLOCKED.search(body):
                 raise OverleafError("Google refused the sign-in from the automated browser")
