@@ -42,7 +42,8 @@ def test_memory_round_trip_and_notes(tmp_path):
      ("What We Require", "basic_qualifications"), ("Core Responsiblities", "responsibilities"),
      ("Technologies We Use", "technical_skills"), ("What you’ll be doing", "responsibilities"),
      ("What we need to see", "basic_qualifications"), ("Ways to stand out from the crowd", "preferred_qualifications"),
-     ("What You’ll Enjoy", "benefits"), ("About Stripe", None)],
+     ("What You’ll Enjoy", "benefits"), ("You might thrive in this role if you", "preferred_qualifications"),
+     ("In this role, you will", "responsibilities"), ("About Stripe", None)],
 )
 def test_classify_heading(heading, field):
     from jobagent.tools.scrape import classify_heading

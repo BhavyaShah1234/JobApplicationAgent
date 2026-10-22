@@ -133,7 +133,8 @@ def _best_text(page: Page, remembered: str | None) -> tuple[str | None, str]:
 
 # Heading → JD list. First match wins; order matters ("preferred qualifications" before "qualifications").
 SECTION_RULES = [
-    ("preferred_qualifications", re.compile(r"(?i)prefer|nice[- ]to[- ]have|bonus|plus\b|ideal(ly)?|desired|stand out")),
+    ("preferred_qualifications", re.compile(r"(?i)prefer|nice[- ]to[- ]have|bonus|plus\b|ideal(ly)?|desired|stand out|"
+                                            r"thrive|(great|good|strong) fit")),
     ("basic_qualifications", re.compile(r"(?i)minimum|basic|require|must[- ]have|qualifications|need to see|"
                                         r"what you('ll)? (need|bring)|you (have|bring)|skills (and|&) experience")),
     ("responsibilities", re.compile(r"(?i)responsib|what you('ll| will)? (be )?do(ing)?\b|your role|the role|in this role|"
