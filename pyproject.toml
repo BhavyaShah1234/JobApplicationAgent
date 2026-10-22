@@ -21,6 +21,7 @@ dependencies = [
     "rich>=14",
     "pyyaml>=6.0.3",
     "httpx>=0.28,<1",
+    "openpyxl>=3.1,<4",
 ]
 
 [project.optional-dependencies]

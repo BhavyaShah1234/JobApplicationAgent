@@ -119,6 +119,23 @@ def _print_bootstrap(result: dict) -> None:
     console.print(f"changed: {result['changed'] or 'nothing'}", highlight=False)
 
 
+@app.command("route")
+def route_cmd(trigger: str = typer.Argument(..., help="Job URL(s), company names, or a .csv/.xlsx path.")) -> None:
+    """Dry run: show how an input is split into work items (nothing is applied to)."""
+    from jobagent.graph.router import route
+
+    routed = route(trigger)
+    table = Table(title=f"Routed as: {routed.kind} ({len(routed.items)} item(s))")
+    for col in ("#", "kind", "value", "referral", "source"):
+        table.add_column(col)
+    for n, item in enumerate(routed.items, 1):
+        ref = f"{item.referral.name} <{item.referral.email}>" if item.referral else ""
+        table.add_row(str(n), item.kind, item.value, ref, item.source)
+    console.print(table)
+    for w in routed.warnings:
+        console.print(f"[yellow]warning:[/] {w}", highlight=False)
+
+
 @app.command("bootstrap")
 def bootstrap() -> None:
     """Global default action: check/repair the harness and accounts (resumes after a crash)."""
