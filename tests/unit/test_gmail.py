@@ -46,6 +46,34 @@ def test_suggestion_format(text, username):
     assert (m.group(1) if m else None) == username
 
 
+@pytest.fixture
+def vault(tmp_path):
+    from cryptography.fernet import Fernet
+
+    from jobagent.tools.vault import Vault
+
+    return Vault(tmp_path / "vault.enc", Fernet.generate_key().decode())
+
+
+def test_existing_account_keeps_a_password_stored_before_the_email(vault):
+    vault.set("gmail", password="pw")  # e.g. via `vault set` / `import-file` before setup ran
+    gmail.use_existing_account("bhavya24091952@gmail.com", vault, log=lambda _: None)
+    assert vault.get("gmail")["password"] == "pw"
+    assert vault.get("gmail")["email"] == "bhavya24091952@gmail.com"
+
+
+def test_switching_to_a_different_account_drops_old_credentials(vault):
+    vault.set("gmail", email="old@gmail.com", password="old", app_password="x", status="ready")
+    gmail.use_existing_account("new@gmail.com", vault, log=lambda _: None)
+    assert vault.get("gmail") == {"email": "new@gmail.com", "username": "new", "status": "existing"}
+
+
+def test_same_account_keeps_everything(vault):
+    vault.set("gmail", email="a@gmail.com", password="pw", app_password="x", status="ready")
+    gmail.use_existing_account("A@gmail.com", vault, log=lambda _: None)
+    assert vault.get("gmail")["password"] == "pw" and vault.get("gmail")["status"] == "ready"
+
+
 def test_no_inline_regex_flags_reach_playwright():
     # Playwright converts Python regexes to JavaScript, where inline (?i) is a syntax error.
     source = inspect.getsource(gmail)

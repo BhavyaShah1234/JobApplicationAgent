@@ -263,8 +263,10 @@ def use_existing_account(email: str, vault: Vault, log=print) -> None:
     if "@" not in email:
         email = f"{email}@gmail.com"
     entry = vault.get("gmail") or {}
-    if entry.get("email", "").lower() != email:
-        # A different account: drop credentials that belonged to the previous one.
+    previous = (entry.get("email") or "").lower()
+    if previous and previous != email:
+        # A *different, named* account: drop credentials that belonged to it. An entry without an
+        # email (e.g. a password stored before the address) belongs to this account and is kept.
         vault.delete("gmail")
         entry = {}
     vault.set("gmail", email=email, username=email.split("@")[0],
