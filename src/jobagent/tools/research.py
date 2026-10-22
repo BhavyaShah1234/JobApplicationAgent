@@ -125,7 +125,13 @@ def _news(query: str, n: int = 8) -> list[dict]:
 
 MIN_PAGE_TEXT = 300
 _BOILERPLATE = re.compile(r"(?i)cookie|consent|privacy (policy|preferences|settings|signal)|do not sell|opt[- ]out|"
-                          r"tracking technolog|ad targeting|targeted advertising|accept all|reject all|manage preferences")
+                          r"tracking technolog|ad targeting|targeted advertising|accept all|reject all|manage preferences|"
+                          r"device visits|traffic sources|third[- ]party (providers|cookies|partners)|aggregated data|"
+                          r"personal (data|information)|your (browser|device) (settings|preferences)")
+CONSENT_REMOVE_JS = """() => document.querySelectorAll(
+    '#onetrust-consent-sdk, #onetrust-banner-sdk, #truste-consent-track, #CybotCookiebotDialog, #usercentrics-root,' +
+    '[id*="cookie" i], [class*="cookie" i], [id*="consent" i], [class*="consent" i], [aria-label*="cookie" i],' +
+    '[aria-label*="privacy" i], [role="dialog"]').forEach(e => e.remove())"""
 
 
 def strip_boilerplate(text: str) -> str:
@@ -170,6 +176,7 @@ def _fetch_browser(url: str) -> tuple[str, str]:
                     page.wait_for_load_state("networkidle", timeout=8_000)
                 except Exception:
                     pass
+                page.evaluate(CONSENT_REMOVE_JS)  # the rendered page includes the consent pop-up's text
                 html = page.content()
                 return page.url, trafilatura.extract(html, include_links=False) or ""
             finally:

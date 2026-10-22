@@ -93,3 +93,9 @@ def test_strip_boilerplate():
     text = ("Intel creates world-changing technology.\nIntel uses cookies and similar technologies to improve your "
             "experience.\nWe collect device information for ad targeting.\nAccept All\nCustomer first: we listen.")
     assert r.strip_boilerplate(text) == "Intel creates world-changing technology.\nCustomer first: we listen."
+
+
+def test_strip_boilerplate_catches_reworded_banner_text():
+    text = ("Intel uses technologies to count device visits and traffic sources.\nWe collect aggregated data.\n"
+            "Intel invents processors.")
+    assert r.strip_boilerplate(text) == "Intel invents processors."
