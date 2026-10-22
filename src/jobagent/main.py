@@ -219,6 +219,75 @@ def step_scrape_check(
         raise typer.Exit(1)
 
 
+RESEARCH_TEST_COMPANIES = ["General Mills", "KPMG LLP", "DOWL", "Intel Corporation", "Cafe Valley, Inc.",
+                           "Stripe", "Palantir Technologies", "OpenAI", "NVIDIA", "Amazon"]
+
+
+def _research_table(results, title: str) -> tuple[Table, bool]:
+    table = Table(title=title)
+    for col in ("company", "website", "does", "mission", "products", "values", "news", "sources (official)", "time"):
+        table.add_column(col)
+    failed = False
+    for name, p, err, secs in results:
+        if err or p is None:
+            failed = True
+            table.add_row(name, f"[red]{err}[/]", *[""] * 6, f"{secs:.0f}s")
+            continue
+        official = sum(1 for s in p.sources.values() if s["kind"] == "official")
+        bad = not p.website or not p.what_they_do or official == 0
+        failed |= bad
+        table.add_row(name, p.website or "[red]—[/]", str(len(p.what_they_do)), str(len(p.mission)), str(len(p.products)),
+                      str(len(p.values)), str(len(p.recent_news)),
+                      f"{len(p.sources)} ({official})" if not bad else f"[red]{len(p.sources)} ({official})[/]", f"{secs:.0f}s")
+    return table, failed
+
+
+@app.command("research")
+def research_cmd(
+    companies: list[str] = typer.Argument(None),
+    file: str = typer.Option(None, "--file", "-f", help="One company per line."),
+    workers: int = typer.Option(5),
+    refresh: bool = typer.Option(False, help="Ignore profiles cached in the last 7 days."),
+) -> None:
+    """Research companies (cited profiles in state/companies/<company>.md)."""
+    import time
+
+    from jobagent.tools.research import research_many
+
+    names = list(companies or []) + _read_urls([], file)
+    if not names:
+        console.print("[red]give at least one company or --file[/]")
+        raise typer.Exit(1)
+    t0 = time.monotonic()
+    results = research_many(names, workers=workers, refresh=refresh, log=lambda m: console.print(m, highlight=False))
+    table, failed = _research_table(results, f"{len(names)} compan(ies) in {time.monotonic() - t0:.0f}s")
+    console.print(table)
+    if failed:
+        raise typer.Exit(1)
+
+
+@step_app.command("research-check")
+def step_research_check(workers: int = typer.Option(5)) -> None:
+    """Step 8 e2e: 10 companies researched with cited sources; the second pass comes from the cache."""
+    import time
+
+    from jobagent.tools.research import research_many
+
+    failed = False
+    for n, refresh in ((1, True), (2, False)):
+        t0 = time.monotonic()
+        results = research_many(RESEARCH_TEST_COMPANIES, workers=workers, refresh=refresh, log=lambda m: None)
+        elapsed = time.monotonic() - t0
+        table, bad = _research_table(results, f"Pass {n} ({'fresh' if refresh else 'cache'}): {elapsed:.0f}s")
+        if n == 2 and elapsed > 10:
+            bad = True
+            console.print("[red]second pass should come from the cache[/]")
+        failed |= bad
+        console.print(table)
+    if failed:
+        raise typer.Exit(1)
+
+
 @app.command("bootstrap")
 def bootstrap() -> None:
     """Global default action: check/repair the harness and accounts (resumes after a crash)."""

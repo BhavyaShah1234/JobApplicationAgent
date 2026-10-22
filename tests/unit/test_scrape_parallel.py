@@ -38,8 +38,12 @@ def test_scrape_many_runs_in_parallel_and_skips_cached(tmp_path, monkeypatch):
     monkeypatch.setenv("HEADLESS", "true")
     get_settings.cache_clear()
 
+    spans = []
+
     def fake_scrape(page, url, hitl, log):
+        start = time.monotonic()
         time.sleep(1.0)
+        spans.append((start, time.monotonic()))
         jd = JobDescription(title="SWE", company="Acme", locations=["Remote"], basic_qualifications=["a", "b", "c"])
         return scrape_mod.ScrapeResult(jd, url[-1], tmp_path, "x", False, "main", 1000, False)
 
@@ -48,10 +52,14 @@ def test_scrape_many_runs_in_parallel_and_skips_cached(tmp_path, monkeypatch):
     monkeypatch.setattr(scrape_mod, "already_scraped",
                         lambda url: JobDescription(title="Old", company="Acme") if url == cached else None)
     urls = [f"https://example.com/jobs/{i}" for i in range(4)] + [cached]
-    t0 = time.monotonic()
     items = scrape_mod.scrape_many(urls, Hitl(tmp_path / "hitl", notify=lambda _: None), workers=4, log=lambda _: None)
-    elapsed = time.monotonic() - t0
     get_settings.cache_clear()
     assert [bool(i.result) for i in items] == [True, True, True, True, False] and items[-1].cached
     assert not any(i.error for i in items)
-    assert elapsed < 4.0 * 0.75 + 3  # parallel: ~1 s of work plus browser start-up, not 4 s sequential + overhead
+    # parallel: the four 1-second reads overlap (a timing-free check; Chrome start-up time varies with load)
+    events = sorted([(s, 1) for s, _ in spans] + [(e, -1) for _, e in spans])
+    running, peak = 0, 0
+    for _, delta in events:
+        running += delta
+        peak = max(peak, running)
+    assert len(spans) == 4 and peak >= 2
