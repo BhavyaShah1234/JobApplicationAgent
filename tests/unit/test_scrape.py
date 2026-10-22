@@ -32,6 +32,34 @@ def test_memory_round_trip_and_notes(tmp_path):
     assert "jobs.lever.co" in (tmp_path / "lever.md").read_text()
 
 
+@pytest.mark.parametrize(
+    "heading,field",
+    [("Minimum requirements", "basic_qualifications"), ("Basic Qualifications", "basic_qualifications"),
+     ("Preferred qualifications", "preferred_qualifications"), ("Nice to have", "preferred_qualifications"),
+     ("Bonus points", "preferred_qualifications"), ("What you'll do", "responsibilities"),
+     ("Responsibilities", "responsibilities"), ("Who you are", "values"), ("Benefits", "benefits"),
+     ("What you'll need", "basic_qualifications"), ("About Stripe", None)],
+)
+def test_classify_heading(heading, field):
+    from jobagent.tools.scrape import classify_heading
+
+    assert classify_heading(heading) == field
+
+
+def test_apply_sections_replaces_lists_with_page_bullets():
+    from jobagent.tools.scrape import apply_sections
+
+    jd = JobDescription(title="SWE", company="Stripe", basic_qualifications=[],
+                        preferred_qualifications=["model version"], technical_skills=["Go"])
+    bullets = [{"heading": "Minimum requirements", "text": "BS in CS"},
+               {"heading": "Minimum requirements", "text": "Programming experience"},
+               {"heading": "Preferred qualifications", "text": "Code review"},
+               {"heading": "Our offices", "text": "Dublin"}]
+    assert apply_sections(jd, bullets) == ["Our offices"]
+    assert jd.basic_qualifications == ["BS in CS", "Programming experience"]
+    assert jd.preferred_qualifications == ["Code review"] and jd.technical_skills == ["Go"]
+
+
 def test_missing_core():
     jd = JobDescription(title="SWE", company="Acme", locations=["Remote"],
                         responsibilities=["a", "b"], basic_qualifications=["c"])
@@ -62,4 +90,15 @@ def test_jsonld_and_remembered_selector():
         sel, text = _best_text(page, None)
         assert sel == ".job-description" and text.startswith("Responsibilities")
         assert _best_text(page, "main")[0] == "main"  # the remembered selector wins when it still has the text
+
+        from jobagent.tools.scrape import _sections
+
+        page.set_content("<main><h2>Who we are</h2><p>Intro</p><h3>Minimum requirements</h3><ul><li>BS in CS</li>"
+                         "<li>Go or Java</li></ul><p><strong>Preferred qualifications</strong></p>"
+                         "<ul><li>Code review</li></ul></main>")
+        assert _sections(page, "main") == [
+            {"heading": "Minimum requirements", "text": "BS in CS"},
+            {"heading": "Minimum requirements", "text": "Go or Java"},
+            {"heading": "Preferred qualifications", "text": "Code review"},
+        ]
         browser.close()

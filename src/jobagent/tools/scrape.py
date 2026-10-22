@@ -102,6 +102,66 @@ def _best_text(page: Page, remembered: str | None) -> tuple[str | None, str]:
     return best
 
 
+# Heading → JD list. First match wins; order matters ("preferred qualifications" before "qualifications").
+SECTION_RULES = [
+    ("preferred_qualifications", re.compile(r"(?i)prefer|nice[- ]to[- ]have|bonus|plus\b|ideal(ly)?|desired|stand out")),
+    ("basic_qualifications", re.compile(r"(?i)minimum|basic|required|requirement|must[- ]have|qualifications|"
+                                        r"what you('ll)? (need|bring)|you (have|bring)|skills (and|&) experience")),
+    ("responsibilities", re.compile(r"(?i)responsib|what you('ll| will)? do|your role|the role|in this role|"
+                                    r"day[- ]to[- ]day|you will|key duties|what you('ll| will) work on")),
+    ("benefits", re.compile(r"(?i)benefit|perks|we offer|compensation (and|&) benefits|what we offer")),
+    ("values", re.compile(r"(?i)who you are|about you|we('re| are) looking for|what we look for|our values|traits")),
+]
+
+
+def classify_heading(heading: str) -> str | None:
+    for field_name, pattern in SECTION_RULES:
+        if pattern.search(heading):
+            return field_name
+    return None
+
+
+def _sections(page: Page, selector: str | None) -> list[dict]:
+    """Bullets on the page, each with the nearest heading above it (h1-h6, or a bold/strong lead line)."""
+    return page.evaluate(
+        r"""(sel) => {
+            const root = (sel && sel !== 'body' && sel !== 'vision' && document.querySelector(sel)) || document.body;
+            const isHeading = el => /^H[1-6]$/.test(el.tagName) ||
+                ((el.tagName === 'STRONG' || el.tagName === 'B') && (el.innerText || '').trim().length < 80) ||
+                (el.tagName === 'P' && el.children.length === 1 && /^(STRONG|B)$/.test(el.children[0].tagName) &&
+                 (el.innerText || '').trim().length < 80);
+            const out = []; let heading = '';
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+            for (let el = walker.currentNode; el; el = walker.nextNode()) {
+                if (isHeading(el) && !el.closest('li')) heading = (el.innerText || '').trim().replace(/:$/, '');
+                else if (el.tagName === 'LI') {
+                    const t = (el.innerText || '').trim().replace(/\s+/g, ' ');
+                    if (t && !el.querySelector('li')) out.push({heading, text: t});
+                }
+            }
+            return out;
+        }""",
+        selector,
+    )
+
+
+def apply_sections(jd: JobDescription, bullets: list[dict]) -> list[str]:
+    """Replace JD lists with the page's own bullets wherever their heading is recognised. Returns unmapped headings."""
+    grouped: dict[str, list[str]] = {}
+    unmapped: list[str] = []
+    for b in bullets:
+        field_name = classify_heading(b["heading"]) if b["heading"] else None
+        if field_name:
+            items = grouped.setdefault(field_name, [])
+            if b["text"] not in items:
+                items.append(b["text"])
+        elif b["heading"] and b["heading"] not in unmapped:
+            unmapped.append(b["heading"])
+    for field_name, items in grouped.items():
+        setattr(jd, field_name, items)
+    return unmapped
+
+
 def _vision_text(page: Page) -> str:
     shot = page.screenshot(full_page=True)
     msg = llm.chat("vision").invoke([HumanMessage(content=[
@@ -176,7 +236,16 @@ def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
     ])
     jd.source_url, jd.portal = url, portal
     jd.apply_url = jd.apply_url or (posting or {}).get("url") or url
+    # The page's own bullets (under recognised headings) replace the model's lists: verbatim and complete.
+    bullets = [] if via_vision else _sections(page, selector)
+    unmapped = apply_sections(jd, bullets)
+    if unmapped:
+        memory.note(f"headings not mapped to a JD list (kept the model's version): {', '.join(unmapped[:5])}")
     missing = jd.missing_core()
+    page_reqs = sum(1 for b in bullets if classify_heading(b["heading"] or "") in
+                    ("basic_qualifications", "preferred_qualifications"))
+    if page_reqs and len(jd.basic_qualifications) + len(jd.preferred_qualifications) < page_reqs:
+        missing.append("requirement bullets shown on the page")
     if missing:
         memory.note(f"extraction missed {', '.join(missing)} at {url}")
     if selector and selector not in ("body", "vision") and memory.data["content_selector"] != selector:
