@@ -124,6 +124,13 @@ def _news(query: str, n: int = 8) -> list[dict]:
 
 
 MIN_PAGE_TEXT = 300
+_BOILERPLATE = re.compile(r"(?i)cookie|consent|privacy (policy|preferences|settings|signal)|do not sell|opt[- ]out|"
+                          r"tracking technolog|ad targeting|targeted advertising|accept all|reject all|manage preferences")
+
+
+def strip_boilerplate(text: str) -> str:
+    """Drop cookie / consent / privacy-banner lines (rendered pages include the consent pop-up)."""
+    return "\n".join(line for line in text.splitlines() if not _BOILERPLATE.search(line)).strip()
 
 
 def _fetch(url: str) -> tuple[str, str]:
@@ -138,9 +145,11 @@ def _fetch(url: str) -> tuple[str, str]:
             final, text = str(r.url), trafilatura.extract(r.text, include_links=False) or ""
     except Exception:
         pass
+    text = strip_boilerplate(text)
     if len(text) >= MIN_PAGE_TEXT:
         return final, text
     browser_final, browser_text = _fetch_browser(url)
+    browser_text = strip_boilerplate(browser_text)
     return (browser_final, browser_text) if len(browser_text) > len(text) else (final, text)
 
 
@@ -265,9 +274,12 @@ RESEARCH_PROMPT = """Write a company profile using ONLY the numbered sources bel
   is left out.
 - At most 6 items per list, each at most 25 words. Keep the company's own wording for mission and values.
   No speculation, no marketing fluff.
-- Fields: what_they_do = the business itself; mission = their stated mission/purpose; products = products,
-  services or brands; values = stated values/culture; facts = only things that fit nowhere else.
-- recent_news: up to 5 items taken ONLY from sources marked (news), newest first; none if there are none.
+- Fields: what_they_do = the business itself; mission = their stated mission/purpose; products = concrete
+  products, services or brands (not slogans); values = stated values/culture; facts = only things that fit
+  nowhere else.
+- Ignore cookie, privacy, legal and site-navigation text.
+- recent_news: up to 5 items taken ONLY from sources marked (news), about events in the last 12 months, newest
+  first; leave out items describing older events; none if there are none.
 /no_think"""
 
 _CITE = re.compile(r"\[(\d+)\]")

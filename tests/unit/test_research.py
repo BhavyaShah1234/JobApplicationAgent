@@ -87,3 +87,9 @@ def test_fetch_falls_back_to_browser_when_text_is_thin(monkeypatch):
     monkeypatch.setattr(r.httpx, "get", lambda *a, **k: Thin())
     monkeypatch.setattr(r, "_fetch_browser", lambda url: ("https://www.intel.com/content/www/us/en/homepage.html", "x" * 900))
     assert r._fetch("https://www.intel.com") == ("https://www.intel.com/content/www/us/en/homepage.html", "x" * 900)
+
+
+def test_strip_boilerplate():
+    text = ("Intel creates world-changing technology.\nIntel uses cookies and similar technologies to improve your "
+            "experience.\nWe collect device information for ad targeting.\nAccept All\nCustomer first: we listen.")
+    assert r.strip_boilerplate(text) == "Intel creates world-changing technology.\nCustomer first: we listen."
