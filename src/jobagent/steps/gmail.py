@@ -279,8 +279,15 @@ def ensure_account(s: Settings, vault: Vault, hitl: Hitl, log=print) -> None:
     if entry.get("status") in ("created", "ready"):
         return
     if entry.get("status") == "existing":
-        with persistent_context(s) as ctx:
-            how = google_auth.ensure_session(ctx.pages[0], vault, hitl, log)
+        try:
+            with persistent_context(s) as ctx:
+                how = google_auth.ensure_session(ctx.pages[0], vault, hitl, log)
+            vault.set("gmail", browser_session="ok")
+        except google_auth.SignInBlocked:
+            # Google refuses sign-in from the automated browser; the agent doesn't work around that.
+            # Mail access goes through IMAP/SMTP with an app password, which needs no browser session.
+            how = "exists; browser sign-in is blocked by Google, continuing with IMAP/SMTP only"
+            vault.set("gmail", browser_session="blocked")
         log(f"gmail: {entry['email']} {how}")
         vault.set("gmail", status="created")
         return
@@ -329,6 +336,16 @@ def _reauth_if_needed(page: Page, vault: Vault, log=print) -> None:
 def ensure_app_password(s: Settings, vault: Vault, hitl: Hitl, log=print) -> None:
     entry = vault.get("gmail")
     if entry.get("app_password"):
+        return
+    if entry.get("browser_session") == "blocked":
+        hitl.ask(
+            f"Google blocks the agent's browser from signing in, so create the app password yourself: on any device "
+            f"signed in as {entry['email']}, open {APP_PASSWORDS_URL} (2-Step Verification must be on), create one "
+            "named 'jobagent', then store it with `jobagent vault set gmail app_password` (spaces are fine). "
+            "The agent continues by itself once it's stored.",
+            done_when=lambda: bool((vault.get("gmail") or {}).get("app_password")),
+        )
+        log("app password stored by the user")
         return
     with persistent_context(s) as ctx:
         page = ctx.pages[0]
@@ -416,6 +433,8 @@ def check_ownership_guard(vault: Vault) -> str:
 def check_browser_session(s: Settings, vault: Vault | None = None, hitl: Hitl | None = None, log=print) -> str:
     """Gmail opens signed in — re-signing in automatically if the session expired."""
     vault, hitl = vault or open_vault(), hitl or open_hitl(log)
+    if (vault.get("gmail") or {}).get("browser_session") == "blocked":
+        return "unavailable: Google blocks automated browser sign-in (mail works over IMAP/SMTP)"
     with persistent_context(s) as ctx:
         page = ctx.pages[0]
         how = google_auth.ensure_session(page, vault, hitl, log)

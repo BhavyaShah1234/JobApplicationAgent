@@ -74,6 +74,41 @@ def test_same_account_keeps_everything(vault):
     assert vault.get("gmail")["password"] == "pw" and vault.get("gmail")["status"] == "ready"
 
 
+def test_blocked_browser_sign_in_falls_back_to_imap_only(vault, monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from jobagent.tools import google_auth
+    from jobagent.tools.hitl import Hitl
+
+    @contextmanager
+    def fake_context(_settings):
+        yield SimpleNamespace(pages=[object()])
+
+    def blocked(*_a, **_k):
+        raise google_auth.SignInBlocked("Google refused to sign in from this browser")
+
+    monkeypatch.setattr(gmail, "persistent_context", fake_context)
+    monkeypatch.setattr(google_auth, "ensure_session", blocked)
+    vault.set("gmail", email="a@gmail.com", password="pw", status="existing")
+    gmail.ensure_account(None, vault, Hitl(tmp_path, notify=lambda _: None), log=lambda _: None)
+    assert vault.get("gmail")["status"] == "created" and vault.get("gmail")["browser_session"] == "blocked"
+
+    # The app password comes from the user; the agent must not open a browser for it.
+    asked = []
+
+    class FakeHitl:
+        def ask(self, prompt, **kw):
+            asked.append(prompt)
+            vault.set("gmail", app_password="abcd efgh ijkl mnop")
+            assert kw["done_when"]()
+            return ""
+
+    gmail.ensure_app_password(None, vault, FakeHitl(), log=lambda _: None)
+    assert vault.get("gmail")["app_password"] == "abcd efgh ijkl mnop" and "apppasswords" in asked[0]
+    assert gmail.check_browser_session(None, vault, log=lambda _: None).startswith("unavailable")
+
+
 def test_no_inline_regex_flags_reach_playwright():
     # Playwright converts Python regexes to JavaScript, where inline (?i) is a syntax error.
     source = inspect.getsource(gmail)
