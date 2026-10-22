@@ -18,18 +18,19 @@ from jobagent.config import Settings, get_settings
 Role = Literal["planner", "vision", "fast"]
 
 
-def _primary(role: Role, s: Settings) -> BaseChatModel:
+def _primary(role: Role, s: Settings, temperature: float | None = None) -> BaseChatModel:
     return ChatOpenAI(
         model=getattr(s, f"model_{role}"),
         base_url=s.openai_base_url,
         api_key=s.openai_api_key,
         max_retries=s.llm_max_retries,
         timeout=s.llm_timeout_s,
+        temperature=temperature,
     )
 
 
-def _fallback(role: Role, s: Settings) -> BaseChatModel:
-    return ChatOllama(model=getattr(s, f"fallback_{role}"), base_url=s.ollama_base_url)
+def _fallback(role: Role, s: Settings, temperature: float | None = None) -> BaseChatModel:
+    return ChatOllama(model=getattr(s, f"fallback_{role}"), base_url=s.ollama_base_url, temperature=temperature)
 
 
 def chat(role: Role = "planner", settings: Settings | None = None) -> Runnable:
@@ -45,8 +46,9 @@ def structured(schema: type[BaseModel], role: Role = "planner", settings: Settin
     function_calling is the default: on Voyager all three methods work, and it was the fastest (~4x).
     """
     s = settings or get_settings()
-    return _primary(role, s).with_structured_output(schema, method=method).with_fallbacks(
-        [_fallback(role, s).with_structured_output(schema, method=method)]
+    # Extraction/classification must be repeatable: temperature 0.
+    return _primary(role, s, 0).with_structured_output(schema, method=method).with_fallbacks(
+        [_fallback(role, s, 0).with_structured_output(schema, method=method)]
     )
 
 

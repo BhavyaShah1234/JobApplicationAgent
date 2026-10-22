@@ -103,6 +103,38 @@ def test_classification_falls_back_to_heading_rules(monkeypatch):
     assert jdtext.classify_sections(secs, log=lambda _: None) == {0: "basic_qualifications", 1: "benefits", 2: "other"}
 
 
+def _b(kind, text):
+    return jdtext.Block(kind, text)
+
+
+def test_choose_source_prefers_the_fuller_page_copy():
+    from jobagent.tools.scrape import choose_source
+
+    overview = [_b("h", "Who Is Cafe Valley"), _b("p", "x" * 1500)]                    # JSON-LD: overview only
+    page = overview + [_b("h", "Duties"), _b("li", "y" * 400), _b("h", "Requirements"), _b("li", "z" * 400)]
+    assert choose_source(dom=page, ld=overview) is page
+    flat_ld = [_b("p", "a" * 3000)]                                                  # Lever: headings lost
+    structured_dom = [_b("h", "Core Responsibilities"), _b("li", "a" * 1000), _b("h", "What We Require"), _b("li", "b" * 900)]
+    assert choose_source(dom=structured_dom, ld=flat_ld) is structured_dom
+    thin_dom = [_b("p", "Apply now")]
+    assert choose_source(dom=thin_dom, ld=flat_ld) is flat_ld
+    assert choose_source(dom=[], ld=flat_ld) is flat_ld and choose_source(dom=page, ld=[]) is page
+
+
+def test_completeness_problems_do_not_trust_the_labels():
+    from jobagent.tools.scrape import completeness_problems
+
+    jd = JobDescription(title="PE", company="Cafe Valley", locations=["Marion, IN"], benefits=["PTO"])
+    secs = [jdtext.Section("Requirements", ["Bachelor's degree"]), jdtext.Section("What You'll Enjoy", ["PTO"])]
+    labels = {0: "benefits", 1: "benefits"}  # the model mislabelled the requirements
+    problems = completeness_problems(jd, secs, labels, "short", "p" * 5000)
+    assert any("requirements heading" in p for p in problems)
+    assert any("both responsibilities and qualifications" in p for p in problems)
+    assert any("jd.txt looks short" in p for p in problems)
+    ok = JobDescription(title="PE", company="CV", locations=["X"], basic_qualifications=["Bachelor's degree"])
+    assert completeness_problems(ok, secs, {0: "basic_qualifications", 1: "benefits"}, "t" * 4000, "p" * 5000) == []
+
+
 def test_apply_labeled_fills_lists_verbatim():
     from jobagent.tools.scrape import apply_labeled
 

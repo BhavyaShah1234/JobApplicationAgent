@@ -199,6 +199,43 @@ def apply_sections(jd: JobDescription, bullets: list[dict]) -> list[str]:
     return unmapped
 
 
+def completeness_problems(jd: JobDescription, secs: list, labels: dict[int, str], jd_text: str, page_text: str) -> list[str]:
+    """Checks that don't trust the model's own labels."""
+    problems = []
+    reqs = len(jd.basic_qualifications) + len(jd.preferred_qualifications)
+    labelled = sum(len(s.items) for i, s in enumerate(secs)
+                   if labels.get(i) in ("basic_qualifications", "preferred_qualifications"))
+    if labelled and reqs < labelled:
+        problems.append("requirement items from the job description")
+    # independent signal: heading rules see a requirements section, but nothing ended up in the lists
+    if not reqs and any(classify_heading(s.heading) in ("basic_qualifications", "preferred_qualifications")
+                        for s in secs if s.heading and s.items):
+        problems.append("requirements (a requirements heading exists)")
+    if not reqs and not jd.responsibilities:
+        problems.append("both responsibilities and qualifications")
+    if len(page_text) >= 2 * MIN_TEXT and len(jd_text) < 0.5 * len(page_text):
+        problems.append(f"jd.txt looks short ({len(jd_text)} of {len(page_text)} page chars)")
+    return problems
+
+
+def _chars(blocks: list) -> int:
+    return sum(len(b.text) for b in blocks)
+
+
+def choose_source(dom: list, ld: list) -> list:
+    """Pick the fuller copy of the job description. The page's own description element keeps the headings and
+    is preferred unless it's clearly thinner: JSON-LD descriptions are often just an overview (Cafe Valley) or
+    lose heading markup (Lever)."""
+    if not ld:
+        return dom
+    if not dom:
+        return ld
+    dom_heads, ld_heads = sum(b.kind == "h" for b in dom), sum(b.kind == "h" for b in ld)
+    if _chars(dom) >= 0.8 * _chars(ld) or (dom_heads > ld_heads and _chars(dom) >= 0.6 * _chars(ld)):
+        return dom
+    return ld
+
+
 LIST_CATEGORIES = ("basic_qualifications", "preferred_qualifications", "responsibilities", "values", "benefits",
                    "technical_skills")
 
@@ -296,12 +333,10 @@ def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
     via_vision = False
     # jd.txt: the posting's description exactly as written (no model). The JSON-LD description is the cleanest
     # copy of the body when it's substantial; otherwise the page's description element.
-    ld_html = str((posting or {}).get("description") or "")
-    blocks = jdtext.blocks(page, html=unescape(ld_html)) if len(re.sub(r"<[^>]+>", "", ld_html)) >= 400 else []
-    if not blocks and selector not in (None, "body") and len(text) >= MIN_TEXT:
-        blocks = jdtext.blocks(page, selector=selector)
-    if not blocks and len(text) >= MIN_TEXT:
-        blocks = jdtext.blocks(page, selector="body")
+    blocks = choose_source(
+        dom=jdtext.blocks(page, selector=selector if selector not in (None, "vision") else "body") if text else [],
+        ld=jdtext.blocks(page, html=unescape(str((posting or {}).get("description") or ""))) if posting else [],
+    )
     jd_text = jdtext.render(blocks) if blocks else ""
     if len(jd_text) < MIN_TEXT and not posting:
         log(f"scrape: only {len(text)} chars of page text; reading the page with the vision model")
@@ -342,11 +377,7 @@ def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
     unlabeled = [s.heading for i, s in enumerate(secs) if labels.get(i) == "other" and s.heading]
     if unlabeled:
         memory.note(f"sections labelled 'other': {', '.join(unlabeled[:5])}")
-    missing = jd.missing_core()
-    page_reqs = sum(len(s.items) for i, s in enumerate(secs)
-                    if labels.get(i) in ("basic_qualifications", "preferred_qualifications"))
-    if page_reqs and len(jd.basic_qualifications) + len(jd.preferred_qualifications) < page_reqs:
-        missing.append("requirement items from the job description")
+    missing = jd.missing_core() + completeness_problems(jd, secs, labels, jd_text, text)
     if missing:
         memory.note(f"extraction missed {', '.join(missing)} at {url}")
     if selector and selector not in ("body", "vision") and memory.data["content_selector"] != selector:
