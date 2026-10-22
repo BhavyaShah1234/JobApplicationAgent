@@ -201,7 +201,8 @@ def gather_sources(company: str, hint_text: str = "") -> tuple[str | None, list[
 RESEARCH_PROMPT = """Write a company profile using ONLY the numbered sources below.
 - Each list item is one short sentence that ends with the ids of the sources stating it, e.g. "Headquartered in
   Springfield [4]" or "Founded in 1950 [1][3]". Anything no source states is left out.
-- Keep the company's own wording for mission and values. No speculation, no marketing fluff.
+- At most 6 items per list, each at most 25 words. Keep the company's own wording for mission and values.
+  No speculation, no marketing fluff.
 - recent_news: up to 5 notable items (products, results, leadership, layoffs, acquisitions), newest first.
 /no_think"""
 
@@ -257,11 +258,16 @@ def research(company: str, hint_text: str = "", refresh: bool = False, log=print
     numbered = {i + 1: src for i, src in enumerate(sources)}
     text = "\n\n".join(f"[{i}] ({src['kind']}) {src['url']}\n{src['text'][:MAX_SOURCE_CHARS]}" for i, src in numbered.items())
     messages = [SystemMessage(RESEARCH_PROMPT), HumanMessage(f"Company: {company}\n\nSources:\n{text}")]
+    draft = None
     try:
-        draft = llm.structured(ProfileDraft, "fast", timeout=90, max_tokens=2000).invoke(messages)
+        draft = llm.structured(ProfileDraft, "fast", timeout=90, max_tokens=4000).invoke(messages)
     except Exception as e:
-        log(f"research: fast model failed ({type(e).__name__}); using the planner model")
-        draft = llm.structured(ProfileDraft, "planner", timeout=180, max_tokens=2500).invoke(messages)
+        log(f"research: fast model failed ({type(e).__name__})")
+    if draft is None:  # an error, or an answer cut off at the token cap (no parsable tool call)
+        log("research: using the planner model")
+        draft = llm.structured(ProfileDraft, "planner", timeout=180, max_tokens=5000).invoke(messages)
+    if draft is None:
+        raise RuntimeError(f"no profile could be written for {company!r}")
     ids = set(numbered)
     profile = CompanyProfile(
         name=draft.name or company,
