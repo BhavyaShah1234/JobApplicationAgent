@@ -35,6 +35,31 @@ def test_empty_or_invalid_key(tmp_path):
         Vault(tmp_path / "v", "nope")
 
 
+def test_truncated_vault_is_reported_and_restorable(tmp_path, key):
+    path = tmp_path / "vault.enc"
+    v = Vault(path, key)
+    v.set("gmail", email="a@gmail.com")
+    v.set("gmail", status="ready")  # second save → backup holds the first good state
+    path.write_bytes(b"")  # simulate an outside truncation
+    with pytest.raises(VaultError, match="empty.*vault restore"):
+        v.get("gmail")
+    assert v.restore_backup() == ["gmail"]
+    assert v.get("gmail") == {"email": "a@gmail.com"}
+    assert (tmp_path / "vault.enc.unreadable").exists()
+
+
+def test_backup_is_never_overwritten_by_an_unreadable_vault(tmp_path, key):
+    path = tmp_path / "vault.enc"
+    v = Vault(path, key)
+    v.set("a", x=1)
+    v.set("a", x=2)
+    good_backup = v.backup_path.read_bytes()
+    path.write_bytes(b"garbage")
+    with pytest.raises(VaultError):
+        v.set("a", x=3)  # load fails first, so nothing is written
+    assert v.backup_path.read_bytes() == good_backup
+
+
 def test_delete_and_names(tmp_path, key):
     v = Vault(tmp_path / "vault.enc", key)
     v.set("b", x=1)

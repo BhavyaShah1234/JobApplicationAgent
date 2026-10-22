@@ -160,6 +160,15 @@ def vault_set(
     console.print(f"stored {name}.{field}")
 
 
+@vault_app.command("restore")
+def vault_restore() -> None:
+    """Replace an unreadable vault.enc with the backup from the last good save."""
+    from jobagent.tools.vault import open_vault
+
+    names = open_vault().restore_backup()
+    console.print(f"restored vault from backup; entries: {', '.join(names) or '(none)'}")
+
+
 @vault_app.command("show")
 def vault_show(name: str) -> None:
     """Print one entry, including secrets (e.g. `jobagent vault show gmail`)."""
