@@ -168,6 +168,17 @@ def compile_pdf(page: Page, project_id: str) -> bytes:
     return got.body()
 
 
+_BANNER = re.compile(
+    r"\A%{20,}\n%\n% Welcome to Overleaf --- .*?\n%\n%{20,}\n\n?", re.S
+)
+
+
+def strip_overleaf_banner(text: str) -> str:
+    """Projects created via /docs get Overleaf's 'Welcome to Overleaf' comment block prepended; remove it so
+    pulled sources match what the agent uploaded (and the banner never leaks into a resume)."""
+    return _BANNER.sub("", text.replace("\r\n", "\n"), count=1)
+
+
 def download_zip(page: Page, project_id: str) -> bytes:
     got = page.request.get(f"{BASE}/project/{project_id}/download/zip", timeout=120_000)
     if not got.ok or not got.body().startswith(b"PK"):

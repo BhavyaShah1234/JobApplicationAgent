@@ -89,8 +89,10 @@ def check(log=print) -> list[tuple[str, bool, str]]:
                 results.append(("compile matches local", ok,
                                 f"pages local {lp} / Overleaf {rp}; text similarity {ratio:.3f}; PDF {keep}"))
                 files = zipfile.ZipFile(io.BytesIO(overleaf.download_zip(page, project_id))).namelist()
-                content = zipfile.ZipFile(io.BytesIO(overleaf.download_zip(page, project_id))).read("main.tex").decode()
-                same = content.replace("\r\n", "\n").strip() == source.replace("\r\n", "\n").strip()
+                # Overleaf prepends a welcome comment to /docs projects; it's stripped on every read-back.
+                raw = zipfile.ZipFile(io.BytesIO(overleaf.download_zip(page, project_id))).read("main.tex").decode()
+                content = overleaf.strip_overleaf_banner(raw)
+                same = content.strip() == source.replace("\r\n", "\n").strip()
                 results.append(("read back as zip", same, f"files {files}; main.tex {'identical' if same else 'DIFFERS'}"))
             except Exception as e:
                 results.append(("round-trip", False, f"{type(e).__name__}: {e}"))
