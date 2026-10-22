@@ -68,3 +68,22 @@ def test_mentions_whole_name(text, hit):
                                         ("Palantir Technologies", "Palantir"), ("General Mills", "General Mills")])
 def test_core_name(name, core):
     assert r.core_name(name) == core
+
+
+def test_about_pages_accept_other_official_domains(monkeypatch):
+    hits = [{"href": "https://www.aboutamazon.com/about-us", "title": "About Amazon"},
+            {"href": "https://en.wikipedia.org/wiki/Amazon_(company)", "title": "Amazon - Wikipedia"},
+            {"href": "https://www.amazon.jobs/en/jobs/1", "title": "Jobs"},
+            {"href": "https://www.aboutamazon.com/news/company-news", "title": "Company news"}]
+    monkeypatch.setattr(r, "_search", lambda q, n=8: hits)
+    assert r.about_pages("Amazon", "https://www.amazon.com") == ["https://www.aboutamazon.com/about-us",
+                                                                 "https://www.aboutamazon.com/news/company-news"]
+
+
+def test_fetch_falls_back_to_browser_when_text_is_thin(monkeypatch):
+    class Thin:
+        status_code, url, text = 200, "https://www.intel.com/", "<html><body><div id=app></div></body></html>"
+
+    monkeypatch.setattr(r.httpx, "get", lambda *a, **k: Thin())
+    monkeypatch.setattr(r, "_fetch_browser", lambda url: ("https://www.intel.com/content/www/us/en/homepage.html", "x" * 900))
+    assert r._fetch("https://www.intel.com") == ("https://www.intel.com/content/www/us/en/homepage.html", "x" * 900)

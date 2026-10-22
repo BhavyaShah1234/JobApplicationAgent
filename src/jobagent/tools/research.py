@@ -124,15 +124,48 @@ def _news(query: str, n: int = 8) -> list[dict]:
     return []
 
 
+MIN_PAGE_TEXT = 300
+
+
 def _fetch(url: str) -> tuple[str, str]:
-    """(final url, readable text) of a page; '' if it can't be fetched."""
+    """(final url, readable text) of a page; '' if it can't be fetched. JS-heavy or bot-shy sites (Intel, OpenAI)
+    return little to a plain request, so those are loaded in a throwaway headless Chrome session instead."""
     import trafilatura
 
+    final, text = url, ""
     try:
         r = httpx.get(url, headers=UA, follow_redirects=True, timeout=20)
-        if r.status_code >= 400:
-            return url, ""
-        return str(r.url), (trafilatura.extract(r.text, include_links=False) or "")
+        if r.status_code < 400:
+            final, text = str(r.url), trafilatura.extract(r.text, include_links=False) or ""
+    except Exception:
+        pass
+    if len(text) >= MIN_PAGE_TEXT:
+        return final, text
+    browser_final, browser_text = _fetch_browser(url)
+    return (browser_final, browser_text) if len(browser_text) > len(text) else (final, text)
+
+
+def _fetch_browser(url: str) -> tuple[str, str]:
+    import trafilatura
+    from playwright.sync_api import sync_playwright
+
+    from jobagent.config import get_settings
+
+    s = get_settings()
+    try:
+        with sync_playwright() as pw:  # per call/thread: Playwright's sync API is bound to its thread
+            browser = pw.chromium.launch(channel=s.chrome_channel or None, headless=True)
+            try:
+                page = browser.new_context(user_agent=UA["User-Agent"]).new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=8_000)
+                except Exception:
+                    pass
+                html = page.content()
+                return page.url, trafilatura.extract(html, include_links=False) or ""
+            finally:
+                browser.close()
     except Exception:
         return url, ""
 
@@ -184,6 +217,21 @@ def _wikipedia(company: str) -> tuple[str, str] | None:
         return None
 
 
+def about_pages(company: str, website: str) -> list[str]:
+    """Official about/mission pages found by search, including the company's other domains (aboutamazon.com)."""
+    words = {w for w in re.findall(r"[a-z]{3,}", core_name(company).lower())}
+    out = []
+    for hit in _search(f"{core_name(company)} about us mission values", n=8):
+        url = hit.get("href", "")
+        host = urlparse(url).netloc.lower()
+        if not host or NOT_OFFICIAL.search(host) or re.search(r"(?i)/(careers?|jobs?)/", url):
+            continue
+        name_part = db.registrable_domain(host).split(".")[0]
+        if any(w in name_part for w in words) and ABOUT_LINK.search(url + " " + hit.get("title", "")):
+            out.append(url.split("?")[0].rstrip("/"))
+    return list(dict.fromkeys(u for u in out if u.rstrip("/") != website.rstrip("/")))[:3]
+
+
 def gather_sources(company: str, hint_text: str = "") -> tuple[str | None, list[dict]]:
     sources: list[dict] = []
     website = find_website(company, hint_text)
@@ -191,7 +239,7 @@ def gather_sources(company: str, hint_text: str = "") -> tuple[str | None, list[
         url, text = _fetch(website)
         if text:
             sources.append({"kind": "official", "url": url, "text": text})
-        for link in _links(website)[:4]:
+        for link in (_links(website)[:4] + about_pages(company, website))[:6]:
             url, text = _fetch(link)
             if text and all(s["url"] != url for s in sources):
                 sources.append({"kind": "official", "url": url, "text": text})
