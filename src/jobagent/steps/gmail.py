@@ -382,6 +382,35 @@ def check_imap_roundtrip(vault: Vault, log=print) -> str:
     return f"sent → received in {took:.0f}s → trashed; audit rows (self_test) = {row}"
 
 
+def check_ownership_guard(vault: Vault) -> str:
+    """The inbox is shared with the user's own sign-ups: a verification mail that isn't the agent's must survive
+    the sweep (even with a 0 h age cutoff) and be refused by consume_and_trash."""
+    entry = vault.get("gmail")
+    token = f"jobagent-guardtest-{uuid.uuid4().hex[:10]}"
+    with Inbox(entry["email"], entry["app_password"], db.connect()) as inbox:
+        inbox.send(entry["email"], f"Your verification code is 482913 ({token})",
+                   "Use this one-time code to verify your email: 482913\n")
+        mail = inbox.wait_for(lambda m: token in m.subject, criteria=f'SUBJECT "{token}"', timeout_s=180)
+        try:
+            if inbox.is_agent_mail(mail):
+                raise RuntimeError("a mail from the user's own address was treated as agent mail")
+            swept = inbox.sweep_stale_verification(max_age_h=0)
+            if any(token in s for s in swept) or not inbox.search(f'SUBJECT "{token}"'):
+                raise RuntimeError("the sweep trashed a non-agent verification mail")
+            try:
+                inbox.consume_and_trash(mail, "otp")
+                raise RuntimeError("consume_and_trash accepted a non-agent mail")
+            except PermissionError:
+                pass
+        finally:
+            # Test cleanup only (bypasses the guard on purpose): remove the seeded mail.
+            imap = inbox.imap()
+            imap.select("INBOX")
+            for uid in inbox.search(f'SUBJECT "{token}"'):
+                imap.uid("MOVE", uid, inbox.trash_folder())
+    return f"non-agent verification mail left alone by sweep (0 h cutoff) and refused by consume_and_trash; {len(swept)} agent mail(s) swept"
+
+
 def check_browser_session(s: Settings, vault: Vault | None = None, hitl: Hitl | None = None, log=print) -> str:
     """Gmail opens signed in — re-signing in automatically if the session expired."""
     vault, hitl = vault or open_vault(), hitl or open_hitl(log)

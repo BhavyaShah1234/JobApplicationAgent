@@ -6,6 +6,7 @@ trashed, and only after its use succeeded or when stale. Application-related mai
 
 import email
 import email.header
+import email.utils
 import imaplib
 import re
 import smtplib
@@ -83,6 +84,13 @@ def parse(uid: str, raw: bytes, thread_id: str = "") -> Mail:
     return Mail(uid, msg.get("Message-ID", "").strip(), msg.get("From", ""), subject, date, _body_text(msg), thread_id)
 
 
+SELF_TEST_TAG = "jobagent-selftest-"
+
+
+def sender_domain(mail: Mail) -> str:
+    return db.registrable_domain(email.utils.parseaddr(mail.sender)[1] or mail.sender)
+
+
 def is_protected(mail: Mail) -> bool:
     return bool(_PROTECTED_WORDS.search(f"{mail.subject}\n{mail.text}"))
 
@@ -140,6 +148,15 @@ class Inbox:
     def __exit__(self, *exc):
         self.close()
 
+    # --- ownership (the inbox is shared with the user's own sign-ups) -------------
+    def is_agent_mail(self, mail: Mail) -> bool:
+        """Mail from a site the agent itself used, or the agent's own tagged self-test mail."""
+        if SELF_TEST_TAG in mail.subject:
+            return True
+        if self.conn is None:
+            return False
+        return sender_domain(mail) in db.agent_domains(self.conn)
+
     def trash_folder(self) -> str:
         if self._trash is None:
             _, rows = self.imap().list()
@@ -186,16 +203,20 @@ class Inbox:
             time.sleep(poll_s)
             seen.clear()  # re-check: Gmail may deliver late into an existing UID range
 
-    def wait_for_verification(self, sender_domain: str | None = None, since: datetime | None = None,
+    def wait_for_verification(self, site: str, since: datetime, kind: str = "portal",
                               timeout_s: float = 300) -> tuple[Mail, Verification]:
-        since = since or datetime.now(UTC) - timedelta(minutes=10)
+        """Wait for a verification mail from `site` (URL or domain) sent after `since` (the agent's action).
+
+        Both are required: the inbox also receives the user's own sign-up codes, which must never be used.
+        """
+        allowed = db.record_agent_domain(self.conn, site, kind) if self.conn is not None else {db.registrable_domain(site)}
         criteria = f'SINCE "{since.strftime("%d-%b-%Y")}"'
         found: dict[str, Verification] = {}
 
         def match(m: Mail) -> bool:
-            if m.date and m.date < since:
+            if m.date is None or m.date < since - timedelta(seconds=30):
                 return False
-            if sender_domain and sender_domain.lower() not in m.sender.lower():
+            if sender_domain(m) not in allowed:
                 return False
             v = classify_verification(m)
             if v:
@@ -218,6 +239,8 @@ class Inbox:
     # --- cleanup ------------------------------------------------------------------
     def consume_and_trash(self, mail: Mail, purpose: str, folder: str = "INBOX") -> None:
         """Log (without the code/link) and move a used verification mail to Trash."""
+        if not self.is_agent_mail(mail):
+            raise PermissionError(f"refusing to trash mail that isn't the agent's: {mail.sender} / {mail.subject!r}")
         if purpose != "self_test" and is_protected(mail):
             raise PermissionError(f"refusing to trash protected mail: {mail.subject!r}")
         if self.conn is not None:
@@ -236,8 +259,8 @@ class Inbox:
         trashed = []
         for uid in self.search(f'BEFORE "{(cutoff + timedelta(days=1)).strftime("%d-%b-%Y")}"'):
             mail = self.fetch(uid)
-            if mail.date is None or mail.date > cutoff:
-                continue
+            if mail.date is None or mail.date > cutoff or not self.is_agent_mail(mail):
+                continue  # too new, or the user's own mail
             v = classify_verification(mail)
             if v and v.confidence >= min_confidence:
                 self.consume_and_trash(mail, "stale_sweep")

@@ -51,7 +51,7 @@ def step_gmail(
 def step_gmail_check() -> None:
     """Step 1 e2e: vault entry, SMTP→IMAP round-trip with trashing, browser session still signed in."""
     from jobagent.config import get_settings
-    from jobagent.steps.gmail import check_browser_session, check_imap_roundtrip
+    from jobagent.steps.gmail import check_browser_session, check_imap_roundtrip, check_ownership_guard
     from jobagent.tools.vault import open_vault
 
     vault = open_vault()
@@ -62,6 +62,7 @@ def step_gmail_check() -> None:
     failed = False
     log = lambda m: console.print(m, highlight=False)  # noqa: E731
     for name, fn in (("imap/smtp", lambda: check_imap_roundtrip(vault)),
+                     ("shared-inbox guard", lambda: check_ownership_guard(vault)),
                      ("browser session", lambda: check_browser_session(get_settings(), vault, log=log))):
         try:
             console.print(f"[green]PASS[/] {name}: {fn()}", highlight=False)
