@@ -49,7 +49,19 @@ def test_parse_cited_keeps_only_valid_citations():
 def test_parse_news():
     news = r.parse_news(["2026-10-20 Q3 results — Sales fell 3% [4]", "Undated headline [2]", "No source"], {2, 4})
     assert [(n.date, n.title, n.summary, n.sources) for n in news] == [
-        ("2026-10-20", "Q3 results", "Sales fell 3%", [4]), (None, "Undated headline", "Undated headline", [2])]
+        ("2026-10-20", "Q3 results", "Sales fell 3%", [4]), (None, "Undated headline", "", [2])]
+    dated = r.parse_news(["CEO named [2]"], {2}, {2: "2026-10-01"})
+    assert dated[0].date == "2026-10-01" and dated[0].summary == ""
+
+
+@pytest.mark.parametrize(
+    "text,hit",
+    [("DOWL wins bridge contract in Anchorage", True), ("@PJ_Dowl replied", False), ("DLW1DOWL quote", False),
+     ("Dow Jones advanced", False), ("Café Valley expands", False), ("Cafe Valley expands in Marion", True)],
+)
+def test_mentions_whole_name(text, hit):
+    company = "DOWL" if "ow" in text.lower() and "valley" not in text.lower() else "Cafe Valley, Inc."
+    assert r.mentions(company, text) is hit
 
 
 @pytest.mark.parametrize("name,core", [("Cafe Valley, Inc.", "Cafe Valley"), ("KPMG LLP", "KPMG"),

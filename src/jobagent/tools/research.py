@@ -87,6 +87,14 @@ def core_name(name: str) -> str:
     return re.sub(r"(?i)[,.]?\s*\b(inc|llc|ltd|corp|corporation|co|company|plc|llp|lp|technologies)\b\.?", "", name).strip(" ,.")
 
 
+SOCIAL = re.compile(r"(?i)(^|\.)(x|twitter|facebook|instagram|tiktok|reddit|threads)\.(com|net)$")
+
+
+def mentions(company: str, text: str) -> bool:
+    """The company's core name appears as a whole word/phrase (case-insensitive)."""
+    return re.search(rf"(?<![\w@]){re.escape(core_name(company))}(?!\w)", text, re.I) is not None
+
+
 def slug(name: str) -> str:
     base = re.sub(r"(?i)[,.]?\s*\b(inc|llc|ltd|corp|corporation|co|company|plc|llp|lp)\b\.?", "", name)
     return re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-") or "unknown"
@@ -188,7 +196,7 @@ def gather_sources(company: str, hint_text: str = "") -> tuple[str | None, list[
             if text and all(s["url"] != url for s in sources):
                 sources.append({"kind": "official", "url": url, "text": text})
     wiki = _wikipedia(company)
-    if wiki and wiki[1] and core_name(company).lower() in wiki[1].lower():
+    if wiki and wiki[1] and mentions(company, wiki[1]):
         sources.append({"kind": "wikipedia", "url": wiki[0], "text": wiki[1]})
     cutoff = datetime.now(UTC) - timedelta(days=365)
     for n in _news(company):
@@ -198,8 +206,8 @@ def gather_sources(company: str, hint_text: str = "") -> tuple[str | None, list[
                 continue
         except ValueError:
             pass
-        if core_name(company).lower() not in f"{n.get('title', '')} {n.get('body', '')}".lower():
-            continue  # must mention the company itself ("Cafe Valley", not just "cafe")
+        if not mentions(company, f"{n.get('title', '')} {n.get('body', '')}") or SOCIAL.search(urlparse(n.get("url", "")).netloc):
+            continue  # must name the company as a word ("DOWL", not "@PJ_Dowl"/"DLW1DOWL"); no social posts
         sources.append({"kind": "news", "url": n.get("url", ""), "date": date[:10],
                         "text": f"{n.get('title', '')} ({n.get('source', '')}, {date[:10]}): {n.get('body', '')}"})
     return website, sources[:14]
@@ -229,14 +237,16 @@ def parse_cited(items: list[str], ids: set[int]) -> list[Claim]:
     return out
 
 
-def parse_news(items: list[str], ids: set[int]) -> list[NewsItem]:
+def parse_news(items: list[str], ids: set[int], source_dates: dict[int, str] | None = None) -> list[NewsItem]:
     out = []
     for claim in parse_cited(items, ids):
-        m = re.match(r"(\d{4}-\d{2}-\d{2})\s+(.*)", claim.text)
+        m = re.match(r"\(?(\d{4}-\d{2}-\d{2})\)?\s+(.*)", claim.text)
         date, rest = (m.group(1), m.group(2)) if m else (None, claim.text)
         title, _, summary = rest.partition(" — ")
-        out.append(NewsItem(title=title.strip(), date=date, summary=summary.strip() or title.strip(), sources=claim.sources))
-    return out
+        date = date or next((source_dates.get(i) for i in claim.sources if (source_dates or {}).get(i)), None)
+        out.append(NewsItem(title=title.strip(), date=date, summary=summary.strip() if summary.strip() != title.strip() else "",
+                            sources=claim.sources))
+    return sorted(out, key=lambda n: n.date or "", reverse=True)
 
 
 def _valid(claims: list, ids: set[int]) -> list:
@@ -282,7 +292,8 @@ def research(company: str, hint_text: str = "", refresh: bool = False, log=print
         name=draft.name or company,
         **{f: parse_cited(getattr(draft, f), ids) for f in ("what_they_do", "mission", "products", "values", "facts")},
         # news must cite an actual news source, not the company's own pages
-        recent_news=parse_news(draft.recent_news, {i for i in ids if numbered[i]["kind"] == "news"}),
+        recent_news=parse_news(draft.recent_news, {i for i in ids if numbered[i]["kind"] == "news"},
+                               {i: numbered[i].get("date", "") for i in ids}),
     )
     cited = {i for f in ("what_they_do", "mission", "products", "values", "facts", "recent_news")
              for c in getattr(profile, f) for i in c.sources}
@@ -305,8 +316,8 @@ def render_md(p: CompanyProfile) -> str:
         if items:
             lines += [f"## {title}", ""] + [f"- {c.text}{cite(c.sources)}" for c in items] + [""]
     if p.recent_news:
-        lines += ["## Recent news", ""] + [f"- {n.date or ''} {n.title}: {n.summary}{cite(n.sources)}"
-                                           for n in p.recent_news] + [""]
+        lines += ["## Recent news", ""] + [f"- {n.date + ' — ' if n.date else ''}{n.title}{': ' + n.summary if n.summary else ''}"
+                                           f"{cite(n.sources)}" for n in p.recent_news] + [""]
     lines += ["## Sources", ""] + [f"{i}. ({s['kind']}{', ' + s['date'] if s.get('date') else ''}) {s['url']}"
                                     for i, s in sorted(p.sources.items())]
     return "\n".join(lines) + "\n"
