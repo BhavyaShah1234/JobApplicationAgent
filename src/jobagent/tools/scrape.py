@@ -134,11 +134,11 @@ def _best_text(page: Page, remembered: str | None) -> tuple[str | None, str]:
 # Heading → JD list. First match wins; order matters ("preferred qualifications" before "qualifications").
 SECTION_RULES = [
     ("preferred_qualifications", re.compile(r"(?i)prefer|nice[- ]to[- ]have|bonus|plus\b|ideal(ly)?|desired|stand out")),
-    ("basic_qualifications", re.compile(r"(?i)minimum|basic|require|must[- ]have|qualifications|"
+    ("basic_qualifications", re.compile(r"(?i)minimum|basic|require|must[- ]have|qualifications|need to see|"
                                         r"what you('ll)? (need|bring)|you (have|bring)|skills (and|&) experience")),
-    ("responsibilities", re.compile(r"(?i)responsib|what you('ll| will)? do|your role|the role|in this role|"
-                                    r"day[- ]to[- ]day|you will|key duties|what you('ll| will) work on")),
-    ("benefits", re.compile(r"(?i)benefit|perks|we offer|compensation (and|&) benefits|what we offer")),
+    ("responsibilities", re.compile(r"(?i)responsib|what you('ll| will)? (be )?do(ing)?\b|your role|the role|in this role|"
+                                    r"day[- ]to[- ]day|you will|key duties|duties|what you('ll| will) work on")),
+    ("benefits", re.compile(r"(?i)benefit|perks|we offer|compensation (and|&) benefits|what we offer|you('ll)? enjoy")),
     ("technical_skills", re.compile(r"(?i)technolog(y|ies)( we use)?|tech stack|our stack|tools (we use|and technologies)")),
     ("values", re.compile(r"(?i)who you are|about you|we('re| are) looking for|what we look for|our values|"
                           r"what we value|traits")),
@@ -146,6 +146,7 @@ SECTION_RULES = [
 
 
 def classify_heading(heading: str) -> str | None:
+    heading = heading.replace("\u2019", "'").replace("\u2018", "'")  # "What you’ll be doing"
     for field_name, pattern in SECTION_RULES:
         if pattern.search(heading):
             return field_name
@@ -276,9 +277,21 @@ def _vision_text(page: Page) -> str:
     return str(msg.content)
 
 
-def job_id_for(url: str, jd: JobDescription) -> str:
-    base = jd.req_id or hashlib.sha1(url.encode()).hexdigest()[:10]
-    return re.sub(r"[^A-Za-z0-9._-]+", "-", base).strip("-")[:60]
+_URL_IDS = [
+    re.compile(r"[?&](?:gh_jid|jobId|job_id|jid|opportunityId|req(?:uisition)?Id|id)=([A-Za-z0-9-]+)", re.I),
+    re.compile(r"_((?:JR|R|REQ)?\d{5,}(?:-\d+)?)(?:[/?#]|$)", re.I),   # Workday ..._JR2026744
+    re.compile(r"/jobs?/(\d{4,})(?:[/?#-]|$)", re.I),                    # /jobs/8130881, /jobs/10585694/slug
+    re.compile(r"/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)", re.I),  # Lever/Ashby
+    re.compile(r"-(\d{5,})/?(?:[?#]|$)"),                                # cafevalleyjobs.com/...-179452/
+]
+
+
+def job_id_for(url: str, jd: JobDescription | None = None) -> str:
+    """A stable folder id from the URL (never from the model, whose req id can vary between runs)."""
+    for pattern in _URL_IDS:
+        if m := pattern.search(url):
+            return m.group(1)[:60]
+    return hashlib.sha1(url.encode()).hexdigest()[:10]
 
 
 def _slug(text: str) -> str:

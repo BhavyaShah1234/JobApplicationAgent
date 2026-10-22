@@ -147,3 +147,40 @@ def test_apply_labeled_fills_lists_verbatim():
     assert jd.responsibilities == ["Manage projects"] and jd.basic_qualifications == ["Bachelor's degree", "5 years"]
     assert jd.preferred_qualifications == ["Have shipped production ML systems"]
     assert jd.role_summary == "Role text." and jd.technical_skills == ["AutoCAD"]
+
+
+NVIDIA_LIKE = """
+<div><p>We are looking for a New College Graduate SoC Software Engineer.</p>
+<p><span><b>What you’ll be doing:</b></span></p><ul><li>Develop SoC software</li></ul>
+<p>What we need to see:</p><ul><li>BS in CS</li><li>C/C++</li></ul>
+<p><span><span><strong>Ways to stand out from the crowd:</strong></span></span></p><ul><li>Linux kernel</li></ul>
+<p>Your base salary will be determined based on your location.</p></div>
+"""
+
+
+def test_nested_bold_and_colon_headings(page):
+    secs = jdtext.sections(jdtext.blocks(page, html=NVIDIA_LIKE))
+    assert [s.heading for s in secs] == ["", "What you’ll be doing", "What we need to see",
+                                         "Ways to stand out from the crowd"]
+    assert secs[2].bullets == ["BS in CS", "C/C++"]
+    labels = jdtext.classify_sections(secs[1:], log=lambda _: None)  # all recognised by rules: no model call
+    assert labels == {0: "responsibilities", 1: "basic_qualifications", 2: "preferred_qualifications"}
+
+
+@pytest.mark.parametrize(
+    "url,job_id",
+    [("https://job-boards.greenhouse.io/stripe/jobs/8130881", "8130881"),
+     ("https://stripe.com/jobs/search?gh_jid=8130881", "8130881"),
+     ("https://www.kpmguscareers.com/jobdetail/?jobId=133129", "133129"),
+     ("https://recruiting2.ultipro.com/X/JobBoard/e886/OpportunityDetail?opportunityId=e313c510-8511-4fac-b22c-d35fafa70083",
+      "e313c510-8511-4fac-b22c-d35fafa70083"),
+     ("https://nvidia.wd5.myworkdayjobs.com/en-US/X/job/US-CA/SoC-Software-Engineer_JR2026744", "JR2026744"),
+     ("https://genmills.wd1.myworkdayjobs.com/en-US/G/job/Powai/Software-Engineer-II_10128543", "10128543"),
+     ("https://www.amazon.jobs/en/jobs/10585694/software-development-engineer", "10585694"),
+     ("https://jobs.lever.co/palantir/10dfc8bc-99ad-4ca2-ab76-853cb90a92c2", "10dfc8bc-99ad-4ca2-ab76-853cb90a92c2"),
+     ("https://cafevalleyjobs.com/project-engineer-marion-in-179452/", "179452")],
+)
+def test_job_id_is_stable(url, job_id):
+    from jobagent.tools.scrape import job_id_for
+
+    assert job_id_for(url) == job_id

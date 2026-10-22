@@ -28,10 +28,17 @@ _BLOCKS_JS = r"""
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'BUTTON', 'NAV', 'FORM', 'IFRAME', 'TEMPLATE', 'SELECT']);
   const BLOCK = /^(P|DIV|SECTION|ARTICLE|UL|OL|TABLE|TBODY|TR|TD|MAIN|HEADER|FOOTER|BLOCKQUOTE|DL|DD|DT|SPAN|FONT|CENTER)$/;
   const out = [];
-  const isLeadHeading = n => {  // <p><strong>Minimum requirements</strong></p>
-    if (!/^(P|DIV)$/.test(n.tagName) || n.children.length !== 1) return false;
-    const c = n.children[0];
-    return /^(STRONG|B|U)$/.test(c.tagName) && textOf(n) === textOf(c) && textOf(n).length > 0 && textOf(n).length < 120;
+  const isBold = el => /^(STRONG|B)$/.test(el.tagName) ||
+    (live && parseInt(getComputedStyle(el).fontWeight || '400', 10) >= 600);
+  const isLeadHeading = n => {  // <p><strong>Minimum requirements</strong></p>, <p><span><b>What you'll do:</b></span></p>
+    if (!/^(P|DIV|SPAN)$/.test(n.tagName) || n.querySelector('li,ul,ol,p,br,h1,h2,h3,h4,h5,h6')) return false;
+    const t = textOf(n);
+    if (!t || t.length >= 120) return false;
+    if (live && isBold(n)) return true;
+    // all of its text sits inside bold elements, however deeply nested
+    const boldText = clean([...n.querySelectorAll('strong,b')].filter(b => !b.parentElement.closest('strong,b') ||
+                           !n.contains(b.parentElement.closest('strong,b'))).map(b => b.textContent).join(' '));
+    return boldText.length > 0 && boldText.replace(/\s/g, '') === t.replace(/\s/g, '');
   };
   const walk = el => {
     for (const n of el.childNodes) {
@@ -87,7 +94,19 @@ class Section:
 
 def blocks(page: Page, *, html: str | None = None, selector: str | None = None) -> list[Block]:
     raw = page.evaluate(_BLOCKS_JS, {"html": html, "sel": selector})
-    return [Block(b["k"], b["t"]) for b in raw]
+    return promote_colon_headings([Block(b["k"], b["t"]) for b in raw])
+
+
+def promote_colon_headings(bs: list[Block]) -> list[Block]:
+    """A short line ending in ':' right before a bullet list is a heading ("What we need to see:")."""
+    out = []
+    for i, b in enumerate(bs):
+        nxt = bs[i + 1] if i + 1 < len(bs) else None
+        if b.kind == "p" and b.text.endswith(":") and len(b.text) <= 100 and nxt is not None and nxt.kind == "li":
+            out.append(Block("h", b.text[:-1].strip()))
+        else:
+            out.append(b)
+    return out
 
 
 def render(bs: list[Block]) -> str:
@@ -181,23 +200,36 @@ heading — companies use creative headings):
 
 
 def classify_sections(secs: list[Section], log=print) -> dict[int, str]:
-    """index → category for each section, via the fast model; heading rules if the model fails."""
+    """index → category. Headings the rules recognise get fixed, repeatable labels; only the rest (creative
+    headings, headless blocks with bullets) go to the fast model, which judges them by content."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from jobagent import llm
+    from jobagent.tools.scrape import classify_heading
 
-    lines = []
+    labels: dict[int, str] = {}
+    ask: list[int] = []
     for i, s in enumerate(secs):
-        sample = " | ".join(s.items[:3])[:300]
-        lines.append(f"{i}. heading: {s.heading or '(none)'} — {len(s.bullets)} bullets — sample: {sample}")
+        rule = classify_heading(s.heading) if s.heading else None
+        # prose-only sections under list-type headings ("Your role" paragraphs) go to the model instead
+        if rule in ("responsibilities", "values", "basic_qualifications", "preferred_qualifications") and not s.bullets:
+            rule = None
+        if rule:
+            labels[i] = rule
+        elif s.bullets or (s.heading and s.items):
+            ask.append(i)
+        else:
+            labels[i] = "other"
+    if not ask:
+        return labels
+    lines = [f"{i}. heading: {secs[i].heading or '(none)'} — {len(secs[i].bullets)} bullets — sample: "
+             f"{' | '.join(secs[i].items[:3])[:300]}" for i in ask]
     try:
         out = llm.structured(SectionLabels, "fast").invoke(
             [SystemMessage(CLASSIFY_PROMPT), HumanMessage("Sections:\n" + "\n".join(lines))])
-        labels = {l.index: l.category for l in out.labels if 0 <= l.index < len(secs)}
-        if labels:
-            return labels
+        labels.update({l.index: l.category for l in out.labels if l.index in ask})
     except Exception as e:
-        log(f"jd sections: model labelling failed ({type(e).__name__}); using heading rules")
-    from jobagent.tools.scrape import classify_heading
-
-    return {i: classify_heading(s.heading) or "other" for i, s in enumerate(secs)}
+        log(f"jd sections: model labelling failed ({type(e).__name__}); unlabelled sections kept as 'other'")
+    for i in ask:
+        labels.setdefault(i, "other")
+    return labels
