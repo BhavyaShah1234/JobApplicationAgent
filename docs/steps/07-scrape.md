@@ -15,6 +15,23 @@ Gate (automated part) passed 2026-10-22: Greenhouse (Stripe), Lever (Palantir), 
 amazon.jobs, plus the `data/test.csv` companies — General Mills (Workday), KPMG (own site), DOWL (UKG UltiPro), Intel
 (Workday), Cafe Valley (own site). All complete, second pass reused the portal notes; 5 postings in 31–45 s.
 
+## `jd.txt` — the posting exactly as written
+
+`outputs/<company>/<job-id>/jd.txt` (and `jobs.jd_text`) is the job description converted from the posting's own
+HTML with no model involved: headings, `- ` bullets and paragraphs in their original order; scripts, hidden elements
+and navigation removed. Linked job-description files (`.pdf`/`.docx`, not terms/privacy) are appended verbatim under
+`[Attachment: …]`. The ATS step (10) submits this text unchanged.
+
+Source choice: the page's description element (keeps headings) unless it is clearly thinner than the schema.org
+JSON-LD description — JSON-LD was only Cafe Valley's overview and lost Lever's headings.
+
+Sections: headings are `<h1-6>`, any short all-bold block (however nested — Workday), or a short `label:` line right
+before a list. Recognised headings get fixed labels from rules (minimum/required/need to see → basic;
+preferred/nice to have/stand out/thrive → preferred; what you'll (be) do(ing)/duties → responsibilities; who you
+are/what we value → values; benefits/you'll enjoy; technologies we use → skills). Only unrecognised headings and
+prose-only sections go to the fast model (temperature 0). List fields are filled with section items verbatim.
+Folder ids come from the URL (gh_jid, jobId, opportunityId, Workday JR…, /jobs/N, UUIDs).
+
 ## Pipeline
 
 1. Navigate in a throwaway Chrome session (public postings don't need the signed-in profile), with backoff and the
