@@ -111,20 +111,35 @@ def plain_chrome(url: str, settings: Settings | None = None) -> Iterator[subproc
     """
     s = settings or get_settings()
     clear_stale_lock(s.chrome_profile_dir)
+    log_path = s.state_dir / "logs" / "plain-chrome.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = open(log_path, "w")
     proc = subprocess.Popen(
-        ["google-chrome", f"--user-data-dir={s.chrome_profile_dir}", "--no-first-run",
+        # --no-sandbox: Chrome's sandbox needs user namespaces, which Docker doesn't allow by default
+        # (the automated browser gets the same flag from Playwright). Nothing else is changed.
+        ["google-chrome", "--no-sandbox", f"--user-data-dir={s.chrome_profile_dir}", "--no-first-run",
          "--no-default-browser-check", "--window-position=0,0", "--window-size=1920,1080", url],
         env={**os.environ, "DISPLAY": s.display},
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=log_file, stderr=subprocess.STDOUT,
     )
     try:
+        # Fail loudly if Chrome dies on start instead of leaving the user an empty noVNC screen.
+        try:
+            code = proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            code = None
+        if code is not None:
+            tail = log_path.read_text(errors="replace").strip().splitlines()[-3:]
+            raise RuntimeError(f"Chrome exited on start (code {code}): {' | '.join(tail)}")
         yield proc
     finally:
-        proc.send_signal(signal.SIGTERM)
-        try:
-            proc.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        if proc.poll() is None:
+            proc.send_signal(signal.SIGTERM)
+            try:
+                proc.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        log_file.close()
 
 
 def screenshot(page: Page, path: str, attempts: int = 3) -> None:
