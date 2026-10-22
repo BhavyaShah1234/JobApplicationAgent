@@ -136,71 +136,85 @@ def route_cmd(trigger: str = typer.Argument(..., help="Job URL(s), company names
         console.print(f"[yellow]warning:[/] {w}", highlight=False)
 
 
-@app.command("scrape")
-def scrape_cmd(url: str) -> None:
-    """Scrape one job posting into outputs/<company>/<job-id>/jd.json and jd.md."""
-    from jobagent.tools.browser import persistent_context
-    from jobagent.tools.hitl import open_hitl
-    from jobagent.tools.scrape import scrape
+def _scrape_table(items, title: str) -> tuple[Table, bool]:
+    table = Table(title=title)
+    for col in ("portal", "title / company", "locs", "pay", "resp", "basic", "pref", "skills", "complete", "notes", "time"):
+        table.add_column(col)
+    failed = False
+    for it in items:
+        if it.error:
+            failed = True
+            table.add_row("?", f"[red]{it.error[:70]}[/]", *[""] * 8, f"{it.seconds:.0f}s")
+            continue
+        jd = it.result.jd if it.result else it.cached
+        missing = jd.missing_core()
+        failed |= bool(missing)
+        pay = "yes" if jd.pay_range and (jd.pay_range.min or jd.pay_range.raw) else "—"
+        notes = "cached" if it.cached else ("reused" if it.result.used_memory else "learned")
+        table.add_row(jd.portal, f"{jd.title[:38]} / {jd.company[:18]}", str(len(jd.locations)), pay,
+                      str(len(jd.responsibilities)), str(len(jd.basic_qualifications)),
+                      str(len(jd.preferred_qualifications)), str(len(jd.technical_skills)),
+                      "[green]yes[/]" if not missing else f"[red]{', '.join(missing)}[/]", notes, f"{it.seconds:.0f}s")
+    return table, failed
 
+
+def _read_urls(urls: list[str], file: str | None) -> list[str]:
+    from pathlib import Path
+
+    out = list(urls)
+    if file:
+        out += [l.split("#")[0].strip() for l in Path(file).read_text().splitlines() if l.split("#")[0].strip()]
+    return out
+
+
+@app.command("scrape")
+def scrape_cmd(
+    urls: list[str] = typer.Argument(None, help="One or more posting URLs."),
+    file: str = typer.Option(None, "--file", "-f", help="A file with one URL per line."),
+    workers: int = typer.Option(5, help="Postings read in parallel."),
+    refresh: bool = typer.Option(False, help="Re-read postings already in the jobs table."),
+) -> None:
+    """Read job postings (in parallel) into outputs/<company>/<job-id>/jd.json and jd.md."""
+    import time
+
+    from jobagent.tools.hitl import open_hitl
+    from jobagent.tools.scrape import scrape_many
+
+    targets = _read_urls(urls or [], file)
+    if not targets:
+        console.print("[red]give at least one URL or --file[/]")
+        raise typer.Exit(1)
     log = lambda m: console.print(m, highlight=False)  # noqa: E731
-    with persistent_context() as ctx:
-        r = scrape(ctx.pages[0], url, open_hitl(log), log)
-    jd = r.jd
-    console.print(f"[bold]{jd.title}[/] — {jd.company} | {', '.join(jd.locations) or '—'} | "
-                  f"pay {jd.pay_range.raw if jd.pay_range and jd.pay_range.raw else '—'}", highlight=False)
-    console.print(f"responsibilities {len(jd.responsibilities)}, basic quals {len(jd.basic_qualifications)}, "
-                  f"preferred {len(jd.preferred_qualifications)}, skills {len(jd.technical_skills)}", highlight=False)
+    t0 = time.monotonic()
+    items = scrape_many(targets, open_hitl(log), workers=workers, refresh=refresh, log=log)
+    table, failed = _scrape_table(items, f"{len(items)} posting(s) in {time.monotonic() - t0:.0f}s ({workers} workers)")
+    console.print(table)
+    if failed:
+        raise typer.Exit(1)
 
 
 @step_app.command("scrape-check")
 def step_scrape_check(
     urls_file: str = typer.Option("/app/tests/e2e/scrape_urls.txt", help="One posting URL per line."),
+    workers: int = typer.Option(5),
 ) -> None:
-    """Step 7 e2e: scrape each posting twice; JDs complete; the second pass reuses the portal notes."""
-    from pathlib import Path
+    """Step 7 e2e: read every posting in parallel twice; JDs complete; the 2nd pass reuses the portal notes."""
+    import time
 
-    from jobagent.tools.browser import persistent_context
     from jobagent.tools.hitl import open_hitl
-    from jobagent.tools.scrape import scrape
+    from jobagent.tools.scrape import scrape_many
 
-    urls = [l.split("#")[0].strip() for l in Path(urls_file).read_text().splitlines() if l.split("#")[0].strip()]
-    log = lambda m: None  # noqa: E731
+    urls = _read_urls([], urls_file)
+    quiet = lambda m: None  # noqa: E731
     failed = False
-    table = Table(title="Scrape check")
-    for col in ("portal", "title / company", "locs", "pay", "resp", "basic", "pref", "skills", "complete", "2nd pass"):
-        table.add_column(col)
-    from playwright.sync_api import Error as PlaywrightError
-
-    def twice(url):
-        # A fresh browser per posting (one bad page can't take the rest down), retried once if it dies.
-        for attempt in (1, 2):
-            try:
-                with persistent_context() as ctx:
-                    page = ctx.pages[0]
-                    return scrape(page, url, open_hitl(log), log), scrape(page, url, open_hitl(log), log)
-            except PlaywrightError as e:
-                if attempt == 2 or "closed" not in str(e):
-                    raise
-                console.print(f"[yellow]browser closed while reading {url[:60]}; retrying once[/]", highlight=False)
-
-    if True:
-        for url in urls:
-            try:
-                first, second = twice(url)
-                jd, missing = first.jd, first.jd.missing_core()
-                stable = second.used_memory and second.jd.title == jd.title
-                failed |= bool(missing) or not stable
-                table.add_row(first.portal, f"{jd.title[:40]} / {jd.company[:20]}", str(len(jd.locations)),
-                              "yes" if jd.pay_range and (jd.pay_range.min or jd.pay_range.raw) else "—",
-                              str(len(jd.responsibilities)), str(len(jd.basic_qualifications)),
-                              str(len(jd.preferred_qualifications)), str(len(jd.technical_skills)),
-                              "[green]yes[/]" if not missing else f"[red]{', '.join(missing)}[/]",
-                              "[green]notes reused[/]" if stable else "[red]no[/]")
-            except Exception as e:
-                failed = True
-                table.add_row("?", f"[red]{type(e).__name__}: {str(e)[:60]}[/]", *[""] * 7, url[:30])
-    console.print(table)
+    for n in (1, 2):
+        t0 = time.monotonic()
+        items = scrape_many(urls, open_hitl(quiet), workers=workers, refresh=True, log=quiet)
+        table, bad = _scrape_table(items, f"Pass {n}: {len(urls)} postings in {time.monotonic() - t0:.0f}s ({workers} workers)")
+        if n == 2:
+            bad |= any(it.result and not it.result.used_memory for it in items)
+        failed |= bad
+        console.print(table)
     if failed:
         raise typer.Exit(1)
 

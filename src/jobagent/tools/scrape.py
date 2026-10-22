@@ -230,10 +230,17 @@ def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
         text, selector, via_vision = _vision_text(page), "vision", True
         memory.note("page text too thin; needed the vision model")
     source = (_jsonld_text(posting) + "\n\n" if posting else "") + f"[page text]\n{text}"
-    jd = llm.structured(JobDescription, "planner").invoke([
-        SystemMessage(EXTRACT_PROMPT),
-        HumanMessage(f"Posting URL: {url}\n\n{source[:MAX_LLM_CHARS]}"),
-    ])
+    messages = [SystemMessage(EXTRACT_PROMPT), HumanMessage(f"Posting URL: {url}\n\n{source[:MAX_LLM_CHARS]}")]
+    # The fast model (~8x quicker, same quality in the benchmark) does the extraction; the large one is the
+    # fallback when it errors or misses title/company/locations.
+    try:
+        jd = llm.structured(JobDescription, "fast").invoke(messages)
+    except Exception as e:
+        log(f"scrape: fast model failed ({type(e).__name__}); using the planner model")
+        jd = None
+    if jd is None or not (jd.title and jd.company and jd.locations):
+        jd = llm.structured(JobDescription, "planner").invoke(messages)
+        memory.note("fast model missed core fields; planner model used")
     jd.source_url, jd.portal = url, portal
     jd.apply_url = jd.apply_url or (posting or {}).get("url") or url
     # The page's own bullets (under recognised headings) replace the model's lists: verbatim and complete.
@@ -255,3 +262,55 @@ def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
     job_id, out = save(jd, url)
     log(f"scrape: {jd.title} @ {jd.company} → {out} ({'complete' if not missing else 'missing ' + ', '.join(missing)})")
     return ScrapeResult(jd, job_id, out, portal, used_memory, selector, len(text), via_vision)
+
+
+def already_scraped(url: str) -> JobDescription | None:
+    row = db.connect().execute("SELECT jd_json FROM jobs WHERE url = ? AND jd_json IS NOT NULL", (url,)).fetchone()
+    return JobDescription.model_validate_json(row[0]) if row else None
+
+
+@dataclass
+class BatchItem:
+    url: str
+    result: ScrapeResult | None = None
+    cached: JobDescription | None = None
+    error: str | None = None
+    seconds: float = 0.0
+
+
+def scrape_many(urls: list[str], hitl: Hitl, workers: int = 5, refresh: bool = False, log=print) -> list[BatchItem]:
+    """Scrape postings in parallel. Public postings don't need the agent's signed-in profile, so each worker
+    thread runs its own Chrome with a throwaway session (Playwright's sync API is per-thread). Postings already
+    in the jobs table are skipped unless `refresh`."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from playwright.sync_api import sync_playwright
+
+    from jobagent.config import get_settings
+
+    s = get_settings()
+
+    def one(url: str) -> BatchItem:
+        # Browser opened and closed in this thread: Playwright's sync objects are bound to their thread.
+        item, t0 = BatchItem(url), time.monotonic()
+        try:
+            if not refresh and (cached := already_scraped(url)):
+                item.cached = cached
+            else:
+                with sync_playwright() as pw:
+                    browser = pw.chromium.launch(channel=s.chrome_channel or None, headless=s.headless,
+                                                 args=["--window-size=1600,1000"])
+                    try:
+                        page = browser.new_context(viewport={"width": 1600, "height": 1000}).new_page()
+                        item.result = scrape(page, url, hitl, log)
+                    finally:
+                        browser.close()
+        except Exception as e:
+            item.error = f"{type(e).__name__}: {str(e)[:200]}"
+            log(f"scrape: {url} failed: {item.error}")
+        item.seconds = time.monotonic() - t0
+        return item
+
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(urls)))) as pool:
+        return list(pool.map(one, urls))

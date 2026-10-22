@@ -2,6 +2,7 @@
 
 import json
 import re
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -31,39 +32,55 @@ def portal_key(url: str) -> str:
     return db.registrable_domain(host)
 
 
+# Parallel scrapes can hit the same portal: updates re-read the file and merge under this lock.
+_LOCK = threading.Lock()
+
+
 class PortalMemory:
     def __init__(self, key: str, root: Path | None = None):
         self.key = key
         self.root = root or get_settings().state_dir / "portals"
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / f"{re.sub(r'[^a-z0-9.-]', '_', key)}.json"
-        self.data: dict = json.loads(self.path.read_text()) if self.path.exists() else {
-            "portal": key, "domains": [], "content_selector": None, "has_jsonld": None,
-            "settle_ms": 2500, "visits": 0, "successes": 0, "notes": [],
-        }
+        self.data: dict = self._load()
+        self._pending_notes: list[str] = []
+
+    def _load(self) -> dict:
+        if self.path.exists():
+            return json.loads(self.path.read_text())
+        return {"portal": self.key, "domains": [], "content_selector": None, "has_jsonld": None,
+                "settle_ms": 2500, "visits": 0, "successes": 0, "notes": []}
 
     @property
     def known(self) -> bool:
         return self.data["successes"] > 0
 
     def note(self, text: str) -> None:
-        stamp = datetime.now(UTC).strftime("%Y-%m-%d")
-        if not any(n.endswith(text) for n in self.data["notes"]):
-            self.data["notes"].append(f"{stamp}: {text}")
-            self.data["notes"] = self.data["notes"][-30:]
+        """Queued until record_visit(), which merges it into the latest file contents."""
+        if not any(n.endswith(text) for n in self.data["notes"] + self._pending_notes):
+            self._pending_notes.append(f"{datetime.now(UTC):%Y-%m-%d}: {text}")
 
     def record_visit(self, url: str, ok: bool, **facts) -> None:
         host = urlparse(url).netloc.lower()
-        if host and host not in self.data["domains"]:
-            self.data["domains"].append(host)
-        self.data["visits"] += 1
-        self.data["successes"] += int(ok)
-        self.data.update({k: v for k, v in facts.items() if v is not None})
-        self.data["last_visit"] = datetime.now(UTC).isoformat(timespec="seconds")
-        self.save()
+        with _LOCK:
+            data = self._load()  # another worker may have updated it meanwhile
+            if host and host not in data["domains"]:
+                data["domains"].append(host)
+            data["visits"] += 1
+            data["successes"] += int(ok)
+            data.update({k: v for k, v in facts.items() if v is not None})
+            for n in self._pending_notes:
+                if not any(existing.endswith(n.split(": ", 1)[1]) for existing in data["notes"]):
+                    data["notes"].append(n)
+            data["notes"] = data["notes"][-30:]
+            data["last_visit"] = datetime.now(UTC).isoformat(timespec="seconds")
+            self.data, self._pending_notes = data, []
+            self.save()
 
     def save(self) -> None:
-        self.path.write_text(json.dumps(self.data, indent=2))
+        tmp = self.path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(self.data, indent=2))
+        tmp.replace(self.path)
         lines = [f"# Portal: {self.key}", "", f"- domains: {', '.join(self.data['domains'])}",
                  f"- job description selector: `{self.data['content_selector']}`",
                  f"- schema.org JobPosting JSON-LD: {self.data['has_jsonld']}",

@@ -76,7 +76,7 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
 
         path = get_settings().state_dir / "jobs.sqlite"
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=30)  # parallel workers wait for each other's writes
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     return conn
