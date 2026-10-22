@@ -14,6 +14,8 @@ from pathlib import Path
 from urllib.parse import quote, urljoin, urlparse
 
 import httpx
+from typing import Annotated
+
 from pydantic import BaseModel, Field
 
 from jobagent import db
@@ -43,18 +45,21 @@ class NewsItem(BaseModel):
     sources: list[int]
 
 
-class ProfileDraft(BaseModel):
-    """What the model fills in: short sentences, each ending with [n] source ids (flat lists are fast and
-    reliable; a nested claims/sources schema made the fast model time out)."""
+Item = Annotated[str, Field(max_length=220)]
 
-    name: str = Field(description="The company's brand name")
-    what_they_do: list[str] = Field(default_factory=list, description="1-4 sentences ending with [n] source ids")
-    mission: list[str] = Field(default_factory=list, description="Mission / purpose as they state it, with [n]")
-    products: list[str] = Field(default_factory=list, description="Main products, services, brands, with [n]")
-    values: list[str] = Field(default_factory=list, description="Stated values / culture, with [n]")
-    facts: list[str] = Field(default_factory=list, description="HQ, size, founding year, industry, with [n]")
-    recent_news: list[str] = Field(default_factory=list,
-                                   description="Up to 5: 'YYYY-MM-DD title — one sentence [n]', newest first")
+
+class ProfileDraft(BaseModel):
+    """What the model fills in: short sentences, each ending with [n] source ids. Sent as an enforced JSON schema
+    (server-side maxItems / maxLength): with free-form tool calls the fast model looped until the token cap."""
+
+    name: str = Field(max_length=120, description="The company's brand name")
+    what_they_do: list[Item] = Field(default_factory=list, max_length=4, description="Sentences ending with [n] ids")
+    mission: list[Item] = Field(default_factory=list, max_length=4, description="Mission / purpose as they state it, with [n]")
+    products: list[Item] = Field(default_factory=list, max_length=6, description="Main products, services, brands, with [n]")
+    values: list[Item] = Field(default_factory=list, max_length=6, description="Stated values / culture, with [n]")
+    facts: list[Item] = Field(default_factory=list, max_length=6, description="HQ, size, founding year, industry, with [n]")
+    recent_news: list[Item] = Field(default_factory=list, max_length=5,
+                                    description="'YYYY-MM-DD title — one sentence [n]', newest first")
 
 
 class StoredProfile(BaseModel):
@@ -260,12 +265,12 @@ def research(company: str, hint_text: str = "", refresh: bool = False, log=print
     messages = [SystemMessage(RESEARCH_PROMPT), HumanMessage(f"Company: {company}\n\nSources:\n{text}")]
     draft = None
     try:
-        draft = llm.structured(ProfileDraft, "fast", timeout=90, max_tokens=4000).invoke(messages)
+        draft = llm.structured(ProfileDraft, "fast", method="json_schema", timeout=90, max_tokens=3000).invoke(messages)
     except Exception as e:
         log(f"research: fast model failed ({type(e).__name__})")
     if draft is None:  # an error, or an answer cut off at the token cap (no parsable tool call)
         log("research: using the planner model")
-        draft = llm.structured(ProfileDraft, "planner", timeout=180, max_tokens=5000).invoke(messages)
+        draft = llm.structured(ProfileDraft, "planner", method="json_schema", timeout=180, max_tokens=3000).invoke(messages)
     if draft is None:
         raise RuntimeError(f"no profile could be written for {company!r}")
     ids = set(numbered)
