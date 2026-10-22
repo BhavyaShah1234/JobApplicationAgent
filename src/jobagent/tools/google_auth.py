@@ -25,6 +25,10 @@ from jobagent.tools.hitl import Hitl
 from jobagent.tools.vault import Vault
 
 GMAIL_URL = "https://mail.google.com/mail/u/0/"
+# Signed out, GMAIL_URL redirects to Google's Gmail marketing page, not to a sign-in form, so sign-in
+# starts here instead. hl=en keeps page text English for the text-based checks below.
+SIGNIN_URL = ("https://accounts.google.com/ServiceLogin?service=mail&hl=en"
+              "&continue=https%3A%2F%2Fmail.google.com%2Fmail%2Fu%2F0%2F")
 BLOCKED = re.compile(
     r"(?i)this browser or app may not be secure|could(?:n.t| not) sign you in|could(?:n.t| not) create your google account"
 )
@@ -95,6 +99,12 @@ def _step(page: Page, email: str, password: str, totp_secret: str | None, log) -
         type_human(totp_box.first, totp(totp_secret))
         _click_next(page)
         return "entered authenticator code"
+    # A product/landing page (e.g. the Gmail marketing page) with a "Sign in" link: follow it.
+    if urlparse(page.url).netloc != "accounts.google.com":
+        sign_in = page.get_by_role("link", name=re.compile(r"^\s*sign in\s*$", re.I))
+        if sign_in.count() and sign_in.first.is_visible():
+            sign_in.first.click()
+            return "clicked Sign in on a landing page"
     if totp_secret:
         # 2SV defaulted to another method (phone prompt, SMS): switch to the authenticator app.
         another = page.get_by_role("button", name=re.compile(r"try another way", re.I))
@@ -120,6 +130,8 @@ def ensure_session(page: Page, vault: Vault, hitl: Hitl, log=print, max_steps: i
     pause(2, 3)
     if signed_in(page):
         return "already signed in"
+    page.goto(SIGNIN_URL, wait_until="domcontentloaded")
+    pause(1.5, 2.5)
     if not password:
         hitl.ask(f"The agent needs the password of {email} to sign in. Store it with: "
                  "jobagent vault set gmail password — then answer 'done'.")

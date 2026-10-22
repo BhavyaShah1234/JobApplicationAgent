@@ -21,6 +21,17 @@ def test_totp_accepts_google_style_spaced_lowercase_keys():
     assert totp(spaced, at=59) == totp(RFC_SECRET, at=59) == "287082"
 
 
+def test_signin_url_targets_gmail_in_english():
+    from urllib.parse import parse_qs, urlparse
+
+    from jobagent.tools.google_auth import SIGNIN_URL
+
+    url = urlparse(SIGNIN_URL)
+    query = parse_qs(url.query)
+    assert url.netloc == "accounts.google.com"
+    assert query["hl"] == ["en"] and query["continue"] == ["https://mail.google.com/mail/u/0/"]
+
+
 @pytest.mark.parametrize(
     "text,blocked",
     [("This browser or app may not be secure", True), ("Couldn’t sign you in", True),
