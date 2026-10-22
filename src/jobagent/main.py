@@ -136,6 +136,63 @@ def route_cmd(trigger: str = typer.Argument(..., help="Job URL(s), company names
         console.print(f"[yellow]warning:[/] {w}", highlight=False)
 
 
+@app.command("scrape")
+def scrape_cmd(url: str) -> None:
+    """Scrape one job posting into outputs/<company>/<job-id>/jd.json and jd.md."""
+    from jobagent.tools.browser import persistent_context
+    from jobagent.tools.hitl import open_hitl
+    from jobagent.tools.scrape import scrape
+
+    log = lambda m: console.print(m, highlight=False)  # noqa: E731
+    with persistent_context() as ctx:
+        r = scrape(ctx.pages[0], url, open_hitl(log), log)
+    jd = r.jd
+    console.print(f"[bold]{jd.title}[/] — {jd.company} | {', '.join(jd.locations) or '—'} | "
+                  f"pay {jd.pay_range.raw if jd.pay_range and jd.pay_range.raw else '—'}", highlight=False)
+    console.print(f"responsibilities {len(jd.responsibilities)}, basic quals {len(jd.basic_qualifications)}, "
+                  f"preferred {len(jd.preferred_qualifications)}, skills {len(jd.technical_skills)}", highlight=False)
+
+
+@step_app.command("scrape-check")
+def step_scrape_check(
+    urls_file: str = typer.Option("/app/tests/e2e/scrape_urls.txt", help="One posting URL per line."),
+) -> None:
+    """Step 7 e2e: scrape each posting twice; JDs complete; the second pass reuses the portal notes."""
+    from pathlib import Path
+
+    from jobagent.tools.browser import persistent_context
+    from jobagent.tools.hitl import open_hitl
+    from jobagent.tools.scrape import scrape
+
+    urls = [l.split("#")[0].strip() for l in Path(urls_file).read_text().splitlines() if l.split("#")[0].strip()]
+    log = lambda m: None  # noqa: E731
+    failed = False
+    table = Table(title="Scrape check")
+    for col in ("portal", "title / company", "locs", "pay", "resp", "basic", "pref", "skills", "complete", "2nd pass"):
+        table.add_column(col)
+    with persistent_context() as ctx:
+        page = ctx.pages[0]
+        for url in urls:
+            try:
+                first = scrape(page, url, open_hitl(log), log)
+                second = scrape(page, url, open_hitl(log), log)
+                jd, missing = first.jd, first.jd.missing_core()
+                stable = second.used_memory and second.jd.title == jd.title
+                failed |= bool(missing) or not stable
+                table.add_row(first.portal, f"{jd.title[:40]} / {jd.company[:20]}", str(len(jd.locations)),
+                              "yes" if jd.pay_range and (jd.pay_range.min or jd.pay_range.raw) else "—",
+                              str(len(jd.responsibilities)), str(len(jd.basic_qualifications)),
+                              str(len(jd.preferred_qualifications)), str(len(jd.technical_skills)),
+                              "[green]yes[/]" if not missing else f"[red]{', '.join(missing)}[/]",
+                              "[green]notes reused[/]" if stable else "[red]no[/]")
+            except Exception as e:
+                failed = True
+                table.add_row("?", f"[red]{type(e).__name__}: {str(e)[:60]}[/]", *[""] * 7, url[:30])
+    console.print(table)
+    if failed:
+        raise typer.Exit(1)
+
+
 @app.command("bootstrap")
 def bootstrap() -> None:
     """Global default action: check/repair the harness and accounts (resumes after a crash)."""

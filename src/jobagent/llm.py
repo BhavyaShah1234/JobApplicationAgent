@@ -38,11 +38,15 @@ def chat(role: Role = "planner", settings: Settings | None = None) -> Runnable:
     return _primary(role, s).with_fallbacks([_fallback(role, s)])
 
 
-def structured(schema: type[BaseModel], role: Role = "planner", settings: Settings | None = None) -> Runnable:
-    """Chat model that returns `schema` instances, with fallback (structured output is bound per model)."""
+def structured(schema: type[BaseModel], role: Role = "planner", settings: Settings | None = None,
+               method: str = "function_calling") -> Runnable:
+    """Chat model that returns `schema` instances, with fallback (structured output is bound per model).
+
+    function_calling is the default: on Voyager all three methods work, and it was the fastest (~4x).
+    """
     s = settings or get_settings()
-    return _primary(role, s).with_structured_output(schema).with_fallbacks(
-        [_fallback(role, s).with_structured_output(schema)]
+    return _primary(role, s).with_structured_output(schema, method=method).with_fallbacks(
+        [_fallback(role, s).with_structured_output(schema, method=method)]
     )
 
 

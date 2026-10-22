@@ -12,6 +12,19 @@ CREATE TABLE IF NOT EXISTS verification_log (
     purpose     TEXT NOT NULL,      -- otp | link | password_reset | self_test | stale_sweep
     used_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+CREATE TABLE IF NOT EXISTS jobs (
+    id           INTEGER PRIMARY KEY,
+    url          TEXT NOT NULL UNIQUE,
+    job_id       TEXT,
+    company      TEXT,
+    title        TEXT,
+    location     TEXT,
+    portal       TEXT,
+    jd_json      TEXT,
+    status       TEXT NOT NULL DEFAULT 'queued',   -- queued | scraped | applied | failed | skipped | needs_review
+    discovered_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT
