@@ -12,6 +12,9 @@ mkdir -p "$LOG_DIR"
 # A container restart leaves stale X locks and Chrome singleton files behind.
 rm -f "/tmp/.X${DISPLAY#:}-lock" "/tmp/.X11-unix/X${DISPLAY#:}"
 rm -f /app/state/chrome-profile/Singleton{Lock,Socket,Cookie}
+# No agent run survives a restart, so pending HITL requests are stale. (PID-based pruning alone
+# can't tell: PIDs restart from 1 in every new container and get reused.)
+rm -f /app/state/hitl/pending/*.json /app/state/hitl/answers/*.json
 
 Xvfb "$DISPLAY" -screen 0 "$SCREEN_GEOMETRY" -nolisten tcp >"$LOG_DIR/xvfb.log" 2>&1 &
 for _ in $(seq 50); do xdpyinfo -display "$DISPLAY" >/dev/null 2>&1 && break; sleep 0.1; done
