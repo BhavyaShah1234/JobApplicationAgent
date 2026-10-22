@@ -160,6 +160,46 @@ def vault_set(
     console.print(f"stored {name}.{field}")
 
 
+@vault_app.command("import-file")
+def vault_import_file(
+    name: str,
+    field: str,
+    path: str,
+    shred: bool = typer.Option(True, help="Overwrite and delete the plaintext file afterwards."),
+) -> None:
+    """Encrypt a value from a plaintext file into the vault (never printed), then shred the file.
+
+    E.g. `jobagent vault import-file gmail password /app/state/password.txt`.
+    """
+    import os
+    from pathlib import Path
+
+    from jobagent.tools.vault import open_vault
+
+    src = Path(path)
+    value = src.read_text().strip()
+    if not value:
+        console.print("[red]file is empty[/]")
+        raise typer.Exit(1)
+    vault = open_vault()
+    if src.resolve() == vault.path.resolve():
+        # The plaintext was written over vault.enc itself: start a fresh vault (restored from backup if any).
+        os.replace(src, src.with_name(src.name + ".plaintext"))
+        src = src.with_name(src.name + ".plaintext")
+        if vault.backup_path.exists():
+            vault.restore_backup()
+        vault = open_vault()
+    vault.set(name, **{field: value})
+    if shred:
+        size = src.stat().st_size
+        with open(src, "r+b") as f:
+            f.write(os.urandom(size))
+            f.flush()
+            os.fsync(f.fileno())
+        src.unlink()
+    console.print(f"stored {name}.{field} ({len(value)} characters){'; plaintext file shredded' if shred else ''}")
+
+
 @vault_app.command("restore")
 def vault_restore() -> None:
     """Replace an unreadable vault.enc with the backup from the last good save."""
