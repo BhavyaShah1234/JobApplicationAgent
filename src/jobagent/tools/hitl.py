@@ -65,7 +65,7 @@ class Hitl:
     ) -> str:
         """Block until the user answers (or `done_when()` turns true). Returns the answer ("" if auto-resolved)."""
         req = Request(id=uuid.uuid4().hex[:8], prompt=prompt, secret=secret, default=default, vault_target=vault_target)
-        (self.pending / f"{req.id}.json").write_text(json.dumps(asdict(req)))
+        _write_atomic(self.pending / f"{req.id}.json", json.dumps(asdict(req)))
         hint = "jobagent hitl answer " + req.id + ("" if secret else " '<answer>'")
         self.notify(f"[HITL {req.id}] {prompt}" + (f" (default: {default})" if default else "") + f"\n  → answer with: {hint}")
         deadline = None if timeout_s is None else time.monotonic() + timeout_s
@@ -88,7 +88,10 @@ class Hitl:
     def list_pending(self) -> list[Request]:
         reqs = []
         for p in self.pending.glob("*.json"):
-            req = Request(**json.loads(p.read_text()))
+            try:
+                req = Request(**json.loads(p.read_text()))
+            except (json.JSONDecodeError, TypeError, FileNotFoundError):
+                continue  # being written or removed right now; seen on the next poll
             if _alive(req.pid):
                 reqs.append(req)
             else:  # the asking run was killed before it could clean up
@@ -108,8 +111,15 @@ class Hitl:
             name, fld = req.vault_target
             open_vault().set(name, **{fld: value})
             value = SECRET_MARKER
-        (self.answers / f"{req.id}.json").write_text(json.dumps({"value": value}))
+        _write_atomic(self.answers / f"{req.id}.json", json.dumps({"value": value}))
         return req
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """Write via a temp file + rename so a concurrent reader never sees a half-written request/answer."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
 
 
 def open_hitl(notify: Callable[[str], None] = print) -> Hitl:

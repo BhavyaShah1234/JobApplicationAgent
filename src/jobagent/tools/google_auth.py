@@ -69,8 +69,22 @@ def signed_in(page: Page) -> bool:
     return urlparse(page.url).netloc in ("mail.google.com", "myaccount.google.com")
 
 
+SIGNIN_FIELDS = "input[type=email], #identifierId, input[type=password], input[name=totpPin], #totpPin"
+
+
+def _wait_for_form(page: Page, timeout_ms: int = 10_000) -> None:
+    """Google's sign-in pages render their fields after a 'Loading' phase; checking too early
+    makes a normal page look unknown. Wait for a known field (or give up quietly)."""
+    try:
+        page.wait_for_load_state("domcontentloaded")
+        page.locator(SIGNIN_FIELDS).first.wait_for(state="visible", timeout=timeout_ms)
+    except PlaywrightTimeout:
+        pass  # not a form page (chooser, challenge, landing page): the caller inspects it
+
+
 def _step(page: Page, email: str, password: str, totp_secret: str | None, log) -> str:
     """Perform at most one sign-in action on the current page; returns what it did ('' if nothing)."""
+    _wait_for_form(page)
     body = page.locator("body").inner_text(timeout=10_000)
     if BLOCKED.search(body):
         _capture(page, "google-signin-blocked", log)
@@ -81,8 +95,8 @@ def _step(page: Page, email: str, password: str, totp_secret: str | None, log) -
         if chooser.count():
             chooser.first.click()
             return "chose account"
-    if _visible(page, "input[type=email]"):
-        type_human(page.locator("input[type=email]").first, email)
+    if _visible(page, "input[type=email], #identifierId"):
+        type_human(page.locator("input[type=email], #identifierId").first, email)
         _click_next(page)
         return "entered email"
     if _visible(page, "input[type=password]"):
