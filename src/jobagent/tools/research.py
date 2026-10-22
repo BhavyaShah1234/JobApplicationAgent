@@ -53,11 +53,13 @@ class ProfileDraft(BaseModel):
     (server-side maxItems / maxLength): with free-form tool calls the fast model looped until the token cap."""
 
     name: str = Field(max_length=120, description="The company's brand name")
-    what_they_do: list[Item] = Field(default_factory=list, max_length=4, description="Sentences ending with [n] ids")
+    what_they_do: list[Item] = Field(min_length=1, max_length=4,
+                                    description="What the company does / sells / its business, ending with [n] ids")
     mission: list[Item] = Field(default_factory=list, max_length=4, description="Mission / purpose as they state it, with [n]")
-    products: list[Item] = Field(default_factory=list, max_length=6, description="Main products, services, brands, with [n]")
+    products: list[Item] = Field(min_length=1, max_length=6, description="Main products, services, brands, with [n]")
     values: list[Item] = Field(default_factory=list, max_length=6, description="Stated values / culture, with [n]")
-    facts: list[Item] = Field(default_factory=list, max_length=6, description="HQ, size, founding year, industry, with [n]")
+    facts: list[Item] = Field(default_factory=list, max_length=6,
+                             description="Only what fits nowhere above: HQ, size, founding year, locations, with [n]")
     recent_news: list[Item] = Field(default_factory=list, max_length=5,
                                     description="'YYYY-MM-DD title — one sentence [n]', newest first")
 
@@ -208,7 +210,9 @@ RESEARCH_PROMPT = """Write a company profile using ONLY the numbered sources bel
   Springfield [4]" or "Founded in 1950 [1][3]". Anything no source states is left out.
 - At most 6 items per list, each at most 25 words. Keep the company's own wording for mission and values.
   No speculation, no marketing fluff.
-- recent_news: up to 5 notable items (products, results, leadership, layoffs, acquisitions), newest first.
+- Fields: what_they_do = the business itself; mission = their stated mission/purpose; products = products,
+  services or brands; values = stated values/culture; facts = only things that fit nowhere else.
+- recent_news: up to 5 items taken ONLY from sources marked (news), newest first; none if there are none.
 /no_think"""
 
 _CITE = re.compile(r"\[(\d+)\]")
@@ -277,7 +281,8 @@ def research(company: str, hint_text: str = "", refresh: bool = False, log=print
     profile = CompanyProfile(
         name=draft.name or company,
         **{f: parse_cited(getattr(draft, f), ids) for f in ("what_they_do", "mission", "products", "values", "facts")},
-        recent_news=parse_news(draft.recent_news, ids),
+        # news must cite an actual news source, not the company's own pages
+        recent_news=parse_news(draft.recent_news, {i for i in ids if numbered[i]["kind"] == "news"}),
     )
     cited = {i for f in ("what_they_do", "mission", "products", "values", "facts", "recent_news")
              for c in getattr(profile, f) for i in c.sources}
