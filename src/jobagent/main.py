@@ -113,6 +113,32 @@ def step_overleaf_check() -> None:
         raise typer.Exit(1)
 
 
+@step_app.command("github")
+def step_github() -> None:
+    """Step 4b (optional): log in to GitHub with the agent's Google session."""
+    from jobagent.steps.github import setup
+
+    try:
+        user = setup(log=lambda m: console.print(m, highlight=False))
+    except Exception as e:  # optional step: report, don't break the rest of the agent
+        console.print(f"[yellow]GitHub unavailable: {type(e).__name__}: {e}[/]")
+        raise typer.Exit(1)
+    console.print(f"[green]GitHub ready ({user}).[/]")
+
+
+@step_app.command("github-check")
+def step_github_check() -> None:
+    """Step 4b e2e: session still logged in; the resume's GitHub repos (own + contributed) are discoverable."""
+    from jobagent.steps.github import check
+
+    failed = False
+    for name, ok, detail in check(log=lambda m: console.print(m, highlight=False)):
+        failed |= not ok
+        console.print(f"{'[green]PASS[/]' if ok else '[red]FAIL[/]'} {name}: {detail}", highlight=False)
+    if failed:
+        raise typer.Exit(1)
+
+
 def _print_bootstrap(result: dict) -> None:
     for line in result["messages"][-1].content.splitlines()[1:]:
         console.print(("[yellow]" if line.startswith("warning") else "") + line, highlight=False)
@@ -317,7 +343,7 @@ def step_bootstrap_check() -> None:
     except BootstrapCrash:
         os.environ.pop(CRASH_ENV)
         resumed = run(log=quiet)
-        ok = resumed["resumed"] and resumed["ran_now"] == ["browser", "linkedin", "overleaf"] and not resumed["changed"]
+        ok = resumed["resumed"] and resumed["ran_now"] == ["browser", "linkedin", "overleaf", "github"] and not resumed["changed"]
         checks.append(("crash/resume", ok, f"resumed={resumed['resumed']}; re-ran only {resumed['ran_now']}"))
     finally:
         os.environ.pop(CRASH_ENV, None)

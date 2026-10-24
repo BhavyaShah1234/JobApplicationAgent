@@ -24,7 +24,7 @@ def env(tmp_path, monkeypatch):
             return bootstrap._done(name, "ok")
         return node
 
-    for name in ("gmail", "browser", "linkedin", "overleaf"):
+    for name in ("gmail", "browser", "linkedin", "overleaf", "github"):
         monkeypatch.setattr(bootstrap, name, stub(name))
     yield calls
     get_settings.cache_clear()
@@ -48,6 +48,6 @@ def test_crash_resumes_from_the_unfinished_node(env, monkeypatch):
     monkeypatch.delenv(bootstrap.CRASH_ENV)
     env.clear()
     resumed = bootstrap.run(log=lambda _: None)
-    assert resumed["resumed"] and resumed["ran_now"] == ["browser", "linkedin", "overleaf"]
-    assert env == ["browser", "linkedin", "overleaf"]  # harness and gmail were not repeated
+    assert resumed["resumed"] and resumed["ran_now"] == ["browser", "linkedin", "overleaf", "github"]
+    assert env == ["browser", "linkedin", "overleaf", "github"]  # harness and gmail were not repeated
     assert not bootstrap.run(log=lambda _: None)["resumed"]  # finished: next run starts fresh

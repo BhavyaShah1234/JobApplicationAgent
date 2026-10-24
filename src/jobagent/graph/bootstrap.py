@@ -1,8 +1,8 @@
 """Global default action (the SystemMessage): make sure the harness and accounts are ready before a trigger.
 
-A LangGraph graph of idempotent nodes — harness → gmail → browser → linkedin → overleaf. Each node checks
+A LangGraph graph of idempotent nodes — harness → gmail → browser → linkedin → overleaf → github. Each node checks
 first and only acts when something is missing, recording what it changed. Optional accounts (LinkedIn,
-Overleaf, the browser's Google session) only produce warnings. Progress is checkpointed in
+Overleaf, GitHub, the browser's Google session) only produce warnings. Progress is checkpointed in
 state/checkpoints.sqlite: a run that crashes mid-way is resumed from the node that didn't finish.
 """
 
@@ -20,7 +20,7 @@ from langgraph.graph.message import add_messages
 from jobagent import db
 from jobagent.config import get_settings
 
-NODES = ["harness", "gmail", "browser", "linkedin", "overleaf"]
+NODES = ["harness", "gmail", "browser", "linkedin", "overleaf", "github"]
 THREAD_KEY = "bootstrap_thread"
 # Test hook: raise right after this node finished (used by the crash/resume check).
 CRASH_ENV = "JOBAGENT_BOOTSTRAP_CRASH_AFTER"
@@ -125,6 +125,21 @@ def overleaf(_: BootstrapState) -> dict:
         return _done("overleaf", "unavailable", warnings=[f"Overleaf unavailable ({type(e).__name__}: {e})"])
 
 
+def github(_: BootstrapState) -> dict:
+    from jobagent.steps import github as github_step
+    from jobagent.tools import github as gh
+    from jobagent.tools.browser import persistent_context
+
+    with persistent_context() as ctx:
+        if user := gh.current_user(ctx.pages[0]):
+            return _done("github", f"ok (logged in as {user})")
+    try:
+        user = github_step.setup(log=_log)
+        return _done("github", f"logged in as {user}", [f"logged in to GitHub as {user}"])
+    except Exception as e:  # optional: never block the agent
+        return _done("github", "unavailable", warnings=[f"GitHub unavailable ({type(e).__name__}: {e})"])
+
+
 def summarize(state: BootstrapState) -> dict:
     lines = [f"{n}: {state['status'].get(n, '?')}" for n in NODES]
     if state["warnings"]:
@@ -135,7 +150,7 @@ def summarize(state: BootstrapState) -> dict:
 def build(checkpointer) -> object:
     g = StateGraph(BootstrapState)
     for name, fn in (("harness", harness), ("gmail", gmail), ("browser", browser),
-                     ("linkedin", linkedin), ("overleaf", overleaf), ("summarize", summarize)):
+                     ("linkedin", linkedin), ("overleaf", overleaf), ("github", github), ("summarize", summarize)):
         g.add_node(name, fn)
     g.add_edge(START, "harness")
     for a, b in zip(NODES, NODES[1:] + ["summarize"]):
