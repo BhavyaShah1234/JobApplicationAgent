@@ -329,6 +329,7 @@ NON_SKILL = re.compile(r"(?i)\b(lift|lbs|stationary|sitting|bend|climb|driver.?s
 # Qualifications that are not bullet material: education, authorisation, pay, EEO boilerplate
 NOT_BULLET = re.compile(r"(?i)\b(degree|bachelor|master'?s|ph\.?d|b\.?s\.?|m\.?s\.?|pursuing|education level|"
                         r"graduat\w*|gpa|authori[sz]\w*|sponsor\w*|citizen\w*|clearance|relocat\w*|willing\w*|travel|"
+                        r"background in|foundations? in|"
                         r"salary|base pay|compensation|usd|annually|equal opportunity|discriminat\w*|accommodation)\b")
 # "3+ years of professional ... experience in X" -> "X": the skill stays, the years go
 _YEARS = re.compile(r"(?i)^\W*(at least\s+)?\d+\+?\s*(or more\s+)?years?\s+of\s+((non-internship|professional|"
@@ -525,6 +526,25 @@ def proper_nouns(text: str) -> set[str]:
 MAX_NO_RESULT = 1  # bullets allowed without a stated result, in the whole resume
 
 
+def _content_words(t: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]{4,}", t.lower()))
+
+
+def moved_from(r: Resume, role: int, text: str) -> int | None:
+    """The other role whose template bullet this text is (> 50% word overlap, better than any of its own role's),
+    i.e. something the candidate did at another employer placed under the wrong one."""
+    w = _content_words(text)
+
+    def best(i: int) -> float:
+        return max([len(w & (o := _content_words(to_plain(b)))) / max(1, min(len(w), len(o)))
+                    for b in r.roles[i].bullets] or [0.0])
+    scores = {i: best(i) for i in range(len(r.roles))}
+    other = max((i for i in scores if i != role), key=scores.get, default=None)
+    if other is not None and scores[other] > 0.5 and scores[other] > scores.get(role, 0):
+        return other
+    return None
+
+
 def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
     """Bullets the user would reject: academic/unpaid wording, no technology named, no result stated."""
     tech = {t.lower() for t in jd.technical_skills}
@@ -539,6 +559,9 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
             where = f"role_{e.role} bullet {k + 1} (\"{b.text}\")"
             if DASH.search(b.text):
                 out.append(f"{where} uses a dash as punctuation; rewrite with a comma, semicolon or colon")
+            if e.role < len(r.roles) and (other := moved_from(r, e.role, b.text)) is not None:
+                out.append(f"{where} is the candidate's bullet from {r.roles[other].company}, not from "
+                           f"{r.roles[e.role].company}: replace it with a new bullet for this role")
             if m := ACADEMIC.search(b.text):
                 out.append(f"{where} uses academic/unpaid wording \"{m.group(0)}\"")
             low = b.text.lower()
@@ -550,3 +573,51 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
     if DASH.search(f.summary):
         out.append("the summary uses a dash as punctuation; rewrite with a comma, semicolon or colon")
     return out + (no_result if len(no_result) > MAX_NO_RESULT else [])
+
+
+# --- repair: rewrite only the flagged bullets -------------------------------------------------------------------
+
+class BulletFix(BaseModel):
+    role: int = Field(description="role_N index of the bullet")
+    bullet: int = Field(description="1-based position of the bullet in that role")
+    text: str = Field(max_length=300, description="The rewritten bullet, plain text, <= 130 characters")
+    estimated: list[str] = Field(default_factory=list, max_length=3)
+
+
+class Repair(BaseModel):
+    fixes: list[BulletFix] = Field(min_length=1, max_length=8)
+
+
+REPAIR_PROMPT = """You fix specific bullets of a tailored resume. Rewrite ONLY the bullets listed under PROBLEMS, each
+in place, so that every problem is solved; leave all other bullets alone. Each rewritten bullet must keep covering
+the JD items it covered (shown), name concrete technologies, state a result (a believable estimated metric is fine;
+list it in `estimated`), stay under ~120 characters, not repeat any other bullet, use no academic wording and no
+dashes as punctuation, and describe work done at THAT role's employer (never another employer's work). A change by
+a percentage takes "by"."""
+
+
+def build_repair_prompt(r: Resume, jd: JobDescription, f: Filled, issues: list[str]) -> list:
+    items = jd_items(jd)
+    lines = []
+    for e in f.roles:
+        role = r.roles[e.role]
+        lines.append(f"role_{e.role}: {role.title} at {role.company} ({role.dates})")
+        for k, b in enumerate(e.bullets, 1):
+            covers = "; ".join(items[d][1][:80] for d in b.duties if 0 <= d < len(items))
+            lines.append(f"  {k}. {b.text}" + (f"   [covers: {covers}]" if covers and b.original is None else ""))
+    return [SystemMessage(REPAIR_PROMPT),
+            HumanMessage("RESUME BULLETS:\n" + "\n".join(lines) + "\n\nPROBLEMS:\n" + "\n".join(issues))]
+
+
+def apply_repair(f: Filled, repair: Repair) -> int:
+    """Replace the fixed bullets in place (a rewritten original becomes a new bullet). Returns how many applied."""
+    by_role = {e.role: e for e in f.roles}
+    done = 0
+    for fx in repair.fixes:
+        e = by_role.get(fx.role)
+        if e is None or not 1 <= fx.bullet <= len(e.bullets):
+            continue
+        b = e.bullets[fx.bullet - 1]
+        b.text, b.estimated, b.original = fx.text, list(fx.estimated), None
+        done += 1
+    return done

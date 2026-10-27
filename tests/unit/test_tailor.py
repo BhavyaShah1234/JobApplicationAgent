@@ -196,3 +196,35 @@ def test_project_paragraph_uses_template_macro_when_defined():
     entry = projects.ProjectEntry(repo="me/Proj", title="Proj", stack=["Python"], paragraph="Built X.")
     cards = {"me/proj": {"url": "https://github.com/me/Proj", "full_name": "me/Proj"}}
     assert r"\resumeProjectText{Built X.}" in projects.render([entry], cards, {"me/Proj": "2025"}, macro=True)
+
+
+TWO_ROLES = TEX.replace(r"""  \resumeSubHeadingListEnd
+
+\section{Projects}""", r"""    \resumeSubheading
+      {\underline{Developer}}{May 2026 -- August 2026}
+      {Beta Corp}{Tempe, Arizona}
+      \resumeItemListStart
+        \resumeItem{Migrated a Windows VM monolith to Azure microservices on Kubernetes.}  % backfill
+        \resumeItem{Deployed a forecasting service through Azure DevOps CI/CD pipelines.}  % backfill
+      \resumeItemListEnd
+  \resumeSubHeadingListEnd
+
+\section{Projects}""")
+
+
+def test_bullet_from_another_employer_is_flagged():
+    r = T.parse(TWO_ROLES)
+    assert T.moved_from(r, 0, "Migrated a Windows VM monolith to Azure microservices on Kubernetes, cutting cost 10%.") == 1
+    assert T.moved_from(r, 1, "Migrated a Windows VM monolith to Azure microservices on Kubernetes.") is None
+    assert T.moved_from(r, 0, "Built Azure Data Factory pipelines, cutting failed runs by 30%.") is None
+
+
+def test_repair_rewrites_only_the_named_bullets():
+    f = _filled("Old bullet one about Python.", "Old bullet two about SQL.")
+    f.roles[0].bullets[0].original = 1
+    fixes = T.Repair(fixes=[T.BulletFix(role=0, bullet=1, text="Built Python ETL, cutting runtime by 20%.",
+                                        estimated=["20%"]), T.BulletFix(role=5, bullet=1, text="ignored")])
+    assert T.apply_repair(f, fixes) == 1
+    b0, b1 = f.roles[0].bullets
+    assert (b0.text, b0.original, b0.estimated) == ("Built Python ETL, cutting runtime by 20%.", None, ["20%"])
+    assert b1.text == "Old bullet two about SQL."

@@ -138,6 +138,53 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, log=None) -> 
         log(f"projects: {time.monotonic() - t0:.0f}s chose " + ", ".join(e.repo for e in proj.entries))
         all_projects = list(proj.entries)
     education = r.tex[r.tex.index("\\section{Education}"):r.skills_span[0]]
+    def render(f):
+        """LaTeX for this round's content (all chosen projects, dropping the least relevant only as far as needed
+        to fit one page), compiled. Returns (tex, problems, pages, err)."""
+        tex, problems = T.apply_fill(r, f)
+        if not proj:
+            return (tex, problems, *T.compile_pdf(tex, job_dir))
+        if education not in tex:
+            problems.append("LOCKED PART CHANGED: Education")
+        base = tex
+        for k in range(len(all_projects), P.MIN_PROJECTS - 1, -1):
+            proj.entries = all_projects[:k]
+            tex = P.apply(base, proj.block())
+            pages, err = T.compile_pdf(tex, job_dir)
+            if err or pages == 1:
+                break
+        if len(proj.entries) < len(all_projects):
+            log(f"  {len(proj.entries)} of {len(all_projects)} projects fit")
+        return tex, problems, pages, err
+
+    def repair(f, dups, attempt):
+        """Rewrite only the flagged bullets (up to 2 passes); keeps a pass only if it doesn't make things worse."""
+        nonlocal tex, problems, pages, err, uncovered, missing, warn
+        for k in range(1, 3):
+            t0 = time.monotonic()
+            trial = f.model_copy(deep=True)
+            try:
+                fixes = writer_model.with_structured_output(T.Repair, method="json_schema").invoke(
+                    T.build_repair_prompt(r, jd, trial, dups))
+            except Exception as e:
+                log(f"round {attempt} repair {k}: model error {type(e).__name__}")
+                return f, dups
+            T.apply_repair(trial, fixes)
+            new_dups = T.duplicates(r, trial) + T.quality(r, jd, trial)
+            new_unc, new_missing, new_warn = T.fill_checks(r, jd, trial)
+            new = render(trial)
+            log(f"round {attempt} repair {k}: {time.monotonic() - t0:.0f}s {len(new_dups)} bullet issues, "
+                f"{len(new_unc)} items missing → {new[2] or 'compile error'} page(s)")
+            if new[2] == 1 and not new_unc and len(new_dups) < len(dups):
+                f, dups = trial, new_dups
+                tex, problems, pages, err = new
+                uncovered, missing, warn = new_unc, new_missing, new_warn
+                if not dups:
+                    break
+        return f, dups
+
+    writer_model = ChatOpenAI(model="glm-5-3", base_url=s.openai_base_url, api_key=s.openai_api_key, max_retries=1,
+                              timeout=600, temperature=0, max_tokens=6000)
     max_bullets, feedback, rounds, last_ok = 14, "", [], None
     for attempt in range(1, 6):
         t0 = time.monotonic()
@@ -150,21 +197,9 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, log=None) -> 
         filled_in = T.backfill(r, jd, f)
         dups = T.duplicates(r, f) + T.quality(r, jd, f)
         uncovered, missing, warn = T.fill_checks(r, jd, f)
-        tex, problems = T.apply_fill(r, f)
-        if proj:  # every round starts from all chosen projects; drop the least relevant only as far as needed
-            if education not in tex:
-                problems.append("LOCKED PART CHANGED: Education")
-            base = tex
-            for k in range(len(all_projects), P.MIN_PROJECTS - 1, -1):
-                proj.entries = all_projects[:k]
-                tex = P.apply(base, proj.block())
-                pages, err = T.compile_pdf(tex, job_dir)
-                if err or pages == 1:
-                    break
-            if len(proj.entries) < len(all_projects):
-                log(f"  {len(proj.entries)} of {len(all_projects)} projects fit")
-        else:
-            pages, err = T.compile_pdf(tex, job_dir)
+        tex, problems, pages, err = render(f)
+        if dups and pages == 1 and not uncovered and not err:  # nearly there: fix just the flagged bullets
+            f, dups = repair(f, dups, attempt)
         n = sum(len(e.bullets) for e in f.roles)
         rounds.append(f"{n} bullets ({len(filled_in)} topped up), {len(dups)} bullet issues, {len(uncovered)} duties missing → "
                       f"{pages or 'compile error'} page(s)")
