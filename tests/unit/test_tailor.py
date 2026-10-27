@@ -130,3 +130,16 @@ def test_repo_card_change_detection(cards_dir, monkeypatch):
     newer = github.Repo("me/Proj", repo.url, pushed_at="2026-10-09T00:00:00Z")
     monkeypatch.setattr(repo_cards, "head_sha", lambda _: "b" * 40)  # new commit on the default branch
     assert repo_cards.needs_analysis(newer, card)
+
+
+def test_punctuation_dashes_removed_but_ranges_kept():
+    assert T.no_dashes("Built X — a bot—that works") == "Built X, a bot, that works"
+    assert T.no_dashes("2025–2026 and pages 3-4") == "2025–2026 and pages 3-4"
+    assert T.no_dashes("Fabric – Azure") == "Fabric, Azure"
+    assert "—" not in T.to_latex("COLLIDE — AI-Powered Site Selection")
+
+
+def test_quality_flags_dash_in_bullets():
+    f = _filled("Built Azure Data Factory pipelines — cutting failed runs 30%.",
+                "Wrote Python modules for Azure SQL, cutting prep 20%.")
+    assert any("dash" in i for i in T.quality(T.parse(TEX), jd(), f))

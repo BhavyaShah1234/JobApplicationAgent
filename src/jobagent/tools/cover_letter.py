@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
-from jobagent.tools.tailor import TOOLISH, compile_pdf, to_latex, to_plain
+from jobagent.tools.tailor import DASH, TOOLISH, compile_pdf, to_latex, to_plain
 
 SLOTS = ("<<DATE>>", "<<RECIPIENT>>", "<<SUBJECT>>", "<<SALUTATION>>", "<<BODY>>", "<<CLOSING>>")
 # Words TOOLISH matches that aren't technologies (letter boilerplate, degrees, places).
@@ -70,6 +70,8 @@ The letter must match the resume exactly in substance:
   4. A short close: what the candidate would bring, interest in a conversation, thanks.
 - Professional, specific, no clichés ("I am writing to express my interest", "team player", "passionate"), no
   pronouns other than I/my/me, no salary or availability claims, no mention of the resume being tailored.
+- Never use em dashes (—) or a spaced dash as punctuation; use commas, semicolons, colons, parentheses or
+  separate sentences.
 - `evidence`: for each paragraph, the short resume lines / company facts it relies on."""
 
 
@@ -106,6 +108,11 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
         for name in sorted((set(TOOLISH.findall(p.text)) | proper_nouns(p.text)) - _NOT_TOOLS):
             if name.lower() not in low:
                 issues.append(f"paragraph {k}: {name!r} is not in the resume, posting or company profile")
+        if dashes := len(DASH.findall(p.text)):
+            issues.append(f"paragraph {k}: {dashes} dash(es) used as punctuation; rewrite with commas, semicolons, "
+                          "colons or separate sentences")
+    if DASH.search(letter.salutation + letter.closing):
+        issues.append("a dash in the salutation or closing")
     words = sum(len(p.text.split()) for p in letter.paragraphs)
     if words > 420:
         issues.append(f"{words} words; keep it to 280-380")

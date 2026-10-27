@@ -46,6 +46,11 @@ python -m jobagent.tools.repo_cards [workers] [--force] # (re)build the GitHub r
 
 ## Checks in code (sent back to the model)
 
+No dash as punctuation anywhere (em dash, or a spaced en dash / `--`): it reads as AI-written. Prompts forbid
+it, the checks send it back (bullets, summary, letter paragraphs), and `to_latex` turns any that slips through into a
+comma; ranges like "2025–2026" are untouched.
+
+
 Duty coverage; repeats across bullets (shared 4-word phrase or > 50% overlap); academic/unpaid wording; a bullet
 naming no technology; more than one bullet without a result; locked parts changed; LaTeX errors.
 

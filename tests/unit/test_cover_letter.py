@@ -64,3 +64,9 @@ def test_header_match_and_committed_template_has_all_slots():
     assert not CL.header_matches(RESUME.replace("Jane Doe", "John Doe"), RESUME)
     example = (Path(__file__).parents[2] / "data" / "templates" / "cover_letter.example.tex").read_text()
     assert all(slot in example for slot in CL.SLOTS)
+
+
+def test_consistency_flags_em_dashes():
+    resume = CL.resume_text(RESUME)
+    issues = CL.consistency(letter("I built pipelines — in Python.", "x", "y"), resume, JD, "")
+    assert any("dash" in i for i in issues)

@@ -114,10 +114,19 @@ def to_plain(latex: str) -> str:
     return out
 
 
-_KEEP = set("–—’‘“”®™°±×→")
+_KEEP = set("–’‘“”®™°±×→")
+# Dashes used as punctuation (em dash, or a spaced en dash / double hyphen) read as AI-written text. Ranges like
+# "2025–2026" are not touched.
+DASH = re.compile(r"\s*—\s*|\s+(–|--)\s+")
+
+
+def no_dashes(text: str) -> str:
+    """Last-resort fix for a punctuation dash the model still wrote: a comma (the checks ask for a rewrite first)."""
+    return DASH.sub(", ", text)
 
 
 def to_latex(plain: str) -> str:
+    plain = no_dashes(plain)
     plain = "".join(c for c in re.sub(r"~\s*(?=\d)", "about ", re.sub(r"\s*(→|->)\s*", " to ", plain)).replace("‑", "-") if ord(c) < 128 or c in _KEEP)
     out = plain.replace("\\", "\\textbackslash{}")
     for ch in "%&$#_":
@@ -277,7 +286,10 @@ Summary: write it FRESH for this job title at this company, 2-3 sentences: open 
 wording, then the 2-3 requirements the candidate most clearly meets (posting keywords), then one clause tying the
 candidate to the company's business, product or mission (from the COMPANY PROFILE). Do not reuse sentences from the
 current summary; take only facts from it (degree, years of experience; never claim more years than it states).
-No pronouns ("he"/"his"). The degree is also in the Education section."""
+No pronouns ("he"/"his"). The degree is also in the Education section.
+
+Style everywhere (bullets, summary, skills): never use em dashes (—) or a spaced dash as punctuation; use commas,
+semicolons, colons or separate sentences."""
 
 
 SOFT = re.compile(r"(?i)^\W*(partner|communicat|collaborat|mentor|present|coach|liaise|work closely|engage)")
@@ -461,6 +473,8 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
     for e in f.roles:
         for k, b in enumerate(e.bullets):
             where = f"role_{e.role} bullet {k + 1} (\"{b.text}\")"
+            if DASH.search(b.text):
+                out.append(f"{where} uses a dash as punctuation; rewrite with a comma, semicolon or colon")
             if m := ACADEMIC.search(b.text):
                 out.append(f"{where} uses academic/unpaid wording \"{m.group(0)}\"")
             low = b.text.lower()
@@ -469,4 +483,6 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
                 out.append(f"{where} names no technology/tool")
             if not RESULT.search(b.text):
                 no_result.append(f"{where} states no result")
+    if DASH.search(f.summary):
+        out.append("the summary uses a dash as punctuation; rewrite with a comma, semicolon or colon")
     return out + (no_result if len(no_result) > MAX_NO_RESULT else [])
