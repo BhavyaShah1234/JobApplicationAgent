@@ -473,6 +473,15 @@ RESULT = re.compile(r"\d|(?i:\b(cut|cutting|reduc\w*|improv\w*|increas\w*|rais\w
 TOOLISH = re.compile(r"\b(?:[A-Z][a-z]*[A-Z][A-Za-z0-9]*|[A-Z]{2,}[A-Za-z0-9]*)\b")  # ACT, CLIP, LoRA, PySpark, MuJoCo
 
 
+def proper_nouns(text: str) -> set[str]:
+    """Capitalized words that don't start a sentence: tools, products, employers, places (Pydantic, Jinja2)."""
+    out = set()
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        words = re.findall(r"[A-Za-z][\w+#.-]*", sentence)
+        out |= {w.rstrip(".") for w in words[1:] if w[0].isupper()}
+    return out
+
+
 MAX_NO_RESULT = 1  # bullets allowed without a stated result, in the whole resume
 
 
@@ -493,7 +502,7 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
             if m := ACADEMIC.search(b.text):
                 out.append(f"{where} uses academic/unpaid wording \"{m.group(0)}\"")
             low = b.text.lower()
-            if not TOOLISH.search(b.text) and not any(re.search(r"(?<![a-z])" + re.escape(t) + r"(?![a-z])", low)
+            if not TOOLISH.search(b.text) and not proper_nouns(b.text) and not any(re.search(r"(?<![a-z])" + re.escape(t) + r"(?![a-z])", low)
                                                       for t in tech if t):
                 out.append(f"{where} names no technology/tool")
             if not RESULT.search(b.text):

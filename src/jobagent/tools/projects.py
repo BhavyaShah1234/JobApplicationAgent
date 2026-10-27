@@ -123,9 +123,10 @@ class Chosen:
         return render(self.entries, {c["full_name"].lower(): c for _, c in self.candidates}, self.years)
 
 
-def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = None, log=print) -> Chosen:
+def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = None, rediscover: bool = True,
+           log=print) -> Chosen:
     """Refresh the repo cards (new/changed repos only), rank them for this job, pick and write 2-4 projects."""
-    cards = repo_cards.refresh(user, token, log=log)
+    cards = repo_cards.refresh(user, token, rediscover=rediscover, log=log)
     job_text = " ".join([jd.title or ""] + jd.responsibilities + jd.basic_qualifications +
                         jd.preferred_qualifications + jd.technical_skills)
     cands = repo_cards.rank(cards, job_text)
@@ -133,13 +134,20 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
     known = known_entries(r.tex)
     by_name = {c["full_name"].lower(): c for _, c in cands}
     messages = build_prompt(cands, jd, known)
-    for _ in range(2):
-        out = model.with_structured_output(Projects, method="json_schema").invoke(messages)
+    out, chosen = None, []
+    for _ in range(3):
+        try:
+            out = model.with_structured_output(Projects, method="json_schema").invoke(messages)
+        except Exception as e:  # timeout / token limit: one more try
+            log(f"projects: model error {type(e).__name__}; retrying")
+            continue
         chosen = list({e.repo.lower(): e for e in out.projects if e.repo.lower() in by_name}.values())
         if MIN_PROJECTS <= len(chosen) <= MAX_PROJECTS:
             break
         messages = messages + [HumanMessage(f"Use {MIN_PROJECTS}-{MAX_PROJECTS} DIFFERENT repos, each exactly one "
                                             "of the CANDIDATE full_names.")]
+    if out is None:
+        raise RuntimeError("could not choose projects (the model failed 3 times)")
     years = {}
     for e in chosen:
         c = by_name[e.repo.lower()]

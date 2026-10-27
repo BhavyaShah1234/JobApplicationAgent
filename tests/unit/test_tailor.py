@@ -156,3 +156,9 @@ def test_quality_flags_dash_in_bullets():
 ])
 def test_percentage_changes_take_by(before, after):
     assert T.by_percent(before) == after
+
+
+def test_capitalized_tool_names_count_as_technology():
+    f = _filled("Engineered a config-driven pipeline where Pydantic specs compile into Jinja2 reports, cutting build "
+                "time by 60%.", "Built Azure Data Factory pipelines, cutting failed runs by 30%.")
+    assert not [i for i in T.quality(T.parse(TEX), jd(), f) if "names no technology" in i]

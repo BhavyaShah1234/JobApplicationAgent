@@ -113,14 +113,15 @@ def cover_letter(job_dir: str | Path, company_slug: str, log=print) -> dict:
     return cl
 
 
-def main(job_dir: str, company_slug: str) -> None:
+def main(job_dir: str, company_slug: str, rediscover: bool = True, log=None) -> dict:
+    """Tailor one job end to end (resume, then cover letter); returns a summary for checks."""
+    log = log or (lambda m: print(m, flush=True))
     s = get_settings()
     job_dir = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
     company = (s.state_dir / "companies" / f"{company_slug}.md").read_text()
     r = T.parse((s.data_dir / "templates" / "resume.tex").read_text())
-    print(f"template: {len(r.roles)} roles; JD: {len(jd.responsibilities)} duties, {len(jd.technical_skills)} skills",
-          flush=True)
+    log(f"template: {len(r.roles)} roles; JD: {len(jd.responsibilities)} duties, {len(jd.technical_skills)} skills")
     model = ChatOpenAI(model="glm-5-3", base_url=s.openai_base_url, api_key=s.openai_api_key, max_retries=1,
                        timeout=600, temperature=0, max_tokens=16000).with_structured_output(T.filled_schema(r), method="json_schema")
     proj = None
@@ -129,14 +130,19 @@ def main(job_dir: str, company_slug: str) -> None:
         writer = ChatOpenAI(model="glm-5-3", base_url=s.openai_base_url, api_key=s.openai_api_key, max_retries=1,
                             timeout=600, temperature=0, max_tokens=12000)
         token = (open_vault().get("github") or {}).get("token")
-        proj = P.choose(r, jd, writer, github.profile_user(r.tex), token)
-        print(f"projects: {time.monotonic() - t0:.0f}s chose " + ", ".join(e.repo for e in proj.entries), flush=True)
+        proj = P.choose(r, jd, writer, github.profile_user(r.tex), token, rediscover=rediscover, log=log)
+        log(f"projects: {time.monotonic() - t0:.0f}s chose " + ", ".join(e.repo for e in proj.entries))
         all_projects = list(proj.entries)
     education = r.tex[r.tex.index("\\section{Education}"):r.skills_span[0]]
     max_bullets, feedback, rounds, last_ok = 14, "", [], None
     for attempt in range(1, 6):
         t0 = time.monotonic()
-        f = T.to_filled(r, model.invoke(T.build_fill_prompt(r, jd, company, max_bullets, feedback)))
+        try:
+            f = T.to_filled(r, model.invoke(T.build_fill_prompt(r, jd, company, max_bullets, feedback)))
+        except Exception as e:  # timeout / token limit on a slow round: try the next round, keep the best so far
+            rounds.append(f"model error ({type(e).__name__})")
+            log(f"round {attempt}: {time.monotonic() - t0:.0f}s model error {type(e).__name__}: {str(e)[:120]}")
+            continue
         filled_in = T.backfill(r, jd, f)
         dups = T.duplicates(r, f) + T.quality(r, jd, f)
         uncovered, missing, warn = T.fill_checks(r, jd, f)
@@ -152,13 +158,13 @@ def main(job_dir: str, company_slug: str) -> None:
                 if err or pages == 1:
                     break
             if len(proj.entries) < len(all_projects):
-                print(f"  {len(proj.entries)} of {len(all_projects)} projects fit", flush=True)
+                log(f"  {len(proj.entries)} of {len(all_projects)} projects fit")
         else:
             pages, err = T.compile_pdf(tex, job_dir)
         n = sum(len(e.bullets) for e in f.roles)
         rounds.append(f"{n} bullets ({len(filled_in)} topped up), {len(dups)} bullet issues, {len(uncovered)} duties missing → "
                       f"{pages or 'compile error'} page(s)")
-        print(f"round {attempt}: {time.monotonic() - t0:.0f}s {rounds[-1]} {err}", flush=True)
+        log(f"round {attempt}: {time.monotonic() - t0:.0f}s {rounds[-1]} {err}")
         asks = []
         if err:
             asks.append(f"The LaTeX failed to compile: {err}.")
@@ -183,9 +189,11 @@ def main(job_dir: str, company_slug: str) -> None:
             if last_ok is None or score < last_ok[8]:  # keep the best one-page round
                 last_ok = (f, uncovered, missing, warn, problems, pages, filled_in, tex, score,
                            list(proj.entries) if proj else None)
-            if not dups and (not proj or len(proj.entries) == len(all_projects)):
+            if not dups:  # clean: stop (chasing one more project costs whole rounds and rarely improves the page)
                 break
         feedback = " ".join(asks)
+    if last_ok is None and "f" not in locals():
+        raise RuntimeError("every tailoring round failed: " + " → ".join(rounds))
     if last_ok:
         f, uncovered, missing, warn, problems, pages, filled_in, tex, _, kept = last_ok
         if proj:
@@ -194,9 +202,90 @@ def main(job_dir: str, company_slug: str) -> None:
     (job_dir / "filled.json").write_text(f.model_dump_json(indent=1))
     (job_dir / "changes.md").write_text(report(r, jd, f, pages, problems, uncovered, missing, warn, rounds, filled_in,
                                                      proj))
-    print(f"done: pages={pages} uncovered={uncovered} missing_skills={len(missing)} problems={len(problems + warn)}")
-    cl = cover_letter(job_dir, company_slug, log=lambda m: print(m, flush=True))
-    print(f"cover letter: {cl['words']} words, {len(cl['issues'])} issue(s)")
+    log(f"done: pages={pages} uncovered={uncovered} missing_skills={len(missing)} problems={len(problems + warn)}")
+    cl = cover_letter(job_dir, company_slug, log=log)
+    log(f"cover letter: {cl['words']} words, {len(cl['issues'])} issue(s)")
+    generated = [f.summary] + [b.text for e in f.roles for b in e.bullets] + \
+        [x for line in f.skills for x in line.render()] + \
+        ([x for e in proj.entries for x in (e.title, e.paragraph)] if proj else []) + \
+        [p.text for p in cl["letter"].paragraphs]
+    return {"job_dir": job_dir, "pages": pages, "uncovered": uncovered, "missing_skills": missing,
+            "problems": problems + warn, "bullet_issues": T.duplicates(r, f) + T.quality(r, jd, f),
+            "bullets_per_role": [len(e.bullets) for e in f.roles], "projects": len(proj.entries) if proj else None,
+            "letter": cl, "dashes": sum(len(T.DASH.findall(t)) for t in generated)}
+
+
+def check(urls: list[str], workers: int = 3, log=print) -> list[tuple[str, bool, str]]:
+    """Step 9 gate: each posting end to end (live scrape → research → resume + cover letter), then the criteria:
+    both PDFs compile to one page, locked parts unchanged, every duty covered, no bullet issues, cover letter
+    consistent with the resume, header identical, 2-4 projects, no dash used as punctuation."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from jobagent.tools import repo_cards
+    from jobagent.tools.hitl import open_hitl
+    from jobagent.tools.research import research_many, slug
+    from jobagent.tools.scrape import scrape_many
+
+    s = get_settings()
+    results: list[tuple[str, bool, str]] = []
+    items = scrape_many(urls, open_hitl(log), refresh=True, log=log)
+    jobs = []
+    for it in items:
+        if it.error or not it.result:
+            results.append((it.url, False, f"scrape failed: {it.error}"))
+            continue
+        jobs.append((it.result.jd, it.result.out_dir))
+    names = list(dict.fromkeys(jd.company for jd, _ in jobs))
+    for name, profile, err, _ in research_many(names, log=log):
+        if err:
+            results.append((name, False, f"research failed: {err}"))
+    template = (s.data_dir / "templates" / "resume.tex").read_text()
+    if P.projects_span(template):  # once, before the parallel runs (one repo listing for all of them)
+        repo_cards.refresh(github.profile_user(template), (open_vault().get("github") or {}).get("token"), log=log)
+
+    def one(job):
+        jd, out_dir = job
+        tag = f"[{jd.company}]"
+        try:
+            return jd, main(str(out_dir), slug(jd.company), rediscover=False,
+                            log=lambda m: print(f"{tag} {m}", flush=True)), None
+        except Exception as e:
+            return jd, None, f"{type(e).__name__}: {e}"
+
+    with ThreadPoolExecutor(workers) as pool:
+        for jd, out, err in pool.map(one, jobs):
+            name = f"{jd.company}: {jd.title}"
+            if err:
+                results.append((name, False, err))
+                continue
+            cl, d = out["letter"], out["job_dir"]
+            letter_pages = _pages(d / "cover_letter.pdf")
+            text = lambda f: re.sub(r"(?<!\\)%.*", "", (d / f).read_text())
+            failures = [msg for ok, msg in [
+                (out["pages"] == 1, f"resume {out['pages']} pages"),
+                (letter_pages == 1, f"cover letter {letter_pages} pages"),
+                (not any("LOCKED" in p for p in out["problems"]), "locked part changed"),
+                (not out["uncovered"], f"duties not covered {out['uncovered']}"),
+                (not out["bullet_issues"], f"{len(out['bullet_issues'])} bullet issue(s)"),
+                (not cl["issues"], f"cover letter issues: {cl['issues']}"),
+                (cl["header_matches_resume"], "cover letter header differs from the resume's"),
+                (out["projects"] is None or 2 <= out["projects"] <= 4, f"{out['projects']} projects"),
+                (all(2 <= n <= 4 for n in out["bullets_per_role"]), f"bullets per role {out['bullets_per_role']}"),
+                (not out["dashes"], f"{out['dashes']} dash(es) used as punctuation in generated text"),
+            ] if not ok]
+            detail = (f"bullets {out['bullets_per_role']}, {out['projects']} projects, letter {cl['words']} words"
+                      + (f" | FAIL: {'; '.join(failures)}" if failures else "") + f" | {d}")
+            results.append((name, not failures, detail))
+    return results
+
+
+def _pages(pdf: Path) -> int:
+    import subprocess
+
+    if not pdf.exists():
+        return 0
+    out = subprocess.run(["pdfinfo", str(pdf)], capture_output=True, text=True).stdout
+    return int(re.search(r"Pages:\s+(\d+)", out).group(1))
 
 
 if __name__ == "__main__":

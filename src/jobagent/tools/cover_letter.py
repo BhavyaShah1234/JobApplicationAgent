@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
-from jobagent.tools.tailor import DASH, TOOLISH, compile_pdf, to_latex, to_plain
+from jobagent.tools.tailor import DASH, TOOLISH, compile_pdf, proper_nouns, to_latex, to_plain
 
 SLOTS = ("<<DATE>>", "<<RECIPIENT>>", "<<SUBJECT>>", "<<SALUTATION>>", "<<BODY>>", "<<CLOSING>>")
 # Words TOOLISH matches that aren't technologies (letter boilerplate, degrees, places).
@@ -60,7 +60,9 @@ PROMPT = """You write a one-page cover letter for the candidate whose tailored R
 
 The letter must match the resume exactly in substance:
 - Every claim about the candidate (roles, employers, duties, tools, projects, numbers, education) must come from the
-  RESUME. Reuse its numbers unchanged and never add new ones; you may rephrase. Use the same project names.
+  RESUME. Reuse its numbers unchanged and never add new ones; you may rephrase. Write employer, project, degree
+  and tool names exactly as the resume does, never abbreviated (no "TGen" for "Translational Genomics Research
+  Institute").
 - Facts about the company come only from the COMPANY PROFILE (cite them in `evidence`).
 - Structure, 3-4 paragraphs, 280-380 words in total, first person:
   1. The role (posting's title) and why this company: one specific fact from the company profile tied to what
@@ -86,15 +88,6 @@ def build_prompt(resume: str, jd: JobDescription, company_md: str, feedback: str
     if feedback:
         text += f"\n\nREVISION REQUEST:\n{feedback}"
     return [SystemMessage(PROMPT), HumanMessage(text)]
-
-
-def proper_nouns(text: str) -> set[str]:
-    """Capitalized words that don't start a sentence: tools, products, employers, places."""
-    out = set()
-    for sentence in re.split(r"(?<=[.!?])\s+", text):
-        words = re.findall(r"[A-Za-z][\w+#.-]*", sentence)
-        out |= {w.rstrip(".") for w in words[1:] if w[0].isupper()}
-    return out
 
 
 def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str) -> list[str]:
@@ -157,8 +150,12 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
     template = template_path().read_text()
     feedback, best = "", None
     for attempt in range(1, rounds + 1):
-        letter = model.with_structured_output(Letter, method="json_schema").invoke(
-            build_prompt(resume, jd, company_md, feedback))
+        try:
+            letter = model.with_structured_output(Letter, method="json_schema").invoke(
+                build_prompt(resume, jd, company_md, feedback))
+        except Exception as e:  # timeout / token limit: next round
+            log(f"cover letter round {attempt}: model error {type(e).__name__}")
+            continue
         issues = consistency(letter, resume, jd, company_md)
         tex = render(template, letter, jd)
         pages, err = compile_pdf(tex, job_dir, name="cover_letter")
@@ -172,6 +169,8 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
         if not issues:
             break
         feedback = "Fix these problems: " + " | ".join(issues)
+    if best is None:
+        raise RuntimeError("every cover letter round failed")
     letter, issues, tex = best
     compile_pdf(tex, job_dir, name="cover_letter")  # the best round, not necessarily the last
     return {"letter": letter, "issues": issues, "words": sum(len(p.text.split()) for p in letter.paragraphs),

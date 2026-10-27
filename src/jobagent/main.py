@@ -315,6 +315,23 @@ def research_cmd(
         raise typer.Exit(1)
 
 
+@step_app.command("tailor-check")
+def step_tailor_check(
+    file: str = typer.Option("tests/e2e/scrape_urls.txt", "--file", "-f", help="Posting URLs, one per line."),
+    workers: int = typer.Option(3, help="Postings tailored in parallel."),
+) -> None:
+    """Step 9 gate: postings end to end (scrape → research → resume + cover letter), then the one-page,
+    locked-parts, coverage, bullet, letter-consistency, projects and no-dash criteria."""
+    from jobagent.steps.tailor import check
+
+    failed = False
+    for name, ok, detail in check(_read_urls([], file), workers, log=lambda m: console.print(m, highlight=False)):
+        failed |= not ok
+        console.print(f"{'[green]PASS[/]' if ok else '[red]FAIL[/]'} {name}: {detail}", highlight=False)
+    if failed:
+        raise typer.Exit(1)
+
+
 @step_app.command("research-check")
 def step_research_check(workers: int = typer.Option(5)) -> None:
     """Step 8 e2e: 10 companies researched with cited sources; the second pass comes from the cache."""

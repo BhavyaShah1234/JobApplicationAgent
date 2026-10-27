@@ -236,10 +236,12 @@ def _embed_text(card: dict) -> str:
             f"Fields: {', '.join(card['fields'])}. {card['readme'][:2500]}")
 
 
-def refresh(user: str, token: str | None = None, workers: int = 6, force: bool = False, log=print) -> list[dict]:
-    """Cards for all of `user`'s repos (own + contributed): new or pushed-since repos are (re)analysed."""
+def refresh(user: str, token: str | None = None, workers: int = 6, force: bool = False, rediscover: bool = True,
+            log=print) -> list[dict]:
+    """Cards for all of `user`'s repos (own + contributed): new or changed repos are (re)analysed. With
+    rediscover=False the repo list from the last day is reused (no API calls, safe for parallel runs)."""
     s = get_settings()
-    repos = github.discover_repos(user, token, refresh=True, log=log)
+    repos = github.discover_repos(user, token, refresh=rediscover, log=log)
     with ThreadPoolExecutor(8) as pool:  # cheap checks, in parallel
         flags = list(pool.map(lambda r: force or needs_analysis(r, load(r.full_name)), repos))
     stale = [r for r, f in zip(repos, flags) if f]
@@ -291,4 +293,4 @@ if __name__ == "__main__":
 
     tex = (get_settings().data_dir / "templates" / "resume.tex").read_text()
     refresh(github.profile_user(tex), (open_vault().get("github") or {}).get("token"),
-            workers=int(sys.argv[1]) if len(sys.argv) > 1 else 6, force="--force" in sys.argv)
+            workers=int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 6, force="--force" in sys.argv)

@@ -1,7 +1,14 @@
-# Step 9 — Resume tailoring (in progress)
+# Step 9 — Resume and cover letter tailoring
 
 Built as a trial with the user on two postings (Amphenol Automation Engineer, Plante Moran AI Data Engineer) and
-accepted 2026-10-27; cover letter added the same day. Still to do: the 5-JD gate.
+accepted 2026-10-27; cover letter added the same day.
+
+**Gate passed 2026-10-27** (`jobagent step tailor-check`, the 5 step-7 postings: Stripe, Palantir, OpenAI,
+NVIDIA, Amazon; live scrape → research → resume + cover letter, 3 in parallel): every resume and letter one page,
+locked parts unchanged, all duties covered, 0 bullet issues, 2-4 bullets per role, 2-3 projects, letters consistent
+with their resumes, no punctuation dashes. The first runs failed on gate-check bugs (template date ranges counted as
+dashes; Pydantic/Jinja2 not recognised as tools) and on two pipeline gaps (a model timeout / token-limit error
+aborted the whole job; the letter abbreviated an employer to "TGen"), all fixed in code; no output was edited by hand.
 
 ## Run it
 
@@ -67,6 +74,9 @@ archive's pax header); a repo is re-analysed only when that SHA changes, checked
 when `pushed_at` moved. First build: 104 repos in ~16 min (6 workers); a no-change refresh ~25 s.
 
 ## Learned while building
+
+- Voyager is slow with 3 jobs in parallel (rounds of 4-20 min; some calls time out at 10 min): a failed model call
+  is now one failed round, not a failed job, and the loop stops at the first clean one-page round.
 
 - Rewording the template's bullets (first trial) mostly deleted them to fit one page and never reached the JD's
   duties; writing from the duties fixed that.
