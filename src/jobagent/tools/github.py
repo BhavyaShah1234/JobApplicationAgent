@@ -132,6 +132,7 @@ class Repo:
     stars: int = 0
     owned: bool = True          # False: someone else's repo the user contributed to
     readme: str = ""
+    created_at: str = ""
 
 
 def _client(token: str | None) -> httpx.Client:
@@ -167,7 +168,7 @@ def _repo(c: httpx.Client, data: dict, owned: bool, token: str | None) -> Repo:
     langs = list(_get(c, f"/repos/{full}/languages"))[:6] if token else [l for l in [data.get("language")] if l]
     return Repo(full, data["html_url"], data.get("description") or "", data.get("language") or "", langs,
                 data.get("topics") or [], data.get("pushed_at") or "", data.get("stargazers_count", 0), owned,
-                _readme(full))
+                _readme(full), data.get("created_at") or "")
 
 
 def contributed_repos(c: httpx.Client, user: str, token: str | None) -> set[str]:
@@ -196,8 +197,13 @@ def discover_repos(user: str, token: str | None = None, refresh: bool = False, l
         if datetime.fromisoformat(data["fetched_at"]) > datetime.now(UTC) - timedelta(days=1):
             return [Repo(**r) for r in data["repos"]]
     with _client(token) as c:
-        own = [r for r in _get(c, f"/users/{user}/repos", per_page=100, type="owner", sort="pushed")
-               if not r.get("fork")]
+        listed, page = [], 1
+        while batch := _get(c, f"/users/{user}/repos", per_page=100, type="owner", sort="pushed", page=page):
+            listed += batch  # one call per 100 repos
+            if len(batch) < 100:
+                break
+            page += 1
+        own = [r for r in listed if not r.get("fork")]
         repos = [_repo(c, r, True, token) for r in own]
         for full in sorted(contributed_repos(c, user, token)):
             try:

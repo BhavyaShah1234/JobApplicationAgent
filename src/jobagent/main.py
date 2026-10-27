@@ -268,6 +268,17 @@ def _research_table(results, title: str) -> tuple[Table, bool]:
     return table, failed
 
 
+@app.command("tailor")
+def tailor_cmd(
+    job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> from `jobagent scrape`."),
+    company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md)."),
+) -> None:
+    """Tailor the resume template to a scraped job (one page): resume.tex/.pdf and changes.md for review."""
+    from jobagent.steps.tailor import main
+
+    main(job_dir, company)
+
+
 @app.command("research")
 def research_cmd(
     companies: list[str] = typer.Argument(None),

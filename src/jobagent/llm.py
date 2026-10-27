@@ -4,8 +4,10 @@ The OpenAI client already retries 429 (token budget) and 503 (capacity) with
 exponential backoff; once those retries are exhausted the call falls over to Ollama.
 """
 
+import sys
 from typing import Literal
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import Runnable
@@ -31,8 +33,17 @@ def _primary(role: Role, s: Settings, temperature: float | None = None, timeout:
     )
 
 
+class _FallbackNotice(BaseCallbackHandler):
+    """Say so whenever a call falls back from Voyager to local Ollama (otherwise it is silent)."""
+
+    def on_chat_model_start(self, serialized, messages, **kwargs) -> None:
+        name = (serialized or {}).get("kwargs", {}).get("model", "?")
+        print(f"[llm] Voyager unavailable; falling back to local Ollama model {name}", file=sys.stderr, flush=True)
+
+
 def _fallback(role: Role, s: Settings, temperature: float | None = None) -> BaseChatModel:
-    return ChatOllama(model=getattr(s, f"fallback_{role}"), base_url=s.ollama_base_url, temperature=temperature)
+    return ChatOllama(model=getattr(s, f"fallback_{role}"), base_url=s.ollama_base_url, temperature=temperature,
+                      callbacks=[_FallbackNotice()])
 
 
 def chat(role: Role = "planner", settings: Settings | None = None) -> Runnable:
@@ -68,6 +79,7 @@ class FallbackEmbeddings(Embeddings):
             return self.primary.embed_documents(texts)
         except Exception:
             self.used_fallback = True
+            print("[llm] Voyager embeddings unavailable; falling back to local Ollama", file=sys.stderr, flush=True)
             return self.fallback.embed_documents(texts)
 
     def embed_query(self, text: str) -> list[float]:
@@ -75,6 +87,7 @@ class FallbackEmbeddings(Embeddings):
             return self.primary.embed_query(text)
         except Exception:
             self.used_fallback = True
+            print("[llm] Voyager embeddings unavailable; falling back to local Ollama", file=sys.stderr, flush=True)
             return self.fallback.embed_query(text)
 
 
