@@ -72,6 +72,8 @@ The letter must match the resume exactly in substance:
   pronouns other than I/my/me, no salary or availability claims, no mention of the resume being tailored.
 - Never use em dashes (—) or a spaced dash as punctuation; use commas, semicolons, colons, parentheses or
   separate sentences.
+- A change by a percentage takes "by": "cutting failed refreshes by 45%" (the resume may have been written either
+  way; always write it with "by").
 - `evidence`: for each paragraph, the short resume lines / company facts it relies on."""
 
 

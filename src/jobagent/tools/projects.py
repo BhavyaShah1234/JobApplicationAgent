@@ -45,7 +45,8 @@ the agent wrote by reading each GitHub repository's code.
   Use the posting's keywords where the card supports them. Numbers/results only from the card's results; never
   invent features or metrics.
 - Never use em dashes (—) or a spaced dash as punctuation, in titles or paragraphs; use commas, semicolons, colons
-  or separate sentences (e.g. "COLLIDE: AI-Powered Site Selection")."""
+  or separate sentences (e.g. "COLLIDE: AI-Powered Site Selection"). A change by a percentage takes "by"
+  ("cutting latency by 40%")."""
 
 
 def build_prompt(cands: list[tuple[float, dict]], jd: JobDescription, known: dict[str, tuple[str, str]]) -> list:

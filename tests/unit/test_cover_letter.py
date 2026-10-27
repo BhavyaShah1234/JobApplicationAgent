@@ -70,3 +70,9 @@ def test_consistency_flags_em_dashes():
     resume = CL.resume_text(RESUME)
     issues = CL.consistency(letter("I built pipelines — in Python.", "x", "y"), resume, JD, "")
     assert any("dash" in i for i in issues)
+
+
+def test_template_is_justified_with_name_right_under_the_closing():
+    example = (Path(__file__).parents[2] / "data" / "templates" / "cover_letter.example.tex").read_text()
+    assert "\\raggedright" not in example
+    assert "<<CLOSING>>,\\\\\nFirst Last" in example

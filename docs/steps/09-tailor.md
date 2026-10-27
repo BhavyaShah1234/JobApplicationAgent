@@ -36,7 +36,7 @@ python -m jobagent.tools.repo_cards [workers] [--force] # (re)build the GitHub r
 - **Template:** `data/templates/cover_letter.tex` (user's, gitignored; the committed `cover_letter.example.tex` is
   the same design with placeholder contact details). Same fonts as the resume, the resume's header verbatim (in an
   `adjustwidth` block so it stays on one line), a rule, then `<<DATE>>`, `<<RECIPIENT>>` (Hiring Team, company,
-  the posting's first location), `Re: <<SUBJECT>>` (title + req id), `<<SALUTATION>>`, `<<BODY>>`, `<<CLOSING>>`.
+  the posting's first location), `Re: <<SUBJECT>>` (title + req id), `<<SALUTATION>>`, `<<BODY>>` (justified), `<<CLOSING>>,` with the name on the next line.
 - **Written from the job's final `resume.tex`** (the user's edits carry over), the JD and the company profile:
   3-4 paragraphs (role + one cited company fact, the 2-3 strongest duty matches with the resume's tools and
   numbers, close). Each paragraph lists the resume lines / company facts it used (in `changes.md`).
@@ -45,6 +45,9 @@ python -m jobagent.tools.repo_cards [workers] [--force] # (re)build the GitHub r
   letter's header must equal the resume's.
 
 ## Checks in code (sent back to the model)
+
+A change by a percentage takes "by" ("cutting failed refreshes by 45%"): prompts ask for it and `to_latex` inserts
+it when missing ("to", "from ... to" and plain metrics like "96.4% mAP" are left alone).
 
 No dash as punctuation anywhere (em dash, or a spaced en dash / `--`): it reads as AI-written. Prompts forbid
 it, the checks send it back (bullets, summary, letter paragraphs), and `to_latex` turns any that slips through into a

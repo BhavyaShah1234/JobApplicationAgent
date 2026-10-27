@@ -120,13 +120,27 @@ _KEEP = set("–’‘“”®™°±×→")
 DASH = re.compile(r"\s*—\s*|\s+(–|--)\s+")
 
 
+_CHANGE_VERB = (r"(?:cut|cutting|reduc\w*|lift\w*|rais\w*|improv\w*|increas\w*|boost\w*|lower\w*|decreas\w*|"
+                r"grow\w*|grew|shrink\w*|slash\w*|sped up|speed\w* up|accelerat\w*|drop\w*|trim\w*|shorten\w*|"
+                r"halv\w*|doubl\w*|tripl\w*|uplift\w*|expand\w*|lengthen\w*)")
+_NOT_OBJECT = r"(?:by|to|from|than|at|under|below|within|of|with|and|while|for|per|across|in|on|into|over)"
+_MISSING_BY = re.compile(rf"\b({_CHANGE_VERB})((?:\s+(?!{_NOT_OBJECT}\b)[\w/&().+-]+){{1,6}}?)\s+"
+                         r"((?:about|nearly|roughly|approximately|almost|over|more than)\s+)?(\d+(?:\.\d+)?\s?%)",
+                         re.I)
+
+
+def by_percent(text: str) -> str:
+    """'cutting failed refreshes 45%' -> 'cutting failed refreshes by 45%' (a change by a percentage needs 'by')."""
+    return _MISSING_BY.sub(lambda m: f"{m.group(1)}{m.group(2)} by {m.group(3) or ''}{m.group(4)}", text)
+
+
 def no_dashes(text: str) -> str:
     """Last-resort fix for a punctuation dash the model still wrote: a comma (the checks ask for a rewrite first)."""
     return DASH.sub(", ", text)
 
 
 def to_latex(plain: str) -> str:
-    plain = no_dashes(plain)
+    plain = by_percent(no_dashes(plain))
     plain = "".join(c for c in re.sub(r"~\s*(?=\d)", "about ", re.sub(r"\s*(→|->)\s*", " to ", plain)).replace("‑", "-") if ord(c) < 128 or c in _KEEP)
     out = plain.replace("\\", "\\textbackslash{}")
     for ch in "%&$#_":
@@ -289,7 +303,8 @@ current summary; take only facts from it (degree, years of experience; never cla
 No pronouns ("he"/"his"). The degree is also in the Education section.
 
 Style everywhere (bullets, summary, skills): never use em dashes (—) or a spaced dash as punctuation; use commas,
-semicolons, colons or separate sentences."""
+semicolons, colons or separate sentences. A change by a percentage takes "by": "cutting failed runs by 45%",
+"lifting throughput by 35%" (not "cutting failed runs 45%")."""
 
 
 SOFT = re.compile(r"(?i)^\W*(partner|communicat|collaborat|mentor|present|coach|liaise|work closely|engage)")

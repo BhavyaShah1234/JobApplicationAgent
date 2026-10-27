@@ -143,3 +143,16 @@ def test_quality_flags_dash_in_bullets():
     f = _filled("Built Azure Data Factory pipelines — cutting failed runs 30%.",
                 "Wrote Python modules for Azure SQL, cutting prep 20%.")
     assert any("dash" in i for i in T.quality(T.parse(TEX), jd(), f))
+
+
+@pytest.mark.parametrize("before, after", [
+    ("lifting throughput 35%.", "lifting throughput by 35%."),
+    ("cutting failed refreshes 45%", "cutting failed refreshes by 45%"),
+    ("cutting review turnaround about 30%", "cutting review turnaround by about 30%"),
+    ("cutting failed runs by 30%", "cutting failed runs by 30%"),
+    ("reduced time from 45 to 20%", "reduced time from 45 to 20%"),
+    ("lifted accuracy to 95%", "lifted accuracy to 95%"),
+    ("fine-tuned YOLOv8 (96.4% mAP@0.5)", "fine-tuned YOLOv8 (96.4% mAP@0.5)"),
+])
+def test_percentage_changes_take_by(before, after):
+    assert T.by_percent(before) == after
