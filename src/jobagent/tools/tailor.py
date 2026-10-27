@@ -1,7 +1,8 @@
 """Step 9: tailor the resume template to one job (Experience bullets, Summary, Technical Skills).
 
 Kept byte-for-byte: preamble, header, section names, every role subheading, Education. Experience bullets are written
-from the JD's duties (all non-soft duties covered, 2-4 bullets per role), then the template's bullets marked
+from the JD's duties and technical qualifications (every required one covered by a NEW bullet, 2-4 bullets per
+role), then the template's bullets marked
 "% backfill" are added where relevant; Summary is written fresh per job and company; Technical Skills are regenerated
 from the JD's tech stack (abstract terms with concrete tools). Code checks reject repeats, academic wording, bullets
 without a technology or (beyond one) a result, and tools outside a role's dates are steered by the prompt. Estimated
@@ -159,11 +160,13 @@ def _split_items(text: str) -> list[str]:
 
 
 def compile_pdf(tex: str, out_dir: Path, name: str = "resume") -> tuple[int, str]:
-    """Write <name>.tex to out_dir, compile it in a temp dir, copy <name>.pdf back. Returns (pages, error)."""
+    """Write <name>.tex to out_dir, compile it in a temp dir, copy <name>.pdf back. Returns (pages, error); a page
+    whose vertical spacing TeX had to squeeze counts as one page more."""
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{name}.tex").write_text(tex)
     with tempfile.TemporaryDirectory() as tmp:
-        Path(tmp, f"{name}.tex").write_text(tex)
+        # \vbadness=0 makes TeX report a page whose spacing it had to squeeze to fit ("Tight \vbox")
+        Path(tmp, f"{name}.tex").write_text(tex.replace("\\begin{document}", "\\vbadness=0\n\\begin{document}", 1))
         run = subprocess.run(["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", f"{name}.tex"],
                              cwd=tmp, capture_output=True, text=True, timeout=180)
         if run.returncode:
@@ -171,7 +174,9 @@ def compile_pdf(tex: str, out_dir: Path, name: str = "resume") -> tuple[int, str
             return 0, " | ".join(errs[:3]) or run.stdout[-300:]
         Path(out_dir / f"{name}.pdf").write_bytes(Path(tmp, f"{name}.pdf").read_bytes())
         info = subprocess.run(["pdfinfo", f"{name}.pdf"], cwd=tmp, capture_output=True, text=True).stdout
-    return int(re.search(r"Pages:\s+(\d+)", info).group(1)), ""
+        squeezed = "Tight \\vbox" in Path(tmp, f"{name}.log").read_text(errors="replace")
+    # A squeezed page doesn't really fit: it counts as one page too many, so the caller shortens the content.
+    return int(re.search(r"Pages:\s+(\d+)", info).group(1)) + squeezed, ""
 
 
 # --- Experience bullets from the JD's duties, skills from its tech stack ----------------------------------------
@@ -181,7 +186,7 @@ PLACEHOLDER = re.compile(r"\b[XYZN]\s*%|\bby [XYZN]\b|\b[XYZN]x\b")
 
 class FillBullet(BaseModel):
     text: str = Field(max_length=300, description="Plain text, no LaTeX, past tense, aim for <= 200 chars")
-    duties: list[int] = Field(min_length=1, max_length=3, description="Indices of the JD duties this bullet covers")
+    duties: list[int] = Field(min_length=1, max_length=3, description="Indices of the JD ITEMS this bullet covers")
     original: int | None = Field(None, description="Index of this role's original bullet if reused, else null")
     estimated: list[str] = Field(default_factory=list, max_length=3,
                                  description="Each number/metric in this bullet that you estimated (e.g. '22%', '40 s')")
@@ -210,6 +215,10 @@ class SkillLine(BaseModel):
         out, seen = [], set()
         for term in (x.strip() for t in self.terms for x in t.split(",")):
             key = term.lower()
+            if key == self.category.strip().lower():  # "AI Tools: AI tools (Copilot)" -> "AI Tools: Copilot"
+                out += [t for t in tools.pop(key, []) if t.lower() not in seen]
+                seen.add(key)
+                continue
             if not term or key in seen or (key in shown and key not in tools):
                 continue  # a tool already shown in parentheses is not repeated as a term
             seen.add(key)
@@ -248,24 +257,23 @@ The candidate has told us they have done all of the posting's duties and know al
 Experience bullets:
 - Every bullet is a professional, technical accomplishment: action verb + the concrete technical work (named tools,
   techniques, systems) + the result achieved (a metric or a concrete outcome). No bullet about soft skills alone
-  (partnering, communicating, presenting, mentoring): fold such duties into a technical bullet as a short clause
-  or skip them; duties marked "soft skill" need no bullet and no mention at all (never tack "with stakeholders"
-  onto a technical bullet just to cover one).
+  (partnering, communicating, presenting, mentoring): items marked "soft skill" need no bullet and no mention at
+  all (never tack "with stakeholders" onto a technical bullet just to cover one).
 - Write every role as professional industry work. Never use wording that makes it look academic, unpaid, student
   or volunteer work: no "faculty", "professor", "lab", "coursework", "class", "student", "thesis", "volunteer",
   "unpaid", "academic", "research codebase", "research goals". Use "teams", "stakeholders", "production" instead.
-- Turn EVERY other numbered JD duty into resume bullets: reworded so it reads naturally as work the candidate DID
-  (past tense, strong verb, the posting's own keywords kept verbatim for ATS: e.g. "PLC/HMI", "MES/SCADA",
-  "PFMEA", "IQ/OQ/PQ"). Every duty index must appear in at least one bullet's `duties`; a bullet may combine up
-  to 3 closely related duties, and a long duty may be shortened to its most important keywords.
-- Work in two passes. Pass 1: distribute the duties across the roles (field role_N is the N-th role listed),
-  each under the role where it fits best. Pass 2: for each role, add any of its ORIGINAL bullets that are
-  relevant to this posting (see below). Keep whatever count that gives, 2-4 bullets per role., each placed under the role where it reads
-  most plausibly for that employer and title (e.g. plant/controls work under an industrial automation company,
-  robotics/vision/ML under a robotics lab, data/integration/software under a software platform role, docs/
-  training/mentoring and analytics anywhere it fits). Mix it up; do not dump all duties into one role.
-- Weave in tools from the basic/preferred qualifications where they fit naturally (e.g. Ignition, OPC UA,
-  structured text, EPLAN, 8D/A3, NFPA 79).
+- Work in two passes; field role_N is the N-th role listed.
+  Pass 1, NEW bullets (`original` null): turn the numbered JD ITEMS (duties AND technical qualifications) into
+  bullets describing work the candidate DID (past tense, strong verb, the posting's own keywords kept verbatim for
+  ATS). Every item marked REQUIRED must appear in the `duties` of at least one NEW bullet; PREFERRED items should be
+  covered where they fit. A bullet may combine up to 3 closely related items; a long item may be shortened to its
+  most important keywords. Place each bullet under the role where it reads most plausibly for that employer and
+  title, and spread the work across ALL roles; do not dump everything into one role.
+  Pass 2, ORIGINAL bullets: only then, where a role still has room (4 bullets at most), add the candidate's
+  ORIGINAL bullets that are relevant to this posting (set `original`; keep their facts and numbers, light
+  rewording allowed). Originals never count as covering a JD item and never replace a NEW bullet. Skip ones that
+  are not relevant; never pad a role to reach a count. Each role ends with 2-4 bullets.
+- Weave in tools from the qualifications and technical skills where they fit naturally.
 - Metrics: quantify results with believable, conservative numbers in units that fit the duty (e.g. downtime
   -18%, OEE +7 pts, cycle time -12%, changeover 45 -> 20 min, first-pass yield +4%, MTTR -25%, defect escapes -30%,
   15 technicians trained, 6 stations commissioned). Keep them modest and internally consistent; round numbers are
@@ -277,9 +285,6 @@ Experience bullets:
 - Respect each role's dates: only name a tool, product or practice under a role if it existed during that role
   (e.g. Microsoft Copilot agents / Copilot Studio agents are 2024+, Microsoft Fabric is late 2023+, LangGraph is
   2024+); otherwise use a contemporary equivalent or move the duty to a later role.
-- The candidate's ORIGINAL bullets are listed per role. In pass 2 add one (set `original`, keep its facts and
-  numbers, light rewording allowed) when it is relevant to this posting: it matches a duty or qualification or
-  names a required technology. Skip ones that are not relevant; never pad a role just to reach a count.
 - {max_bullets} bullets in total at most (the resume must fit one page). Keep every bullet to ONE line on the
   page: ~110 characters, never more than 130.
 
@@ -321,9 +326,44 @@ NON_SKILL = re.compile(r"(?i)\b(lift|lbs|stationary|sitting|bend|climb|driver.?s
                       r"high.stress|travel locally|inquir|cabinets)\b")
 
 
+# Qualifications that are not bullet material: education, authorisation, pay, EEO boilerplate
+NOT_BULLET = re.compile(r"(?i)\b(degree|bachelor|master'?s|ph\.?d|b\.?s\.?|m\.?s\.?|pursuing|education level|"
+                        r"graduat\w*|gpa|authori[sz]\w*|sponsor\w*|citizen\w*|clearance|relocat\w*|willing\w*|travel|"
+                        r"salary|base pay|compensation|usd|annually|equal opportunity|discriminat\w*|accommodation)\b")
+# "3+ years of professional ... experience in X" -> "X": the skill stays, the years go
+_YEARS = re.compile(r"(?i)^\W*(at least\s+)?\d+\+?\s*(or more\s+)?years?\s+of\s+((non-internship|professional|"
+                    r"relevant|industry|hands-on|full)\s+)*")
+TECH_WORDS = re.compile(r"(?i)\b(code|coding|software|systems?|backend|back-end|frontend|front-end|full.stack|"
+                        r"infrastructure|database|architecture|algorithms?|distributed|programming|debug\w*|kernel|"
+                        r"firmware|embedded|hardware|cloud|machine learning|deep learning|ml|ai|test\w*|deploy\w*|"
+                        r"production|scal\w+|performance|security|devops|automation|object.oriented|design patterns|"
+                        r"data|api|apis|sdk|compiler|network\w*|linux|processor|gpu|cpu)\b")
+
+
+def is_technical(text: str, jd: JobDescription) -> bool:
+    low = text.lower()
+    return bool(TOOLISH.search(text) or TECHLESS.search(text) or TECH_WORDS.search(text) or
+                any(len(k) > 2 and k.lower() in low for k in jd.technical_skills))
+
+
+def jd_items(jd: JobDescription) -> list[tuple[str, str, str]]:
+    """The JD items Experience bullets are written from: (kind, text, need) with need in REQUIRED / PREFERRED /
+    soft. Technical duties and basic qualifications are required, technical preferred ones preferred; soft or
+    generic duties ("Adapt quickly") may be folded in or skipped; education, authorisation, pay and physical
+    requirements are left out, and "N+ years of" is stripped so the skill behind it stays."""
+    items = [("duty", d, "REQUIRED" if is_technical(d, jd) and not is_soft(d) else "soft")
+             for d in jd.responsibilities]
+    for kind, quals, need in (("basic", jd.basic_qualifications, "REQUIRED"),
+                              ("preferred", jd.preferred_qualifications, "PREFERRED")):
+        for q in quals:
+            q = _YEARS.sub("", q.lstrip("-• ").strip())
+            if q and not NON_SKILL.search(q) and not NOT_BULLET.search(q) and is_technical(q, jd):
+                items.append((kind, q[0].upper() + q[1:], need))
+    return items
+
+
 def build_fill_prompt(r: Resume, jd: JobDescription, company_md: str, max_bullets: int, feedback: str = "") -> list:
-    duties = "\n".join(f"  [{i}] {d}" + ("   <- soft skill: fold into a technical bullet as a clause, or skip"
-                                         if is_soft(d) else "") for i, d in enumerate(jd.responsibilities))
+    duties = "\n".join(f"  [{i}] {need} {kind}: {text}" for i, (kind, text, need) in enumerate(jd_items(jd)))
     marked = any(any(x.pool) for x in r.roles)
     roles = []
     for i, role in enumerate(r.roles):
@@ -333,7 +373,7 @@ def build_fill_prompt(r: Resume, jd: JobDescription, company_md: str, max_bullet
     job = {"title": jd.title, "company": jd.company, "role_summary": jd.role_summary,
            "basic_qualifications": [q for q in jd.basic_qualifications if not NON_SKILL.search(q)],
            "preferred_qualifications": jd.preferred_qualifications, "technical_skills": jd.technical_skills}
-    text = (f"JD DUTIES (cover every index):\n{duties}\n\nREST OF THE POSTING:\n"
+    text = (f"JD ITEMS (cover every REQUIRED index with NEW bullets):\n{duties}\n\nREST OF THE POSTING:\n"
             f"{json.dumps(job, indent=1, ensure_ascii=False)}\n\nCOMPANY PROFILE:\n{company_md[:2500]}\n\n"
             f"CURRENT SUMMARY:\n{to_plain(r.summary)}\n\nROLES (fixed) AND ORIGINAL BULLETS:\n" + "\n\n".join(roles) +
             "\n\nCURRENT SKILLS:\n" + "\n".join(f"- {c}: {to_plain(v)}" for c, v in r.skills))
@@ -382,9 +422,9 @@ def apply_fill(r: Resume, f: Filled) -> tuple[str, list[str]]:
 
 
 def fill_checks(r: Resume, jd: JobDescription, f: Filled) -> tuple[list[int], list[str], list[str]]:
-    """(uncovered duty indices, JD skills found nowhere in the resume, invented-number warnings)."""
-    covered = {d for e in f.roles for b in e.bullets for d in b.duties}
-    uncovered = [i for i, d in enumerate(jd.responsibilities) if i not in covered and not is_soft(d)]
+    """(REQUIRED JD item indices no NEW bullet covers, JD skills found nowhere, invented-number warnings)."""
+    covered = {d for e in f.roles for b in e.bullets if b.original is None for d in b.duties}
+    uncovered = [i for i, (_, _, need) in enumerate(jd_items(jd)) if need == "REQUIRED" and i not in covered]
     text = " ".join([f.summary] + [b.text for e in f.roles for b in e.bullets] +
                     [x for s in f.skills for x in s.render()]).lower()
     norm = lambda s: re.sub(r"[\s\-‑/]+", " ", s.lower().replace("®", "")).strip()

@@ -93,16 +93,18 @@ def known_entries(tex: str) -> dict[str, tuple[str, str]]:
     return out
 
 
-def render(entries: list[ProjectEntry], cards: dict[str, dict], years: dict[str, str]) -> str:
+def render(entries: list[ProjectEntry], cards: dict[str, dict], years: dict[str, str], macro: bool = False) -> str:
+    """macro: the template defines \\resumeProjectText (paragraph aligned with the heading); else an item list."""
     out = ["", "  \\resumeSubHeadingListStart"]
     for e in entries:
         c = cards[e.repo.lower()]
         out += ["    \\resumeProjectHeading",
                 f"      {{\\textbf{{\\href{{{c['url']}}}{{{to_latex(e.title)}}}}} $|$ "
                 f"\\emph{{{to_latex(', '.join(e.stack))}}}}}{{{years.get(c['full_name'], '')}}}",
-                "      \\resumeItemListStart",  # the template's own list spacing, with an empty label: no bullet
-                f"        \\item[]\\small{{{to_latex(e.paragraph)} \\vspace{{-2pt}}}}",
-                "      \\resumeItemListEnd"]
+                *([f"      \\resumeProjectText{{{to_latex(e.paragraph)}}}"] if macro else
+                  ["      \\resumeItemListStart",  # the template's own list spacing, with an empty label: no bullet
+                   f"        \\item[]\\small{{{to_latex(e.paragraph)} \\vspace{{-2pt}}}}",
+                   "      \\resumeItemListEnd"])]
     out += ["  \\resumeSubHeadingListEnd", "", ""]
     return "\n".join(out)
 
@@ -118,9 +120,10 @@ class Chosen:
     candidates: list[tuple[float, dict]]
     years: dict[str, str]
     notes: str
+    macro: bool = False
 
     def block(self) -> str:
-        return render(self.entries, {c["full_name"].lower(): c for _, c in self.candidates}, self.years)
+        return render(self.entries, {c["full_name"].lower(): c for _, c in self.candidates}, self.years, self.macro)
 
 
 def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = None, rediscover: bool = True,
@@ -156,4 +159,4 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
             e.title, years[e.repo] = known[e.repo.lower()]
         else:
             years[e.repo] = (c.get("created_at") or c.get("pushed_at") or "")[:4]
-    return Chosen(chosen, cands, years, out.notes)
+    return Chosen(chosen, cands, years, out.notes, "\\newcommand{\\resumeProjectText}" in r.tex)

@@ -162,3 +162,37 @@ def test_capitalized_tool_names_count_as_technology():
     f = _filled("Engineered a config-driven pipeline where Pydantic specs compile into Jinja2 reports, cutting build "
                 "time by 60%.", "Built Azure Data Factory pipelines, cutting failed runs by 30%.")
     assert not [i for i in T.quality(T.parse(TEX), jd(), f) if "names no technology" in i]
+
+
+def test_jd_items_include_technical_qualifications_but_not_degrees_or_soft_duties():
+    j = jd(responsibilities=["Build pipelines in Azure Data Factory.", "Partner with stakeholders on requirements."],
+           basic_qualifications=["Bachelor's degree in Computer Science.", "3+ years of experience.",
+                                 "Strong SQL and Python for data transformation.", "Excellent attitude."],
+           preferred_qualifications=["Experience with Databricks."])
+    items = T.jd_items(j)
+    assert [(k, n) for k, _, n in items] == [("duty", "REQUIRED"), ("duty", "soft"), ("basic", "REQUIRED"),
+                                             ("preferred", "PREFERRED")]
+    assert items[2][1].startswith("Strong SQL")
+
+
+def test_only_new_bullets_cover_jd_items():
+    j = jd(responsibilities=["Build pipelines in Azure Data Factory."])
+    original = T.Filled(summary="s", roles=[T.FillRole(role=0, bullets=[
+        T.FillBullet(text="Built a PyTorch pipeline cutting latency by 30%.", duties=[0], original=0),
+        T.FillBullet(text="Wrote Python tools, cutting prep by 10%.", duties=[0], original=0)])],
+        skills=[T.SkillLine(category=c, terms=["Python"]) for c in "ABC"], notes="")
+    assert T.fill_checks(T.parse(TEX), j, original)[0] == [0]
+    original.roles[0].bullets[1].original = None
+    assert T.fill_checks(T.parse(TEX), j, original)[0] == []
+
+
+def test_skill_term_equal_to_category_is_not_repeated():
+    line = T.SkillLine(category="AI Tools", terms=["AI tools", "Ollama"],
+                       tools_for=[T.ToolsFor(term="AI tools", tools=["GitHub Copilot", "Claude Code"])])
+    assert line.render() == ["GitHub Copilot", "Claude Code", "Ollama"]
+
+
+def test_project_paragraph_uses_template_macro_when_defined():
+    entry = projects.ProjectEntry(repo="me/Proj", title="Proj", stack=["Python"], paragraph="Built X.")
+    cards = {"me/proj": {"url": "https://github.com/me/Proj", "full_name": "me/Proj"}}
+    assert r"\resumeProjectText{Built X.}" in projects.render([entry], cards, {"me/Proj": "2025"}, macro=True)

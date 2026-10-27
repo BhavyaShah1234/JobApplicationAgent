@@ -4,7 +4,7 @@
 
 Projects come from GitHub repo cards (tools/projects); Experience, Summary and Technical Skills from the JD
 (tools/tailor), in up to 5 rounds that keep the best one-page result. Writes resume.tex/.pdf, filled.json (the
-model's output) and changes.md (estimated metrics to confirm, where each duty went, projects and skills chosen),
+model's output) and changes.md (estimated metrics to confirm, where each JD item went, projects and skills chosen),
 then the matching cover letter (cover_letter.tex/.pdf).
 """
 
@@ -24,10 +24,12 @@ from jobagent.tools.vault import open_vault
 
 
 def report(r, jd, f, pages, problems, uncovered, missing, warn, rounds, filled_in=(), proj=None) -> str:
+    items = T.jd_items(jd)
+    need = sum(n == "REQUIRED" for _, _, n in items)
     lines = ["# Resume fill — review", "", f"- Pages: **{pages}**", f"- Rounds: {' → '.join(rounds)}",
              f"- Locked parts (header, section names, role subheadings, Education): "
              f"{'unchanged ✅' if not any('LOCKED' in p for p in problems) else 'CHANGED ❌'}",
-             f"- JD duties covered: **{len(jd.responsibilities) - len(uncovered)}/{len(jd.responsibilities)}**"
+             f"- Required JD items covered by new bullets: **{need - len(uncovered)}/{need}**"
              + (f" (missing: {uncovered})" if uncovered else ""),
              f"- JD tech-stack items not found verbatim anywhere: {', '.join(missing) or 'none'}", ""]
     dups = T.duplicates(r, f) + T.quality(r, jd, f)
@@ -57,11 +59,13 @@ def report(r, jd, f, pages, problems, uncovered, missing, warn, rounds, filled_i
                 if b.original is not None else "new"
             lines.append(f"| {j + 1} | {b.text.replace('|', '/')} | {', '.join(map(str, b.duties))} | {src} | {', '.join(b.estimated) or '—'} |")
         lines.append("")
-    lines += ["## Duty → where it went", "", "| # | JD duty | Role(s) |", "|---|---|---|"]
-    for i, d in enumerate(jd.responsibilities):
-        where = sorted({r.roles[e.role].company for e in f.roles for b in e.bullets if i in b.duties
-                        and e.role < len(r.roles)})
-        lines.append(f"| {i} | {d[:110].replace('|', '/')} | {'; '.join(where) or '**not covered**'} |")
+    lines += ["## JD item → where it went (new bullets; originals don't count)", "",
+              "| # | Kind | Need | JD item | Role(s) |", "|---|---|---|---|---|"]
+    for i, (kind, text, need_) in enumerate(items):
+        where = sorted({r.roles[e.role].company for e in f.roles for b in e.bullets
+                        if i in b.duties and b.original is None and e.role < len(r.roles)})
+        lines.append(f"| {i} | {kind} | {need_} | {text[:100].replace('|', '/')} | "
+                     f"{'; '.join(where) or ('**not covered**' if need_ == 'REQUIRED' else '—')} |")
     if proj:
         lines += ["", "## Projects (from GitHub repo cards)", "", proj.notes, "",
                   "| Project | Repo | Owner | Relevance | Card (kind, substance, had README) | Paragraph |",
@@ -121,7 +125,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, log=None) -> 
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
     company = (s.state_dir / "companies" / f"{company_slug}.md").read_text()
     r = T.parse((s.data_dir / "templates" / "resume.tex").read_text())
-    log(f"template: {len(r.roles)} roles; JD: {len(jd.responsibilities)} duties, {len(jd.technical_skills)} skills")
+    log(f"template: {len(r.roles)} roles; JD: {len(T.jd_items(jd))} JD items, {len(jd.technical_skills)} skills")
     model = ChatOpenAI(model="glm-5-3", base_url=s.openai_base_url, api_key=s.openai_api_key, max_retries=1,
                        timeout=600, temperature=0, max_tokens=16000).with_structured_output(T.filled_schema(r), method="json_schema")
     proj = None
@@ -169,9 +173,10 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, log=None) -> 
         if err:
             asks.append(f"The LaTeX failed to compile: {err}.")
         if uncovered:
-            asks.append(f"These JD duty indices are not covered by any bullet: {uncovered}. Cover them.")
+            asks.append(f"These REQUIRED JD item indices are not covered by any NEW bullet (originals don't count): "
+                        f"{uncovered}. Cover each with a new bullet.")
         if pages and pages > 1:
-            asks.append(f"The resume came out {pages} pages; it must be ONE. Keep every duty covered but merge "
+            asks.append(f"The resume came out {pages} pages; it must be ONE. Keep every REQUIRED item covered but merge "
                         "related duties, drop the least relevant bullets from roles above their target and shorten every "
                         f"bullet to ONE line (<= 110 characters); never below {T.MIN_BULLETS} bullets per role; "
                         "give each tools_for entry at most 2 tools (never drop posting terms).")
