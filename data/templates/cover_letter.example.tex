@@ -1,27 +1,50 @@
-% Placeholder cover letter template — replace data/templates/cover_letter.tex with your own.
-\documentclass[11pt,letterpaper]{article}
-\usepackage[margin=1in]{geometry}
+%-------------------------
+% Cover letter in LaTeX — the agent fills the <<...>> slots for each job; everything else stays as is.
+% Matches the resume: same fonts, header and rule. One page.
+%------------------------
+
+\documentclass[letterpaper,11pt]{article}
+
+\usepackage{latexsym}
+\usepackage[letterpaper,top=0.5in,bottom=0.6in,left=0.6in,right=0.6in]{geometry}
+\usepackage[usenames,dvipsnames]{color}
 \usepackage[hidelinks]{hyperref}
+\usepackage[english]{babel}
+\usepackage{fontawesome5}
+\usepackage{changepage}
+\input{glyphtounicode}
+\pdfgentounicode=1
+\urlstyle{same}
 \pagestyle{empty}
+\raggedright
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{8pt}
+\setlength{\parskip}{9pt}
 
 \begin{document}
-First Last \\ email@example.com \\ +1 480 555 1234
 
-\today
+\begin{adjustwidth}{-0.45in}{-0.45in}  % the resume's header, as wide as on the resume
+\begin{center}
+    \textbf{\Huge \scshape First Last} \\ \vspace{1pt}
+    \faPhone$/$\href{tel://+14805551234}{\underline{480-555-1234}} $|$
+    \faEnvelope$/$\href{mailto:email@example.com}{\underline{email@example.com}} $|$
+    \faLinkedin$/$\href{https://linkedin.com/in/first-last}{\underline{first-last}} $|$
+    \faGithub$/$\href{https://github.com/firstlast}{\underline{firstlast}}
+\end{center}
+\end{adjustwidth}
+\vspace{-4pt}
+\rule{\textwidth}{0.4pt}
 
-Hiring Team\\
-Company
+<<DATE>>
 
-Dear Hiring Team,
+<<RECIPIENT>>
 
-Opening paragraph: the role and why this company.
+\textbf{Re: <<SUBJECT>>}
 
-Body: two or three concrete accomplishments that match the job's requirements.
+<<SALUTATION>>
 
-Closing paragraph and thanks.
+<<BODY>>
 
-Sincerely,\\
+<<CLOSING>>,\\[14pt]
 First Last
+
 \end{document}

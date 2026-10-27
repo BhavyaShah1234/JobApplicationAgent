@@ -1,14 +1,15 @@
 # Step 9 — Resume tailoring (in progress)
 
 Built as a trial with the user on two postings (Amphenol Automation Engineer, Plante Moran AI Data Engineer) and
-accepted 2026-10-27. Still to do: the cover letter, then the 5-JD gate.
+accepted 2026-10-27; cover letter added the same day. Still to do: the 5-JD gate.
 
 ## Run it
 
 ```bash
 jobagent scrape <url>                                  # step 7 → outputs/<company>/<job-id>/
 jobagent research "<Company>"                          # step 8 → state/companies/<slug>.md
-jobagent tailor outputs/<company>/<job-id> <slug>      # → resume.tex/.pdf, filled.json, changes.md
+jobagent tailor outputs/<company>/<job-id> <slug>      # → resume + cover letter (.tex/.pdf), changes.md
+jobagent cover-letter outputs/<company>/<job-id> <slug> # rewrite the letter after editing resume.tex
 python -m jobagent.tools.repo_cards [workers] [--force] # (re)build the GitHub repo cards on their own
 ```
 
@@ -29,6 +30,19 @@ python -m jobagent.tools.repo_cards [workers] [--force] # (re)build the GitHub r
   described as whole projects; titles/years already in the template are kept.
 - **One page:** up to 5 rounds; the least relevant project is dropped only as far as a round needs; the best
   one-page round (fewest issues, then most projects) is kept.
+
+## Cover letter
+
+- **Template:** `data/templates/cover_letter.tex` (user's, gitignored; the committed `cover_letter.example.tex` is
+  the same design with placeholder contact details). Same fonts as the resume, the resume's header verbatim (in an
+  `adjustwidth` block so it stays on one line), a rule, then `<<DATE>>`, `<<RECIPIENT>>` (Hiring Team, company,
+  the posting's first location), `Re: <<SUBJECT>>` (title + req id), `<<SALUTATION>>`, `<<BODY>>`, `<<CLOSING>>`.
+- **Written from the job's final `resume.tex`** (the user's edits carry over), the JD and the company profile:
+  3-4 paragraphs (role + one cited company fact, the 2-3 strongest duty matches with the resume's tools and
+  numbers, close). Each paragraph lists the resume lines / company facts it used (in `changes.md`).
+- **Consistency checks** (sent back to the model, up to 3 rounds, best kept): every number and every tool/proper
+  noun in the letter must appear in the resume, the JD or the company profile; ~420 words max; one page; the
+  letter's header must equal the resume's.
 
 ## Checks in code (sent back to the model)
 
@@ -53,4 +67,6 @@ when `pushed_at` moved. First build: 104 repos in ~16 min (6 workers); a no-chan
   limits on free text are set well above what the prompt asks for (the summary was cut mid-sentence at 500).
 - `\par` after `\resumeProjectHeading` overlapped the heading on a full page (and hid real overflow); project
   paragraphs use the template's own item list with an empty label.
+- In LaTeX source `\\%` is an escaped percent, not a comment: stripping comments naively cut every percentage off
+  the resume text the letter is checked against.
 - Unicode the fonts can't set (Cyrillic, →, ~) is mapped or dropped before compiling.

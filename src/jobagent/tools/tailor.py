@@ -135,18 +135,19 @@ def _split_items(text: str) -> list[str]:
     return [t.strip() for t in re.split(r",(?![^{]*\})", text) if t.strip()]
 
 
-def compile_pdf(tex: str, out_dir: Path) -> tuple[int, str]:
+def compile_pdf(tex: str, out_dir: Path, name: str = "resume") -> tuple[int, str]:
+    """Write <name>.tex to out_dir, compile it in a temp dir, copy <name>.pdf back. Returns (pages, error)."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "resume.tex").write_text(tex)
+    (out_dir / f"{name}.tex").write_text(tex)
     with tempfile.TemporaryDirectory() as tmp:
-        Path(tmp, "resume.tex").write_text(tex)
-        run = subprocess.run(["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", "resume.tex"],
+        Path(tmp, f"{name}.tex").write_text(tex)
+        run = subprocess.run(["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", f"{name}.tex"],
                              cwd=tmp, capture_output=True, text=True, timeout=180)
         if run.returncode:
-            errs = [l for l in Path(tmp, "resume.log").read_text(errors="replace").splitlines() if l.startswith("!")]
+            errs = [l for l in Path(tmp, f"{name}.log").read_text(errors="replace").splitlines() if l.startswith("!")]
             return 0, " | ".join(errs[:3]) or run.stdout[-300:]
-        Path(out_dir / "resume.pdf").write_bytes(Path(tmp, "resume.pdf").read_bytes())
-        info = subprocess.run(["pdfinfo", "resume.pdf"], cwd=tmp, capture_output=True, text=True).stdout
+        Path(out_dir / f"{name}.pdf").write_bytes(Path(tmp, f"{name}.pdf").read_bytes())
+        info = subprocess.run(["pdfinfo", f"{name}.pdf"], cwd=tmp, capture_output=True, text=True).stdout
     return int(re.search(r"Pages:\s+(\d+)", info).group(1)), ""
 
 

@@ -4,7 +4,8 @@
 
 Projects come from GitHub repo cards (tools/projects); Experience, Summary and Technical Skills from the JD
 (tools/tailor), in up to 5 rounds that keep the best one-page result. Writes resume.tex/.pdf, filled.json (the
-model's output) and changes.md (estimated metrics to confirm, where each duty went, projects and skills chosen).
+model's output) and changes.md (estimated metrics to confirm, where each duty went, projects and skills chosen),
+then the matching cover letter (cover_letter.tex/.pdf).
 """
 
 import re
@@ -80,6 +81,36 @@ def report(r, jd, f, pages, problems, uncovered, missing, warn, rounds, filled_i
             re.sub(r"[^,()]+", lambda m: m.group(0) + (" *(yours)*" if m.group(0).strip().lower() in old else ""), x)
             for x in s.render()))
     return "\n".join(lines) + "\n"
+
+
+def letter_report(cl: dict) -> str:
+    lines = ["", "## Cover letter", "",
+             f"- Template: `{cl['template']}`; header identical to the resume's: "
+             f"{'yes ✅' if cl['header_matches_resume'] else 'NO ❌'}",
+             f"- {cl['words']} words; consistency with the resume: "
+             + ("all numbers and technologies found in the resume/posting/company profile ✅" if not cl["issues"]
+                else "problems: " + " | ".join(cl["issues"])), ""]
+    for k, p in enumerate(cl["letter"].paragraphs, 1):
+        lines += [f"**Paragraph {k}** — based on: " + "; ".join(f"“{e}”" for e in p.evidence), ""]
+    return "\n".join(lines) + "\n"
+
+
+def cover_letter(job_dir: str | Path, company_slug: str, log=print) -> dict:
+    """Write cover_letter.tex/.pdf from the job's (final) resume.tex; also usable after editing the resume."""
+    from jobagent.tools import cover_letter as CL
+
+    s = get_settings()
+    job_dir = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
+    jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
+    company = (s.state_dir / "companies" / f"{company_slug}.md").read_text()
+    writer = ChatOpenAI(model="glm-5-3", base_url=s.openai_base_url, api_key=s.openai_api_key, max_retries=1,
+                        timeout=600, temperature=0, max_tokens=8000)
+    cl = CL.write(job_dir, jd, company, writer, log=log)
+    changes = job_dir / "changes.md"
+    text = changes.read_text() if changes.exists() else ""
+    text = text.split("\n## Cover letter\n", 1)[0].rstrip("\n") + "\n"  # replace an earlier letter's section
+    changes.write_text(text + letter_report(cl))
+    return cl
 
 
 def main(job_dir: str, company_slug: str) -> None:
@@ -164,6 +195,8 @@ def main(job_dir: str, company_slug: str) -> None:
     (job_dir / "changes.md").write_text(report(r, jd, f, pages, problems, uncovered, missing, warn, rounds, filled_in,
                                                      proj))
     print(f"done: pages={pages} uncovered={uncovered} missing_skills={len(missing)} problems={len(problems + warn)}")
+    cl = cover_letter(job_dir, company_slug, log=lambda m: print(m, flush=True))
+    print(f"cover letter: {cl['words']} words, {len(cl['issues'])} issue(s)")
 
 
 if __name__ == "__main__":

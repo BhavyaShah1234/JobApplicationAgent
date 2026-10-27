@@ -279,6 +279,18 @@ def tailor_cmd(
     main(job_dir, company)
 
 
+@app.command("cover-letter")
+def cover_letter_cmd(
+    job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with a tailored resume.tex."),
+    company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md)."),
+) -> None:
+    """(Re)write the cover letter from the job's resume.tex — e.g. after editing the resume's numbers."""
+    from jobagent.steps.tailor import cover_letter
+
+    cl = cover_letter(job_dir, company, log=lambda m: console.print(m, highlight=False))
+    console.print(f"cover letter: {cl['words']} words, {len(cl['issues'])} issue(s)", highlight=False)
+
+
 @app.command("research")
 def research_cmd(
     companies: list[str] = typer.Argument(None),
