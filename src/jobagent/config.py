@@ -10,6 +10,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # The user's local time: "today", "present" and "latest" are judged in this zone (America/Phoenix = MST, no DST)
+    timezone: str = "America/Phoenix"
+
     # Paths (bind-mounted volumes inside the container)
     data_dir: Path = Path("/app/data")
     state_dir: Path = Path("/app/state")

@@ -20,6 +20,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from jobagent import llm
+from jobagent.clock import with_today
 from jobagent.state import JobDescription
 
 
@@ -380,7 +381,7 @@ def build_fill_prompt(r: Resume, jd: JobDescription, company_md: str, max_bullet
             "\n\nCURRENT SKILLS:\n" + "\n".join(f"- {c}: {to_plain(v)}" for c, v in r.skills))
     if feedback:
         text += f"\n\nREVISION REQUEST:\n{feedback}"
-    return [SystemMessage(FILL_PROMPT.format(max_bullets=max_bullets)), HumanMessage(text)]
+    return [SystemMessage(with_today(FILL_PROMPT.format(max_bullets=max_bullets))), HumanMessage(text)]
 
 
 def fill_locked_parts(r: Resume) -> list[str]:
@@ -413,8 +414,9 @@ def apply_fill(r: Resume, f: Filled) -> tuple[str, list[str]]:
                      else to_latex(b.text) for b in edit.bullets]
         body = "\n" + "".join(f"        \\resumeItem{{{x}}}\n" for x in items) + "      "
         tex = tex[:role.span[0]] + body + tex[role.span[1]:]
-    m = re.match(r"\\(small|footnotesize|normalsize)\{", r.summary)  # keep the template's size wrapper
-    body = f"\\{m.group(1)}{{{to_latex(f.summary)}}}" if m else to_latex(f.summary)
+    # keep the template's wrapper, e.g. \small{\justifying ...}
+    m = re.match(r"\\(small|footnotesize|normalsize)\{(\\justifying\s*)?", r.summary)
+    body = f"\\{m.group(1)}{{{m.group(2) or ''}{to_latex(f.summary)}}}" if m else to_latex(f.summary)
     tex = tex[:r.summary_span[0]] + "\n" + body + "\n\n" + tex[r.summary_span[1]:]
     for part in fill_locked_parts(r):
         if part not in tex:
@@ -605,7 +607,7 @@ def build_repair_prompt(r: Resume, jd: JobDescription, f: Filled, issues: list[s
         for k, b in enumerate(e.bullets, 1):
             covers = "; ".join(items[d][1][:80] for d in b.duties if 0 <= d < len(items))
             lines.append(f"  {k}. {b.text}" + (f"   [covers: {covers}]" if covers and b.original is None else ""))
-    return [SystemMessage(REPAIR_PROMPT),
+    return [SystemMessage(with_today(REPAIR_PROMPT)),
             HumanMessage("RESUME BULLETS:\n" + "\n".join(lines) + "\n\nPROBLEMS:\n" + "\n".join(issues))]
 
 

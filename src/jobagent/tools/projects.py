@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from jobagent.clock import with_today
 from jobagent.state import JobDescription
 from jobagent.tools import repo_cards
 from jobagent.tools.tailor import Resume, _braced, to_latex
@@ -34,8 +35,9 @@ class Projects(BaseModel):
 PROMPT = """You choose the projects for the Projects section of a resume tailored to one job posting, from cards
 the agent wrote by reading each GitHub repository's code.
 
-- Pick {n_min} to {n_max} CANDIDATE repos (never fewer, never more): the ones most relevant to the posting's duties,
-  qualifications and tech stack, and that are substantial. Prefer projects that show skills the posting wants beyond
+- Pick {n_max} CANDIDATE repos (at least {n_min} if fewer are relevant), ORDERED by relevance to the posting's
+  duties, qualifications and tech stack, most relevant first, all of them substantial. The page fitter keeps the
+  first ones that fit on the page, so order matters. Prefer projects that show skills the posting wants beyond
   what the Experience section already shows. A shared repo (someone else owns it) counts as the candidate's project:
   describe the whole project, not only the candidate's part.
 - title: short project name (<= 45 characters). If a KNOWN TITLE is given, use it exactly.
@@ -62,7 +64,7 @@ def build_prompt(cands: list[tuple[float, dict]], jd: JobDescription, known: dic
         blocks.append("\n".join(lines))
     job = {"title": jd.title, "responsibilities": jd.responsibilities, "basic": jd.basic_qualifications,
            "preferred": jd.preferred_qualifications, "technical_skills": jd.technical_skills}
-    return [SystemMessage(PROMPT.format(n_min=MIN_PROJECTS, n_max=MAX_PROJECTS)),
+    return [SystemMessage(with_today(PROMPT.format(n_min=MIN_PROJECTS, n_max=MAX_PROJECTS))),
             HumanMessage(f"POSTING: {job}\n\nCANDIDATES:\n\n" + "\n\n".join(blocks))]
 
 
@@ -91,6 +93,16 @@ def known_entries(tex: str) -> dict[str, tuple[str, str]]:
             title = re.sub(r"\\textbf|\\underline|[{}]", "", title).replace("\\&", "&").strip()
             out[link.group(1).lower()] = (title, year.strip())
     return out
+
+
+def month_year(iso: str) -> str:
+    """'2026-03-14T...' -> 'March 2026' (projects carry month and year, like the Experience dates)."""
+    from datetime import datetime
+    try:
+        d = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    return f"{d:%B %Y}"
 
 
 def render(entries: list[ProjectEntry], cards: dict[str, dict], years: dict[str, str], macro: bool = False) -> str:
@@ -155,8 +167,8 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
     for e in chosen:
         c = by_name[e.repo.lower()]
         e.repo = c["full_name"]
-        if e.repo.lower() in known:  # the user's own title/year (e.g. hackathon wins)
-            e.title, years[e.repo] = known[e.repo.lower()]
-        else:
-            years[e.repo] = (c.get("created_at") or c.get("pushed_at") or "")[:4]
+        if e.repo.lower() in known:  # the user's own title (e.g. hackathon wins)
+            e.title = known[e.repo.lower()][0]
+        years[e.repo] = month_year(c.get("created_at") or c.get("pushed_at") or "") or \
+            known.get(e.repo.lower(), ("", ""))[1]
     return Chosen(chosen, cands, years, out.notes, "\\newcommand{\\resumeProjectText}" in r.tex)

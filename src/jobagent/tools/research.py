@@ -16,6 +16,7 @@ from urllib.parse import quote, urljoin, urlparse
 import httpx
 from pydantic import BaseModel, Field
 
+from jobagent.clock import with_today
 from jobagent import db
 from jobagent.config import get_settings
 
@@ -342,7 +343,7 @@ def research(company: str, hint_text: str = "", refresh: bool = False, log=print
         raise RuntimeError(f"no sources found for {company!r}")
     numbered = {i + 1: src for i, src in enumerate(sources)}
     text = "\n\n".join(f"[{i}] ({src['kind']}) {src['url']}\n{src['text'][:MAX_SOURCE_CHARS]}" for i, src in numbered.items())
-    messages = [SystemMessage(RESEARCH_PROMPT), HumanMessage(f"Company: {company}\n\nSources:\n{text}")]
+    messages = [SystemMessage(with_today(RESEARCH_PROMPT)), HumanMessage(f"Company: {company}\n\nSources:\n{text}")]
     draft = None
     try:
         draft = llm.structured(ProfileDraft, "fast", method="json_schema", timeout=90, max_tokens=3000).invoke(messages)

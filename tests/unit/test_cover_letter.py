@@ -1,6 +1,5 @@
 """Cover letter: resume text extraction, consistency with the resume, template slots, header match."""
 
-from datetime import date
 from pathlib import Path
 
 from jobagent.state import JobDescription
@@ -51,12 +50,15 @@ def test_consistency_flags_new_numbers_and_tools():
     assert any("'70'" in i for i in issues) and any("Snowflake" in i for i in issues)
 
 
-def test_render_fills_every_slot():
-    template = "<<DATE>>|<<RECIPIENT>>|Re: <<SUBJECT>>|<<SALUTATION>>|<<BODY>>|<<CLOSING>>,"
-    out = CL.render(template, letter("A & B 10%.", "Two.", "Three."), JD, today=date(2026, 10, 27))
+def test_render_fills_every_slot_and_skips_url_ids():
+    template = "<<RECIPIENT>>|Re: <<SUBJECT>>|<<SALUTATION>>|<<BODY>>|<<CLOSING>>,"
+    out = CL.render(template, letter("A & B 10%.", "Two.", "Three."), JD)
     assert "<<" not in out
-    assert out.startswith("October 27, 2026|Hiring Team\\\\\nAcme\\\\\nChicago, IL|Re: AI Data Engineer (Req. JR-1)")
+    assert out.startswith("Hiring Team\\\\\nAcme\\\\\nChicago, IL|Re: AI Data Engineer (Req. JR-1)")
     assert "A \\& B 10\\%." in out and out.endswith("Sincerely,")
+    uuid = JD.model_copy(update={"req_id": "10dfc8bc-99ad-4ca2-ab76-853cb90a92c2"})
+    assert "Req." not in CL.render(template, letter("a", "b", "c"), uuid)
+    assert CL.real_req_id("12795") and CL.real_req_id("JR2026744") and not CL.real_req_id("8E736DCABBE5EE1B1B7B")
 
 
 def test_header_match_and_committed_template_has_all_slots():
@@ -75,4 +77,4 @@ def test_consistency_flags_em_dashes():
 def test_template_is_justified_with_name_right_under_the_closing():
     example = (Path(__file__).parents[2] / "data" / "templates" / "cover_letter.example.tex").read_text()
     assert "\\raggedright" not in example
-    assert "<<CLOSING>>,\\\\\nFirst Last" in example
+    assert "<<CLOSING>>,\\\\\nFirst Last" in example and "<<DATE>>" not in example

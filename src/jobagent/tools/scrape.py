@@ -17,6 +17,7 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage, SystemMessage
 from playwright.sync_api import Page
 
+from jobagent.clock import with_today
 from jobagent import db, llm
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
@@ -369,7 +370,7 @@ def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
                 jdtext.Block("p", line.strip()) for line in attached.splitlines() if line.strip()]
         memory.note("postings can link the job description as a file")
     source = (_jsonld_text(posting).split("[description]")[0] + "\n" if posting else "") + f"[job description]\n{jd_text}"
-    messages = [SystemMessage(EXTRACT_PROMPT), HumanMessage(f"Posting URL: {url}\n\n{source[:MAX_LLM_CHARS]}")]
+    messages = [SystemMessage(with_today(EXTRACT_PROMPT)), HumanMessage(f"Posting URL: {url}\n\n{source[:MAX_LLM_CHARS]}")]
     # The fast model (~8x quicker, same quality in the benchmark) does the extraction; the large one is the
     # fallback when it errors or misses title/company/locations.
     try:

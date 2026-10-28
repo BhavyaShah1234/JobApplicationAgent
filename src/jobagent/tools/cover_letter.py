@@ -3,22 +3,22 @@
 The letter is written from the job's FINAL resume.tex (so the user's own edits to it carry over), the JD and the
 company research profile. Code checks keep it consistent with the resume: every number must appear in the resume,
 the JD or the company profile, and every tool/technology it names must appear in one of them. The template
-(data/templates/cover_letter.tex, else the committed example) has <<DATE>>, <<RECIPIENT>>, <<SUBJECT>>,
+(data/templates/cover_letter.tex, else the committed example) has <<RECIPIENT>>, <<SUBJECT>>,
 <<SALUTATION>>, <<BODY>> and <<CLOSING>> slots; everything else (the resume's header, layout) stays as is.
 """
 
 import re
-from datetime import date
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from jobagent.clock import with_today
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
 from jobagent.tools.tailor import DASH, TOOLISH, compile_pdf, proper_nouns, to_latex, to_plain
 
-SLOTS = ("<<DATE>>", "<<RECIPIENT>>", "<<SUBJECT>>", "<<SALUTATION>>", "<<BODY>>", "<<CLOSING>>")
+SLOTS = ("<<RECIPIENT>>", "<<SUBJECT>>", "<<SALUTATION>>", "<<BODY>>", "<<CLOSING>>")
 # Words TOOLISH matches that aren't technologies (letter boilerplate, degrees, places).
 _NOT_TOOLS = {"I", "MS", "BS", "USA", "US", "MI", "OH", "IL", "AZ", "CA", "NY", "TX", "AI", "ML", "RE"}
 
@@ -87,7 +87,7 @@ def build_prompt(resume: str, jd: JobDescription, company_md: str, feedback: str
             f"{resume}")
     if feedback:
         text += f"\n\nREVISION REQUEST:\n{feedback}"
-    return [SystemMessage(PROMPT), HumanMessage(text)]
+    return [SystemMessage(with_today(PROMPT)), HumanMessage(text)]
 
 
 def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str) -> list[str]:
@@ -121,15 +121,20 @@ def recipient(jd: JobDescription) -> str:
     return "\\\\\n".join(to_latex(x) for x in lines if x)
 
 
+def real_req_id(req: str | None) -> bool:
+    """A requisition number worth quoting ("JR-03394", "12795"), not a posting's URL id (UUID / long hex)."""
+    if not req or len(req) > 16:
+        return False
+    return not re.fullmatch(r"[0-9a-fA-F-]{12,}", req)
+
+
 def subject(jd: JobDescription) -> str:
-    return to_latex(jd.title or "") + (f" (Req. {to_latex(jd.req_id)})" if jd.req_id else "")
+    return to_latex(jd.title or "") + (f" (Req. {to_latex(jd.req_id)})" if real_req_id(jd.req_id) else "")
 
 
-def render(template: str, letter: Letter, jd: JobDescription, today: date | None = None) -> str:
-    today = today or date.today()
+def render(template: str, letter: Letter, jd: JobDescription) -> str:
     body = "\n\n".join(to_latex(p.text) for p in letter.paragraphs)
-    values = {"<<DATE>>": f"{today:%B} {today.day}, {today.year}", "<<RECIPIENT>>": recipient(jd),
-              "<<SUBJECT>>": subject(jd), "<<SALUTATION>>": to_latex(letter.salutation),
+    values = {"<<RECIPIENT>>": recipient(jd), "<<SUBJECT>>": subject(jd), "<<SALUTATION>>": to_latex(letter.salutation),
               "<<BODY>>": body, "<<CLOSING>>": to_latex(letter.closing.rstrip(","))}
     for slot in SLOTS:
         template = template.replace(slot, values[slot])

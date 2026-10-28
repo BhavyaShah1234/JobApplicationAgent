@@ -228,3 +228,15 @@ def test_repair_rewrites_only_the_named_bullets():
     b0, b1 = f.roles[0].bullets
     assert (b0.text, b0.original, b0.estimated) == ("Built Python ETL, cutting runtime by 20%.", None, ["20%"])
     assert b1.text == "Old bullet two about SQL."
+
+
+def test_project_dates_are_month_and_year():
+    assert projects.month_year("2026-03-14T10:00:00Z") == "March 2026"
+    assert projects.month_year("") == ""
+
+
+def test_today_line_is_in_phoenix_time(monkeypatch):
+    from jobagent import clock
+    line = clock.today_line()
+    assert "America/Phoenix" in line and str(clock.today().year) in line
+    assert clock.with_today("PROMPT").startswith("PROMPT\n\nToday is ")

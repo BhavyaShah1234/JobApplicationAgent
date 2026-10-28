@@ -51,6 +51,16 @@ python -m jobagent.tools.repo_cards [workers] [--force] # (re)build the GitHub r
   noun in the letter must appear in the resume, the JD or the company profile; ~420 words max; one page; the
   letter's header must equal the resume's.
 
+## Dates, layout and the letter header (2026-10-27)
+
+- `jobagent.clock`: "now" is the user's local time (`TIMEZONE`, default America/Phoenix); every model prompt that
+  reasons about time (scrape, research, repo cards, tailoring, repair, projects, letter) ends with today's date.
+- Projects: the model ranks 4 by relevance and the page fitter keeps as many as fit unsqueezed; each heading shows
+  the repo's creation month and year. The template's `\\resumeProjectText` paragraph and the Summary are justified
+  (`ragged2e`); headings span the full text width so dates and locations meet the right edge.
+- Cover letter: no date line; the Re: line quotes a requisition number only when it is a real one (not the
+  posting's URL id such as a UUID).
+
 ## Checks in code (sent back to the model)
 
 A change by a percentage takes "by" ("cutting failed refreshes by 45%"): prompts ask for it and `to_latex` inserts
