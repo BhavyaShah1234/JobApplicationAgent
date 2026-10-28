@@ -25,6 +25,7 @@ class ProjectEntry(BaseModel):
     title: str = Field(max_length=70, description="Short project name (<= 45 characters)")
     stack: list[str] = Field(min_length=1, max_length=5, description="From the card's tech stack, posting spelling")
     paragraph: str = Field(max_length=600, description="2-3 sentences, <= 320 characters, plain text")
+    short: str = Field(max_length=400, description="The same project in 1-2 sentences, <= 170 characters")
 
 
 class Projects(BaseModel):
@@ -46,6 +47,8 @@ the agent wrote by reading each GitHub repository's code.
   solution, and the system that was built (components, how they connect). Past tense or noun phrases; no "I".
   Use the posting's keywords where the card supports them. Numbers/results only from the card's results; never
   invent features or metrics.
+- short: the same project in 1-2 sentences, <= 170 characters (problem and system in brief), used when the page
+  has room for the project but not for its full paragraph. Same facts, no new ones.
 - Never use em dashes (—) or a spaced dash as punctuation, in titles or paragraphs; use commas, semicolons, colons
   or separate sentences (e.g. "COLLIDE: AI-Powered Site Selection"). A change by a percentage takes "by"
   ("cutting latency by 40%")."""
@@ -105,17 +108,19 @@ def month_year(iso: str) -> str:
     return f"{d:%B %Y}"
 
 
-def render(entries: list[ProjectEntry], cards: dict[str, dict], years: dict[str, str], macro: bool = False) -> str:
+def render(entries: list[ProjectEntry], cards: dict[str, dict], years: dict[str, str], macro: bool = False,
+           short: frozenset[str] = frozenset()) -> str:
     """macro: the template defines \\resumeProjectText (paragraph aligned with the heading); else an item list."""
     out = ["", "  \\resumeSubHeadingListStart"]
     for e in entries:
         c = cards[e.repo.lower()]
+        text = e.short if e.repo in short and e.short else e.paragraph
         out += ["    \\resumeProjectHeading",
                 f"      {{\\textbf{{\\href{{{c['url']}}}{{{to_latex(e.title)}}}}} $|$ "
                 f"\\emph{{{to_latex(', '.join(e.stack))}}}}}{{{years.get(c['full_name'], '')}}}",
-                *([f"      \\resumeProjectText{{{to_latex(e.paragraph)}}}"] if macro else
+                *([f"      \\resumeProjectText{{{to_latex(text)}}}"] if macro else
                   ["      \\resumeItemListStart",  # the template's own list spacing, with an empty label: no bullet
-                   f"        \\item[]\\small{{{to_latex(e.paragraph)} \\vspace{{-2pt}}}}",
+                   f"        \\item[]\\small{{{to_latex(text)} \\vspace{{-2pt}}}}",
                    "      \\resumeItemListEnd"])]
     out += ["  \\resumeSubHeadingListEnd", "", ""]
     return "\n".join(out)
@@ -133,9 +138,11 @@ class Chosen:
     years: dict[str, str]
     notes: str
     macro: bool = False
+    short: frozenset[str] = frozenset()  # repos rendered with their short paragraph (to fit one more project)
 
     def block(self) -> str:
-        return render(self.entries, {c["full_name"].lower(): c for _, c in self.candidates}, self.years, self.macro)
+        return render(self.entries, {c["full_name"].lower(): c for _, c in self.candidates}, self.years, self.macro,
+                      self.short)
 
 
 def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = None, rediscover: bool = True,

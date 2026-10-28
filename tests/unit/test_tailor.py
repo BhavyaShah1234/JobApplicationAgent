@@ -104,7 +104,7 @@ def test_skill_line_renders_tools_once():
 def test_projects_known_entries_and_paragraph_render():
     assert projects.known_entries(TEX) == {"me/proj": ("Proj, Hackathon Winner", "2025")}
     entry = projects.ProjectEntry(repo="me/Proj", title="Proj", stack=["Python", "FastAPI"],
-                                  paragraph="Solved X with Y; built Z & more.")
+                                  paragraph="Solved X with Y; built Z & more.", short="Built Z.")
     block = projects.render([entry], {"me/proj": {"url": "https://github.com/me/Proj", "full_name": "me/Proj"}},
                             {"me/Proj": "2025"})
     assert r"\item[]\small{Solved X with Y; built Z \& more." in block and r"\resumeItem{" not in block
@@ -193,7 +193,7 @@ def test_skill_term_equal_to_category_is_not_repeated():
 
 
 def test_project_paragraph_uses_template_macro_when_defined():
-    entry = projects.ProjectEntry(repo="me/Proj", title="Proj", stack=["Python"], paragraph="Built X.")
+    entry = projects.ProjectEntry(repo="me/Proj", title="Proj", stack=["Python"], paragraph="Built X.", short="X.")
     cards = {"me/proj": {"url": "https://github.com/me/Proj", "full_name": "me/Proj"}}
     assert r"\resumeProjectText{Built X.}" in projects.render([entry], cards, {"me/Proj": "2025"}, macro=True)
 
@@ -240,3 +240,11 @@ def test_today_line_is_in_phoenix_time(monkeypatch):
     line = clock.today_line()
     assert "America/Phoenix" in line and str(clock.today().year) in line
     assert clock.with_today("PROMPT").startswith("PROMPT\n\nToday is ")
+
+
+def test_short_paragraph_used_only_for_named_projects():
+    entry = projects.ProjectEntry(repo="me/Proj", title="Proj", stack=["Python"], paragraph="Long version.",
+                                  short="Short version.")
+    cards = {"me/proj": {"url": "https://github.com/me/Proj", "full_name": "me/Proj"}}
+    assert "Long version." in projects.render([entry], cards, {}, macro=True)
+    assert "Short version." in projects.render([entry], cards, {}, macro=True, short=frozenset({"me/Proj"}))

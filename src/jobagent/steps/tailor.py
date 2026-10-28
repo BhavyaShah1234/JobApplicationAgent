@@ -147,14 +147,21 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, log=None) -> 
         if education not in tex:
             problems.append("LOCKED PART CHANGED: Education")
         base = tex
+        # Most projects first; for each count, full paragraphs, then the last ones short, before dropping one.
         for k in range(len(all_projects), P.MIN_PROJECTS - 1, -1):
-            proj.entries = all_projects[:k]
-            tex = P.apply(base, proj.block())
-            pages, err = T.compile_pdf(tex, job_dir)
+            for n_short in range(0, k + 1):
+                proj.entries = all_projects[:k]
+                proj.short = frozenset(e.repo for e in all_projects[k - n_short:k])
+                tex = P.apply(base, proj.block())
+                pages, err = T.compile_pdf(tex, job_dir)
+                if err or pages == 1:
+                    break
             if err or pages == 1:
                 break
         if len(proj.entries) < len(all_projects):
             log(f"  {len(proj.entries)} of {len(all_projects)} projects fit")
+        if proj.short:
+            log(f"  {len(proj.short)} project(s) in short form to fit")
         return tex, problems, pages, err
 
     def repair(f, dups, attempt):
@@ -228,7 +235,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, log=None) -> 
             score = (len(dups), -len(proj.entries) if proj else 0)  # fewest issues, then most projects
             if last_ok is None or score < last_ok[8]:  # keep the best one-page round
                 last_ok = (f, uncovered, missing, warn, problems, pages, filled_in, tex, score,
-                           list(proj.entries) if proj else None)
+                           (list(proj.entries), proj.short) if proj else None)
             if not dups:  # clean: stop (chasing one more project costs whole rounds and rarely improves the page)
                 break
         feedback = " ".join(asks)
@@ -237,7 +244,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, log=None) -> 
     if last_ok:
         f, uncovered, missing, warn, problems, pages, filled_in, tex, _, kept = last_ok
         if proj:
-            proj.entries = kept
+            proj.entries, proj.short = kept
         T.compile_pdf(tex, job_dir)  # the best round, not necessarily the last
     (job_dir / "filled.json").write_text(f.model_dump_json(indent=1))
     (job_dir / "changes.md").write_text(report(r, jd, f, pages, problems, uncovered, missing, warn, rounds, filled_in,
@@ -247,7 +254,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, log=None) -> 
     log(f"cover letter: {cl['words']} words, {len(cl['issues'])} issue(s)")
     generated = [f.summary] + [b.text for e in f.roles for b in e.bullets] + \
         [x for line in f.skills for x in line.render()] + \
-        ([x for e in proj.entries for x in (e.title, e.paragraph)] if proj else []) + \
+        ([x for e in proj.entries for x in (e.title, e.paragraph, e.short)] if proj else []) + \
         [p.text for p in cl["letter"].paragraphs]
     return {"job_dir": job_dir, "pages": pages, "uncovered": uncovered, "missing_skills": missing,
             "problems": problems + warn, "bullet_issues": T.duplicates(r, f) + T.quality(r, jd, f),
