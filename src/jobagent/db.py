@@ -26,6 +26,18 @@ CREATE TABLE IF NOT EXISTS jobs (
     discovered_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+-- Step 10: every ATS score of a resume version (local scorer or an external site), per round.
+CREATE TABLE IF NOT EXISTS ats_runs (
+    id          INTEGER PRIMARY KEY,
+    job_dir     TEXT NOT NULL,      -- outputs/<company>/<job-id>
+    site        TEXT NOT NULL,      -- local | jobalytics | autoapplymax | jobscan | skillsyncer | resymatch | ...
+    round       INTEGER NOT NULL,
+    score       REAL,               -- 0-100 as the site reports it (sites are not comparable to each other)
+    missing     TEXT,               -- JSON list of missing keywords, most important first
+    raw         TEXT,               -- JSON: the site's breakdown / notes
+    resume_sha  TEXT,               -- sha256 of the scored resume.pdf
+    scored_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT

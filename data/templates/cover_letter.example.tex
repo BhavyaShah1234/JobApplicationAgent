@@ -11,6 +11,14 @@
 \usepackage[hidelinks]{hyperref}
 \usepackage[english]{babel}
 \usepackage{fontawesome5}
+\usepackage{accsupp}
+% Icons are decoration: give them empty "actual text" so ATS text extraction doesn't read their glyphs as junk.
+\newcommand{\atsquiet}[1]{\BeginAccSupp{method=plain,ActualText={}}#1\EndAccSupp{}}
+\let\oldfaPhone\faPhone \renewcommand{\faPhone}{\atsquiet{\oldfaPhone}}
+\let\oldfaEnvelope\faEnvelope \renewcommand{\faEnvelope}{\atsquiet{\oldfaEnvelope}}
+\let\oldfaLinkedin\faLinkedin \renewcommand{\faLinkedin}{\atsquiet{\oldfaLinkedin}}
+\let\oldfaGithub\faGithub \renewcommand{\faGithub}{\atsquiet{\oldfaGithub}}
+\let\oldfaUniversity\faUniversity \renewcommand{\faUniversity}{\atsquiet{\oldfaUniversity}}
 \usepackage{changepage}
 \input{glyphtounicode}
 \pdfgentounicode=1

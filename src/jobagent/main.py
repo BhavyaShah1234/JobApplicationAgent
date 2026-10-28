@@ -291,6 +291,26 @@ def cover_letter_cmd(
     console.print(f"cover letter: {cl['words']} words, {len(cl['issues'])} issue(s)", highlight=False)
 
 
+@app.command("ats")
+def ats_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with resume.pdf and jd.json.")) -> None:
+    """Score the job's resume with the local ATS scorer (recorded in ats_runs)."""
+    from pathlib import Path
+
+    from jobagent.state import JobDescription
+    from jobagent.tools import ats_local
+
+    d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
+    jd = JobDescription.model_validate_json((d / "jd.json").read_text())
+    s = ats_local.score(d / "resume.pdf", jd, (d / "jd.txt").read_text() if (d / "jd.txt").exists() else "")
+    ats_local.record(d, "local", 0, s.score, s.missing, s.to_dict())
+    console.print(f"local ATS score {s.score} (keywords {s.keyword_pct}%, semantic {s.semantic}, title {s.title_pct}%)",
+                  highlight=False)
+    for label, items in (("missing", s.missing), ("parse issues", s.parse_issues),
+                         ("sections missing", s.sections_missing)):
+        if items:
+            console.print(f"  {label}: {', '.join(items)}", highlight=False)
+
+
 @app.command("research")
 def research_cmd(
     companies: list[str] = typer.Argument(None),
