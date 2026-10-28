@@ -263,3 +263,13 @@ def test_tools_written_inside_a_term_are_parsed():
     assert line.render() == ["GitHub Copilot", "Claude Code", "Cursor"]
     line = T.SkillLine(category="Data", terms=["SQL, Spark (PySpark, Databricks)"])
     assert line.render() == ["SQL", "Spark (PySpark, Databricks)"]
+
+
+def test_keyword_pass_adds_skills_and_rewrites_named_bullets():
+    f = _filled("Built Python ETL, cutting runtime by 20%.", "Wrote SQL reports, cutting prep by 10%.")
+    kp = T.KeywordPass(skills=[T.SkillAdd(category="A", terms=["Kafka", "Python"]),
+                              T.SkillAdd(category="Streaming", terms=["Flink"])],
+                       bullets=[T.BulletFix(role=0, bullet=2, text="Wrote SQL and Spark reports, cutting prep by 10%.")])
+    g = T.apply_keyword_pass(f, kp)
+    assert g.skills[0].render() == ["Python", "Kafka"] and g.skills[-1].category == "Streaming"
+    assert g.roles[0].bullets[1].text.startswith("Wrote SQL and Spark") and f.roles[0].bullets[1].text.startswith("Wrote SQL reports")

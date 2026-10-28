@@ -631,3 +631,60 @@ def apply_repair(f: Filled, repair: Repair) -> int:
         b.text, b.estimated, b.original = fx.text, list(fx.estimated), None
         done += 1
     return done
+
+
+# --- ATS keyword pass (step 10): add missing keywords without breaking the page or the rules --------------------
+
+class SkillAdd(BaseModel):
+    category: str = Field(max_length=40, description="An existing category name exactly, or a new short one")
+    terms: list[str] = Field(min_length=1, max_length=6)
+
+
+class KeywordPass(BaseModel):
+    skills: list[SkillAdd] = Field(default_factory=list, max_length=4)
+    bullets: list[BulletFix] = Field(default_factory=list, max_length=4)
+
+
+KEYWORD_PROMPT = """An ATS scan of this tailored resume found the posting's keywords listed under MISSING. Work them in so
+the resume matches the posting, the way a careful candidate would:
+- Prefer adding a keyword to the most fitting existing Technical Skills category (`skills`); open a new short
+  category only if none fits (there may be at most 8 categories in total).
+- Where a keyword names work rather than a tool (a practice, a system, a domain), rewrite ONE existing bullet that
+  plausibly involved it (`bullets`: role_N index and 1-based position), keeping that bullet's facts, numbers,
+  coverage and length (<= ~120 characters). Never move work to another employer; never invent numbers.
+- Use the posting's exact spelling. Skip keywords that are not skills or that make no sense for the candidate.
+- No dashes as punctuation; a change by a percentage takes "by"."""
+
+
+def build_keyword_prompt(r: Resume, jd: JobDescription, f: Filled, missing: list[str]) -> list:
+    lines = []
+    for e in f.roles:
+        role = r.roles[e.role]
+        lines.append(f"role_{e.role}: {role.title} at {role.company} ({role.dates})")
+        lines += [f"  {k}. {b.text}" for k, b in enumerate(e.bullets, 1)]
+    skills = "\n".join(f"- {s.category}: {', '.join(s.render())}" for s in f.skills)
+    context = {k: [t for _, t, _ in jd_items(jd) if k.lower() in t.lower()][:1] for k in missing}
+    miss = "\n".join(f"- {k}" + (f"   (posting: {c[0][:120]})" if c else "") for k, c in context.items())
+    return [SystemMessage(with_today(KEYWORD_PROMPT)),
+            HumanMessage(f"MISSING:\n{miss}\n\nTECHNICAL SKILLS:\n{skills}\n\nEXPERIENCE BULLETS:\n" + "\n".join(lines))]
+
+
+def apply_keyword_pass(f: Filled, kp: KeywordPass) -> Filled:
+    """A copy of `f` with the keywords added (skills appended to their category, bullets rewritten in place)."""
+    g = f.model_copy(deep=True)
+    for add in kp.skills:
+        line = next((s for s in g.skills if s.category.strip().lower() == add.category.strip().lower()), None)
+        if line is None:
+            if len(g.skills) >= 8:
+                line = g.skills[-1]
+            else:
+                g.skills.append(SkillLine(category=add.category, terms=list(add.terms)))
+                continue
+        have = {t.lower() for t in line.render()}
+        line.terms = line.terms + [t for t in add.terms if t.lower() not in have]
+    by_role = {e.role: e for e in g.roles}
+    for fx in kp.bullets:
+        e = by_role.get(fx.role)
+        if e and 1 <= fx.bullet <= len(e.bullets):
+            e.bullets[fx.bullet - 1].text = fx.text
+    return g

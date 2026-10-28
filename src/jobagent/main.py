@@ -311,6 +311,18 @@ def ats_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> 
             console.print(f"  {label}: {', '.join(items)}", highlight=False)
 
 
+@app.command("ats-loop")
+def ats_loop_cmd(
+    job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with a tailored resume."),
+    company: str = typer.Argument(..., help="Company slug of the research profile."),
+    target: float = typer.Option(90.0, help="Stop when the score reaches this."),
+) -> None:
+    """Step 10: score the resume and work missing keywords in until the target (or 5 rounds)."""
+    from jobagent.steps.ats import run
+
+    run(job_dir, company, target, log=lambda m: console.print(m, highlight=False))
+
+
 @app.command("research")
 def research_cmd(
     companies: list[str] = typer.Argument(None),

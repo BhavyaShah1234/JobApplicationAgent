@@ -23,6 +23,10 @@ from jobagent.tools.tailor import TOOLISH, jd_items
 
 SECTIONS = {"summary": r"summary|profile|objective", "experience": r"experience|employment|work history",
             "education": r"education", "skills": r"skills|technical skills|technologies"}
+# Title words that describe the program or level, not the role ("New College Grad 2027", "Sr.", "II")
+TITLE_NOISE = {"and", "the", "for", "new", "college", "grad", "graduate", "graduates", "university", "intern",
+               "internship", "co", "op", "early", "career", "entry", "level", "senior", "sr", "junior", "jr", "staff",
+               "principal", "lead", "ii", "iii", "iv", "i", "remote", "hybrid", "us", "usa", "summer", "fall", "spring"}
 _GENERIC = {"experience", "ability", "knowledge", "understanding", "strong", "skills", "team", "work", "years",
             "familiarity", "proficiency", "engineering", "development", "systems", "software", "design"}
 
@@ -132,7 +136,7 @@ def score(pdf: Path, jd: JobDescription, jd_text: str = "", embed=None) -> Local
     missing_sections = [s for s, pat in SECTIONS.items() if not any(re.fullmatch(pat, l) for l in lines)]
     section_pct = 100.0 * (len(SECTIONS) - len(missing_sections)) / len(SECTIONS)
 
-    words = [w for w in norm(jd.title or "").split() if len(w) > 2 and w not in {"and", "the", "for", "new"}]
+    words = [w for w in norm(jd.title or "").split() if len(w) > 1 and w not in TITLE_NOISE and not w.isdigit()]
     title_pct = 100.0 * sum(f" {w} " in ntext for w in words) / len(words) if words else 100.0
 
     semantic = 0.0
