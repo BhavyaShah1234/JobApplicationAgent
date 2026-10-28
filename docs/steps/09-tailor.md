@@ -10,6 +10,31 @@ with their resumes, no punctuation dashes. The first runs failed on gate-check b
 dashes; Pydantic/Jinja2 not recognised as tools) and on two pipeline gaps (a model timeout / token-limit error
 aborted the whole job; the letter abbreviated an employer to "TGen"), all fixed in code; no output was edited by hand.
 
+## Architecture
+
+```
+ INPUTS: jd.json/jd.txt (step 7) · company profile (step 8) · resume.tex + cover_letter.tex templates (user)
+         · GitHub repo cards (step 4b + repo_cards) · "Today is …, America/Phoenix" (jobagent.clock)
+                                   │  jobagent tailor <job_dir> <slug>
+        ┌──────────────────────────┴───────────────────────────────┐
+        ▼                                                          ▼
+ PROJECTS (once per job)                         RESUME LOOP (≤ 5 rounds, keep the best one-page round)
+  repo_cards.refresh: listing (1-day cache) →     jd_items → glm-5-3 (one schema slot per role) → backfill
+   SHA check only if pushed_at moved →             (role < 2 bullets, "% backfill" originals) → CHECKS
+   archive → glm-5-3 card → embedding              (coverage by NEW bullets, repeats, academic wording,
+  rank cards vs JD (embeddings)                     no tool, > 1 bullet without result, dashes, bullet moved
+  glm-5-3: 4 ranked projects, paragraph + short     across employers) → apply_fill (locked parts, to_latex:
+  fallback: top cards (never empty) ────────────►   dash→comma, "by N%") → PAGE FITTER (most projects; full
+                                                     → short → drop, min 2) → compile_pdf (squeeze = overflow)
+                                                     → REPAIR flagged bullets only (≤ 2) or feedback → next round
+                                                                   │
+                                     resume.tex/.pdf · filled.json · changes.md
+                                                                   ▼
+ COVER LETTER (≤ 3 rounds): resume_text(final resume.tex) + JD + profile → glm-5-3 (3-4 paragraphs + evidence)
+  → CHECKS (numbers/tools/proper nouns traced, no dashes, ≤ ~420 words, header = resume's, one page)
+  → template slots (recipient, Re: title + real req id only, body) → cover_letter.tex/.pdf
+```
+
 ## Run it
 
 ```bash
