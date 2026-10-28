@@ -121,15 +121,20 @@ def recipient(jd: JobDescription) -> str:
     return "\\\\\n".join(to_latex(x) for x in lines if x)
 
 
-def real_req_id(req: str | None) -> bool:
-    """A requisition number worth quoting ("JR-03394", "12795"), not a posting's URL id (UUID / long hex)."""
-    if not req or len(req) > 16:
+def real_req_id(req: str | None, url: str = "") -> bool:
+    """A requisition number worth quoting ("JR-03394", "12795", "JR2026744"), not a job board's posting id. An id
+    that is part of the posting URL is the board's own id (Greenhouse "8130881", Ashby/Lever UUIDs) unless it looks
+    like a requisition code (letters and digits)."""
+    if not req or len(req) > 16 or re.fullmatch(r"[0-9a-fA-F-]{12,}", req):
         return False
-    return not re.fullmatch(r"[0-9a-fA-F-]{12,}", req)
+    if req.lower() in (url or "").lower():
+        return bool(re.search(r"[A-Za-z]", req) and re.search(r"\d", req))
+    return True
 
 
 def subject(jd: JobDescription) -> str:
-    return to_latex(jd.title or "") + (f" (Req. {to_latex(jd.req_id)})" if real_req_id(jd.req_id) else "")
+    url = f"{jd.source_url or ''} {jd.apply_url or ''}"
+    return to_latex(jd.title or "") + (f" (Req. {to_latex(jd.req_id)})" if real_req_id(jd.req_id, url) else "")
 
 
 def render(template: str, letter: Letter, jd: JobDescription) -> str:

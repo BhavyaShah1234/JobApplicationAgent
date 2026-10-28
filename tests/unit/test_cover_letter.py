@@ -59,6 +59,8 @@ def test_render_fills_every_slot_and_skips_url_ids():
     uuid = JD.model_copy(update={"req_id": "10dfc8bc-99ad-4ca2-ab76-853cb90a92c2"})
     assert "Req." not in CL.render(template, letter("a", "b", "c"), uuid)
     assert CL.real_req_id("12795") and CL.real_req_id("JR2026744") and not CL.real_req_id("8E736DCABBE5EE1B1B7B")
+    assert not CL.real_req_id("8130881", "https://job-boards.greenhouse.io/stripe/jobs/8130881")
+    assert CL.real_req_id("JR2026744", "https://nvidia.wd5.myworkdayjobs.com/job/SoC-Engineer_JR2026744")
 
 
 def test_header_match_and_committed_template_has_all_slots():
