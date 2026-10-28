@@ -132,7 +132,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, log=None) -> 
     if P.projects_span(r.tex):
         t0 = time.monotonic()
         writer = ChatOpenAI(model="glm-5-3", base_url=s.openai_base_url, api_key=s.openai_api_key, max_retries=1,
-                            timeout=600, temperature=0, max_tokens=12000)
+                            timeout=600, temperature=0, max_tokens=20000)
         token = (open_vault().get("github") or {}).get("token")
         proj = P.choose(r, jd, writer, github.profile_user(r.tex), token, rediscover=rediscover, log=log)
         log(f"projects: {time.monotonic() - t0:.0f}s chose " + ", ".join(e.repo for e in proj.entries))

@@ -248,3 +248,10 @@ def test_short_paragraph_used_only_for_named_projects():
     cards = {"me/proj": {"url": "https://github.com/me/Proj", "full_name": "me/Proj"}}
     assert "Long version." in projects.render([entry], cards, {}, macro=True)
     assert "Short version." in projects.render([entry], cards, {}, macro=True, short=frozenset({"me/Proj"}))
+
+
+def test_project_from_card_fallback_is_short_and_dash_free():
+    card = {"full_name": "me/Proj", "title": "Proj — a long subtitle", "tech_stack": ["Python", "FastAPI"],
+            "summary": "First sentence about the problem. Second sentence about the system. " * 6}
+    e = projects.from_card(card)
+    assert e.title == "Proj" and len(e.paragraph) <= 320 and len(e.short) <= 170 and e.short.endswith(".")

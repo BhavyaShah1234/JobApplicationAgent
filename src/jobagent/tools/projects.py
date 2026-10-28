@@ -145,6 +145,22 @@ class Chosen:
                       self.short)
 
 
+def _sentences(text: str, limit: int) -> str:
+    out = ""
+    for sentence in re.split(r"(?<=[.!?])\s+", text.strip()):
+        if len(out) + len(sentence) + 1 > limit:
+            break
+        out = f"{out} {sentence}".strip()
+    return out or text[:limit].rsplit(" ", 1)[0] + "."
+
+
+def from_card(c: dict) -> ProjectEntry:
+    """A project entry straight from a repo card (fallback when the model can't choose)."""
+    title = re.split(r"\s+[—:|-]\s+", c["title"])[0][:45]
+    return ProjectEntry(repo=c["full_name"], title=title, stack=c["tech_stack"][:5] or ["GitHub"],
+                        paragraph=_sentences(c["summary"], 320), short=_sentences(c["summary"], 170))
+
+
 def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = None, rediscover: bool = True,
            log=print) -> Chosen:
     """Refresh the repo cards (new/changed repos only), rank them for this job, pick and write 2-4 projects."""
@@ -168,8 +184,14 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
             break
         messages = messages + [HumanMessage(f"Use {MIN_PROJECTS}-{MAX_PROJECTS} DIFFERENT repos, each exactly one "
                                             "of the CANDIDATE full_names.")]
-    if out is None:
-        raise RuntimeError("could not choose projects (the model failed 3 times)")
+    if len(chosen) < MIN_PROJECTS:  # the model failed or picked too few: top-ranked cards, in their own words
+        log(f"projects: model gave {len(chosen)} usable project(s); filling from the top-ranked repo cards")
+        have = {e.repo.lower() for e in chosen}
+        for _, c in cands:
+            if len(chosen) >= MAX_PROJECTS:
+                break
+            if c["full_name"].lower() not in have:
+                chosen.append(from_card(c))
     years = {}
     for e in chosen:
         c = by_name[e.repo.lower()]
@@ -178,4 +200,4 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
             e.title = known[e.repo.lower()][0]
         years[e.repo] = month_year(c.get("created_at") or c.get("pushed_at") or "") or \
             known.get(e.repo.lower(), ("", ""))[1]
-    return Chosen(chosen, cands, years, out.notes, "\\newcommand{\\resumeProjectText}" in r.tex)
+    return Chosen(chosen, cands, years, out.notes if out else "top-ranked repo cards (model unavailable)", "\\newcommand{\\resumeProjectText}" in r.tex)
