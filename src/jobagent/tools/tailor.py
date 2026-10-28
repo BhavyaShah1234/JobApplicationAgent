@@ -212,9 +212,17 @@ class SkillLine(BaseModel):
 
     def render(self) -> list[str]:
         tools = {t.term.strip().lower(): t.tools for t in self.tools_for}
-        shown = {x.strip().lower() for t in self.tools_for for x in t.tools}
+        terms = []
+        for raw in self.terms:  # top-level commas only; "Term (a, b)" written inside a term is read as tools_for
+            for part in re.split(r",(?![^()]*\))", raw):
+                part = part.strip()
+                if m := re.fullmatch(r"(.+?)\s*\((.+)\)", part):
+                    part = m.group(1).strip()
+                    tools.setdefault(part.lower(), [x.strip() for x in m.group(2).split(",") if x.strip()])
+                terms.append(part)
+        shown = {x.strip().lower() for v in tools.values() for x in v}
         out, seen = [], set()
-        for term in (x.strip() for t in self.terms for x in t.split(",")):
+        for term in terms:
             key = term.lower()
             if key == self.category.strip().lower():  # "AI Tools: AI tools (Copilot)" -> "AI Tools: Copilot"
                 out += [t for t in tools.pop(key, []) if t.lower() not in seen]

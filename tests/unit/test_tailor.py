@@ -255,3 +255,11 @@ def test_project_from_card_fallback_is_short_and_dash_free():
             "summary": "First sentence about the problem. Second sentence about the system. " * 6}
     e = projects.from_card(card)
     assert e.title == "Proj" and len(e.paragraph) <= 320 and len(e.short) <= 170 and e.short.endswith(".")
+
+
+def test_tools_written_inside_a_term_are_parsed():
+    line = T.SkillLine(category="AI Tools", terms=["AI Tools (GitHub Copilot, Claude Code, Cursor)"],
+                       tools_for=[T.ToolsFor(term="AI Tools", tools=["GitHub Copilot", "Claude Code", "Cursor"])])
+    assert line.render() == ["GitHub Copilot", "Claude Code", "Cursor"]
+    line = T.SkillLine(category="Data", terms=["SQL, Spark (PySpark, Databricks)"])
+    assert line.render() == ["SQL", "Spark (PySpark, Databricks)"]
