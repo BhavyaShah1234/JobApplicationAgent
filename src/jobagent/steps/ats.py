@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from jobagent.config import get_settings
@@ -92,9 +93,11 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
     jd_text = (job_dir / "jd.txt").read_text() if (job_dir / "jd.txt").exists() else ""
     r = T.parse((s.data_dir / "templates" / "resume.tex").read_text())
     f = T.Filled.model_validate_json((job_dir / "filled.json").read_text())
-    from jobagent import llm
-    keyword_model = llm.structured(T.KeywordPass, role="fast", method="function_calling", timeout=180,
-                                   max_tokens=3000)
+    # The writing model in function-calling mode: it places skills in the right category and works domain words into
+    # bullets. (In json_schema mode it spends its whole token budget deliberating; the fast model mis-places skills.)
+    keyword_model = ChatOpenAI(model="glm-5-3", base_url=s.openai_base_url, api_key=s.openai_api_key, max_retries=1,
+                               timeout=400, temperature=0, max_tokens=16000).with_structured_output(
+        T.KeywordPass, method="function_calling")
     history, changed = [], False
     avg, missing, info = evaluate(job_dir, jd, jd_text, 0, sites, log)
     history.append(avg)
@@ -118,11 +121,7 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
         if avg >= target or not missing:
             break
         try:
-            # A small, constrained edit checked by code afterwards: the fast model without thinking (the reasoning
-            # model spent its whole token budget deliberating over a handful of keywords).
-            messages = T.build_keyword_prompt(r, jd, f, missing[:n_keywords])
-            messages[0] = SystemMessage(messages[0].content + "\n/no_think")
-            kp = keyword_model.invoke(messages)
+            kp = keyword_model.invoke(T.build_keyword_prompt(r, jd, f, missing[:n_keywords]))
         except Exception as e:
             n_keywords = max(3, n_keywords // 2)  # e.g. token limit: fewer keywords next time
             log(f"ats round {rnd}: model error {type(e).__name__}; next round with {n_keywords} keywords")
@@ -130,7 +129,7 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
         if not kp.skills and not kp.bullets:
             log(f"ats round {rnd}: nothing worth adding (remaining words aren't skills)")
             break
-        g = T.apply_keyword_pass(f, kp)
+        g = T.apply_keyword_pass(f, kp, jd_text)
         base_issues = T.duplicates(r, f) + T.quality(r, jd, f)
         base_uncovered = set(T.fill_checks(r, jd, f)[0])
         issues = [i for i in T.duplicates(r, g) + T.quality(r, jd, g) if i not in base_issues]  # new ones only

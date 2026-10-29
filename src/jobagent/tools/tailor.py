@@ -683,21 +683,36 @@ def is_generic(term: str) -> bool:
     return all(w in GENERIC_WORDS for w in re.findall(r"[a-z]+", term.lower())) if term.strip() else True
 
 
-def apply_keyword_pass(f: Filled, kp: KeywordPass) -> Filled:
-    """A copy of `f` with the keywords added (skills appended to their category, bullets rewritten in place)."""
+_FILLER_CATEGORY = re.compile(r"(?i)^\s*(technical\s+)?skills?\s*$|^\s*(other|misc\w*|additional|general|keywords?)\s*$")
+
+
+def posting_spelling(term: str, jd_text: str) -> str:
+    """The posting's own capitalisation of a term ("rust" -> "Rust", "aws" -> "AWS") when it appears there."""
+    m = re.search(rf"(?<![\w-]){re.escape(term)}(?![\w-])", jd_text, re.I) if jd_text else None
+    return m.group(0) if m and (m.group(0) != m.group(0).lower() or term == term.lower()) else term
+
+
+def apply_keyword_pass(f: Filled, kp: KeywordPass, jd_text: str = "") -> Filled:
+    """A copy of `f` with the keywords added: each skill once (never one already in any category), in the posting's
+    spelling, in an existing category or a real new one (no "Technical Skills" / "Other" filler); bullets rewritten
+    in place. Generic words never become skills."""
     g = f.model_copy(deep=True)
+    have = {t.lower() for line in g.skills for t in line.render()}
     for add in kp.skills:
+        terms = []
+        for t in (posting_spelling(x.strip(), jd_text) for x in add.terms):
+            if t and t.lower() not in have and not is_generic(t):
+                terms.append(t)
+                have.add(t.lower())
+        if not terms:
+            continue
         line = next((s for s in g.skills if s.category.strip().lower() == add.category.strip().lower()), None)
+        if line is None and (_FILLER_CATEGORY.match(add.category) or len(g.skills) >= 8):
+            continue  # no filler category; no room for a ninth
         if line is None:
-            if len(g.skills) >= 8:
-                line = g.skills[-1]
-            else:
-                terms = [t for t in add.terms if not is_generic(t)]
-                if terms:
-                    g.skills.append(SkillLine(category=add.category, terms=terms))
-                continue
-        have = {t.lower() for t in line.render()}
-        line.terms = line.terms + [t for t in add.terms if t.lower() not in have and not is_generic(t)]
+            g.skills.append(SkillLine(category=add.category, terms=terms))
+        else:
+            line.terms = line.terms + terms
     by_role = {e.role: e for e in g.roles}
     for fx in kp.bullets:
         e = by_role.get(fx.role)

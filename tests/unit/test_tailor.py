@@ -295,3 +295,13 @@ def test_project_refit_prefers_short_paragraphs_before_dropping(tmp_path):
     fake = lambda tex: (1 if tex.count("Short") >= 1 or tex.count("resumeProjectHeading") <= 2 else 2, "")
     tex, pages, err, kept, short = projects.fit(TEX, tmp_path, fake, start=(3, 0))
     assert (pages, kept, short) == (1, 3, frozenset({"me/P2"})) and "Short 2." in tex and "Long 0." in tex
+
+
+def test_keyword_pass_dedupes_respells_and_refuses_filler_categories():
+    f = _filled("Built Python ETL, cutting runtime by 20%.", "Wrote SQL reports, cutting prep by 10%.")
+    kp = T.KeywordPass(skills=[T.SkillAdd(category="A", terms=["rust", "Python"]),
+                              T.SkillAdd(category="B", terms=["rust", "aws"]),
+                              T.SkillAdd(category="Technical Skills", terms=["Kafka"])])
+    g = T.apply_keyword_pass(f, kp, "We use Rust and AWS daily.")
+    assert g.skills[0].render() == ["Python", "Rust"] and g.skills[1].render() == ["Python", "AWS"]
+    assert all(s.category != "Technical Skills" for s in g.skills)
