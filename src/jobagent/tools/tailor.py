@@ -652,7 +652,10 @@ the resume matches the posting, the way a careful candidate would:
 - Where a keyword names work rather than a tool (a practice, a system, a domain), rewrite ONE existing bullet that
   plausibly involved it (`bullets`: role_N index and 1-based position), keeping that bullet's facts, numbers,
   coverage and length (<= ~120 characters). Never move work to another employer; never invent numbers.
+- A MISSING entry may be a phrase about work ("leading small projects independently", "navigating large code
+  bases"): work it into one existing bullet where the candidate plausibly did it, in the posting's words.
 - Use the posting's exact spelling. Skip keywords that are not skills or that make no sense for the candidate.
+- Never add or change claims about years or months of experience, degrees, dates, titles or eligibility.
 - No dashes as punctuation; a change by a percentage takes "by"."""
 
 

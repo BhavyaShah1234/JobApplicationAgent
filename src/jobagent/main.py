@@ -273,12 +273,11 @@ def tailor_cmd(
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> from `jobagent scrape`."),
     company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md)."),
     no_ats: bool = typer.Option(False, "--no-ats", help="Skip the step 10 ATS loop."),
-    ats_local_only: bool = typer.Option(False, "--ats-local-only", help="ATS loop with the local scorer only."),
 ) -> None:
     """Tailor the resume to a scraped job (one page), run the ATS loop, then write the matching cover letter."""
     from jobagent.steps.tailor import main
 
-    main(job_dir, company, ats=not no_ats, ats_sites=() if ats_local_only else None)
+    main(job_dir, company, ats=not no_ats)
 
 
 @app.command("cover-letter")
@@ -294,23 +293,38 @@ def cover_letter_cmd(
 
 
 @app.command("ats")
-def ats_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with resume.pdf and jd.json.")) -> None:
-    """Score the job's resume with the local ATS scorer (recorded in ats_runs)."""
+def ats_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with resume.pdf and jd.txt.")) -> None:
+    """Score the job's resume on the online ATS checkers (recorded in ats_runs)."""
     from pathlib import Path
 
     from jobagent.state import JobDescription
-    from jobagent.tools import ats_local
+    from jobagent.tools import ats_sites
 
     d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
     jd = JobDescription.model_validate_json((d / "jd.json").read_text())
-    s = ats_local.score(d / "resume.pdf", jd, (d / "jd.txt").read_text() if (d / "jd.txt").exists() else "")
-    ats_local.record(d, "local", 0, s.score, s.missing, s.to_dict())
-    console.print(f"local ATS score {s.score} (keywords {s.keyword_pct}%, semantic {s.semantic}, title {s.title_pct}%)",
-                  highlight=False)
-    for label, items in (("missing", s.missing), ("parse issues", s.parse_issues),
-                         ("sections missing", s.sections_missing)):
-        if items:
-            console.print(f"  {label}: {', '.join(items)}", highlight=False)
+    for s in ats_sites.score_all(d / "resume.pdf", (d / "jd.txt").read_text(), title=jd.title or "",
+                                 log=lambda m: console.print(m, highlight=False)):
+        ats_sites.record(d, s.site, 0, s.score, s.missing, s.to_dict())
+        console.print(f"{s.site}: {s.score}  missing: {', '.join(s.missing[:12]) or '-'}", highlight=False)
+
+
+@app.command("ats-record")
+def ats_record_cmd(
+    job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> whose resume.pdf you scanned."),
+    site: str = typer.Argument(..., help="skillsfirst | jobscan | skillsyncer | atsalign | applycove"),
+    score: float = typer.Argument(..., help="The score the site gave (0-100)."),
+) -> None:
+    """Record a score you got by hand on a site the agent doesn't automate; it joins the ATS average."""
+    from pathlib import Path
+
+    from jobagent.tools import ats_sites
+
+    if site not in ats_sites.MANUAL_SITES:
+        console.print(f"[red]unknown site {site!r}; use one of {', '.join(ats_sites.MANUAL_SITES)}[/]")
+        raise typer.Exit(1)
+    d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
+    ats_sites.record(d, site, 0, score, [], {"manual": True})
+    console.print(f"recorded {site} = {score} for the current resume.pdf", highlight=False)
 
 
 @app.command("ats-loop")

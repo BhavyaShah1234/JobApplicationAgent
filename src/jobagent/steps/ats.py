@@ -1,4 +1,4 @@
-"""Step 10: the ATS loop. Score the tailored resume (local scorer; external sites when their adapters are enabled),
+"""Step 10: the ATS loop. Score the tailored resume on online ATS checkers (plus any scores the user recorded by hand),
 and while the score is below the target, work the missing keywords in (keyword pass), re-render under the same
 one-page and bullet rules, and rescore. Every score is recorded in ats_runs; the cover letter is rewritten at the
 end if the resume changed.
@@ -7,6 +7,7 @@ end if the resume changed.
 """
 
 import json
+import re
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -15,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
-from jobagent.tools import ats_local, ats_sites
+from jobagent.tools import ats_sites
 from jobagent.tools import projects as P
 from jobagent.tools import tailor as T
 
@@ -70,23 +71,31 @@ def skill_words(words: list[str], jd: JobDescription, log=print) -> list[str]:
     return [w for w in out.keep if w.lower() in given and not T.is_generic(w)]
 
 
+# Eligibility requirements are facts about the candidate, never something to work into a resume
+ELIGIBILITY = re.compile(r"(?i)\b(months?|years?|degree|bachelor|master|ph\.?d|graduat\w*|authori[sz]\w*|sponsor\w*|"
+                         r"citizen\w*|clearance|relocat\w*|gpa)\b")
+
+
 def evaluate(job_dir: Path, jd: JobDescription, jd_text: str, rnd: int, sites, log=print) -> tuple[float, list[str], dict]:
-    """Score with the local scorer and every enabled site; record each in ats_runs. Returns (average, missing
-    keywords from all job-specific scorers, local first, deduplicated, scores by scorer)."""
-    local = ats_local.score(job_dir / "resume.pdf", jd, jd_text)
-    ats_local.record(job_dir, "local", rnd, local.score, local.missing, local.to_dict())
-    scores, missing = {"local": local.score}, list(local.missing)
-    for s in ats_sites.score_all(job_dir / "resume.pdf", jd_text, sites, log=log) if sites else []:
-        ats_local.record(job_dir, s.site, rnd, s.score, s.missing, s.to_dict())
+    """Score the resume on every enabled online site (and include the user's manual scores for this exact resume);
+    record each in ats_runs. Returns (average, missing skills from the job-specific sites, info)."""
+    scores, missing = {}, []
+    for s in ats_sites.score_all(job_dir / "resume.pdf", jd_text, sites, jd.title or "", log=log) if sites else []:
+        ats_sites.record(job_dir, s.site, rnd, s.score, s.missing, s.to_dict())
         if s.score is not None:
             scores[s.site] = s.score
-            new = [m for m in s.missing if m.lower() not in {x.lower() for x in missing}]
-            missing += skill_words(new, jd, log)
-    avg = round(sum(scores.values()) / len(scores), 1)
-    return avg, missing, {"scores": scores, "parse_issues": local.parse_issues}
+            if s.job_specific:
+                new = [m for m in s.missing if m.lower() not in {x.lower() for x in missing}
+                       and not ELIGIBILITY.search(m)]
+                phrases = [m for m in new if len(m.split()) >= 3]   # work phrases: bullet material, not skills
+                missing += phrases + skill_words([m for m in new if m not in phrases], jd, log)
+    scores.update(ats_sites.manual_scores(job_dir))
+    avg = round(sum(scores.values()) / len(scores), 1) if scores else 0.0
+    return avg, missing, {"scores": scores}
+
 
 def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: int = MAX_ROUNDS,
-        sites=tuple(ats_sites.SITES), rewrite_letter: bool = True, log=print) -> dict:
+        sites=ats_sites.DEFAULT_SITES, rewrite_letter: bool = True, log=print) -> dict:
     s = get_settings()
     job_dir = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
@@ -102,20 +111,6 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
     avg, missing, info = evaluate(job_dir, jd, jd_text, 0, sites, log)
     history.append(avg)
     log(f"ats round 0: average {avg} {info['scores']}; missing {missing[:MAX_KEYWORDS]}")
-    if info["parse_issues"]:  # e.g. built before a template fix (header icons): a plain re-render may fix it
-        current = (job_dir / "resume.tex").read_text()
-        backup = (current, (job_dir / "resume.pdf").read_bytes())
-        tex, problems, pages, err = render_keeping_projects(r, f, current, job_dir)
-        if pages == 1 and not err and not any("LOCKED" in p for p in problems):
-            new_avg, new_missing, new_info = evaluate(job_dir, jd, jd_text, 0, sites, log)
-            if new_avg > avg:
-                log(f"ats: re-rendered with the current template: {avg} -> {new_avg} {new_info['scores']}")
-                avg, missing, info, changed = new_avg, new_missing, new_info, True
-                history.append(avg)
-            else:
-                (job_dir / "resume.tex").write_text(backup[0]); (job_dir / "resume.pdf").write_bytes(backup[1])
-        else:
-            (job_dir / "resume.tex").write_text(backup[0]); (job_dir / "resume.pdf").write_bytes(backup[1])
     n_keywords = MAX_KEYWORDS
     for rnd in range(1, rounds + 1):
         if avg >= target or not missing:

@@ -24,9 +24,9 @@ which skills don't move. Closing that gap would mean stuffing non-skill words, w
 
 ```bash
 jobagent tailor outputs/<company>/<job-id> <slug>               # step 9 + this loop + cover letter (default)
-jobagent tailor outputs/<company>/<job-id> <slug> --ats-local-only   # loop with the local scorer only
 jobagent ats-loop outputs/<company>/<job-id> <slug> [--target 90]   # the loop on an already-tailored resume
-jobagent ats outputs/<company>/<job-id>                        # one local score, recorded
+jobagent ats outputs/<company>/<job-id>                        # one round of online scores, recorded
+jobagent ats-record outputs/<company>/<job-id> skillsfirst 92  # a score you got by hand; joins the average
 ```
 
 ## How it works
@@ -55,17 +55,21 @@ flowchart TD
 The loop runs at most 5 rounds. A model error or a rejected change costs one round; after a model error the
 next round tries with fewer keywords.
 
-## The scorers
+## The scorers (online only, since 2026-10-29)
 
-| Scorer | What it measures | Notes |
+The agent's own local scorer was removed at the user's request: every score now comes from an online ATS checker.
+
+| Site | Automated? | What it measures |
 |---|---|---|
-| Local (`tools/ats_local.py`) | The posting's tech stack and required/preferred items (required weigh double), parseability of the PDF text (email, phone, header, one page), section headers, title words, embedding similarity | Free and instant; reads the resume like an ATS, from `pdftotext` |
-| AutoApplyMax (`tools/ats_sites.py`) | Job-specific score: keywords 40%, formatting, completeness, readability; matched and missing words | Agent account (Continue with Google); its missing words are word overlap, so only real skills are used |
-| Jobalytics (`tools/ats_sites.py`) | General resume quality: content, sections, ATS essentials | Public checker; its job match stays locked for this account, so it isn't job-specific |
+| AutoApplyMax | yes (agent account) | Job-specific: keywords 40%, formatting, completeness, readability; matched and missing words (word overlap) |
+| Jobalytics | yes (agent account) | General resume quality: content, sections, ATS essentials (job match locked) |
+| HireFlow | yes (no account) | Job match: keyword match, skills fit, experience fit, completeness; missing must-have / nice-to-have phrases |
+| ResumeAtlas | on request only | Required skills shown in work bullets; only 2 job matches a month |
+| ATS Friendly | needs an account (asked) | Job match after "Start Scan" |
+| SkillsFirst, Jobscan, SkillSyncer, AtsAlign, Novoresume, RemoWork, Lessie | no: their terms forbid bots or scraping | Run by hand; `jobagent ats-record` |
+| ApplyCove, Resmume | no: CAPTCHA on every scan | Run by hand; `jobagent ats-record` |
 
-Sites the user picked but whose terms forbid automated use, so they are only used by hand: **Jobscan**,
-**SkillSyncer**, **SkillsFirst** (the user's ASU account). ResyMatch and Resume Optimizer Pro: terms not found,
-on hold. The two automated accounts were created with the user's explicit approval (2026-10-28).
+Scores the user records by hand count in the average for the exact resume version they scanned.
 
 ## Rules
 
@@ -75,8 +79,9 @@ on hold. The two automated accounts were created with the user's explicit approv
 | A skill already in any category is not added again; the posting's spelling is used ("Rust", "AWS") | `tailor.apply_keyword_pass` |
 | No filler category ("Technical Skills", "Other"), at most 8 categories | `tailor.apply_keyword_pass` |
 | A change is kept only if the page stays one page, no bullet issue or uncovered item is added, and the average rises | `steps/ats.run` |
+| Work phrases from a site ("leading small projects independently") go into an existing bullet; eligibility (years, degree, authorisation) is never written in | `steps/ats.evaluate`, keyword prompt |
 | Projects make room first (short paragraphs, then one fewer, at least 2) | `projects.fit` |
-| Every score of every round is recorded | `ats_runs` (`tools/ats_local.record`) |
+| Every score of every round is recorded | `ats_runs` (`tools/ats_sites.record`) |
 
 ## Learned while building
 

@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     discovered_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
--- Step 10: every ATS score of a resume version (local scorer or an external site), per round.
+-- Step 10: every ATS score of a resume version (an online checker, or one the user ran by hand), per round.
 CREATE TABLE IF NOT EXISTS ats_runs (
     id          INTEGER PRIMARY KEY,
     job_dir     TEXT NOT NULL,      -- outputs/<company>/<job-id>

@@ -87,6 +87,12 @@ def jobalytics(pg, resume_pdf: Path, jd_text: str = "") -> SiteScore:
                       "issues": {k: int(n) for k, n in issues}})
 
 
+_MISSING_PILLS = r"""() => [...document.querySelectorAll('p')]
+  .filter(p => /^Missing \(\d+\)$/.test(p.textContent.trim()))
+  .flatMap(p => p.nextElementSibling ? [...p.nextElementSibling.querySelectorAll('span')].map(x => x.textContent.trim()) : [])
+  .filter(Boolean)"""
+
+
 def hireflow(pg, resume_pdf: Path, jd_text: str) -> SiteScore:
     """HireFlow job match: overall 0-100 (keyword match, skills fit, experience fit, completeness), must-have and
     nice-to-have phrases matched / missing, and suggested additions. No account."""
@@ -105,9 +111,8 @@ def hireflow(pg, resume_pdf: Path, jd_text: str) -> SiteScore:
         screenshot(pg, "/app/state/logs/ats-hireflow-fail.png")
         raise SiteError("HireFlow: no score on the page")
     pct = lambda name: int(x.group(1)) if (x := re.search(rf"{name} (\d{{1,3}})%", body)) else None
-    missing = []
-    for block in re.findall(r"Missing \(\d+\) (.*?) (?:Nice-to-Have|Suggested Additions)", body):
-        missing += [x.strip() for x in re.split(r"(?<=[a-z0-9)]) (?=[A-Za-z])(?=(?:[a-z]+ ){2,})", block) if x.strip()]
+    # Each phrase is a pill after its "Missing (n)" label; the page text runs them together, so read the pills.
+    missing = pg.evaluate(_MISSING_PILLS)
     sugg = re.search(r"Suggested Additions (.*?)(?:Tailor|Get your|$)", body)
     return SiteScore("hireflow", float(m.group(1)), True, missing,
                      {"keyword_match": pct("Keyword Match"), "skills_fit": pct("Skills Fit"),
@@ -140,9 +145,14 @@ def resumeatlas(pg, resume_pdf: Path, jd_text: str, title: str = "") -> SiteScor
 
 
 SITES = {"autoapplymax": autoapplymax, "jobalytics": jobalytics, "hireflow": hireflow, "resumeatlas": resumeatlas}
+# Used every round by default. ResumeAtlas allows 2 job matches a month, so it is only run when asked for.
+DEFAULT_SITES = ("autoapplymax", "jobalytics", "hireflow")
+# Sites whose terms forbid automated use, or that run a CAPTCHA on every scan: scanned by the user, recorded with
+# `jobagent ats-record`.
+MANUAL_SITES = ("skillsfirst", "jobscan", "skillsyncer", "atsalign", "applycove")
 
 
-def score_all(resume_pdf: Path, jd_text: str, sites=tuple(SITES), title: str = "", log=print) -> list[SiteScore]:
+def score_all(resume_pdf: Path, jd_text: str, sites=DEFAULT_SITES, title: str = "", log=print) -> list[SiteScore]:
     """Every enabled site, one browser session; a site that fails is reported, never fatal."""
     out = []
     with persistent_context() as ctx:
@@ -155,3 +165,28 @@ def score_all(resume_pdf: Path, jd_text: str, sites=tuple(SITES), title: str = "
                 log(f"ats site {name}: {type(e).__name__}: {str(e)[:160]}")
                 out.append(SiteScore(name, None, name == "autoapplymax", [], {"error": str(e)[:300]}))
     return out
+
+
+def record(job_dir: Path, site: str, rnd: int, score: float | None, missing: list[str], raw: dict) -> None:
+    """One row in ats_runs for this resume version."""
+    import hashlib
+    import json
+
+    from jobagent import db
+    sha = hashlib.sha256((job_dir / "resume.pdf").read_bytes()).hexdigest()
+    with (conn := db.connect()):
+        conn.execute("INSERT INTO ats_runs (job_dir, site, round, score, missing, raw, resume_sha) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     (str(job_dir), site, rnd, score, json.dumps(missing), json.dumps(raw), sha))
+
+
+def manual_scores(job_dir: Path) -> dict[str, float]:
+    """The latest score the user recorded by hand for each manual site, for the current resume.pdf."""
+    import hashlib
+
+    from jobagent import db
+    sha = hashlib.sha256((job_dir / "resume.pdf").read_bytes()).hexdigest()
+    rows = db.connect().execute(
+        "SELECT site, score FROM ats_runs WHERE job_dir = ? AND resume_sha = ? AND site IN (%s) AND score IS NOT NULL "
+        "ORDER BY id" % ",".join("?" * len(MANUAL_SITES)), (str(job_dir), sha, *MANUAL_SITES)).fetchall()
+    return {site: score for site, score in rows}
