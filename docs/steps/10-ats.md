@@ -34,15 +34,16 @@ jobagent ats-record outputs/<company>/<job-id> skillsfirst 92  # a score you got
 ```mermaid
 flowchart TD
     IN[/"Tailored resume (step 9)<br/>resume.pdf + filled.json + projects.json"/] --> SC
-    subgraph SC["Score the resume"]
-        L["Local scorer<br/>keywords, parseability, sections,<br/>title, embedding similarity"]
+    subgraph SC["Score the resume online"]
         A["AutoApplyMax<br/>job-specific score + missing words"]
         J["Jobalytics<br/>general resume score"]
+        H["HireFlow<br/>job match + missing phrases"]
+        M["Your manual scans<br/>(jobagent ats-record)"]
     end
-    SC --> REC[("ats_runs table<br/>one row per scorer per round")]
+    SC --> REC[("ats_runs table<br/>one row per site per round")]
     SC --> AVG{"Average at least 90<br/>or nothing left to add?"}
     AVG -- "yes" --> OUT
-    AVG -- "no" --> F["Keep only real skills<br/>local missing keywords + site words<br/>filtered by the fast model and a generic-word list"]
+    AVG -- "no" --> F["Keep only real skills and work phrases<br/>fast-model filter, generic-word list,<br/>eligibility claims never added"]
     F --> KP["Keyword pass (glm-5-3)<br/>add each skill to the right category<br/>or work it into one existing bullet"]
     KP --> CHK["Code checks<br/>no duplicates, posting's spelling,<br/>no filler category, no new bullet issues"]
     CHK --> FIT["Re-render and re-fit the page<br/>projects: full, then short, then one fewer"]
@@ -93,5 +94,6 @@ Scores the user records by hand count in the average for the exact resume versio
 - `glm-5-3` in json_schema mode spent its whole 16k-token budget deliberating over a handful of keywords;
   in function-calling mode it answers in about 100 s. The fast model was quick but put "rust" under LLMs.
 - A full page leaves no room for one more skill: the loop re-fits the projects saved in `projects.json`.
-- The 90 average is hard to reach honestly: the local score reaches the high 90s, but AutoApplyMax's word overlap
-  and Jobalytics' general score don't respond to skills, so the gap is reported instead of stuffing words.
+- The 90 average is hard to reach honestly with online checkers: AutoApplyMax's word overlap
+  HireFlow's exact-phrase keyword match (8-14%) and Jobalytics' general score don't respond to real skills; the
+  first online-only run on OpenAI went 73.0 -> 74.7 (AutoApplyMax 82, Jobalytics 82, HireFlow 60).
