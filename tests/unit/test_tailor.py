@@ -273,3 +273,25 @@ def test_keyword_pass_adds_skills_and_rewrites_named_bullets():
     g = T.apply_keyword_pass(f, kp)
     assert g.skills[0].render() == ["Python", "Kafka"] and g.skills[-1].category == "Streaming"
     assert g.roles[0].bullets[1].text.startswith("Wrote SQL and Spark") and f.roles[0].bullets[1].text.startswith("Wrote SQL reports")
+
+
+def test_generic_words_never_become_skills():
+    f = _filled("Built Python ETL, cutting runtime by 20%.", "Wrote SQL reports, cutting prep by 10%.")
+    kp = T.KeywordPass(skills=[T.SkillAdd(category="A", terms=["AWS", "build", "tools", "information", "Rust"]),
+                              T.SkillAdd(category="Junk", terms=["value", "problems"])])
+    g = T.apply_keyword_pass(f, kp)
+    assert g.skills[0].render() == ["Python", "AWS", "Rust"] and all(s.category != "Junk" for s in g.skills)
+    assert T.is_generic("Information") and not T.is_generic("CI/CD") and not T.is_generic("data pipelines on AWS")
+
+
+def test_project_refit_prefers_short_paragraphs_before_dropping(tmp_path):
+    import json
+    ranked = [projects.ProjectEntry(repo=f"me/P{i}", title=f"P{i}", stack=["Python"], paragraph=f"Long {i}.",
+                                    short=f"Short {i}.") for i in range(3)]
+    cards = {f"me/p{i}": {"url": f"https://github.com/me/P{i}", "full_name": f"me/P{i}"} for i in range(3)}
+    (tmp_path / "projects.json").write_text(json.dumps({"ranked": [e.model_dump() for e in ranked], "kept": 3,
+                                                        "short": [], "years": {}, "macro": True, "cards": cards}))
+    # fits only with 3 projects if at least one is short
+    fake = lambda tex: (1 if tex.count("Short") >= 1 or tex.count("resumeProjectHeading") <= 2 else 2, "")
+    tex, pages, err, kept, short = projects.fit(TEX, tmp_path, fake, start=(3, 0))
+    assert (pages, kept, short) == (1, 3, frozenset({"me/P2"})) and "Short 2." in tex and "Long 0." in tex

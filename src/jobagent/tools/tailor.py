@@ -637,7 +637,7 @@ def apply_repair(f: Filled, repair: Repair) -> int:
 
 class SkillAdd(BaseModel):
     category: str = Field(max_length=40, description="An existing category name exactly, or a new short one")
-    terms: list[str] = Field(min_length=1, max_length=6)
+    terms: list[str] = Field(min_length=1, max_length=6, description="ONLY the new keywords to add to this category")
 
 
 class KeywordPass(BaseModel):
@@ -647,8 +647,8 @@ class KeywordPass(BaseModel):
 
 KEYWORD_PROMPT = """An ATS scan of this tailored resume found the posting's keywords listed under MISSING. Work them in so
 the resume matches the posting, the way a careful candidate would:
-- Prefer adding a keyword to the most fitting existing Technical Skills category (`skills`); open a new short
-  category only if none fits (there may be at most 8 categories in total).
+- Prefer adding a keyword to the most fitting existing Technical Skills category (`skills`): list ONLY the new
+  keywords in `terms`, never the skills already there; open a new short category only if none fits (at most 8).
 - Where a keyword names work rather than a tool (a practice, a system, a domain), rewrite ONE existing bullet that
   plausibly involved it (`bullets`: role_N index and 1-based position), keeping that bullet's facts, numbers,
   coverage and length (<= ~120 characters). Never move work to another employer; never invent numbers.
@@ -669,6 +669,20 @@ def build_keyword_prompt(r: Resume, jd: JobDescription, f: Filled, missing: list
             HumanMessage(f"MISSING:\n{miss}\n\nTECHNICAL SKILLS:\n{skills}\n\nEXPERIENCE BULLETS:\n" + "\n".join(lines))]
 
 
+# Plain English that ATS checkers report as "missing keywords" but that is never a skill on a resume
+GENERIC_WORDS = set("""build builds building tool tools information info value values product products problem problems
+design designs work works working management manage people person communication communications team teams user users
+world range salary location locations posted updated employment job jobs role roles experience growth economic
+critical thinking understanding think small large business businesses company companies opportunity opportunities
+customer customers solution solutions process processes quality support service services system systems data
+technology technologies skills skill ability knowledge strong excellent new great best help impact results result
+develop development developer engineer engineering software project projects time year years day days""".split())
+
+
+def is_generic(term: str) -> bool:
+    return all(w in GENERIC_WORDS for w in re.findall(r"[a-z]+", term.lower())) if term.strip() else True
+
+
 def apply_keyword_pass(f: Filled, kp: KeywordPass) -> Filled:
     """A copy of `f` with the keywords added (skills appended to their category, bullets rewritten in place)."""
     g = f.model_copy(deep=True)
@@ -678,10 +692,12 @@ def apply_keyword_pass(f: Filled, kp: KeywordPass) -> Filled:
             if len(g.skills) >= 8:
                 line = g.skills[-1]
             else:
-                g.skills.append(SkillLine(category=add.category, terms=list(add.terms)))
+                terms = [t for t in add.terms if not is_generic(t)]
+                if terms:
+                    g.skills.append(SkillLine(category=add.category, terms=terms))
                 continue
         have = {t.lower() for t in line.render()}
-        line.terms = line.terms + [t for t in add.terms if t.lower() not in have]
+        line.terms = line.terms + [t for t in add.terms if t.lower() not in have and not is_generic(t)]
     by_role = {e.role: e for e in g.roles}
     for fx in kp.bullets:
         e = by_role.get(fx.role)

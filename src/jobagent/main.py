@@ -272,11 +272,13 @@ def _research_table(results, title: str) -> tuple[Table, bool]:
 def tailor_cmd(
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> from `jobagent scrape`."),
     company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md)."),
+    no_ats: bool = typer.Option(False, "--no-ats", help="Skip the step 10 ATS loop."),
+    ats_local_only: bool = typer.Option(False, "--ats-local-only", help="ATS loop with the local scorer only."),
 ) -> None:
-    """Tailor the resume template to a scraped job (one page): resume.tex/.pdf and changes.md for review."""
+    """Tailor the resume to a scraped job (one page), run the ATS loop, then write the matching cover letter."""
     from jobagent.steps.tailor import main
 
-    main(job_dir, company)
+    main(job_dir, company, ats=not no_ats, ats_sites=() if ats_local_only else None)
 
 
 @app.command("cover-letter")
@@ -315,12 +317,14 @@ def ats_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> 
 def ats_loop_cmd(
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with a tailored resume."),
     company: str = typer.Argument(..., help="Company slug of the research profile."),
-    target: float = typer.Option(90.0, help="Stop when the score reaches this."),
+    target: float = typer.Option(90.0, help="Stop when the average score reaches this."),
+    local_only: bool = typer.Option(False, "--local-only", help="Skip the external ATS sites."),
 ) -> None:
-    """Step 10: score the resume and work missing keywords in until the target (or 5 rounds)."""
+    """Step 10: score the resume (local + external ATS sites) and work missing keywords in until the target."""
     from jobagent.steps.ats import run
 
-    run(job_dir, company, target, log=lambda m: console.print(m, highlight=False))
+    run(job_dir, company, target, sites=() if local_only else ("autoapplymax", "jobalytics"),
+        log=lambda m: console.print(m, highlight=False))
 
 
 @app.command("research")

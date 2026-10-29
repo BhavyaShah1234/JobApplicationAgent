@@ -6,8 +6,10 @@ unbulleted paragraph: the problem, the solution, the system built — about the 
 Entries already in the template keep the template's title and year (the user's wording, e.g. a hackathon win).
 """
 
+import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
@@ -201,3 +203,41 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
         years[e.repo] = month_year(c.get("created_at") or c.get("pushed_at") or "") or \
             known.get(e.repo.lower(), ("", ""))[1]
     return Chosen(chosen, cands, years, out.notes if out else "top-ranked repo cards (model unavailable)", "\\newcommand{\\resumeProjectText}" in r.tex)
+
+
+# --- the chosen projects, saved per job so later steps (the ATS loop) can re-fit the page --------------------------
+
+def save_state(job_dir: Path, ranked: list[ProjectEntry], chosen: "Chosen") -> None:
+    """All ranked projects (best first) and how many / which in short form made it onto the page."""
+    cards = {c["full_name"].lower(): {"url": c["url"], "full_name": c["full_name"]} for _, c in chosen.candidates}
+    (job_dir / "projects.json").write_text(json.dumps({
+        "ranked": [e.model_dump() for e in ranked], "kept": len(chosen.entries), "short": sorted(chosen.short),
+        "years": chosen.years, "macro": chosen.macro, "cards": cards}, indent=1))
+
+
+def fit(base_tex: str, job_dir: Path, compile_pdf, start: tuple[int, int] | None = None):
+    """Re-fit the Projects section of `base_tex` from projects.json: the most projects first, full paragraphs, then
+    the last ones short, then one fewer (at least MIN_PROJECTS). Returns (tex, pages, err, kept, short) or None
+    when the job has no saved projects. `start` = (kept, n_short) to begin from (no more than the current page)."""
+    path = job_dir / "projects.json"
+    if not path.exists() or projects_span(base_tex) is None:
+        return None
+    st = json.loads(path.read_text())
+    ranked = [ProjectEntry(**e) for e in st["ranked"]]
+    k0, s0 = start or (len(ranked), 0)
+    tex = pages = err = None
+    for k in range(min(k0, len(ranked)), MIN_PROJECTS - 1, -1):
+        for n_short in range(s0 if k == k0 else 0, k + 1):
+            short = frozenset(e.repo for e in ranked[k - n_short:k])
+            tex = apply(base_tex, render(ranked[:k], st["cards"], st["years"], st["macro"], short))
+            pages, err = compile_pdf(tex)
+            if err or pages == 1:
+                return tex, pages, err, k, short
+    return tex, pages, err, MIN_PROJECTS, frozenset(e.repo for e in ranked[:MIN_PROJECTS])
+
+
+def update_state(job_dir: Path, kept: int, short: frozenset[str]) -> None:
+    path = job_dir / "projects.json"
+    st = json.loads(path.read_text())
+    st["kept"], st["short"] = kept, sorted(short)
+    path.write_text(json.dumps(st, indent=1))

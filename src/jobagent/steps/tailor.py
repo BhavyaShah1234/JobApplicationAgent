@@ -8,6 +8,7 @@ model's output) and changes.md (estimated metrics to confirm, where each JD item
 then the matching cover letter (cover_letter.tex/.pdf).
 """
 
+import json
 import re
 import sys
 import time
@@ -117,7 +118,8 @@ def cover_letter(job_dir: str | Path, company_slug: str, log=print) -> dict:
     return cl
 
 
-def main(job_dir: str, company_slug: str, rediscover: bool = True, log=None) -> dict:
+def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = True, ats_sites=None,
+         log=None) -> dict:
     """Tailor one job end to end (resume, then cover letter); returns a summary for checks."""
     log = log or (lambda m: print(m, flush=True))
     s = get_settings()
@@ -250,6 +252,19 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, log=None) -> 
     (job_dir / "changes.md").write_text(report(r, jd, f, pages, problems, uncovered, missing, warn, rounds, filled_in,
                                                      proj))
     log(f"done: pages={pages} uncovered={uncovered} missing_skills={len(missing)} problems={len(problems + warn)}")
+    if proj:
+        P.save_state(job_dir, all_projects, proj)
+    ats_result = None
+    if ats:  # step 10 before the letter, so the letter is written once, from the final resume
+        from jobagent.steps import ats as ats_step
+        ats_result = ats_step.run(job_dir, company_slug, rewrite_letter=False, log=log,
+                                  **({"sites": ats_sites} if ats_sites is not None else {}))
+        f = T.Filled.model_validate_json((job_dir / "filled.json").read_text())
+        pages = _pages(job_dir / "resume.pdf")
+        if proj and (job_dir / "projects.json").exists():
+            st = json.loads((job_dir / "projects.json").read_text())
+            proj.entries = [e for e in all_projects[:st["kept"]]]
+            proj.short = frozenset(st["short"])
     cl = cover_letter(job_dir, company_slug, log=log)
     log(f"cover letter: {cl['words']} words, {len(cl['issues'])} issue(s)")
     generated = [f.summary] + [b.text for e in f.roles for b in e.bullets] + \
@@ -259,7 +274,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, log=None) -> 
     return {"job_dir": job_dir, "pages": pages, "uncovered": uncovered, "missing_skills": missing,
             "problems": problems + warn, "bullet_issues": T.duplicates(r, f) + T.quality(r, jd, f),
             "bullets_per_role": [len(e.bullets) for e in f.roles], "projects": len(proj.entries) if proj else None,
-            "letter": cl, "dashes": sum(len(T.DASH.findall(t)) for t in generated)}
+            "letter": cl, "dashes": sum(len(T.DASH.findall(t)) for t in generated), "ats": ats_result}
 
 
 def check(urls: list[str], workers: int = 3, log=print) -> list[tuple[str, bool, str]]:
@@ -320,7 +335,9 @@ def check(urls: list[str], workers: int = 3, log=print) -> list[tuple[str, bool,
                 (all(2 <= n <= 4 for n in out["bullets_per_role"]), f"bullets per role {out['bullets_per_role']}"),
                 (not out["dashes"], f"{out['dashes']} dash(es) used as punctuation in generated text"),
             ] if not ok]
-            detail = (f"bullets {out['bullets_per_role']}, {out['projects']} projects, letter {cl['words']} words"
+            ats = out.get("ats") or {}
+            detail = (f"bullets {out['bullets_per_role']}, {out['projects']} projects, letter {cl['words']} words, "
+                      f"ATS average {ats.get('average')} {ats.get('scores', {})}"
                       + (f" | FAIL: {'; '.join(failures)}" if failures else "") + f" | {d}")
             results.append((name, not failures, detail))
     return results
