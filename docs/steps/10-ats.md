@@ -4,7 +4,21 @@ After the resume is tailored (step 9), the agent scores it the way applicant tra
 posting's missing skills in where they truthfully fit, and rescores, up to 5 rounds, aiming for an average of 90.
 Every score is recorded, and the cover letter is written afterwards from the final resume.
 
-**Status:** built 2026-10-28; gate run in progress (see the plan's step 10 row for the result).
+**Gate passed 2026-10-29** (`jobagent step tailor-check` on the 5 step-7 postings, tailoring + ATS loop + cover
+letter): every resume and letter passes the step 9 criteria; every score is recorded in `ats_runs`; each scorer
+ran 24 times across the 5 jobs with 0 failures. No posting reached the 90 average, so the gap is reported:
+
+| Posting | Average (start → end) | Local | AutoApplyMax | Jobalytics | Gap |
+|---|---|---|---|---|---|
+| OpenAI | 84.0 → 88.3 | 98.0 | 85 | 82 | 1.7 |
+| Palantir | 84.9 → 86.2 | 92.5 | 88 | 78 | 3.8 |
+| Amazon | 85.2 | 93.5 | 80 | 82 | 4.8 |
+| NVIDIA | 80.5 → 83.5 | 90.6 | 72 | 88 | 6.5 |
+| Stripe | 78.9 | 91.6 | 57 | 88 | 11.1 |
+
+The local score is above 90 everywhere. What holds the average down is AutoApplyMax's word overlap (Stripe's
+posting is mostly company language: "financial infrastructure", "economic growth") and Jobalytics' general score,
+which skills don't move. Closing that gap would mean stuffing non-skill words, which the loop refuses to do.
 
 ## Run it
 
