@@ -331,13 +331,14 @@ def ats_record_cmd(
 def ats_loop_cmd(
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with a tailored resume."),
     company: str = typer.Argument(..., help="Company slug of the research profile."),
-    target: float = typer.Option(90.0, help="Stop when the average score reaches this."),
-    local_only: bool = typer.Option(False, "--local-only", help="Skip the external ATS sites."),
+    target: float = typer.Option(90.0, help="Stop when the average online score reaches this."),
+    site: list[str] = typer.Option(None, "--site", help="Online checkers to use (default: all automated ones)."),
 ) -> None:
-    """Step 10: score the resume (local + external ATS sites) and work missing keywords in until the target."""
+    """Step 10: score the resume on online ATS checkers and work missing keywords in until the target."""
     from jobagent.steps.ats import run
+    from jobagent.tools import ats_sites
 
-    run(job_dir, company, target, sites=() if local_only else ("autoapplymax", "jobalytics"),
+    run(job_dir, company, target, sites=tuple(site) if site else ats_sites.DEFAULT_SITES,
         log=lambda m: console.print(m, highlight=False))
 
 
