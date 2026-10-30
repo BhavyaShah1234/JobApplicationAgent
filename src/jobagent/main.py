@@ -306,6 +306,8 @@ def ats_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> 
                                  log=lambda m: console.print(m, highlight=False)):
         ats_sites.record(d, s.site, 0, s.score, s.missing, s.to_dict())
         console.print(f"{s.site}: {s.score}  missing: {', '.join(s.missing[:12]) or '-'}", highlight=False)
+        for tip in s.advice + s.breakdown.get("template", []):
+            console.print(f"   advice: {tip}", highlight=False)
 
 
 @app.command("ats-record")
@@ -334,7 +336,7 @@ def ats_loop_cmd(
     target: float = typer.Option(90.0, help="Stop when the average online score reaches this."),
     site: list[str] = typer.Option(None, "--site", help="Online checkers to use (default: all automated ones)."),
 ) -> None:
-    """Step 10: score the resume on online ATS checkers and work missing keywords in until the target."""
+    """Step 10: score the resume on online ATS checkers and work their missing keywords and advice in until the target."""
     from jobagent.steps.ats import run
     from jobagent.tools import ats_sites
 

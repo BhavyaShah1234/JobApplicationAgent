@@ -642,11 +642,13 @@ class SkillAdd(BaseModel):
 
 class KeywordPass(BaseModel):
     skills: list[SkillAdd] = Field(default_factory=list, max_length=4)
-    bullets: list[BulletFix] = Field(default_factory=list, max_length=4)
+    bullets: list[BulletFix] = Field(default_factory=list, max_length=6)
+    summary: str = Field("", max_length=800, description="The rewritten Summary (plain text, 2-3 sentences, <= 450 "
+                                                          "characters), or empty to keep it")
 
 
-KEYWORD_PROMPT = """An ATS scan of this tailored resume found the posting's keywords listed under MISSING. Work them in so
-the resume matches the posting, the way a careful candidate would:
+KEYWORD_PROMPT = """ATS scans of this tailored resume found the posting's keywords listed under MISSING, and the checkers
+gave the suggestions under ADVICE. Work them in so the resume matches the posting, the way a careful candidate would:
 - Prefer adding a keyword to the most fitting existing Technical Skills category (`skills`): list ONLY the new
   keywords in `terms`, never the skills already there; open a new short category only if none fits (at most 8).
 - Where a keyword names work rather than a tool (a practice, a system, a domain), rewrite ONE existing bullet that
@@ -654,12 +656,21 @@ the resume matches the posting, the way a careful candidate would:
   coverage and length (<= ~120 characters). Never move work to another employer; never invent numbers.
 - A MISSING entry may be a phrase about work ("leading small projects independently", "navigating large code
   bases"): work it into one existing bullet where the candidate plausibly did it, in the posting's words.
+- Soft skills and qualities ("collaboration", "comfort with ambiguity") never go in Technical Skills: show them in
+  the Summary or in what a bullet's work involved ("partnered with security and product teams to ...").
+- Follow the ADVICE where it can be done truthfully with the existing facts (vary repeated words, add a result to a
+  line without one, name the teams the work involved). Rewrite the Summary (`summary`) only if that helps; keep it
+  2-3 sentences, <= 450 characters, with its facts (degree, years) unchanged.
+- Every keyword under KEEP is already matched by the checkers: a rewritten bullet or Summary must still contain
+  each KEEP word it contained before. Never make a bullet or the Summary longer than it was (checkers penalise
+  long sentences); swap words in rather than append clauses.
 - Use the posting's exact spelling. Skip keywords that are not skills or that make no sense for the candidate.
 - Never add or change claims about years or months of experience, degrees, dates, titles or eligibility.
 - No dashes as punctuation; a change by a percentage takes "by"."""
 
 
-def build_keyword_prompt(r: Resume, jd: JobDescription, f: Filled, missing: list[str]) -> list:
+def build_keyword_prompt(r: Resume, jd: JobDescription, f: Filled, missing: list[str],
+                         advice: list[str] = (), keep: list[str] = ()) -> list:
     lines = []
     for e in f.roles:
         role = r.roles[e.role]
@@ -668,8 +679,10 @@ def build_keyword_prompt(r: Resume, jd: JobDescription, f: Filled, missing: list
     skills = "\n".join(f"- {s.category}: {', '.join(s.render())}" for s in f.skills)
     context = {k: [t for _, t, _ in jd_items(jd) if k.lower() in t.lower()][:1] for k in missing}
     miss = "\n".join(f"- {k}" + (f"   (posting: {c[0][:120]})" if c else "") for k, c in context.items())
+    tips = "\n".join(f"- {a}" for a in advice) or "(none)"
     return [SystemMessage(with_today(KEYWORD_PROMPT)),
-            HumanMessage(f"MISSING:\n{miss}\n\nTECHNICAL SKILLS:\n{skills}\n\nEXPERIENCE BULLETS:\n" + "\n".join(lines))]
+            HumanMessage(f"MISSING:\n{miss}\n\nADVICE:\n{tips}\n\nKEEP:\n{', '.join(keep) or '(none)'}\n\nSUMMARY:\n{f.summary}\n\nTECHNICAL SKILLS:\n{skills}"
+                         f"\n\nEXPERIENCE BULLETS:\n" + "\n".join(lines))]
 
 
 # Plain English that ATS checkers report as "missing keywords" but that is never a skill on a resume
@@ -695,6 +708,14 @@ def posting_spelling(term: str, jd_text: str) -> str:
     return m.group(0) if m and (m.group(0) != m.group(0).lower() or term == term.lower()) else term
 
 
+def covered_by(term: str, phrases: list[str]) -> bool:
+    """True when every word of `term` is in one of `phrases` ("fraud remediation" vs "fraud detection and
+    remediation", "backend systems" vs the category "Backend and Data Systems"). Multi-word terms only."""
+    words = set(re.findall(r"[a-z0-9+#.]+", term.lower()))
+    # A one-word tool stays even inside a longer phrase ("Azure" next to "Azure DevOps CI/CD")
+    return len(words) >= 2 and any(words <= set(re.findall(r"[a-z0-9+#.]+", p.lower())) for p in phrases)
+
+
 def apply_keyword_pass(f: Filled, kp: KeywordPass, jd_text: str = "") -> Filled:
     """A copy of `f` with the keywords added: each skill once (never one already in any category), in the posting's
     spelling, in an existing category or a real new one (no "Technical Skills" / "Other" filler); bullets rewritten
@@ -707,9 +728,11 @@ def apply_keyword_pass(f: Filled, kp: KeywordPass, jd_text: str = "") -> Filled:
             if t and t.lower() not in have and not is_generic(t):
                 terms.append(t)
                 have.add(t.lower())
+        line = next((s for s in g.skills if s.category.strip().lower() == add.category.strip().lower()), None)
+        if line is not None:  # nothing the category name or one existing term already says
+            terms = [t for t in terms if not covered_by(t, [line.category] + line.render())]
         if not terms:
             continue
-        line = next((s for s in g.skills if s.category.strip().lower() == add.category.strip().lower()), None)
         if line is None and (_FILLER_CATEGORY.match(add.category) or len(g.skills) >= 8):
             continue  # no filler category; no room for a ninth
         if line is None:
@@ -721,4 +744,6 @@ def apply_keyword_pass(f: Filled, kp: KeywordPass, jd_text: str = "") -> Filled:
         e = by_role.get(fx.role)
         if e and 1 <= fx.bullet <= len(e.bullets):
             e.bullets[fx.bullet - 1].text = fx.text
+    if 80 <= len(kp.summary.strip()) <= 500:   # an empty or runaway rewrite keeps the current Summary
+        g.summary = kp.summary.strip()
     return g
