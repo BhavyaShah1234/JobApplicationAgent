@@ -685,6 +685,11 @@ EVERY piece of advice, within the CANDIDATE FACTS:
 - A MISSING entry may be a phrase about work ("leading small projects independently", "navigating large code
   bases") or a requirement ("2 years of fraud analysis"): work it into the Summary or a bullet in the posting's
   own words (years only within CANDIDATE FACTS).
+- A MISSING item that names a skill already in Technical Skills ("experience with Kafka", "Terraform") means the
+  checker wants to see it used in the work: put it in a bullet, not in the skills again. Rewrite at least 2
+  bullets every round unless every MISSING item already appears in a bullet.
+- LAST ROUND (if given) says what your previous answer did to the scores: build on what was kept, try something
+  different from what was undone, and never resend changes that were already in place.
 - Soft skills and qualities ("collaboration", "comfort with ambiguity") never go in Technical Skills: show them in
   the Summary or in what a bullet's work involved ("partnered with security and product teams to ...").
 - Follow the ADVICE (vary repeated words, add a result to a line without one, name the teams the work involved,
@@ -700,7 +705,7 @@ EVERY piece of advice, within the CANDIDATE FACTS:
 
 
 def build_keyword_prompt(r: Resume, jd: JobDescription, f: Filled, missing: list[str],
-                         advice: list[str] = (), keep: list[str] = ()) -> list:
+                         advice: list[str] = (), keep: list[str] = (), last: str = "") -> list:
     lines = []
     for e in f.roles:
         role = r.roles[e.role]
@@ -711,7 +716,7 @@ def build_keyword_prompt(r: Resume, jd: JobDescription, f: Filled, missing: list
     miss = "\n".join(f"- {k}" + (f"   (posting: {c[0][:120]})" if c else "") for k, c in context.items())
     tips = "\n".join(f"- {a}" for a in advice) or "(none)"
     return [SystemMessage(with_today(KEYWORD_PROMPT)),
-            HumanMessage(f"{facts_block()}\n\nMISSING:\n{miss}\n\nADVICE:\n{tips}\n\nKEEP:\n{', '.join(keep) or '(none)'}\n\nSUMMARY:\n{f.summary}\n\nTECHNICAL SKILLS:\n{skills}"
+            HumanMessage(f"{facts_block()}\n\n" + (f"LAST ROUND: {last}\n\n" if last else "") + f"MISSING:\n{miss}\n\nADVICE:\n{tips}\n\nKEEP:\n{', '.join(keep) or '(none)'}\n\nSUMMARY:\n{f.summary}\n\nTECHNICAL SKILLS:\n{skills}"
                          f"\n\nEXPERIENCE BULLETS:\n" + "\n".join(lines))]
 
 

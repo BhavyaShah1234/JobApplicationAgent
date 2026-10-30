@@ -119,6 +119,12 @@ def merged_missing(missing: dict) -> list[str]:
     return out
 
 
+def resume_text(f: T.Filled) -> str:
+    """Everything the advice pass can change, for spotting an answer that changes nothing."""
+    return "\n".join([f.summary] + [b.text for e in f.roles for b in e.bullets] +
+                     [t for line in f.skills for t in line.render()])
+
+
 def present(job_dir: Path, phrases: list[str]) -> int:
     """How many of `phrases` the resume's text contains (case-insensitive), the stand-in score for budget sites
     between their scans."""
@@ -154,12 +160,12 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
     log(f"ats round 0: average {history[0]} {scores}; missing {missing[:MAX_KEYWORDS]}; advice {len(advice)}")
     for t in dict.fromkeys(template):
         log(f"ats: template advice (not applied; locked or eligibility): {t}")
-    n_keywords = MAX_KEYWORDS
+    n_keywords, last = MAX_KEYWORDS, ""
     for rnd in range(1, rounds + 1):
         if average(scores) >= target or not (missing or advice):
             break
         try:
-            prompt = T.build_keyword_prompt(r, jd, f, missing[:n_keywords], advice, keep)
+            prompt = T.build_keyword_prompt(r, jd, f, missing[:n_keywords], advice, keep, last)
             kp = llm.structured_invoke(keyword_model, T.KeywordPass, prompt, first="function_calling", log=log)
         except Exception as e:
             n_keywords = max(3, n_keywords // 2)  # e.g. token limit: fewer keywords next time
@@ -169,6 +175,12 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
             log(f"ats round {rnd}: nothing worth changing (remaining words aren't skills)")
             break
         g = T.apply_keyword_pass(f, kp, jd_text)
+        proposed = [t for a in kp.skills for t in a.terms]
+        if resume_text(g) == resume_text(f):  # only things already there: don't spend a scoring round on it
+            last = (f"your answer changed nothing ({', '.join(proposed) or 'no new text'} already on the resume); "
+                    "put the MISSING items into bullets and the Summary instead")
+            log(f"ats round {rnd}: no change ({', '.join(proposed)} already present); not scored")
+            continue
         base_issues = T.duplicates(r, f) + T.quality(r, jd, f)
         base_uncovered = set(T.fill_checks(r, jd, f)[0])
         issues = [i for i in T.duplicates(r, g) + T.quality(r, jd, g) if i not in base_issues]  # new ones only
@@ -181,6 +193,8 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
         if not (pages == 1 and not err and not issues and not uncovered and not any("LOCKED" in p for p in problems)):
             (job_dir / "resume.tex").write_text(backup[0]); (job_dir / "resume.pdf").write_bytes(backup[1])
             log(f"ats round {rnd}: rejected (pages={pages} {err} new issues={issues[:2]} newly uncovered={uncovered})")
+            last = (f"undone before scoring: " + ("the page overflowed; make lines shorter, not longer" if pages != 1
+                    else f"it broke resume rules: {'; '.join((issues + uncovered)[:3])}"))
             continue
         ev = evaluate(job_dir, jd, jd_text, rnd, every, log)
         new_scores = {**scores, **ev["scores"]}
@@ -192,9 +206,12 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
             f"{' + summary' if kp.summary else ''}")
         # Keep a change if the unlimited sites rose, or if it works in at least 2 more of the budget sites' keywords
         # without the unlimited sites falling beyond their run-to-run noise
+        change = (f"added skills {added}, {len(kp.bullets)} bullet edit(s)" + (", a new Summary" if kp.summary else ""))
         if not (new_loop > loop_avg or (new_loop >= loop_avg - NOISE and new_covered >= covered + 2)):  # undo
             (job_dir / "resume.tex").write_text(backup[0]); (job_dir / "resume.pdf").write_bytes(backup[1])
+            last = f"UNDONE: {change} moved the scores {ev['scores']} (average {loop_avg} -> {new_loop})"
             continue
+        last = f"KEPT: {change} raised the average {loop_avg} -> {new_loop} {ev['scores']}"
         f, scores, loop_avg, covered, changed = g, new_scores, new_loop, new_covered, True
         missing = [m for m in merged_missing(ev["missing"]) + budget_missing if m.lower() not in
                    {x.lower() for x in added}]

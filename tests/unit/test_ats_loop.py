@@ -64,3 +64,16 @@ def test_skill_already_said_by_category_or_term_is_not_added():
 def test_one_word_tool_is_never_covered():
     assert not T.covered_by("Azure", ["Azure DevOps CI/CD"])
     assert T.covered_by("backend systems", ["Backend and Data Systems"])
+
+
+def test_last_round_feedback_reaches_the_prompt(monkeypatch):
+    r = type("R", (), {"roles": [type("Role", (), {"title": "Engineer", "company": "Acme", "dates": "2024"})()]})()
+    monkeypatch.setattr(T, "jd_items", lambda jd: [])
+    text = T.build_keyword_prompt(r, None, _filled(), ["Kafka"], last="UNDONE: a new Summary")[1].content
+    assert "LAST ROUND: UNDONE: a new Summary" in text and "CANDIDATE FACTS" in text
+
+
+def test_resume_text_spots_an_answer_that_changes_nothing():
+    f = _filled()
+    same = T.apply_keyword_pass(f, T.KeywordPass(skills=[T.SkillAdd(category="Data", terms=["Kafka"])]))
+    assert ats.resume_text(same) == ats.resume_text(f)
