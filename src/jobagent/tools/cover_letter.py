@@ -13,6 +13,7 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from jobagent import llm
 from jobagent.clock import with_today
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
@@ -161,8 +162,7 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
     feedback, best = "", None
     for attempt in range(1, rounds + 1):
         try:
-            letter = model.with_structured_output(Letter, method="json_schema").invoke(
-                build_prompt(resume, jd, company_md, feedback))
+            letter = llm.structured_invoke(model, Letter, build_prompt(resume, jd, company_md, feedback), log=log)
         except Exception as e:  # timeout / token limit: next round
             log(f"cover letter round {attempt}: model error {type(e).__name__}")
             continue

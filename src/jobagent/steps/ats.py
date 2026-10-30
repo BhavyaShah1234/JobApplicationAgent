@@ -12,9 +12,9 @@ import subprocess
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
+from jobagent import llm
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
 from jobagent.tools import ats_sites
@@ -63,7 +63,6 @@ def skill_words(words: list[str], jd: JobDescription, log=print) -> list[str]:
     """The site's missing keywords that are real skills (fast model); [] if the model is unavailable."""
     if not words:
         return []
-    from jobagent import llm
     try:
         out = llm.structured(SkillWords, role="fast", method="json_schema", timeout=120, max_tokens=1500).invoke(
             [SystemMessage(SKILL_FILTER),
@@ -75,9 +74,11 @@ def skill_words(words: list[str], jd: JobDescription, log=print) -> list[str]:
     return [w for w in out.keep if w.lower() in given and not T.is_generic(w)]
 
 
-# Eligibility requirements are facts about the candidate, never something to work into a resume
-ELIGIBILITY = re.compile(r"(?i)\b(months?|years?|degree|bachelor|master|ph\.?d|graduat\w*|authori[sz]\w*|sponsor\w*|"
-                         r"citizen\w*|clearance|relocat\w*|gpa)\b")
+# Never worked into a resume: credentials and status the candidate can't take on per posting, and location (the user
+# is open to relocating and doesn't want proximity screening). Years and domain experience ARE worked in, up to the
+# declared total (data/master_profile.yaml `claims`).
+ELIGIBILITY = re.compile(r"(?i)\b(authori[sz]\w*|sponsor\w*|citizen\w*|clearance|relocat\w*|gpa|ph\.?d|doctor\w*|"
+                         r"certifi\w*|licen[cs]\w*|located|city|zip|address|on-?site|hybrid|commut\w*)\b")
 # Sites whose "missing keywords" are word overlap with the posting: only the real skills among them are used
 WORD_OVERLAP_SITES = {"autoapplymax"}
 
@@ -138,9 +139,7 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
     f = T.Filled.model_validate_json((job_dir / "filled.json").read_text())
     # The writing model in function-calling mode: it places skills in the right category and works domain words into
     # bullets. (In json_schema mode it spends its whole token budget deliberating; the fast model mis-places skills.)
-    keyword_model = ChatOpenAI(model="glm-5-3", base_url=s.openai_base_url, api_key=s.openai_api_key, max_retries=1,
-                               timeout=400, temperature=0, max_tokens=16000).with_structured_output(
-        T.KeywordPass, method="function_calling")
+    keyword_model = llm.writer(16000, timeout=400)
     every = tuple(x for x in sites if x not in ats_sites.BUDGET_SITES)
     budget = tuple(x for x in sites if x in ats_sites.BUDGET_SITES)
     ev = evaluate(job_dir, jd, jd_text, 0, sites, log)
@@ -161,9 +160,7 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
             break
         try:
             prompt = T.build_keyword_prompt(r, jd, f, missing[:n_keywords], advice, keep)
-            kp = keyword_model.invoke(prompt) or keyword_model.invoke(prompt)  # an empty answer gets one retry
-            if kp is None:
-                raise ValueError("no structured answer")
+            kp = llm.structured_invoke(keyword_model, T.KeywordPass, prompt, first="function_calling", log=log)
         except Exception as e:
             n_keywords = max(3, n_keywords // 2)  # e.g. token limit: fewer keywords next time
             log(f"ats round {rnd}: model error {type(e).__name__}; next round with {n_keywords} keywords")

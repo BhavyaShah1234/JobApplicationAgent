@@ -344,6 +344,22 @@ def ats_loop_cmd(
         log=lambda m: console.print(m, highlight=False))
 
 
+@app.command("model-experiment")
+def model_experiment_cmd(
+    job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with jd.json / jd.txt."),
+    company: str = typer.Argument(..., help="Company slug of the research profile."),
+    model: list[str] = typer.Option(None, "--model", help="Voyager models to try (default: every chat model)."),
+    workers: int = typer.Option(4, help="Models written in parallel (scoring takes turns on the browser)."),
+    target: float = typer.Option(90.0, help="ATS average each model's loop aims for."),
+) -> None:
+    """Every Voyager chat model tailors the same job (5 rounds + ATS loop); ranks them by final ATS average."""
+    from jobagent.steps.model_experiment import run
+
+    root = run(job_dir, company, list(model) if model else None, workers, target,
+               log=lambda m: console.print(m, highlight=False))
+    console.print(f"results: {root / 'results.md'}", highlight=False)
+
+
 @app.command("research")
 def research_cmd(
     companies: list[str] = typer.Argument(None),

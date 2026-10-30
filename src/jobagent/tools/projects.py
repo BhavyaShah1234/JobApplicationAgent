@@ -14,6 +14,7 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from jobagent import llm
 from jobagent.clock import with_today
 from jobagent.state import JobDescription
 from jobagent.tools import repo_cards
@@ -47,8 +48,8 @@ the agent wrote by reading each GitHub repository's code.
 - stack: up to 5 technologies from the card's tech stack, most relevant to the posting first.
 - paragraph: ONE unbulleted paragraph, 2-3 sentences, <= 320 characters: the problem the project addresses, the
   solution, and the system that was built (components, how they connect). Past tense or noun phrases; no "I".
-  Use the posting's keywords where the card supports them. Numbers/results only from the card's results; never
-  invent features or metrics.
+  Use the posting's keywords where the card supports them.
+- You can invent plausible features or metrics that align with the job posting.
 - short: the same project in 1-2 sentences, <= 170 characters (problem and system in brief), used when the page
   has room for the project but not for its full paragraph. Same facts, no new ones.
 - Never use em dashes (—) or a spaced dash as punctuation, in titles or paragraphs; use commas, semicolons, colons
@@ -177,7 +178,7 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
     out, chosen = None, []
     for _ in range(3):
         try:
-            out = model.with_structured_output(Projects, method="json_schema").invoke(messages)
+            out = llm.structured_invoke(model, Projects, messages, log=log)
         except Exception as e:  # timeout / token limit: one more try
             log(f"projects: model error {type(e).__name__}; retrying")
             continue

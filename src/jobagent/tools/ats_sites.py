@@ -239,13 +239,13 @@ def atsfriendly_result(pg, url: str = "") -> SiteScore:
     if sec.get("Soft Skills"):
         advice.append("Show these soft skills through what the work involved (Summary or bullets, never Technical "
                       f"Skills): {', '.join(sec['Soft Skills'])}")
+    # The header's missing city/state/country is never reported: the user keeps location off the resume on purpose
     template = []
     if sec.get("Job Title Matching"):
-        template.append(f"Posting title not on the resume: {sec['Job Title Matching'][0]}")
-    if sec.get("Contact Details"):
-        template.append(f"Contact details missing from the header: {', '.join(sec['Contact Details'])}")
+        advice.append(f"Open the Summary with the posting's exact title: {sec['Job Title Matching'][0]}")
     if sec.get("Educational Qualifications"):
-        template.append(f"Education asked for: {', '.join(sec['Educational Qualifications'])} (eligibility; not changed)")
+        advice.append("Name the degree field the posting asks for where the candidate's real degree matches it "
+                      f"(Education is locked; say it in the Summary): {', '.join(sec['Educational Qualifications'])}")
     names = ("hard_skills", "soft_skills", "other_keywords")
     return SiteScore("atsfriendly", float(pct[0]), True, missing,
                      {**dict(zip(names, pct[1:4])), "url": pg.url, "template": template}, advice)

@@ -180,8 +180,7 @@ def build_card(repo: github.Repo, model) -> dict:
             f"Topics: {', '.join(repo.topics)}\n\nFILE TREE:\n" + "\n".join(tree) +
             "\n\nMANIFESTS:\n" + "\n\n".join(f"### {p}\n{t}" for p, t in list(snap.manifests.items())[:8]) +
             f"\n\nORIGINAL README:\n{repo.readme[:5000] or '(none)'}\n\nSOURCE FILES:\n{code_context(snap)}")
-    out: CardOut = model.with_structured_output(CardOut, method="json_schema").invoke(
-        [SystemMessage(with_today(PROMPT)), HumanMessage(text)])
+    out: CardOut = llm.structured_invoke(model, CardOut, [SystemMessage(with_today(PROMPT)), HumanMessage(text)])
     return {"full_name": repo.full_name, "url": repo.url, "owned": repo.owned, "pushed_at": repo.pushed_at,
             "head_sha": snap.sha or head_sha(repo.full_name),
             "analyzed_at": datetime.now(UTC).isoformat(timespec="seconds"), "files": len(snap.tree),

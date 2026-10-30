@@ -4,6 +4,11 @@
 
 summary: ""
 
+# What the agent may state about you to match a posting (the ATS loop and the resume writer read this).
+# years_experience: the most years of experience a resume may claim, overall or in any domain a posting asks for.
+claims:
+  years_experience: 5
+
 skills:
   languages: []          # e.g. [Python, Java, TypeScript]
   frameworks: []

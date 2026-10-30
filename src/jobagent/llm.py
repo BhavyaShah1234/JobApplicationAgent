@@ -5,6 +5,7 @@ exponential backoff; once those retries are exhausted the call falls over to Oll
 """
 
 import sys
+from contextvars import ContextVar
 from typing import Literal
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -65,6 +66,71 @@ def structured(schema: type[BaseModel], role: Role = "planner", settings: Settin
     return _primary(role, s, 0, timeout, max_tokens).with_structured_output(schema, method=method).with_fallbacks(
         [_fallback(role, s, 0).with_structured_output(schema, method=method)]
     )
+
+
+# Per-thread override of the writing model (the model experiment runs several models in one process)
+WRITER_MODEL: ContextVar[str | None] = ContextVar("writer_model", default=None)
+
+
+def writer(max_tokens: int = 16000, timeout: float = 600, settings: Settings | None = None,
+           model: str | None = None) -> ChatOpenAI:
+    """The writing model (`model`, else this thread's WRITER_MODEL, else settings.model_writer): temperature 0,
+    one retry."""
+    s = settings or get_settings()
+    return ChatOpenAI(model=model or WRITER_MODEL.get() or s.model_writer, base_url=s.openai_base_url, api_key=s.openai_api_key,
+                      max_retries=1, timeout=timeout, temperature=0, max_tokens=max_tokens)
+
+
+class StructuredError(RuntimeError):
+    pass
+
+
+_METHODS = ("json_schema", "function_calling", "json_mode")
+
+
+def _parse_json(text: str, schema: type[BaseModel]) -> BaseModel:
+    """`schema` from a free-text answer: drops <think> blocks and code fences, takes the outermost JSON object."""
+    import re
+    text = re.sub(r"(?s)<think>.*?</think>", "", text or "")
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("no JSON object in the answer")
+    return schema.model_validate_json(text[start:end + 1])
+
+
+def structured_invoke(model: ChatOpenAI, schema: type[BaseModel], messages: list, first: str = "json_schema",
+                      log=None) -> BaseModel:
+    """Call `model` for a `schema` instance, robust to models that lack a structured-output method or answer
+    empty: tries `first`, then the other methods (json_schema, function_calling, plain JSON with the schema in the
+    prompt), each retried once on an empty or invalid answer. A timeout is not retried with another method (the
+    model is just slow). Raises StructuredError if nothing works."""
+    import json
+
+    import openai
+    from langchain_core.messages import SystemMessage
+    errors = []
+    for method in (first, *[m for m in _METHODS if m != first]):
+        for _ in range(2):
+            try:
+                if method == "json_mode":
+                    hint = SystemMessage("Answer with ONE JSON object only (no prose, no code fence) that matches "
+                                         "this JSON schema:\n" + json.dumps(schema.model_json_schema()))
+                    out = _parse_json(model.invoke([*messages, hint]).content, schema)
+                else:
+                    out = model.with_structured_output(schema, method=method).invoke(messages)
+                if out is not None:
+                    return out
+                errors.append(f"{method}: empty answer")
+            except (openai.APITimeoutError, TimeoutError) as e:
+                raise StructuredError(f"timeout ({type(e).__name__})") from e
+            except openai.BadRequestError as e:  # the method itself is unsupported: next method
+                errors.append(f"{method}: {str(e)[:120]}")
+                break
+            except Exception as e:  # invalid / truncated answer: retry once, then next method
+                errors.append(f"{method}: {type(e).__name__}: {str(e)[:120]}")
+        if log:
+            log(f"[llm] {model.model_name}: {method} failed ({errors[-1][:100]}); trying the next method")
+    raise StructuredError("; ".join(errors)[-600:])
 
 
 class FallbackEmbeddings(Embeddings):

@@ -14,8 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-from langchain_openai import ChatOpenAI
-
+from jobagent import llm
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
 from jobagent.tools import github
@@ -108,8 +107,7 @@ def cover_letter(job_dir: str | Path, company_slug: str, log=print) -> dict:
     job_dir = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
     company = (s.state_dir / "companies" / f"{company_slug}.md").read_text()
-    writer = ChatOpenAI(model="glm-5-3", base_url=s.openai_base_url, api_key=s.openai_api_key, max_retries=1,
-                        timeout=600, temperature=0, max_tokens=8000)
+    writer = llm.writer(8000)
     cl = CL.write(job_dir, jd, company, writer, log=log)
     changes = job_dir / "changes.md"
     text = changes.read_text() if changes.exists() else ""
@@ -119,7 +117,7 @@ def cover_letter(job_dir: str | Path, company_slug: str, log=print) -> dict:
 
 
 def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = True, ats_sites=None,
-         log=None) -> dict:
+         log=None, letter: bool = True) -> dict:
     """Tailor one job end to end (resume, then cover letter); returns a summary for checks."""
     log = log or (lambda m: print(m, flush=True))
     s = get_settings()
@@ -128,13 +126,11 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
     company = (s.state_dir / "companies" / f"{company_slug}.md").read_text()
     r = T.parse((s.data_dir / "templates" / "resume.tex").read_text())
     log(f"template: {len(r.roles)} roles; JD: {len(T.jd_items(jd))} JD items, {len(jd.technical_skills)} skills")
-    model = ChatOpenAI(model="glm-5-3", base_url=s.openai_base_url, api_key=s.openai_api_key, max_retries=1,
-                       timeout=600, temperature=0, max_tokens=16000).with_structured_output(T.filled_schema(r), method="json_schema")
+    fill_model, fill_schema = llm.writer(16000), T.filled_schema(r)
     proj = None
     if P.projects_span(r.tex):
         t0 = time.monotonic()
-        writer = ChatOpenAI(model="glm-5-3", base_url=s.openai_base_url, api_key=s.openai_api_key, max_retries=1,
-                            timeout=600, temperature=0, max_tokens=20000)
+        writer = llm.writer(20000)
         token = (open_vault().get("github") or {}).get("token")
         proj = P.choose(r, jd, writer, github.profile_user(r.tex), token, rediscover=rediscover, log=log)
         log(f"projects: {time.monotonic() - t0:.0f}s chose " + ", ".join(e.repo for e in proj.entries))
@@ -173,8 +169,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
             t0 = time.monotonic()
             trial = f.model_copy(deep=True)
             try:
-                fixes = writer_model.with_structured_output(T.Repair, method="json_schema").invoke(
-                    T.build_repair_prompt(r, jd, trial, dups))
+                fixes = llm.structured_invoke(writer_model, T.Repair, T.build_repair_prompt(r, jd, trial, dups), log=log)
             except Exception as e:
                 log(f"round {attempt} repair {k}: model error {type(e).__name__}")
                 return f, dups
@@ -192,13 +187,13 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
                     break
         return f, dups
 
-    writer_model = ChatOpenAI(model="glm-5-3", base_url=s.openai_base_url, api_key=s.openai_api_key, max_retries=1,
-                              timeout=600, temperature=0, max_tokens=6000)
+    writer_model = llm.writer(6000)
     max_bullets, feedback, rounds, last_ok = 14, "", [], None
     for attempt in range(1, 6):
         t0 = time.monotonic()
         try:
-            f = T.to_filled(r, model.invoke(T.build_fill_prompt(r, jd, company, max_bullets, feedback)))
+            f = T.to_filled(r, llm.structured_invoke(fill_model, fill_schema,
+                                                     T.build_fill_prompt(r, jd, company, max_bullets, feedback), log=log))
         except Exception as e:  # timeout / token limit on a slow round: try the next round, keep the best so far
             rounds.append(f"model error ({type(e).__name__})")
             log(f"round {attempt}: {time.monotonic() - t0:.0f}s model error {type(e).__name__}: {str(e)[:120]}")
@@ -265,6 +260,9 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
             st = json.loads((job_dir / "projects.json").read_text())
             proj.entries = [e for e in all_projects[:st["kept"]]]
             proj.short = frozenset(st["short"])
+    if not letter:  # e.g. the model experiment: the resume and its ATS scores only
+        return {"job_dir": job_dir, "pages": pages, "uncovered": uncovered, "problems": problems + warn,
+                "bullet_issues": T.duplicates(r, f) + T.quality(r, jd, f), "ats": ats_result}
     cl = cover_letter(job_dir, company_slug, log=log)
     log(f"cover letter: {cl['words']} words, {len(cl['issues'])} issue(s)")
     generated = [f.summary] + [b.text for e in f.roles for b in e.bullets] + \

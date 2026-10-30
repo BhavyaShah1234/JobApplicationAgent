@@ -19,9 +19,14 @@ def test_merged_missing_puts_curated_lists_first_and_dedupes():
     assert out == ["fraud analysis", "trust and safety", "rust"]
 
 
-def test_eligibility_advice_is_filtered():
-    assert ats.ELIGIBILITY.search("Consider emphasizing the 5+ years of software engineering experience")
+def test_only_credentials_and_location_advice_is_filtered():
+    # Years and domain experience are worked in (up to the declared total); credentials and location never are
+    assert not ats.ELIGIBILITY.search("Consider emphasizing the 5+ years of software engineering experience")
     assert not ats.ELIGIBILITY.search("Highlight collaboration with finance, security, and product teams")
+    assert not ats.ELIGIBILITY.search("state management")
+    for item in ("Active security clearance", "US citizenship", "Must be located in Seattle", "hybrid 3 days onsite",
+                 "AWS Certified Solutions Architect"):
+        assert ats.ELIGIBILITY.search(item), item
 
 
 def test_advice_pass_rewrites_summary_only_when_sane():

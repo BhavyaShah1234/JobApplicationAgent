@@ -313,7 +313,8 @@ Technical Skills:
 Summary: write it FRESH for this job title at this company, 2-3 sentences: open with the posting's own title
 wording, then the 2-3 requirements the candidate most clearly meets (posting keywords), then one clause tying the
 candidate to the company's business, product or mission (from the COMPANY PROFILE). Do not reuse sentences from the
-current summary; take only facts from it (degree, years of experience; never claim more years than it states).
+current summary. Years of experience: follow CANDIDATE FACTS (state the years the posting asks for, overall or in its
+domain, up to the declared total; never more).
 No pronouns ("he"/"his"). The degree is also in the Education section.
 
 Style everywhere (bullets, summary, skills): never use em dashes (—) or a spaced dash as punctuation; use commas,
@@ -389,7 +390,33 @@ def build_fill_prompt(r: Resume, jd: JobDescription, company_md: str, max_bullet
             "\n\nCURRENT SKILLS:\n" + "\n".join(f"- {c}: {to_plain(v)}" for c, v in r.skills))
     if feedback:
         text += f"\n\nREVISION REQUEST:\n{feedback}"
-    return [SystemMessage(with_today(FILL_PROMPT.format(max_bullets=max_bullets))), HumanMessage(text)]
+    return [SystemMessage(with_today(FILL_PROMPT.format(max_bullets=max_bullets))),
+            HumanMessage(text + "\n\n" + facts_block())]
+
+
+def declared_claims() -> dict:
+    """The `claims` block of data/master_profile.yaml ({} without one)."""
+    import yaml
+
+    from jobagent.config import get_settings
+    try:
+        return yaml.safe_load((get_settings().data_dir / "master_profile.yaml").read_text()).get("claims") or {}
+    except Exception:
+        return {}
+
+
+def facts_block() -> str:
+    """What the writer may claim about the candidate, from the user's declared facts."""
+    years = declared_claims().get("years_experience")
+    lines = ["CANDIDATE FACTS (declared by the candidate):",
+             f"- Up to {years}+ years of professional experience may be stated, overall or in any domain the posting "
+             "asks for (e.g. 'fraud and abuse analysis')." if years else
+             "- Years of experience: only what the current resume states.",
+             "- The candidate has every skill and tool the posting names.",
+             "- Degrees, certifications, clearances, citizenship or work authorization, employers, job titles and "
+             "dates: ONLY as already on the resume; never invent them.",
+             "- Never add a city, state, country or other location anywhere."]
+    return "\n".join(lines)
 
 
 def fill_locked_parts(r: Resume) -> list[str]:
@@ -648,24 +675,27 @@ class KeywordPass(BaseModel):
 
 
 KEYWORD_PROMPT = """ATS scans of this tailored resume found the posting's keywords listed under MISSING, and the checkers
-gave the suggestions under ADVICE. Work them in so the resume matches the posting, the way a careful candidate would:
+gave the suggestions under ADVICE. The goal is an average ATS score above 90: work in EVERY missing item and follow
+EVERY piece of advice, within the CANDIDATE FACTS:
 - Prefer adding a keyword to the most fitting existing Technical Skills category (`skills`): list ONLY the new
   keywords in `terms`, never the skills already there; open a new short category only if none fits (at most 8).
 - Where a keyword names work rather than a tool (a practice, a system, a domain), rewrite ONE existing bullet that
-  plausibly involved it (`bullets`: role_N index and 1-based position), keeping that bullet's facts, numbers,
-  coverage and length (<= ~120 characters). Never move work to another employer; never invent numbers.
+  fits it (`bullets`: role_N index and 1-based position), keeping that bullet's numbers, coverage and length
+  (<= ~120 characters). Never move work to another employer.
 - A MISSING entry may be a phrase about work ("leading small projects independently", "navigating large code
-  bases"): work it into one existing bullet where the candidate plausibly did it, in the posting's words.
+  bases") or a requirement ("2 years of fraud analysis"): work it into the Summary or a bullet in the posting's
+  own words (years only within CANDIDATE FACTS).
 - Soft skills and qualities ("collaboration", "comfort with ambiguity") never go in Technical Skills: show them in
   the Summary or in what a bullet's work involved ("partnered with security and product teams to ...").
-- Follow the ADVICE where it can be done truthfully with the existing facts (vary repeated words, add a result to a
-  line without one, name the teams the work involved). Rewrite the Summary (`summary`) only if that helps; keep it
-  2-3 sentences, <= 450 characters, with its facts (degree, years) unchanged.
+- Follow the ADVICE (vary repeated words, add a result to a line without one, name the teams the work involved,
+  state the experience the posting asks for, open the Summary with the posting's exact title). Rewrite the Summary
+  (`summary`) whenever that helps; keep it 2-3 sentences, <= 450 characters.
 - Every keyword under KEEP is already matched by the checkers: a rewritten bullet or Summary must still contain
   each KEEP word it contained before. Never make a bullet or the Summary longer than it was (checkers penalise
   long sentences); swap words in rather than append clauses.
-- Use the posting's exact spelling. Skip keywords that are not skills or that make no sense for the candidate.
-- Never add or change claims about years or months of experience, degrees, dates, titles or eligibility.
+- Use the posting's exact spelling. Skip only words that are page boilerplate (salary, posted, applicants, etc).
+- Never invent degrees, certifications, clearances, citizenship or work authorization, employers, job titles or
+  dates, and never add a location.
 - No dashes as punctuation; a change by a percentage takes "by"."""
 
 
@@ -681,7 +711,7 @@ def build_keyword_prompt(r: Resume, jd: JobDescription, f: Filled, missing: list
     miss = "\n".join(f"- {k}" + (f"   (posting: {c[0][:120]})" if c else "") for k, c in context.items())
     tips = "\n".join(f"- {a}" for a in advice) or "(none)"
     return [SystemMessage(with_today(KEYWORD_PROMPT)),
-            HumanMessage(f"MISSING:\n{miss}\n\nADVICE:\n{tips}\n\nKEEP:\n{', '.join(keep) or '(none)'}\n\nSUMMARY:\n{f.summary}\n\nTECHNICAL SKILLS:\n{skills}"
+            HumanMessage(f"{facts_block()}\n\nMISSING:\n{miss}\n\nADVICE:\n{tips}\n\nKEEP:\n{', '.join(keep) or '(none)'}\n\nSUMMARY:\n{f.summary}\n\nTECHNICAL SKILLS:\n{skills}"
                          f"\n\nEXPERIENCE BULLETS:\n" + "\n".join(lines))]
 
 
