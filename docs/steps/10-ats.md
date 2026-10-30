@@ -123,3 +123,29 @@ Scores the user records by hand count in the average for the exact resume versio
 - ATS Friendly allows 2 free scans a week: it is read at round 0 and rescanned on the final resume, a scan of the
   exact same PDF is reused from `ats_runs`, and with no scans left it is skipped and left out of the final
   average (logged).
+
+## Model experiment (2026-10-29/30)
+
+`jobagent model-experiment outputs/openai/3c67f712-... openai --workers 6`: all 37 Voyager chat models, each writing the
+OpenAI Fraud Engineering resume with the same harness (5 tailoring rounds, then the ATS loop: 5 rounds, target 90),
+scored on AutoApplyMax, Jobalytics and HireFlow (2 runs). About 9.5 hours wall time. Full table:
+`outputs/experiments/20261029-1942-openai/results.md`.
+
+| Model | Average | AutoApplyMax | Jobalytics | HireFlow | Minutes |
+|---|---|---|---|---|---|
+| qwen3-coder-next | 81.3 | 87 | 90 | 67.0 | 104 |
+| qwen35-27b | 80.5 | 85 | 90 | 66.5 | 102 |
+| inkling-small / beam-1-0 / muse-spark-open | 80.3 | 85 | 90 | 66.0 | 45 / 157 / 31 |
+| glm-5-3-flash | 79.7 | 85 | 90 | 64.0 | 44 |
+| devstral2-123b / olmo3-7b | 79.0 | 87 / 86 | 90 | 60 / 61 | 4 / 6 |
+| glm-5-3 (default) | 78.8 | 79 | 90 | 67.5 | 46 |
+
+- No model reached 90. The scorers set the ceiling, not the models: Jobalytics tops out at 90 (a general score),
+  AutoApplyMax at 87, and HireFlow at 67.5 for every model (its keyword match stays near 14%). The best possible
+  average with these three is about 81-82, and the top 10 models are within 2.5 points, inside HireFlow's
+  run-to-run noise.
+- 2 models (qwen3-coder-30b-a3b-instruct, qwen3-30b-a3b) ended on 2 pages: disqualified.
+- 7 models never produced a tailored resume: 5 timed out (600 s, retried once) on every tailoring round under
+  6-way load (kimi-k2-7-code, north-mini-code, qwen-agentworld-35b-a3b, qwen35-122b-a10b, qwen35-397b-a17b);
+  minimax-m3 gave empty or unparseable structured output; ornith-1-5-35b-a3b ran out of tokens.
+

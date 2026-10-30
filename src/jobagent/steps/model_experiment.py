@@ -70,6 +70,10 @@ def run_one(model: str, src: Path, root: Path, slug: str, target: float) -> dict
 
 
 def write_results(root: Path, results: list[dict], target: float, job: str) -> None:
+    for r in results:  # the resume must be one page: anything else doesn't count
+        if r.get("status") == "ok" and r.get("pages") != 1:
+            r["status"], r["disqualified_average"], r["average"] = f"disqualified: {r.get('pages')} pages", \
+                r.get("average"), None
     ranked = sorted(results, key=lambda r: (r.get("average") is None, -(r.get("average") or 0)))
     (root / "results.json").write_text(json.dumps(ranked, indent=1))
     lines = [f"# Model experiment: {job}", "",
