@@ -305,3 +305,9 @@ def test_keyword_pass_dedupes_respells_and_refuses_filler_categories():
     g = T.apply_keyword_pass(f, kp, "We use Rust and AWS daily.")
     assert g.skills[0].render() == ["Python", "Rust"] and g.skills[1].render() == ["Python", "AWS"]
     assert all(s.category != "Technical Skills" for s in g.skills)
+
+
+def test_comparison_and_times_signs_render_in_ot1():
+    # A bare < > prints as ¡ ¿ and × as Ö in the template's default font encoding
+    assert T.to_latex("<10ms, >99%, 2× traffic, ±5%") == \
+        "\\textless{}10ms, \\textgreater{}99\\%, 2$\\times$ traffic, $\\pm$5\\%"

@@ -147,6 +147,9 @@ def to_latex(plain: str) -> str:
     out = plain.replace("\\", "\\textbackslash{}")
     for ch in "%&$#_":
         out = out.replace(ch, "\\" + ch)
+    # The template's default (OT1) font encoding prints a bare < > as ¡ ¿ and × as Ö; use commands that work in any
+    out = (out.replace("<", "\\textless{}").replace(">", "\\textgreater{}").replace("×", "$\\times$")
+           .replace("±", "$\\pm$"))
     return out.replace("~", "\\textasciitilde{}").replace("^", "\\textasciicircum{}").replace("–", "--")
 
 
