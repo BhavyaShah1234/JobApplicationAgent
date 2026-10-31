@@ -59,7 +59,8 @@ def run_one(model: str, src: Path, root: Path, slug: str, target: float) -> dict
         ats = res.get("ats") or {}
         out.update(status="ok", pages=res.get("pages"), average=ats.get("average"), scores=ats.get("scores", {}),
                    history=ats.get("history", []), reached=ats.get("reached", False),
-                   bullet_issues=len(res.get("bullet_issues", [])), uncovered=len(res.get("uncovered", [])))
+                   bullet_issues=len(res.get("bullet_issues", [])), uncovered=len(res.get("uncovered", [])),
+                   layout_issues=res.get("layout", []))
     except Exception as e:
         log(traceback.format_exc())
         out.update(status=f"failed: {type(e).__name__}: {str(e)[:200]}")

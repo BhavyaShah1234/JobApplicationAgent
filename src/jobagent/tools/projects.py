@@ -21,14 +21,15 @@ from jobagent.tools import repo_cards
 from jobagent.tools.tailor import Resume, _braced, to_latex
 
 MIN_PROJECTS, MAX_PROJECTS = 2, 4
+MIN_PARAGRAPH = 250  # characters: shorter descriptions render as one line and waste the section
 
 
 class ProjectEntry(BaseModel):
     repo: str = Field(description="full_name of one CANDIDATE repo, exactly as given")
     title: str = Field(max_length=70, description="Short project name (<= 45 characters)")
     stack: list[str] = Field(min_length=1, max_length=5, description="From the card's tech stack, posting spelling")
-    paragraph: str = Field(max_length=600, description="2-3 sentences, <= 320 characters, plain text")
-    short: str = Field(max_length=400, description="The same project in 1-2 sentences, <= 170 characters")
+    paragraph: str = Field(max_length=700, description="3 sentences, 300-420 characters: problem, system, wow factor")
+    short: str = Field(max_length=400, description="The same project in 1-2 sentences, 130-200 characters")
 
 
 class Projects(BaseModel):
@@ -46,12 +47,26 @@ the agent wrote by reading each GitHub repository's code.
   describe the whole project, not only the candidate's part.
 - title: short project name (<= 45 characters). If a KNOWN TITLE is given, use it exactly.
 - stack: up to 5 technologies from the card's tech stack, most relevant to the posting first.
-- paragraph: ONE unbulleted paragraph, 2-3 sentences, <= 320 characters: the problem the project addresses, the
-  solution, and the system that was built (components, how they connect). Past tense or noun phrases; no "I".
-  Use the posting's keywords where the card supports them.
+- paragraph: ONE unbulleted paragraph of exactly 3 sentences, 300-420 characters (it fills 3 lines on the page;
+  a one-line description wastes the space):
+  1. the problem: who had it and why it mattered;
+  2. the system built: its components and how they connect, naming the stack;
+  3. the wow factor: the result, scale or what was new (a number where possible: accuracy, latency, users,
+     throughput, cost, a hackathon placing).
+  Past tense or noun phrases; no "I". Use the posting's keywords throughout.
 - You can invent plausible features or metrics that align with the job posting.
-- short: the same project in 1-2 sentences, <= 170 characters (problem and system in brief), used when the page
-  has room for the project but not for its full paragraph. Same facts, no new ones.
+- short: the same project in 1-2 sentences, 130-200 characters (problem, system and wow factor in brief), used
+  only to fit one extra project into leftover space.
+
+EXAMPLE of the expected depth (a made-up project; never copy its content):
+  title: TrafficLens: Real-Time Intersection Analytics
+  stack: Python, YOLOv8, Kafka, TimescaleDB, FastAPI
+  paragraph: City traffic engineers retimed signals from week-old manual counts, so congestion fixes lagged
+  behind real demand. Built an edge pipeline where YOLOv8 on Jetson Orin tracks vehicles per lane, streams events
+  through Kafka into TimescaleDB, and serves live counts on a FastAPI dashboard. Sustained 30 FPS on four 1080p
+  streams per device at 96% count accuracy, and the retimed signals cut average wait by 18%.
+  short: Edge YOLOv8 and Kafka pipeline giving traffic engineers live lane counts at 30 FPS with 96% accuracy,
+  cutting signal wait by 18%.
 - Never use em dashes (—) or a spaced dash as punctuation, in titles or paragraphs; use commas, semicolons, colons
   or separate sentences (e.g. "COLLIDE: AI-Powered Site Selection"). A change by a percentage takes "by"
   ("cutting latency by 40%")."""
@@ -183,8 +198,22 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
             log(f"projects: model error {type(e).__name__}; retrying")
             continue
         chosen = list({e.repo.lower(): e for e in out.projects if e.repo.lower() in by_name}.values())
-        if MIN_PROJECTS <= len(chosen) <= MAX_PROJECTS:
+        thin = [e.title for e in chosen if len(e.paragraph) < MIN_PARAGRAPH]
+        heads = [re.split(r"[:,]", e.title)[0].strip().lower() for e in chosen]
+        if len(set(heads)) < len(heads):  # one project under two titles (e.g. "SolBot: ..." and "SolBot, ...")
+            dup = sorted({h for h in heads if heads.count(h) > 1})
+            log(f"projects: the same project twice ({dup}); asking again")
+            messages = messages + [HumanMessage(f"{dup} appears twice: every entry must be a DIFFERENT repo, and each "
+                                                "paragraph must describe its own repo's card.")]
+            continue
+        if MIN_PROJECTS <= len(chosen) <= MAX_PROJECTS and not thin:
             break
+        if thin and MIN_PROJECTS <= len(chosen) <= MAX_PROJECTS:
+            log(f"projects: description too short for {thin}; asking for the full paragraphs")
+            messages = messages + [HumanMessage(
+                f"These paragraphs are too short: {thin}. Every paragraph must be 3 sentences, 300-420 characters: "
+                "the problem, the system built, and the wow factor (a result or scale), like the EXAMPLE.")]
+            continue
         messages = messages + [HumanMessage(f"Use {MIN_PROJECTS}-{MAX_PROJECTS} DIFFERENT repos, each exactly one "
                                             "of the CANDIDATE full_names.")]
     if len(chosen) < MIN_PROJECTS:  # the model failed or picked too few: top-ranked cards, in their own words
@@ -216,24 +245,38 @@ def save_state(job_dir: Path, ranked: list[ProjectEntry], chosen: "Chosen") -> N
         "years": chosen.years, "macro": chosen.macro, "cards": cards}, indent=1))
 
 
+def layouts(n: int) -> list[tuple[int, int]]:
+    """(projects kept, how many of the last ones in short form), best first. Full paragraphs come first: all n
+    full, then n-1 full plus one extra project in short form to use the leftover space, then n-1 full alone, and so
+    on down to MIN_PROJECTS full; shortening more than one project is the last resort."""
+    out = []
+    for k in range(n, MIN_PROJECTS - 1, -1):
+        out.append((k, 0))
+        if k > MIN_PROJECTS or k == n:
+            out.append((k, 1))
+    out += [(MIN_PROJECTS, s) for s in range(1, MIN_PROJECTS + 1) if (MIN_PROJECTS, s) not in out]
+    return out
+
+
 def fit(base_tex: str, job_dir: Path, compile_pdf, start: tuple[int, int] | None = None):
-    """Re-fit the Projects section of `base_tex` from projects.json: the most projects first, full paragraphs, then
-    the last ones short, then one fewer (at least MIN_PROJECTS). Returns (tex, pages, err, kept, short) or None
-    when the job has no saved projects. `start` = (kept, n_short) to begin from (no more than the current page)."""
+    """Re-fit the Projects section of `base_tex` from projects.json in `layouts` order (full paragraphs first;
+    a short form only adds an extra project). Returns (tex, pages, err, kept, short) or None when the job has no
+    saved projects. `start` = (kept, n_short) to begin from (no more than the current page)."""
     path = job_dir / "projects.json"
     if not path.exists() or projects_span(base_tex) is None:
         return None
     st = json.loads(path.read_text())
     ranked = [ProjectEntry(**e) for e in st["ranked"]]
-    k0, s0 = start or (len(ranked), 0)
+    order = layouts(len(ranked))
+    if start in order:
+        order = order[order.index(start):]
     tex = pages = err = None
-    for k in range(min(k0, len(ranked)), MIN_PROJECTS - 1, -1):
-        for n_short in range(s0 if k == k0 else 0, k + 1):
-            short = frozenset(e.repo for e in ranked[k - n_short:k])
-            tex = apply(base_tex, render(ranked[:k], st["cards"], st["years"], st["macro"], short))
-            pages, err = compile_pdf(tex)
-            if err or pages == 1:
-                return tex, pages, err, k, short
+    for k, n_short in order:
+        short = frozenset(e.repo for e in ranked[k - n_short:k])
+        tex = apply(base_tex, render(ranked[:k], st["cards"], st["years"], st["macro"], short))
+        pages, err = compile_pdf(tex)
+        if err or pages == 1:
+            return tex, pages, err, k, short
     return tex, pages, err, MIN_PROJECTS, frozenset(e.repo for e in ranked[:MIN_PROJECTS])
 
 

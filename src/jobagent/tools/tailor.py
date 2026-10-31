@@ -169,8 +169,12 @@ def compile_pdf(tex: str, out_dir: Path, name: str = "resume") -> tuple[int, str
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{name}.tex").write_text(tex)
     with tempfile.TemporaryDirectory() as tmp:
-        # \vbadness=0 makes TeX report a page whose spacing it had to squeeze to fit ("Tight \vbox")
-        Path(tmp, f"{name}.tex").write_text(tex.replace("\\begin{document}", "\\vbadness=0\n\\begin{document}", 1))
+        # \vbadness=0 makes TeX report a page whose spacing it had to squeeze to fit ("Tight \vbox"); the \typeout
+        # logs the height left free on the last page (for the layout validator)
+        body = tex.replace("\\begin{document}", "\\vbadness=0\n\\begin{document}", 1)
+        body = body.replace("\\end{document}", "\\par\\typeout{JOBAGENT-SPACE=\\the\\pagegoal/\\the\\pagetotal}\n"
+                            "\\end{document}", 1)
+        Path(tmp, f"{name}.tex").write_text(body)
         run = subprocess.run(["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", f"{name}.tex"],
                              cwd=tmp, capture_output=True, text=True, timeout=180)
         if run.returncode:
@@ -178,7 +182,13 @@ def compile_pdf(tex: str, out_dir: Path, name: str = "resume") -> tuple[int, str
             return 0, " | ".join(errs[:3]) or run.stdout[-300:]
         Path(out_dir / f"{name}.pdf").write_bytes(Path(tmp, f"{name}.pdf").read_bytes())
         info = subprocess.run(["pdfinfo", f"{name}.pdf"], cwd=tmp, capture_output=True, text=True).stdout
-        squeezed = "Tight \\vbox" in Path(tmp, f"{name}.log").read_text(errors="replace")
+        log = Path(tmp, f"{name}.log").read_text(errors="replace")
+        squeezed = "Tight \\vbox" in log
+        space = re.search(r"JOBAGENT-SPACE=([\d.]+)pt/([\d.]+)pt", log)
+        goal, total = (float(space.group(1)), float(space.group(2))) if space else (0.0, 0.0)
+        # \pagegoal is \maxdimen on a page nothing has started yet: no reading then
+        free = round(goal - total, 1) if space and goal < 10000 else None
+        (out_dir / f"{name}.layout.json").write_text(json.dumps({"free_pt": free}))
     # A squeezed page doesn't really fit: it counts as one page too many, so the caller shortens the content.
     return int(re.search(r"Pages:\s+(\d+)", info).group(1)) + squeezed, ""
 
@@ -670,9 +680,15 @@ class SkillAdd(BaseModel):
     terms: list[str] = Field(min_length=1, max_length=6, description="ONLY the new keywords to add to this category")
 
 
+class ProjectFix(BaseModel):
+    project: int = Field(description="1-based number of the project under PROJECTS")
+    paragraph: str = Field(max_length=700, description="The rewritten description: 3 sentences, 300-420 characters")
+
+
 class KeywordPass(BaseModel):
     skills: list[SkillAdd] = Field(default_factory=list, max_length=4)
     bullets: list[BulletFix] = Field(default_factory=list, max_length=6)
+    projects: list[ProjectFix] = Field(default_factory=list, max_length=4)
     summary: str = Field("", max_length=800, description="The rewritten Summary (plain text, 2-3 sentences, <= 450 "
                                                           "characters), or empty to keep it")
 
@@ -693,6 +709,9 @@ EVERY piece of advice, within the CANDIDATE FACTS:
   bullets every round unless every MISSING item already appears in a bullet.
 - LAST ROUND (if given) says what your previous answer did to the scores: build on what was kept, try something
   different from what was undone, and never resend changes that were already in place.
+- A MISSING word that is not a skill (finance, compliance, product, safety) goes into a natural sentence of the
+  Summary, a bullet or a project description (`projects`: rewrite a PROJECTS paragraph, keeping its problem,
+  system and result, 3 sentences, 300-420 characters). Never write words that refer to applicants.
 - Soft skills and qualities ("collaboration", "comfort with ambiguity") never go in Technical Skills: show them in
   the Summary or in what a bullet's work involved ("partnered with security and product teams to ...").
 - Follow the ADVICE (vary repeated words, add a result to a line without one, name the teams the work involved,
@@ -708,7 +727,8 @@ EVERY piece of advice, within the CANDIDATE FACTS:
 
 
 def build_keyword_prompt(r: Resume, jd: JobDescription, f: Filled, missing: list[str],
-                         advice: list[str] = (), keep: list[str] = (), last: str = "") -> list:
+                         advice: list[str] = (), keep: list[str] = (), last: str = "",
+                         projects: list[str] = ()) -> list:
     lines = []
     for e in f.roles:
         role = r.roles[e.role]
@@ -720,7 +740,8 @@ def build_keyword_prompt(r: Resume, jd: JobDescription, f: Filled, missing: list
     tips = "\n".join(f"- {a}" for a in advice) or "(none)"
     return [SystemMessage(with_today(KEYWORD_PROMPT)),
             HumanMessage(f"{facts_block()}\n\n" + (f"LAST ROUND: {last}\n\n" if last else "") + f"MISSING:\n{miss}\n\nADVICE:\n{tips}\n\nKEEP:\n{', '.join(keep) or '(none)'}\n\nSUMMARY:\n{f.summary}\n\nTECHNICAL SKILLS:\n{skills}"
-                         f"\n\nEXPERIENCE BULLETS:\n" + "\n".join(lines))]
+                         f"\n\nEXPERIENCE BULLETS:\n" + "\n".join(lines) +
+                         ("\n\nPROJECTS:\n" + "\n".join(f"{i}. {p}" for i, p in enumerate(projects, 1)) if projects else ""))]
 
 
 # Plain English that ATS checkers report as "missing keywords" but that is never a skill on a resume

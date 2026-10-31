@@ -77,3 +77,22 @@ def test_resume_text_spots_an_answer_that_changes_nothing():
     f = _filled()
     same = T.apply_keyword_pass(f, T.KeywordPass(skills=[T.SkillAdd(category="Data", terms=["Kafka"])]))
     assert ats.resume_text(same) == ats.resume_text(f)
+
+
+def test_applicant_words_are_never_worked_in():
+    for w in ("applicants", "Candidate", "people", "you", "employment"):
+        assert ats.APPLICANT_WORDS.match(w), w
+    for w in ("finance", "compliance", "product", "AWS", "gestion"):
+        assert not ats.APPLICANT_WORDS.match(w), w
+
+
+def test_project_fixes_only_touch_projects_on_the_page():
+    import json
+    st = {"kept": 1, "ranked": [{"title": "A", "paragraph": "old a"}, {"title": "B", "paragraph": "old b"}]}
+    long = "Fraud teams lacked live signals — so " + "x" * 220 + "."
+    fixes = [T.ProjectFix(project=1, paragraph=long), T.ProjectFix(project=2, paragraph=long),
+             T.ProjectFix(project=1, paragraph="too short")]
+    out = json.loads(ats.apply_project_fixes(json.dumps(st), fixes))
+    assert out["ranked"][0]["paragraph"].startswith("Fraud teams lacked live signals, so")  # no dash
+    assert out["ranked"][1]["paragraph"] == "old b"
+    assert ats.project_paragraphs(json.dumps(st)) == ["A: old a"]

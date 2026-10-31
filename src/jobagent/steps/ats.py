@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from jobagent import llm
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
-from jobagent.tools import ats_sites
+from jobagent.tools import ats_sites, layout
 from jobagent.tools import projects as P
 from jobagent.tools import tailor as T
 
@@ -81,6 +81,9 @@ ELIGIBILITY = re.compile(r"(?i)\b(authori[sz]\w*|sponsor\w*|citizen\w*|clearance
                          r"certifi\w*|licen[cs]\w*|located|city|zip|address|on-?site|hybrid|commut\w*)\b")
 # Sites whose "missing keywords" are word overlap with the posting: only the real skills among them are used
 WORD_OVERLAP_SITES = {"autoapplymax"}
+# Words a posting uses for whoever applies: never written into a resume, whatever a checker says
+APPLICANT_WORDS = re.compile(r"(?i)^(applicants?|candidates?|people|persons?|individuals?|you|your|yourself|we|us|"
+                             r"our|employees?|hires?|talent|job ?seekers?|employment|equal|opportunity)$")
 
 
 def evaluate(job_dir: Path, jd: JobDescription, jd_text: str, rnd: int, sites, log=print) -> dict:
@@ -98,8 +101,13 @@ def evaluate(job_dir: Path, jd: JobDescription, jd_text: str, rnd: int, sites, l
         if s.job_specific:
             new = [m for m in s.missing if not ELIGIBILITY.search(m)]
             if s.site in WORD_OVERLAP_SITES:
-                phrases = [m for m in new if len(m.split()) >= 3]   # work phrases: bullet material, not skills
-                new = phrases + skill_words([m for m in new if m not in phrases], jd, log)
+                # Every word but the ones naming applicants: work phrases first, then skills, then other non-generic
+                # words (finance, compliance, product) for the Summary, bullets or projects
+                new = [m for m in new if not APPLICANT_WORDS.match(m.strip())]
+                phrases = [m for m in new if len(m.split()) >= 3]
+                rest = [m for m in new if m not in phrases]
+                skills = skill_words(rest, jd, log)
+                new = phrases + skills + [m for m in rest if m not in skills]
             out["missing"][s.site] = new
     return out
 
@@ -117,6 +125,26 @@ def merged_missing(missing: dict) -> list[str]:
                 seen.add(m.lower())
                 out.append(m)
     return out
+
+
+def project_paragraphs(state: str | None) -> list[str]:
+    """The projects on the page (projects.json `kept`), as "title: paragraph" for the advice pass."""
+    if not state:
+        return []
+    st = json.loads(state)
+    return [f"{e['title']}: {e['paragraph']}" for e in st["ranked"][:st["kept"]]]
+
+
+def apply_project_fixes(state: str | None, fixes: list) -> str | None:
+    """projects.json text with the advice pass's rewritten paragraphs (only for projects on the page; an empty or
+    one-line rewrite is ignored)."""
+    if not state or not fixes:
+        return state
+    st = json.loads(state)
+    for fx in fixes:
+        if 1 <= fx.project <= st["kept"] and len(fx.paragraph.strip()) >= 200:
+            st["ranked"][fx.project - 1]["paragraph"] = T.no_dashes(fx.paragraph.strip())
+    return json.dumps(st, indent=1)
 
 
 def resume_text(f: T.Filled) -> str:
@@ -161,22 +189,27 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
     for t in dict.fromkeys(template):
         log(f"ats: template advice (not applied; locked or eligibility): {t}")
     n_keywords, last = MAX_KEYWORDS, ""
+    base_layout = len(layout.check(job_dir / "resume.pdf").issues)  # the change must not make the page read worse
     for rnd in range(1, rounds + 1):
         if average(scores) >= target or not (missing or advice):
             break
+        proj_path = job_dir / "projects.json"
+        proj_before = proj_path.read_text() if proj_path.exists() else None
         try:
-            prompt = T.build_keyword_prompt(r, jd, f, missing[:n_keywords], advice, keep, last)
+            prompt = T.build_keyword_prompt(r, jd, f, missing[:n_keywords], advice, keep, last,
+                                            project_paragraphs(proj_before))
             kp = llm.structured_invoke(keyword_model, T.KeywordPass, prompt, first="function_calling", log=log)
         except Exception as e:
             n_keywords = max(3, n_keywords // 2)  # e.g. token limit: fewer keywords next time
             log(f"ats round {rnd}: model error {type(e).__name__}; next round with {n_keywords} keywords")
             continue
-        if not kp.skills and not kp.bullets and not kp.summary:
+        if not kp.skills and not kp.bullets and not kp.summary and not kp.projects:
             log(f"ats round {rnd}: nothing worth changing (remaining words aren't skills)")
             break
         g = T.apply_keyword_pass(f, kp, jd_text)
         proposed = [t for a in kp.skills for t in a.terms]
-        if resume_text(g) == resume_text(f):  # only things already there: don't spend a scoring round on it
+        proj_after = apply_project_fixes(proj_before, kp.projects)
+        if resume_text(g) == resume_text(f) and proj_after == proj_before:  # nothing new: don't spend a scoring round
             last = (f"your answer changed nothing ({', '.join(proposed) or 'no new text'} already on the resume); "
                     "put the MISSING items into bullets and the Summary instead")
             log(f"ats round {rnd}: no change ({', '.join(proposed)} already present); not scored")
@@ -189,9 +222,16 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
         backup = (current, (job_dir / "resume.pdf").read_bytes())
         tried = missing[:n_keywords]
         missing = missing[n_keywords:] + tried  # a rejected round tries the other keywords first next time
+        if proj_after != proj_before:
+            proj_path.write_text(proj_after)
+        undo = lambda: ((job_dir / "resume.tex").write_text(backup[0]), (job_dir / "resume.pdf").write_bytes(backup[1]),
+                        proj_before is not None and proj_path.write_text(proj_before))
         tex, problems, pages, err = render_keeping_projects(r, g, current, job_dir)
+        new_layout = layout.check(job_dir / "resume.pdf").issues if pages == 1 and not err else []
+        if len(new_layout) > base_layout:
+            issues = issues + [f"the page reads worse: {new_layout[-1]}"]
         if not (pages == 1 and not err and not issues and not uncovered and not any("LOCKED" in p for p in problems)):
-            (job_dir / "resume.tex").write_text(backup[0]); (job_dir / "resume.pdf").write_bytes(backup[1])
+            undo()
             log(f"ats round {rnd}: rejected (pages={pages} {err} new issues={issues[:2]} newly uncovered={uncovered})")
             last = (f"undone before scoring: " + ("the page overflowed; make lines shorter, not longer" if pages != 1
                     else f"it broke resume rules: {'; '.join((issues + uncovered)[:3])}"))
@@ -206,13 +246,15 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
             f"{' + summary' if kp.summary else ''}")
         # Keep a change if the unlimited sites rose, or if it works in at least 2 more of the budget sites' keywords
         # without the unlimited sites falling beyond their run-to-run noise
-        change = (f"added skills {added}, {len(kp.bullets)} bullet edit(s)" + (", a new Summary" if kp.summary else ""))
+        change = (f"added skills {added}, {len(kp.bullets)} bullet edit(s), {len(kp.projects)} project edit(s)" +
+                  (", a new Summary" if kp.summary else ""))
         if not (new_loop > loop_avg or (new_loop >= loop_avg - NOISE and new_covered >= covered + 2)):  # undo
-            (job_dir / "resume.tex").write_text(backup[0]); (job_dir / "resume.pdf").write_bytes(backup[1])
+            undo()
             last = f"UNDONE: {change} moved the scores {ev['scores']} (average {loop_avg} -> {new_loop})"
             continue
         last = f"KEPT: {change} raised the average {loop_avg} -> {new_loop} {ev['scores']}"
         f, scores, loop_avg, covered, changed = g, new_scores, new_loop, new_covered, True
+        base_layout = len(new_layout)
         missing = [m for m in merged_missing(ev["missing"]) + budget_missing if m.lower() not in
                    {x.lower() for x in added}]
         missing = list(dict.fromkeys(missing))

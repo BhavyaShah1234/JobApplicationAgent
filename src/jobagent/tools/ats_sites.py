@@ -98,8 +98,8 @@ def jobalytics(pg, resume_pdf: Path, jd_text: str = "") -> SiteScore:
                       f"bullets, and vary the wording elsewhere")
     if issues.get("Quantify Impact") and (q := re.search(r"invite you in\. (.*?) Repetition \d", body)):
         advice.append(f"Lines without a measurable result (add one where the work plausibly had it): {q.group(1)[:500]}")
-    if issues.get("Bullets Consistency"):
-        advice.append("Start every bullet with a capital letter and end every bullet with a period")
+    # "Bullets Consistency" is not advice: Jobalytics reports 1 such issue even for a resume whose bullets are all
+    # capitalised and end with a period (tested 2026-10-31 with 9 bullet/period variants and a plain control)
     template = [t for t, k in (("Header links are hidden hyperlinks; show full URLs (e.g. linkedin.com/in/you)",
                                 "Header Links"), ("Generic file name", "File Name")) if issues.get(k)]
     return SiteScore("jobalytics", float(m.group(1)), False, [],

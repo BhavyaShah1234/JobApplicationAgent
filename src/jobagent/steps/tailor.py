@@ -18,9 +18,14 @@ from jobagent import llm
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
 from jobagent.tools import github
+from jobagent.tools import layout
 from jobagent.tools import projects as P
 from jobagent.tools import tailor as T
 from jobagent.tools.vault import open_vault
+
+
+# Visual-review findings the code checks can't see; the others (blank space, short lines) the code measures itself
+VISUAL_ONLY = {"odd_characters", "overlap", "overflow", "alignment"}
 
 
 def report(r, jd, f, pages, problems, uncovered, missing, warn, rounds, filled_in=(), proj=None) -> str:
@@ -145,15 +150,12 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
         if education not in tex:
             problems.append("LOCKED PART CHANGED: Education")
         base = tex
-        # Most projects first; for each count, full paragraphs, then the last ones short, before dropping one.
-        for k in range(len(all_projects), P.MIN_PROJECTS - 1, -1):
-            for n_short in range(0, k + 1):
-                proj.entries = all_projects[:k]
-                proj.short = frozenset(e.repo for e in all_projects[k - n_short:k])
-                tex = P.apply(base, proj.block())
-                pages, err = T.compile_pdf(tex, job_dir)
-                if err or pages == 1:
-                    break
+        # Full paragraphs first; a short form only squeezes in one extra project (P.layouts)
+        for k, n_short in P.layouts(len(all_projects)):
+            proj.entries = all_projects[:k]
+            proj.short = frozenset(e.repo for e in all_projects[k - n_short:k])
+            tex = P.apply(base, proj.block())
+            pages, err = T.compile_pdf(tex, job_dir)
             if err or pages == 1:
                 break
         if len(proj.entries) < len(all_projects):
@@ -189,6 +191,9 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
 
     writer_model = llm.writer(6000)
     max_bullets, feedback, rounds, last_ok = 14, "", [], None
+    # The template's own skills (its Technical Skills section): candidates to fill half-empty skills lines
+    template_skills = [t.strip() for _, items in r.skills for t in re.split(r",(?![^()]*\))", T.to_plain(items))
+                       if 1 < len(t.strip()) <= 40]
     for attempt in range(1, 6):
         t0 = time.monotonic()
         try:
@@ -229,17 +234,36 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
                         "lack a result), or replace it with another duty: "
                         + " | ".join(dups))
         if pages == 1 and not uncovered:
-            score = (len(dups), -len(proj.entries) if proj else 0)  # fewest issues, then most projects
+            # How the page reads (rendered PDF): blank bottom, wasted lines, half-empty skills lines. Project
+            # paragraphs are fixed before the rounds, so their length is reported but isn't the rounds' to fix.
+            T.compile_pdf(tex, job_dir)  # the accepted version (a rejected repair trial may be on disk)
+            lay = layout.check(job_dir / "resume.pdf")
+            lay_issues = [i for i in lay.issues if not i.startswith("the project")]
+            visual = []
+            if not dups and not lay_issues:  # a reader's eye on a page the code checks pass
+                visual = [v for v in layout.review(job_dir / "resume.pdf", log=log)
+                          if v.split(" ", 1)[0] in VISUAL_ONLY]
+            log(f"round {attempt}: layout {len(lay_issues)} issue(s), visual {len(visual)}")
+            score = (len(dups), len(lay_issues) + len(visual), -len(proj.entries) if proj else 0)
             if last_ok is None or score < last_ok[8]:  # keep the best one-page round
                 last_ok = (f, uncovered, missing, warn, problems, pages, filled_in, tex, score,
-                           (list(proj.entries), proj.short) if proj else None)
-            if not dups:  # clean: stop (chasing one more project costs whole rounds and rarely improves the page)
+                           (list(proj.entries), proj.short) if proj else None, lay.issues + visual)
+            if not dups and not lay_issues and not visual:  # clean on paper and on the page: stop
                 break
+            if lay_issues or visual:
+                pool = [t for t in template_skills if t.lower() not in tex.lower()][:12]
+                asks.append("Layout of the rendered page: " + " | ".join(lay_issues + visual) +
+                            (f". Skills to fill Technical Skills lines (the candidate's own, pick relevant ones): "
+                             f"{pool}" if lay.short_skills and pool else "") +
+                            (". Use the free space: one more bullet where a role has room, or fuller bullets."
+                             if lay.free_pt and lay.free_pt > layout.BLANK_PT else ""))
+                if lay.free_pt and lay.free_pt > layout.BLANK_PT:
+                    max_bullets = min(max_bullets + 2, 4 * len(r.roles))
         feedback = " ".join(asks)
     if last_ok is None and "f" not in locals():
         raise RuntimeError("every tailoring round failed: " + " → ".join(rounds))
     if last_ok:
-        f, uncovered, missing, warn, problems, pages, filled_in, tex, _, kept = last_ok
+        f, uncovered, missing, warn, problems, pages, filled_in, tex, _, kept, layout_issues = last_ok
         if proj:
             proj.entries, proj.short = kept
         T.compile_pdf(tex, job_dir)  # the best round, not necessarily the last
@@ -260,9 +284,12 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
             st = json.loads((job_dir / "projects.json").read_text())
             proj.entries = [e for e in all_projects[:st["kept"]]]
             proj.short = frozenset(st["short"])
+    final_layout = layout.check(job_dir / "resume.pdf").issues  # the page as it finally reads (after the ATS loop)
+    log(f"layout: {len(final_layout)} issue(s)" + "".join(f"\n  - {i}" for i in final_layout))
     if not letter:  # e.g. the model experiment: the resume and its ATS scores only
         return {"job_dir": job_dir, "pages": pages, "uncovered": uncovered, "problems": problems + warn,
-                "bullet_issues": T.duplicates(r, f) + T.quality(r, jd, f), "ats": ats_result}
+                "bullet_issues": T.duplicates(r, f) + T.quality(r, jd, f), "ats": ats_result,
+                "layout": final_layout}
     cl = cover_letter(job_dir, company_slug, log=log)
     log(f"cover letter: {cl['words']} words, {len(cl['issues'])} issue(s)")
     generated = [f.summary] + [b.text for e in f.roles for b in e.bullets] + \
@@ -272,7 +299,8 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
     return {"job_dir": job_dir, "pages": pages, "uncovered": uncovered, "missing_skills": missing,
             "problems": problems + warn, "bullet_issues": T.duplicates(r, f) + T.quality(r, jd, f),
             "bullets_per_role": [len(e.bullets) for e in f.roles], "projects": len(proj.entries) if proj else None,
-            "letter": cl, "dashes": sum(len(T.DASH.findall(t)) for t in generated), "ats": ats_result}
+            "letter": cl, "dashes": sum(len(T.DASH.findall(t)) for t in generated), "ats": ats_result,
+            "layout": final_layout}
 
 
 def check(urls: list[str], workers: int = 3, log=print) -> list[tuple[str, bool, str]]:

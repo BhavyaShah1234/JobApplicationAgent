@@ -311,3 +311,9 @@ def test_comparison_and_times_signs_render_in_ot1():
     # A bare < > prints as ¡ ¿ and × as Ö in the template's default font encoding
     assert T.to_latex("<10ms, >99%, 2× traffic, ±5%") == \
         "\\textless{}10ms, \\textgreater{}99\\%, 2$\\times$ traffic, $\\pm$5\\%"
+
+
+def test_project_layouts_keep_full_paragraphs_before_short_ones():
+    # (kept, n_short): a short form only adds an extra project; it never replaces a full paragraph
+    assert projects.layouts(4) == [(4, 0), (4, 1), (3, 0), (3, 1), (2, 0), (2, 1), (2, 2)]
+    assert projects.layouts(2) == [(2, 0), (2, 1), (2, 2)]
