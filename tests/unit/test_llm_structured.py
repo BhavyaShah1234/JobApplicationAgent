@@ -65,3 +65,14 @@ def test_a_timeout_gets_one_other_method_then_gives_up():
     with pytest.raises(llm.StructuredError, match="twice"):
         llm.structured_invoke(m, Out, [HumanMessage("x")])
     assert m.calls == ["json_schema", "function_calling"]
+
+
+def test_a_method_that_ran_out_of_tokens_is_tried_last_next_time():
+    class LengthFinishReasonError(Exception):
+        pass
+    m = FakeModel({"json_schema": [LengthFinishReasonError("cap")], "function_calling": [Out(name="a"), Out(name="b")],
+                   "json_mode": []})
+    m.model_name = "looper"
+    assert llm.structured_invoke(m, Out, [HumanMessage("x")]).name == "a"
+    assert llm.structured_invoke(m, Out, [HumanMessage("x")]).name == "b"
+    assert m.calls == ["json_schema", "function_calling", "function_calling"]

@@ -199,7 +199,10 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
             log(f"projects: model error {type(e).__name__}; retrying")
             continue
         chosen = list({e.repo.lower(): e for e in out.projects if e.repo.lower() in by_name}.values())
-        thin = [e.title for e in chosen if not MIN_PARAGRAPH <= len(e.paragraph) <= MAX_PARAGRAPH]
+        for e in chosen:  # too long: keep whole sentences up to the limit (models rarely shorten when asked)
+            if len(e.paragraph) > MAX_PARAGRAPH:
+                e.paragraph = _sentences(e.paragraph, MAX_PARAGRAPH - 10)
+        thin = [e.title for e in chosen if len(e.paragraph) < MIN_PARAGRAPH]
         heads = [re.split(r"[:,]", e.title)[0].strip().lower() for e in chosen]
         if len(set(heads)) < len(heads):  # one project under two titles (e.g. "SolBot: ..." and "SolBot, ...")
             dup = sorted({h for h in heads if heads.count(h) > 1})
@@ -210,10 +213,9 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
         if MIN_PROJECTS <= len(chosen) <= MAX_PROJECTS and not thin:
             break
         if thin and MIN_PROJECTS <= len(chosen) <= MAX_PROJECTS:
-            log(f"projects: description length off for {thin}; asking again")
+            log(f"projects: description too short for {thin}; asking again")
             messages = messages + [HumanMessage(
-                f"These paragraphs are too short or too long: {thin}. Every paragraph must be 3 sentences, 300-420 "
-                "characters (not more): "
+                f"These paragraphs are too short: {thin}. Every paragraph must be 3 sentences, 300-420 characters: "
                 "the problem, the system built, and the wow factor (a result or scale), like the EXAMPLE.")]
             continue
         messages = messages + [HumanMessage(f"Use {MIN_PROJECTS}-{MAX_PROJECTS} DIFFERENT repos, each exactly one "

@@ -1,0 +1,464 @@
+"""Multi-agent resume writer (experiment): each section has its own agent and model, validators review the page and
+the ATS scores, and route every finding to the agent that owns that part of the resume.
+
+    jobagent multi-agent outputs/<company>/<job-id>:<slug> [...] [--role experience=qwen3-coder-next ...]
+
+Agents (each sees the JD, company profile, template, candidate facts and the current resume; edits only its part):
+- experience: the bullets of every role (same rules as step 9);
+- projects: chooses the GitHub projects and writes/rewrites their paragraphs;
+- skills: the Technical Skills lines (posting terms first, the template's own skills to fill a line);
+- summary: the Summary, written last from the other sections.
+Validators:
+- layout: compile, one page, bullet rules, JD coverage, the rendered-page checks (tools/layout.py) and a vision
+  review; each finding goes to the agent whose section it is about;
+- ats: the online checkers; a router model splits missing keywords and advice into tasks per agent.
+Loop: write -> fix layout (<= 3 passes) -> score -> route -> agents edit -> fix layout -> rescore; a round is kept if the
+average rises (or holds within the noise while the page improves), else undone and reported back; <= 5 ATS rounds.
+"""
+
+import json
+import operator
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Annotated, Literal, TypedDict
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field, create_model
+
+from jobagent import llm
+from jobagent.clock import with_today
+from jobagent.config import get_settings
+from jobagent.state import JobDescription
+from jobagent.steps import ats as A
+from jobagent.tools import ats_sites, github, layout
+from jobagent.tools import projects as P
+from jobagent.tools import tailor as T
+from jobagent.tools.vault import open_vault
+
+AGENTS = ("experience", "projects", "skills", "summary")
+# Provisional picks from the 37-model OpenAI run (see docs/steps/10-ats.md); override with --role agent=model
+DEFAULT_MODELS = {"experience": "qwen3-coder-next", "projects": "laguna-s-2-1", "skills": "qwen35-27b",
+                  "summary": "glm-5-3", "router": "glm-5-3"}
+SITES = tuple(x for x in ats_sites.DEFAULT_SITES if x not in ats_sites.BUDGET_SITES)
+LAYOUT_PASSES, ATS_ROUNDS, TARGET = 3, 5, 90.0
+# Tasks that need the whole Experience section rewritten (coverage, length); anything else is a targeted bullet edit
+FULL_REWRITE = __import__("re").compile(r"(?i)not covered|pages?; it must be one|overflows|failed to compile")
+
+
+# --- section outputs ----------------------------------------------------------------------------------------
+
+def experience_schema(r: T.Resume) -> type[BaseModel]:
+    fields = {f"role_{i}": (list[T.FillBullet], Field(min_length=T.MIN_BULLETS, max_length=T.MAX_BULLETS,
+                                                      description=f"Bullets for: {role.title} at {role.company}"))
+              for i, role in enumerate(r.roles)}
+    fields["notes"] = (str, Field(max_length=600, description="How duties were distributed across roles"))
+    return create_model("ExperienceOut", **fields)
+
+
+class SkillsOut(BaseModel):
+    skills: list[T.SkillLine] = Field(min_length=3, max_length=8)
+
+
+class SummaryOut(BaseModel):
+    summary: str = Field(max_length=800, description="Plain text, 2-3 complete sentences, <= 450 characters")
+
+
+class ProjectsOut(BaseModel):
+    projects: list[T.ProjectFix] = Field(default_factory=list, max_length=4)
+
+
+class Task(BaseModel):
+    agent: Literal["experience", "projects", "skills", "summary"]
+    instruction: str = Field(max_length=500, description="What that agent must change, citing the items")
+
+
+class RoutePlan(BaseModel):
+    tasks: list[Task] = Field(default_factory=list, max_length=12)
+
+
+ROLE_PROMPTS = {
+    "experience": "You are the EXPERIENCE agent: write ONLY the Experience bullets (fields role_N), following the rules "
+                  "below for bullets. Other agents write the Summary, Technical Skills and Projects.",
+    "skills": "You are the SKILLS agent: write ONLY the Technical Skills lines (`skills`), following the rules below "
+              "for skills. Size budget: 5-7 categories, each about ONE line on the page (roughly 100-120 characters "
+              "of skills); the whole section 7-9 lines. A short line gets relevant skills added, preferring the "
+              "candidate's own TEMPLATE SKILLS; a long one gets trimmed. Never list soft skills or words for "
+              "applicants.",
+    "summary": "You are the SUMMARY agent: write ONLY the Summary, following the rules below for the summary. Base it "
+               "on the CURRENT RESUME's bullets, skills and projects so it never claims what they don't show.",
+}
+
+PROJECTS_EDIT_PROMPT = """You are the PROJECTS agent of a resume team. Rewrite ONLY the project paragraphs named in TASKS
+(`projects`: 1-based number under PROJECTS and the new paragraph). Each paragraph: exactly 3 sentences, 300-420
+characters: the problem, the system built (stack named), the wow factor (a result or scale). Use the posting's
+keywords the TASKS ask for. No dashes as punctuation; "by N%". Never invent degrees, employers or dates."""
+
+ROUTER_PROMPT = """You are the ATS validator of a resume team. Online ATS checkers scored the resume; their MISSING
+keywords and ADVICE are below. Turn them into tasks for the agents that own each part of the resume:
+- experience: work phrases, experience requirements ("2 years of X", "experience with Terraform"), domain words,
+  results/metrics advice, repeated-word advice in bullets;
+- skills: tools, languages, frameworks, platforms, methods (one task listing all of them);
+- summary: the posting's exact title, years of experience, soft skills/qualities, mission or domain words;
+- projects: non-skill words that fit a project description (e.g. compliance, product, finance), project advice.
+Every MISSING item must go to exactly one agent. Ignore page boilerplate (salary, posted, benefits) and words for
+applicants (applicants, candidate, people, you). Keep instructions short and concrete. Never ask for a city or
+location, degrees, certifications, clearances, citizenship or work authorization."""
+
+
+# --- graph state -----------------------------------------------------------------------------------------------
+
+class State(TypedDict, total=False):
+    ctx: dict                       # job_dir, jd, company, r, jd_text, models, log
+    f: T.Filled                     # summary + roles + skills
+    tasks: dict                     # agent -> list of instructions for the next edit
+    last: str                       # what happened to the last edit (fed back to the agents)
+    scores: dict
+    best: dict                      # {"avg", "scores", "f", "tex", "pdf", "projects"} of the best checked version
+    ats_round: int
+    layout_pass: int
+    layout_issues: list
+    history: Annotated[list, operator.add]
+
+
+def _context(ctx: dict, f: T.Filled | None, project_state: str | None) -> str:
+    """What every agent sees about the current resume."""
+    r = ctx["r"]
+    parts = [T.facts_block(), "TEMPLATE SKILLS (the candidate's own): " +
+             "; ".join(f"{c}: {T.to_plain(v)}" for c, v in r.skills)]
+    if f is not None:
+        lines = []
+        for e in f.roles:
+            role = r.roles[e.role]
+            lines.append(f"role_{e.role}: {role.title} at {role.company} ({role.dates})")
+            lines += [f"  {k}. {b.text}" for k, b in enumerate(e.bullets, 1)]
+        parts.append("CURRENT RESUME\nSummary: " + f.summary + "\nExperience:\n" + "\n".join(lines) +
+                     "\nTechnical Skills:\n" + "\n".join(f"- {s.category}: {', '.join(s.render())}" for s in f.skills))
+    if project_state:
+        parts.append("PROJECTS:\n" + "\n".join(f"{i}. {p}" for i, p in enumerate(A.project_paragraphs(project_state), 1)))
+    return "\n\n".join(parts)
+
+
+def _section_messages(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last: str) -> list:
+    """The step 9 prompt (all rules and the posting) with the agent's role, the current resume and its tasks."""
+    base = T.build_fill_prompt(ctx["r"], ctx["jd"], ctx["company"], 14)
+    system = SystemMessage(ROLE_PROMPTS[agent] + "\n\n" + base[0].content)
+    proj = (ctx["job_dir"] / "projects.json")
+    extra = _context(ctx, f, proj.read_text() if proj.exists() else None)
+    if tasks:
+        extra += "\n\nTASKS FOR YOU (from the validators):\n" + "\n".join(f"- {t}" for t in tasks)
+    if last:
+        extra += f"\n\nLAST ROUND: {last}"
+    if f is not None:
+        extra += "\n\nKeep everything in your section that no task asks you to change."
+    return [system, HumanMessage(base[1].content + "\n\n" + extra)]
+
+
+def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last: str) -> tuple[str, object]:
+    """One section agent's call; returns (agent, output) or (agent, None) on failure."""
+    model = llm.writer(16000 if agent == "experience" else 8000, timeout=600, model=ctx["models"][agent])
+    log, t0 = ctx["log"], time.monotonic()
+    try:
+        if agent == "projects":
+            proj = ctx["job_dir"] / "projects.json"
+            msgs = [SystemMessage(with_today(PROJECTS_EDIT_PROMPT)),
+                    HumanMessage(_context(ctx, f, proj.read_text()) + "\n\nTASKS:\n" + "\n".join(f"- {t}" for t in tasks)
+                                 + (f"\n\nLAST ROUND: {last}" if last else ""))]
+            out = llm.structured_invoke(model, ProjectsOut, msgs, log=log)
+        elif agent == "experience" and f is not None and not any(FULL_REWRITE.search(t) for t in tasks):
+            # targeted edit: only the bullets the validators named (a full rewrite moves every orphan word)
+            msgs = T.build_repair_prompt(ctx["r"], ctx["jd"], f, tasks + ([f"LAST ROUND: {last}"] if last else []))
+            out = llm.structured_invoke(model, T.Repair, msgs, log=log)
+        else:
+            schema = {"experience": experience_schema(ctx["r"]), "skills": SkillsOut, "summary": SummaryOut}[agent]
+            out = llm.structured_invoke(model, schema, _section_messages(ctx, agent, f, tasks, last), log=log)
+        log(f"  {agent} agent ({ctx['models'][agent]}): {time.monotonic() - t0:.0f}s")
+        return agent, out
+    except Exception as e:
+        log(f"  {agent} agent ({ctx['models'][agent]}): failed {type(e).__name__}: {str(e)[:120]}")
+        return agent, None
+
+
+def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
+    """The current resume with each agent's new section (an agent that failed keeps its old section)."""
+    g = f.model_copy(deep=True)
+    r = ctx["r"]
+    if isinstance(outs.get("experience"), T.Repair):
+        T.apply_repair(g, outs["experience"])
+    elif outs.get("experience") is not None:
+        g.roles = [T.FillRole(role=i, bullets=getattr(outs["experience"], f"role_{i}")) for i in range(len(r.roles))]
+    if outs.get("skills") is not None:
+        g.skills = outs["skills"].skills
+    if outs.get("summary") is not None and 80 <= len(outs["summary"].summary) <= 600:
+        g.summary = outs["summary"].summary
+    if outs.get("projects") is not None:
+        proj = ctx["job_dir"] / "projects.json"
+        new = A.apply_project_fixes(proj.read_text(), outs["projects"].projects)
+        if new:
+            proj.write_text(new)
+    return g
+
+
+# --- nodes -------------------------------------------------------------------------------------------------------
+
+def write_initial(state: State) -> dict:
+    """Projects first (the page fitter needs them), experience alongside; then skills; then the summary."""
+    ctx = state["ctx"]
+    r, jd, log = ctx["r"], ctx["jd"], ctx["log"]
+    log("initial draft")
+
+    def projects():
+        token = (open_vault().get("github") or {}).get("token")
+        chosen = P.choose(r, jd, llm.writer(8000, timeout=300, model=ctx["models"]["projects"]),
+                          github.profile_user(r.tex), token, rediscover=False, log=log)
+        P.save_state(ctx["job_dir"], list(chosen.entries), chosen)
+        return chosen
+
+    with ThreadPoolExecutor(2) as ex:
+        fut_p = ex.submit(projects)
+        _, exp = _run_agent(ctx, "experience", None, [], "")
+        fut_p.result()
+    if exp is None:
+        raise RuntimeError("the experience agent failed on the first draft")
+    roles = [T.FillRole(role=i, bullets=getattr(exp, f"role_{i}")) for i in range(len(r.roles))]
+    f = T.Filled(summary=T.to_plain(r.summary), roles=roles,
+                 skills=[T.SkillLine(category=c, terms=[T.to_plain(v)]) for c, v in r.skills][:8] or
+                 [T.SkillLine(category="Skills", terms=["Python"])] * 3, notes=exp.notes)
+    _, sk = _run_agent(ctx, "skills", f, [], "")
+    if sk is not None:
+        f.skills = sk.skills
+    _, su = _run_agent(ctx, "summary", f, [], "")
+    if su is not None:
+        f.summary = su.summary
+    T.backfill(r, jd, f)
+    return {"f": f, "tasks": {}, "last": "", "ats_round": 0, "layout_pass": 0, "history": ["draft"]}
+
+
+def render(state: State) -> tuple[str, list[str], int, str]:
+    ctx = state["ctx"]
+    return A.render_keeping_projects(ctx["r"], state["f"], ctx["r"].tex, ctx["job_dir"])
+
+
+def check_layout(state: State) -> dict:
+    """Layout validator: route every finding to the agent whose section it is about."""
+    ctx, f = state["ctx"], state["f"]
+    r, jd, job_dir, log = ctx["r"], ctx["jd"], ctx["job_dir"], ctx["log"]
+    tex, problems, pages, err = render(state)
+    tasks: dict[str, list[str]] = {a: [] for a in AGENTS}
+    if err:
+        tasks["experience"].append(f"The LaTeX failed to compile ({err}); write plain text only.")
+    if pages and pages > 1:
+        tasks["experience"].append(f"The resume is {pages} pages; it must be one: shorten every bullet to one line "
+                                   "(<= 110 characters) and drop the least relevant bullet of the longest role.")
+        tasks["skills"].append("The resume overflows one page: at most 2 tools per term, merge near-duplicates.")
+    tasks["experience"] += T.duplicates(r, f) + T.quality(r, jd, f)
+    uncovered = T.fill_checks(r, jd, f)[0]
+    if uncovered:
+        tasks["experience"].append(f"REQUIRED JD item indices not covered by any NEW bullet: {uncovered}.")
+    lay = layout.check(job_dir / "resume.pdf") if pages == 1 and not err else None
+    if lay:
+        for issue in lay.issues:
+            agent = ("skills" if issue.startswith("Technical Skills") else
+                     "projects" if issue.startswith("the project") else "experience")
+            tasks[agent].append(issue)
+        if lay.free_pt and lay.free_pt > layout.BLANK_PT:
+            tasks["projects"].append("There is free space at the bottom: make each project paragraph a full 3 "
+                                     "sentences (up to 420 characters).")
+        if not any(tasks.values()):
+            tasks["experience"] += [v for v in layout.review(job_dir / "resume.pdf", log=log)
+                                    if v.split(" ", 1)[0] in {"odd_characters", "overlap", "overflow", "alignment"}]
+    tasks = {a: t for a, t in tasks.items() if t}
+    n = sum(map(len, tasks.values()))
+    log(f"layout pass {state.get('layout_pass', 0)}: {pages} page(s), {n} finding(s) "
+        f"{ {a: len(t) for a, t in tasks.items()} }")
+    return {"tasks": tasks, "layout_issues": [x for t in tasks.values() for x in t],
+            "layout_pass": state.get("layout_pass", 0) + 1, "history": [f"layout {n}"]}
+
+
+def after_layout(state: State) -> str:
+    if state["tasks"] and state["layout_pass"] <= LAYOUT_PASSES:
+        return "fix"
+    return "score"
+
+
+def edit_sections(state: State) -> dict:
+    """The agents with tasks edit their sections in parallel (projects.json is backed up for a rollback)."""
+    ctx, f, tasks = state["ctx"], state["f"], state["tasks"]
+    ctx["log"]("editing: " + ", ".join(f"{a} ({len(t)})" for a, t in tasks.items()))
+    with ThreadPoolExecutor(len(tasks) or 1) as ex:
+        outs = dict(ex.map(lambda a: _run_agent(ctx, a, f, tasks[a], state.get("last", "")), list(tasks)))
+    return {"f": _merge(ctx, f, outs), "tasks": {}}
+
+
+def score(state: State) -> dict:
+    """ATS validator: score the current page (one page only); keep it if better than the best so far, else roll back."""
+    ctx, f = state["ctx"], state["f"]
+    job_dir, jd, log = ctx["job_dir"], ctx["jd"], ctx["log"]
+    tex, problems, pages, err = render(state)
+    rnd = state.get("ats_round", 0)
+    best = state.get("best")
+    if pages != 1 or err:
+        log(f"ats round {rnd}: page not valid ({pages} pages {err}); rolled back to the best version")
+        return _rollback(state, "UNDONE: the edit broke the one-page layout; keep lines short") if best else \
+            {"ats_round": rnd + 1, "last": "the page overflowed: shorten bullets"}
+    ev = A.evaluate(job_dir, jd, ctx["jd_text"], rnd, ctx["sites"], log)
+    avg = A.average(ev["scores"])
+    n_layout = len(layout.check(job_dir / "resume.pdf").issues)
+    log(f"ats round {rnd}: average {avg} {ev['scores']}, layout issues {n_layout}")
+    if best and not (avg > best["avg"] or (avg >= best["avg"] - A.NOISE and n_layout < best["layout"])):
+        return _rollback(state, f"UNDONE: the last edits moved the scores to {ev['scores']} (average {avg}, best "
+                                f"{best['avg']}); try different wording or other items", ev)
+    proj = job_dir / "projects.json"
+    new_best = {"avg": avg, "scores": ev["scores"], "f": f.model_copy(deep=True), "layout": n_layout,
+                "tex": (job_dir / "resume.tex").read_text(), "pdf": (job_dir / "resume.pdf").read_bytes(),
+                "projects": proj.read_text() if proj.exists() else None, "ev": ev}
+    last = f"KEPT: the scores are {ev['scores']} (average {avg})" if best else ""
+    return {"best": new_best, "scores": ev["scores"], "ats_round": rnd + 1, "last": last,
+            "history": [f"ats {avg}"]}
+
+
+def _rollback(state: State, why: str, ev: dict | None = None) -> dict:
+    ctx, best = state["ctx"], state["best"]
+    job_dir = ctx["job_dir"]
+    (job_dir / "resume.tex").write_text(best["tex"])
+    (job_dir / "resume.pdf").write_bytes(best["pdf"])
+    if best["projects"] is not None:
+        (job_dir / "projects.json").write_text(best["projects"])
+    out = {"f": best["f"].model_copy(deep=True), "ats_round": state.get("ats_round", 0) + 1, "last": why,
+           "history": ["rollback"]}
+    if ev:  # the rejected version's findings still tell the agents what's missing
+        out["best"] = {**best, "ev": {**best["ev"], "missing": ev["missing"], "advice": ev["advice"]}}
+    return out
+
+
+def after_score(state: State) -> str:
+    best = state.get("best")
+    if not state["ctx"]["sites"] and best:  # dry run (no ATS sites): the drafted, layout-checked page is the result
+        return "done"
+    if best and best["avg"] >= TARGET or state.get("ats_round", 0) > ATS_ROUNDS:
+        return "done"
+    return "route"
+
+
+def route(state: State) -> dict:
+    """ATS validator's router: missing keywords and advice -> tasks per agent."""
+    ctx, best = state["ctx"], state.get("best")
+    if not best:  # nothing scored yet: the page never fit
+        return {"tasks": {"experience": ["The resume overflows one page: every bullet to one line (<= 110 characters), "
+                                         "drop the least relevant bullet of the longest role."],
+                          "projects": ["The resume overflows one page: make every paragraph 300-350 characters."]},
+                "layout_pass": 0}
+    ev = best["ev"]
+    missing = A.merged_missing(ev["missing"])[:20]
+    msgs = [SystemMessage(ROUTER_PROMPT),
+            HumanMessage(f"SCORES: {best['scores']}\n\nMISSING:\n" + "\n".join(f"- {m}" for m in missing) +
+                         "\n\nADVICE:\n" + "\n".join(f"- {a}" for a in ev["advice"]) +
+                         f"\n\nLAST ROUND: {state.get('last', '')}\n\n" + _context(ctx, state["f"], None))]
+    try:
+        plan = llm.structured_invoke(llm.writer(4000, timeout=300, model=ctx["models"]["router"]), RoutePlan, msgs,
+                                     log=ctx["log"])
+        tasks: dict[str, list[str]] = {}
+        for t in plan.tasks:
+            tasks.setdefault(t.agent, []).append(t.instruction)
+    except Exception as e:
+        ctx["log"](f"router failed ({type(e).__name__}); every agent gets the full list")
+        tasks = {a: [f"Work in what fits your section: {missing}; advice: {ev['advice']}"] for a in AGENTS}
+    ctx["log"]("routed: " + ", ".join(f"{a} {len(t)}" for a, t in tasks.items()))
+    return {"tasks": tasks, "layout_pass": 0}
+
+
+def build_graph():
+    g = StateGraph(State)
+    g.add_node("write", write_initial)
+    g.add_node("check_layout", check_layout)
+    g.add_node("fix", edit_sections)
+    g.add_node("score", score)
+    g.add_node("route", route)
+    g.add_node("edit", edit_sections)
+    g.add_edge(START, "write")
+    g.add_edge("write", "check_layout")
+    g.add_conditional_edges("check_layout", after_layout, {"fix": "fix", "score": "score"})
+    g.add_edge("fix", "check_layout")
+    g.add_conditional_edges("score", after_score, {"route": "route", "done": END})
+    g.add_edge("route", "edit")
+    g.add_edge("edit", "check_layout")
+    return g.compile()
+
+
+def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> dict:  # noqa: C901
+    """One job through the agent graph; leaves the best one-page version in job_dir."""
+    s = get_settings()
+    jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
+    ctx = {"job_dir": job_dir, "jd": jd, "company": (s.state_dir / "companies" / f"{slug}.md").read_text(),
+           "r": T.parse((s.data_dir / "templates" / "resume.tex").read_text()),
+           "jd_text": (job_dir / "jd.txt").read_text() if (job_dir / "jd.txt").exists() else "",
+           "models": models, "log": log, "sites": sites}
+    final = build_graph().invoke({"ctx": ctx, "history": []}, {"recursion_limit": 200})
+    best = final.get("best")
+    if best:
+        (job_dir / "resume.tex").write_text(best["tex"])
+        (job_dir / "resume.pdf").write_bytes(best["pdf"])
+        (job_dir / "filled.json").write_text(best["f"].model_dump_json(indent=1))
+    lay = layout.check(job_dir / "resume.pdf").issues if best else []
+    hist = [h for h in final.get("history", []) if h.startswith("ats ")]
+    return {"average": best["avg"] if best else None, "scores": best["scores"] if best else {},
+            "history": [float(h.split()[1]) for h in hist], "reached": bool(best and best["avg"] >= TARGET),
+            "pages": layout.page_count(job_dir / "resume.pdf") if best else None, "layout_issues": lay,
+            "steps": final.get("history", [])}
+
+
+def run(jobs: list[tuple[str | Path, str]], models: dict | None = None, sites=SITES, log=print) -> Path:
+    """Every job through the agent team (jobs in parallel: their agent calls overlap, scoring takes turns)."""
+    import shutil
+    import traceback
+    from datetime import datetime
+
+    from jobagent.clock import now
+    s = get_settings()
+    models = {**DEFAULT_MODELS, **(models or {})}
+    jobs = [(Path(d) if Path(d).is_absolute() else Path("/app") / d, slug) for d, slug in jobs]
+    root = s.outputs_dir / "experiments" / f"{datetime.now():%Y%m%d-%H%M}-multiagent"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "models.json").write_text(json.dumps(models, indent=1))
+    log(f"multi-agent experiment: {len(jobs)} jobs, models {models} -> {root}")
+
+    def one(src_slug):
+        src, slug = src_slug
+        d = root / src.parent.name
+        d.mkdir(parents=True, exist_ok=True)
+        for name in ("jd.json", "jd.txt", "jd.md"):
+            if (src / name).exists():
+                shutil.copy(src / name, d / name)
+        logf = (d / "run.log").open("a")
+        jlog = lambda m: (logf.write(f"{now():%H:%M:%S} {m}\n"), logf.flush())
+        t0 = time.monotonic()
+        try:
+            out = {"job": d.name, "status": "ok", **run_job(d, slug, models, sites, jlog)}
+        except Exception as e:
+            jlog(traceback.format_exc())
+            out = {"job": d.name, "status": f"failed: {type(e).__name__}: {str(e)[:200]}"}
+        out["minutes"] = round((time.monotonic() - t0) / 60, 1)
+        jlog(f"result: {json.dumps(out)}")
+        logf.close()
+        return out
+
+    with ThreadPoolExecutor(len(jobs)) as ex:
+        results = list(ex.map(one, jobs))
+    (root / "results.json").write_text(json.dumps(results, indent=1))
+    lines = [f"# Multi-agent experiment ({now():%Y-%m-%d %H:%M} America/Phoenix)", "",
+             "Agents and models: " + ", ".join(f"{k} = {v}" for k, v in models.items()), "",
+             "| Job | Average | Rounds | " + " | ".join(sites) + " | Pages | Layout issues | Minutes | Status |",
+             "|---|---|---|" + "---|" * len(sites) + "---|---|---|---|"]
+    for r in results:
+        sc = r.get("scores") or {}
+        lines.append(f"| {r['job']} | {r.get('average', '-')}{' ✓' if r.get('reached') else ''} | "
+                     f"{' → '.join(map(str, r.get('history') or [])) or '-'} | " +
+                     " | ".join(str(sc.get(x, "-")) for x in sites) +
+                     f" | {r.get('pages', '-')} | {len(r.get('layout_issues') or [])} | {r['minutes']} | "
+                     f"{r['status'][:80]} |")
+    avgs = [r["average"] for r in results if r.get("average") is not None]
+    lines += ["", f"Average over jobs: {round(sum(avgs) / len(avgs), 1) if avgs else '-'}"]
+    (root / "results.md").write_text("\n".join(lines) + "\n")
+    log(f"results: {root / 'results.md'}")
+    return root

@@ -189,7 +189,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
                     break
         return f, dups
 
-    writer_model = llm.writer(6000)
+    writer_model = llm.writer(3000)  # a repair answer is <= 8 bullets; a looping model stops sooner
     max_bullets, feedback, rounds, last_ok = 14, "", [], None
     # The template's own skills (its Technical Skills section): candidates to fill half-empty skills lines
     template_skills = [t.strip() for _, items in r.skills for t in re.split(r",(?![^()]*\))", T.to_plain(items))

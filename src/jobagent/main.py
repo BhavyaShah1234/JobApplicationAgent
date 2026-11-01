@@ -360,6 +360,21 @@ def model_experiment_cmd(
     console.print(f"results: {root / 'results.md'}", highlight=False)
 
 
+@app.command("multi-agent")
+def multi_agent_cmd(
+    jobs: list[str] = typer.Argument(..., help="outputs/<company>/<job-id>:<company-slug>, one or more."),
+    role: list[str] = typer.Option(None, "--role", help="agent=model, e.g. experience=qwen3-coder-next "
+                                   "(agents: experience, projects, skills, summary, router)."),
+    no_ats: bool = typer.Option(False, "--no-ats", help="Dry run: agents and layout validator only, no ATS sites."),
+) -> None:
+    """Experiment: a team of section agents (one model each) and validators writes each job's resume."""
+    from jobagent.steps.multi_agent import SITES, run
+
+    models = dict(x.split("=", 1) for x in role or [])
+    run([tuple(j.rsplit(":", 1)) for j in jobs], models, () if no_ats else SITES,
+        log=lambda m: console.print(m, highlight=False))
+
+
 @app.command("research")
 def research_cmd(
     companies: list[str] = typer.Argument(None),

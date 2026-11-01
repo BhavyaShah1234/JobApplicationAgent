@@ -86,6 +86,8 @@ class StructuredError(RuntimeError):
 
 
 _METHODS = ("json_schema", "function_calling", "json_mode")
+# model -> methods it ran out of tokens in (some models loop in json_schema mode until the cap): tried last from then on
+_LOOPS: dict[str, set[str]] = {}
 
 
 def _parse_json(text: str, schema: type[BaseModel]) -> BaseModel:
@@ -107,14 +109,17 @@ def structured_invoke(model: ChatOpenAI, schema: type[BaseModel], messages: list
     import json
 
     import openai
-    from langchain_core.messages import SystemMessage
+    from langchain_core.messages import HumanMessage
     errors, timeouts = [], 0
-    for method in (first, *[m for m in _METHODS if m != first]):
+    order = (first, *[m for m in _METHODS if m != first])
+    bad = _LOOPS.get(model.model_name, set())
+    for method in [m for m in order if m not in bad] + [m for m in order if m in bad]:
         for _ in range(2):
             try:
                 if method == "json_mode":
-                    hint = SystemMessage("Answer with ONE JSON object only (no prose, no code fence) that matches "
-                                         "this JSON schema:\n" + json.dumps(schema.model_json_schema()))
+                    # as a user turn: some servers reject a system message that isn't the first one
+                    hint = HumanMessage("Answer with ONE JSON object only (no prose, no code fence) that matches "
+                                        "this JSON schema:\n" + json.dumps(schema.model_json_schema()))
                     out = _parse_json(model.invoke([*messages, hint]).content, schema)
                 else:
                     out = model.with_structured_output(schema, method=method).invoke(messages)
@@ -133,6 +138,9 @@ def structured_invoke(model: ChatOpenAI, schema: type[BaseModel], messages: list
                 break
             except Exception as e:  # invalid / truncated answer: retry once, then next method
                 errors.append(f"{method}: {type(e).__name__}: {str(e)[:120]}")
+                if "LengthFinishReason" in type(e).__name__:  # ran to the token cap: don't wait for that again
+                    _LOOPS.setdefault(model.model_name, set()).add(method)
+                    break
         if log:
             log(f"[llm] {model.model_name}: {method} failed ({errors[-1][:100]}); trying the next method")
     raise StructuredError("; ".join(errors)[-600:])
