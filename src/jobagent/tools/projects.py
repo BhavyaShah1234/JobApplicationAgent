@@ -187,6 +187,11 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
     job_text = " ".join([jd.title or ""] + jd.responsibilities + jd.basic_qualifications +
                         jd.preferred_qualifications + jd.technical_skills)
     cands = repo_cards.rank(cards, job_text)
+    # The template's own projects (the user's chosen showcase, e.g. SolBot) are always candidates, ranked or not
+    known_repos = set(known_entries(r.tex))
+    have = {c["full_name"].lower() for _, c in cands}
+    cands += [(s, c) for s, c in repo_cards.rank(cards, job_text, k=len(cards), min_substance=0)
+              if c["full_name"].lower() in known_repos and c["full_name"].lower() not in have]
     log("projects: top candidates: " + ", ".join(f"{c['full_name']} {s:.2f}" for s, c in cands))
     known = known_entries(r.tex)
     by_name = {c["full_name"].lower(): c for _, c in cands}

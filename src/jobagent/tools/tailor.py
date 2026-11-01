@@ -447,7 +447,9 @@ def apply_fill(r: Resume, f: Filled) -> tuple[str, list[str]]:
     s0 = r.skills_span[0]
     i0 = tex.index("\\small{\\item{", s0) + len("\\small{\\item{")
     i1 = tex.index("}}", i0)
-    lines = [f"     \\textbf{{{to_latex(s.category)}}}{{: {', '.join(to_latex(x) for x in s.render())}}}" for s in f.skills]
+    # a category whose terms were all deduplicated away (e.g. "Databases:" with nothing after it) is left out
+    lines = [f"     \\textbf{{{to_latex(s.category)}}}{{: {', '.join(to_latex(x) for x in s.render())}}}" for s in f.skills
+             if s.render()]
     tex = tex[:i0] + "\n" + " \\\\\n".join(lines) + "\n    " + tex[i1:]
     by_role = {e.role: e for e in f.roles}
     for i in range(len(r.roles) - 1, -1, -1):

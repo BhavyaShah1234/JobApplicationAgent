@@ -186,3 +186,12 @@ project).
 **Word policy.** AutoApplyMax's missing words that aren't generic (finance, compliance, product, AWS) are worked
 into the Summary, bullets, skills or project descriptions, and kept only if the scores rise; words for whoever
 applies (applicants, candidate, people, you, employment) never are.
+
+## Second model experiment cancelled (2026-11-01)
+
+37 models x 3 entry-level postings (DoorDash SWE, Adobe ML, Symbotic Robotics), stopped by the user after 14 models
+(20 hours). Conclusion: **a single LLM writing the whole resume fails**: no model reached 90 (best devstral2-123b
+79.5 average) and the resumes kept problems no generation pass caught: too few bullets with room left, template
+bullets and skills unused, short or wrong project descriptions, too few or weaker projects, an empty skills line, an
+over-long page. Details and evidence: `outputs/experiments/20261031-1910-doordash-adobe-symbotic/CONCLUSION.md`.
+Next: the multi-agent builder with a validator agent that checks against that list and routes ATS advice.

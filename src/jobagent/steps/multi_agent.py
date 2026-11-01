@@ -38,13 +38,17 @@ from jobagent.tools import tailor as T
 from jobagent.tools.vault import open_vault
 
 AGENTS = ("experience", "projects", "skills", "summary")
-# Provisional picks from the 37-model OpenAI run (see docs/steps/10-ats.md); override with --role agent=model
-DEFAULT_MODELS = {"experience": "qwen3-coder-next", "projects": "laguna-s-2-1", "skills": "qwen35-27b",
-                  "summary": "glm-5-3", "router": "glm-5-3"}
+# Each agent's model from the per-section report of the 3-posting model run (outputs/experiments/
+# 20261031-1910-doordash-adobe-symbotic/SECTIONS.md): experience = fewest bullet issues and best keyword sub-score,
+# projects = paragraphs on target length, skills = fewest half-empty lines (after devstral), summary = HireFlow
+# experience fit (fast), validator/router = glm-5-3. Override with --role agent=model or --same-model.
+DEFAULT_MODELS = {"experience": "devstral2-123b", "projects": "gpt-oss-120b", "skills": "glm-5-3-flash",
+                  "summary": "llama4-scout-17b", "router": "glm-5-3"}
 SITES = tuple(x for x in ats_sites.DEFAULT_SITES if x not in ats_sites.BUDGET_SITES)
 LAYOUT_PASSES, ATS_ROUNDS, TARGET = 3, 5, 90.0
 # Tasks that need the whole Experience section rewritten (coverage, length); anything else is a targeted bullet edit
-FULL_REWRITE = __import__("re").compile(r"(?i)not covered|pages?; it must be one|overflows|failed to compile")
+FULL_REWRITE = __import__("re").compile(r"(?i)not covered|pages?; it must be one|overflows|failed to compile|"
+                                        r"add bullets")
 
 
 # --- section outputs ----------------------------------------------------------------------------------------
@@ -65,8 +69,23 @@ class SummaryOut(BaseModel):
     summary: str = Field(max_length=800, description="Plain text, 2-3 complete sentences, <= 450 characters")
 
 
+class ProjectSwap(BaseModel):
+    project: int = Field(description="1-based number under PROJECTS to replace")
+    entry: P.ProjectEntry = Field(description="The better CANDIDATE repo, written like the others")
+
+
 class ProjectsOut(BaseModel):
     projects: list[T.ProjectFix] = Field(default_factory=list, max_length=4)
+    swaps: list[ProjectSwap] = Field(default_factory=list, max_length=2)
+
+
+class Finding(BaseModel):
+    agent: Literal["experience", "projects", "skills", "summary"]
+    issue: str = Field(max_length=400, description="What is wrong and what to do, citing the text")
+
+
+class Review(BaseModel):
+    findings: list[Finding] = Field(default_factory=list, max_length=8)
 
 
 class Task(BaseModel):
@@ -90,10 +109,23 @@ ROLE_PROMPTS = {
                "on the CURRENT RESUME's bullets, skills and projects so it never claims what they don't show.",
 }
 
-PROJECTS_EDIT_PROMPT = """You are the PROJECTS agent of a resume team. Rewrite ONLY the project paragraphs named in TASKS
-(`projects`: 1-based number under PROJECTS and the new paragraph). Each paragraph: exactly 3 sentences, 300-420
-characters: the problem, the system built (stack named), the wow factor (a result or scale). Use the posting's
-keywords the TASKS ask for. No dashes as punctuation; "by N%". Never invent degrees, employers or dates."""
+PROJECTS_EDIT_PROMPT = """You are the PROJECTS agent of a resume team. Do what TASKS ask for the Projects section:
+- rewrite a paragraph in place (`projects`: 1-based number under PROJECTS and the new paragraph), or
+- replace a weaker project with a better CANDIDATE repo (`swaps`: the number to replace and a full entry for the
+  candidate: repo full_name exactly as listed, title, stack, paragraph, short).
+Each paragraph: exactly 3 sentences, 300-420 characters: the problem, the system built (stack named), the wow factor
+(a result or scale). The title is a real project name, never the bare repo slug. Use the posting's keywords the TASKS
+ask for. No dashes as punctuation; "by N%". Never invent degrees, employers or dates."""
+
+REVIEW_PROMPT = """You are the VALIDATOR of a resume team. Check the CURRENT RESUME for this posting the way a hiring
+manager would and report only real problems, each for the agent that owns that section:
+- projects: a CANDIDATE (especially one marked TEMPLATE, the candidate's own showcase) fits the posting clearly
+  better than a project on the page; a description that doesn't match its repo summary; a title that is a bare repo
+  slug; a description under 3 sentences;
+- experience: bullets that don't fit their employer, repeat each other, or miss the posting's main duties;
+- skills: missing posting tools the bullets use; a category with nothing useful in it; soft skills listed;
+- summary: claims the rest of the resume doesn't show; not opening with the posting's title.
+Return an empty list if the resume is sound."""
 
 ROUTER_PROMPT = """You are the ATS validator of a resume team. Online ATS checkers scored the resume; their MISSING
 keywords and ADVICE are below. Turn them into tasks for the agents that own each part of the resume:
@@ -119,6 +151,7 @@ class State(TypedDict, total=False):
     ats_round: int
     layout_pass: int
     layout_issues: list
+    reviewed: bool
     history: Annotated[list, operator.add]
 
 
@@ -137,6 +170,12 @@ def _context(ctx: dict, f: T.Filled | None, project_state: str | None) -> str:
                      "\nTechnical Skills:\n" + "\n".join(f"- {s.category}: {', '.join(s.render())}" for s in f.skills))
     if project_state:
         parts.append("PROJECTS:\n" + "\n".join(f"{i}. {p}" for i, p in enumerate(A.project_paragraphs(project_state), 1)))
+    if ctx.get("candidates"):
+        known = set(P.known_entries(r.tex))
+        parts.append("CANDIDATE REPOS (for the Projects section):\n" + "\n".join(
+            f"- {c['full_name']}{' (TEMPLATE)' if c['full_name'].lower() in known else ''} [relevance {sc:.2f}]: "
+            f"{c['title']}; {c['summary'][:220]}; stack {', '.join(c['tech_stack'][:6])}"
+            for sc, c in ctx["candidates"]))
     return "\n\n".join(parts)
 
 
@@ -195,6 +234,18 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
     if outs.get("projects") is not None:
         proj = ctx["job_dir"] / "projects.json"
         new = A.apply_project_fixes(proj.read_text(), outs["projects"].projects)
+        if new and outs["projects"].swaps:
+            st = json.loads(new)
+            cands = ctx.get("cards", {})
+            for sw in outs["projects"].swaps:
+                repo = sw.entry.repo.lower()
+                if 1 <= sw.project <= st["kept"] and repo in cands and \
+                        repo not in {e["repo"].lower() for e in st["ranked"]}:
+                    st["ranked"][sw.project - 1] = sw.entry.model_dump()
+                    st["cards"][repo] = {"url": cands[repo]["url"], "full_name": cands[repo]["full_name"]}
+                    st["years"][sw.entry.repo] = P.month_year(cands[repo].get("pushed_at", ""))
+                    ctx["log"](f"  projects: swapped in {sw.entry.repo}")
+            new = json.dumps(st, indent=1)
         if new:
             proj.write_text(new)
     return g
@@ -213,6 +264,8 @@ def write_initial(state: State) -> dict:
         chosen = P.choose(r, jd, llm.writer(8000, timeout=300, model=ctx["models"]["projects"]),
                           github.profile_user(r.tex), token, rediscover=False, log=log)
         P.save_state(ctx["job_dir"], list(chosen.entries), chosen)
+        ctx["candidates"] = chosen.candidates
+        ctx["cards"] = {c["full_name"].lower(): c for _, c in chosen.candidates}
         return chosen
 
     with ThreadPoolExecutor(2) as ex:
@@ -241,7 +294,9 @@ def render(state: State) -> tuple[str, list[str], int, str]:
 
 
 def check_layout(state: State) -> dict:
-    """Layout validator: route every finding to the agent whose section it is about."""
+    """Validator: checks the resume against the known failure list (one page, bullet rules, JD coverage, page filled,
+    template bullets and skills used where they fit, enough full projects, no empty skills line), then the rendered
+    page (tools/layout.py), then a content review; every finding goes to the agent whose section it is about."""
     ctx, f = state["ctx"], state["f"]
     r, jd, job_dir, log = ctx["r"], ctx["jd"], ctx["job_dir"], ctx["log"]
     tex, problems, pages, err = render(state)
@@ -256,24 +311,79 @@ def check_layout(state: State) -> dict:
     uncovered = T.fill_checks(r, jd, f)[0]
     if uncovered:
         tasks["experience"].append(f"REQUIRED JD item indices not covered by any NEW bullet: {uncovered}.")
+    empty = [sl.category for sl in f.skills if not sl.render()]
+    if empty:
+        tasks["skills"].append(f"These categories render empty (their terms repeat other lines): {empty}; give each "
+                               "real, different skills or drop it.")
     lay = layout.check(job_dir / "resume.pdf") if pages == 1 and not err else None
+    proj_path = job_dir / "projects.json"
+    st = json.loads(proj_path.read_text()) if proj_path.exists() else None
     if lay:
         for issue in lay.issues:
             agent = ("skills" if issue.startswith("Technical Skills") else
                      "projects" if issue.startswith("the project") else "experience")
             tasks[agent].append(issue)
-        if lay.free_pt and lay.free_pt > layout.BLANK_PT:
-            tasks["projects"].append("There is free space at the bottom: make each project paragraph a full 3 "
-                                     "sentences (up to 420 characters).")
-        if not any(tasks.values()):
-            tasks["experience"] += [v for v in layout.review(job_dir / "resume.pdf", log=log)
-                                    if v.split(" ", 1)[0] in {"odd_characters", "overlap", "overflow", "alignment"}]
+        used = " ".join(x for sl in f.skills for x in sl.render()).lower()
+        pool = [t.strip() for _, items in r.skills for t in T.to_plain(items).split(",")
+                if t.strip() and t.strip().lower() not in used][:15]
+        if lay.short_skills and pool:
+            tasks["skills"].append(f"Fill the short lines with relevant skills from TEMPLATE SKILLS not yet listed: {pool}")
+        if lay.free_pt and lay.free_pt > 12:  # at least a line free: use it
+            thin = [e for e in f.roles if len(e.bullets) < T.MAX_BULLETS]
+            if thin:
+                spare = {e.role: [T.to_plain(b) for j, b in enumerate(r.roles[e.role].bullets)
+                                  if T.eligible(r.roles[e.role], j, any(any(x.pool) for x in r.roles))
+                                  and T.to_plain(b)[:40].lower() not in " ".join(x.text for x in e.bullets).lower()]
+                         for e in thin}
+                tasks["experience"].append(
+                    f"About {round(lay.free_pt / 11)} line(s) of the page are free: add bullets (up to {T.MAX_BULLETS} "
+                    f"per role) to {[f'role_{e.role} ({len(e.bullets)} now)' for e in thin]}, preferring the candidate's "
+                    f"own template bullets that fit the posting: {spare}. Keep every REQUIRED item covered.")
+    if st and st["kept"] < min(3, len(st["ranked"])):
+        tasks["projects"].append(f"Only {st['kept']} project(s) fit: make every paragraph 300-340 characters so "
+                                 "another fits.")
+        tasks["experience"].append("Room is needed for one more project: shorten the two longest bullets to one line.")
+    if st:
+        for i, e in enumerate(st["ranked"][:st["kept"]], 1):
+            if "/" not in e["title"] and e["title"].lower() == e["repo"].split("/")[-1].lower():
+                tasks["projects"].append(f"Project {i} is titled with its bare repo name '{e['title']}': give it a "
+                                         "real project title and a full 3-sentence description.")
+    if pages == 1 and not err and not state.get("reviewed"):
+        # once per cycle, on the first one-page draft: the content review (a better project skipped, a description
+        # that doesn't match its repo...) and the vision check for what code can't see
+        for fd in content_review(ctx, f):
+            tasks[fd.agent].append(fd.issue)
+        tasks["experience"] += [v for v in layout.review(job_dir / "resume.pdf", log=log)
+                                if v.split(" ", 1)[0] in {"odd_characters", "overlap", "overflow", "alignment"}]
+        reviewed = True
+    else:
+        reviewed = state.get("reviewed", False)
     tasks = {a: t for a, t in tasks.items() if t}
     n = sum(map(len, tasks.values()))
-    log(f"layout pass {state.get('layout_pass', 0)}: {pages} page(s), {n} finding(s) "
-        f"{ {a: len(t) for a, t in tasks.items()} }")
+    log(f"validator pass {state.get('layout_pass', 0)}: {pages} page(s), {n} finding(s) "
+        f"{ {a: len(t) for a, t in tasks.items()} }" +
+        "".join(f"\n    [{a}] {t[:200]}" for a, ts in tasks.items() for t in ts))
     return {"tasks": tasks, "layout_issues": [x for t in tasks.values() for x in t],
-            "layout_pass": state.get("layout_pass", 0) + 1, "history": [f"layout {n}"]}
+            "layout_pass": state.get("layout_pass", 0) + 1, "history": [f"validator {n}"],
+            "reviewed": reviewed}
+
+
+def content_review(ctx: dict, f: T.Filled) -> list:
+    """The validator agent's read of the whole resume against the posting (judgement code can't make)."""
+    proj = ctx["job_dir"] / "projects.json"
+    job = {"title": ctx["jd"].title, "responsibilities": ctx["jd"].responsibilities,
+           "basic": ctx["jd"].basic_qualifications, "preferred": ctx["jd"].preferred_qualifications,
+           "skills": ctx["jd"].technical_skills}
+    msgs = [SystemMessage(REVIEW_PROMPT),
+            HumanMessage(f"POSTING: {json.dumps(job)}\n\n" + _context(ctx, f, proj.read_text() if proj.exists() else None))]
+    try:
+        out = llm.structured_invoke(llm.writer(4000, timeout=300, model=ctx["models"]["router"]), Review, msgs,
+                                    log=ctx["log"])
+        ctx["log"](f"  content review: {len(out.findings)} finding(s)")
+        return out.findings
+    except Exception as e:
+        ctx["log"](f"  content review failed ({type(e).__name__})")
+        return []
 
 
 def after_layout(state: State) -> str:
@@ -365,7 +475,7 @@ def route(state: State) -> dict:
         ctx["log"](f"router failed ({type(e).__name__}); every agent gets the full list")
         tasks = {a: [f"Work in what fits your section: {missing}; advice: {ev['advice']}"] for a in AGENTS}
     ctx["log"]("routed: " + ", ".join(f"{a} {len(t)}" for a, t in tasks.items()))
-    return {"tasks": tasks, "layout_pass": 0}
+    return {"tasks": tasks, "layout_pass": 0, "reviewed": False}
 
 
 def build_graph():
