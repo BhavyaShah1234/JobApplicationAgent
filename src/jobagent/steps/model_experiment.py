@@ -147,3 +147,43 @@ def run(jobs: list[tuple[str | Path, str]], models: list[str] | None = None, wor
             log(f"{futs[fut]}: " + "; ".join(f"{r['job']} {r.get('average', '-')} {r.get('scores', '')} {r['status'][:40]}"
                                               for r in rs) + f" ({sum(r['minutes'] for r in rs):.0f} min) [{done}/{len(models)}]")
     return root
+
+
+def section_report(root: Path) -> str:
+    """Which model is best at which part of the resume, from a finished run (to pick the multi-agent team):
+    experience = fewest bullet issues / best keyword sub-scores, projects = paragraphs of the target length and no
+    one-line descriptions, skills = fewest half-empty lines, summary = HireFlow's experience fit. Markdown table."""
+    from jobagent import db
+    results = [r for r in json.loads((root / "results.json").read_text()) if r.get("status") == "ok"]
+    conn = db.connect()
+    per: dict[str, dict[str, list]] = {}
+    for r in results:
+        d = Path(r["dir"])
+        m = per.setdefault(r["model"], {k: [] for k in ("bullets", "aam_kw", "hf_kw", "hf_exp", "proj_ok",
+                                                        "proj_1line", "skills_short", "minutes", "average")})
+        lay = r.get("layout_issues") or []
+        m["bullets"].append(r.get("bullet_issues", 0) + r.get("uncovered", 0))
+        m["proj_1line"].append(sum(i.startswith("the project") for i in lay))
+        m["skills_short"].append(sum(i.startswith("Technical Skills") for i in lay))
+        m["minutes"].append(r.get("minutes", 0))
+        m["average"].append(r.get("average"))
+        for site, key, field_ in (("autoapplymax", "aam_kw", "keywords"), ("hireflow", "hf_kw", "keyword_match"),
+                                  ("hireflow", "hf_exp", "experience_fit")):
+            row = conn.execute("SELECT raw FROM ats_runs WHERE job_dir = ? AND site = ? AND score IS NOT NULL "
+                               "ORDER BY id DESC LIMIT 1", (str(d), site)).fetchone()
+            if row:
+                m[key].append(json.loads(row[0]).get("breakdown", {}).get(field_))
+        if (d / "projects.json").exists():
+            st = json.loads((d / "projects.json").read_text())
+            kept = st["ranked"][:st["kept"]]
+            m["proj_ok"].append(sum(300 <= len(e["paragraph"]) <= 420 for e in kept) / max(1, len(kept)))
+    rows = []
+    for model, m in per.items():
+        rows.append((model, *(_mean(m[k]) for k in ("average", "bullets", "aam_kw", "hf_kw", "hf_exp", "proj_ok",
+                                                    "proj_1line", "skills_short", "minutes")), len(m["average"])))
+    head = ("| Model | Average | Bullet issues (lower) | AutoApplyMax keywords | HireFlow keyword match | "
+            "HireFlow experience fit | Project paragraphs on target | One-line projects (lower) | "
+            "Short skills lines (lower) | Minutes | Jobs |\n|---|---|---|---|---|---|---|---|---|---|---|")
+    body = "\n".join("| " + " | ".join("-" if v is None else str(v) for v in row) + " |"
+                     for row in sorted(rows, key=lambda x: -(x[1] or 0)))
+    return head + "\n" + body
