@@ -57,8 +57,11 @@ def test_unsupported_method_falls_through_to_plain_json():
     assert llm.structured_invoke(m, Out, [HumanMessage("x")]).name == "plain"
 
 
-def test_timeout_is_not_retried():
-    m = FakeModel({"json_schema": [openai.APITimeoutError(request=None)], "function_calling": [], "json_mode": []})
-    with pytest.raises(llm.StructuredError, match="timeout"):
+def test_a_timeout_gets_one_other_method_then_gives_up():
+    t = lambda: openai.APITimeoutError(request=None)
+    m = FakeModel({"json_schema": [t()], "function_calling": [Out(name="ok")], "json_mode": []})
+    assert llm.structured_invoke(m, Out, [HumanMessage("x")]).name == "ok"
+    m = FakeModel({"json_schema": [t()], "function_calling": [t()], "json_mode": ['{"name": "x"}']})
+    with pytest.raises(llm.StructuredError, match="twice"):
         llm.structured_invoke(m, Out, [HumanMessage("x")])
-    assert m.calls == ["json_schema"]
+    assert m.calls == ["json_schema", "function_calling"]

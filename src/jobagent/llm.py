@@ -108,7 +108,7 @@ def structured_invoke(model: ChatOpenAI, schema: type[BaseModel], messages: list
 
     import openai
     from langchain_core.messages import SystemMessage
-    errors = []
+    errors, timeouts = [], 0
     for method in (first, *[m for m in _METHODS if m != first]):
         for _ in range(2):
             try:
@@ -122,7 +122,12 @@ def structured_invoke(model: ChatOpenAI, schema: type[BaseModel], messages: list
                     return out
                 errors.append(f"{method}: empty answer")
             except (openai.APITimeoutError, TimeoutError) as e:
-                raise StructuredError(f"timeout ({type(e).__name__})") from e
+                # A hang in one mode (e.g. a model looping in json_schema) gets one other method; two hangs = slow
+                timeouts += 1
+                errors.append(f"{method}: timeout")
+                if timeouts >= 2:
+                    raise StructuredError(f"timeout ({type(e).__name__}) twice") from e
+                break
             except openai.BadRequestError as e:  # the method itself is unsupported: next method
                 errors.append(f"{method}: {str(e)[:120]}")
                 break

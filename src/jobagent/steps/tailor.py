@@ -135,7 +135,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
     proj = None
     if P.projects_span(r.tex):
         t0 = time.monotonic()
-        writer = llm.writer(20000)
+        writer = llm.writer(8000, timeout=300)
         token = (open_vault().get("github") or {}).get("token")
         proj = P.choose(r, jd, writer, github.profile_user(r.tex), token, rediscover=rediscover, log=log)
         log(f"projects: {time.monotonic() - t0:.0f}s chose " + ", ".join(e.repo for e in proj.entries))
