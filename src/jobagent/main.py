@@ -346,16 +346,16 @@ def ats_loop_cmd(
 
 @app.command("model-experiment")
 def model_experiment_cmd(
-    job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with jd.json / jd.txt."),
-    company: str = typer.Argument(..., help="Company slug of the research profile."),
+    jobs: list[str] = typer.Argument(..., help="outputs/<company>/<job-id>:<company-slug>, one or more."),
     model: list[str] = typer.Option(None, "--model", help="Voyager models to try (default: every chat model)."),
     workers: int = typer.Option(4, help="Models written in parallel (scoring takes turns on the browser)."),
     target: float = typer.Option(90.0, help="ATS average each model's loop aims for."),
 ) -> None:
-    """Every Voyager chat model tailors the same job (5 rounds + ATS loop); ranks them by final ATS average."""
+    """Every Voyager chat model tailors every given job (5 rounds + ATS loop); ranks them by average ATS score."""
     from jobagent.steps.model_experiment import run
 
-    root = run(job_dir, company, list(model) if model else None, workers, target,
+    pairs = [tuple(j.rsplit(":", 1)) for j in jobs]
+    root = run(pairs, list(model) if model else None, workers, target,
                log=lambda m: console.print(m, highlight=False))
     console.print(f"results: {root / 'results.md'}", highlight=False)
 

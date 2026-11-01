@@ -149,3 +149,40 @@ scored on AutoApplyMax, Jobalytics and HireFlow (2 runs). About 9.5 hours wall t
   6-way load (kimi-k2-7-code, north-mini-code, qwen-agentworld-35b-a3b, qwen35-122b-a10b, qwen35-397b-a17b);
   minimax-m3 gave empty or unparseable structured output; ornith-1-5-35b-a3b ran out of tokens.
 
+
+## Text extraction, bullets and layout (2026-10-31)
+
+**OCR.** The top experiment resume (qwen3-coder-next) rendered to an image and read three ways:
+
+| Extractor | Where | Time / fit | Result |
+|---|---|---|---|
+| PDF text layer (`pdftotext`, what most checkers read) | container | instant | Clean: every font maps to Unicode, bullets are "•", header icons carry empty ActualText |
+| Tesseract 5.5 (300 dpi) | container | 3.3 s | Body text right; the tiny bullet reads as "¢", header icons as junk ("oJ /623-...", "%/bshah43@...") |
+| glm-ocr (Ollama, 150 dpi) | GTX 1650 4 GB | 62 s, 3.5 GB peak, 100% GPU | Near perfect (bullets "•", icons dropped); 200 dpi runs out of GPU memory |
+| deepseek-ocr (Ollama) | GTX 1650 4 GB | does not fit | CUDA out of memory even at 150 dpi (needs a further 1.6 GB buffer) |
+
+A good OCR reads the resume correctly, so extraction is not what holds scores down.
+
+**Bullets.** Nine variants on Jobalytics (tiny / normal / small bullet, hyphen, no final period, periods on skills
+lines, one-line bullets, no Projects) all scored 90 with exactly one "Bullets Consistency" issue, and so did a
+plain control resume with eight identical, capitalised, period-ended bullets: that issue is constant on the free
+checker. It is no longer passed to the model as advice. The tiny bullet stays (text layer "•"); a hyphen would read
+best for Tesseract-style OCR.
+
+**Layout validator** (`tools/layout.py`): checks the rendered page, not the LaTeX: one page; free height at the
+bottom (LaTeX logs `\pagegoal - \pagetotal` on every compile); bullets whose last line holds 1-3 words; uneven
+bullet gaps; Technical Skills lines under 60% full; one-line project descriptions. On the 37-model OpenAI run it
+flagged what a reader sees: one-line projects (devstral2-123b 3, gemma4-31b-it 4), 4 blank lines (olmo3-7b,
+gemma4-31b-it), skills lines filling 5-16% of the width. A vision model then reviews the page image with a
+checklist; qwen38-27b (about 50 s) found the same problems as the code checks, gemma4-31b-it was faster (2-9 s) but
+found fewer, qwen36-27b timed out. Both vision models also reported blank space on a page LaTeX logged as full, so
+only the findings code can't measure (odd characters, overlap, overflow, alignment) are fed back.
+
+**Projects.** The prompt had no example and allowed 2-3 sentences; the page fitter shortened every project to one
+sentence before dropping one. Now: a worked example, exactly 3 sentences (problem, system, wow factor), short
+paragraphs and duplicate projects sent back, and the fitter keeps full paragraphs (a short form only adds an extra
+project).
+
+**Word policy.** AutoApplyMax's missing words that aren't generic (finance, compliance, product, AWS) are worked
+into the Summary, bullets, skills or project descriptions, and kept only if the scores rise; words for whoever
+applies (applicants, candidate, people, you, employment) never are.
