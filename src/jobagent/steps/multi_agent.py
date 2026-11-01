@@ -528,7 +528,8 @@ def run(jobs: list[tuple[str | Path, str]], models: dict | None = None, sites=SI
     s = get_settings()
     models = {**DEFAULT_MODELS, **(models or {})}
     jobs = [(Path(d) if Path(d).is_absolute() else Path("/app") / d, slug) for d, slug in jobs]
-    root = s.outputs_dir / "experiments" / f"{datetime.now():%Y%m%d-%H%M}-multiagent"
+    variant = f"same-{models['experience']}" if len(set(models.values())) == 1 else "team"
+    root = s.outputs_dir / "experiments" / f"{datetime.now():%Y%m%d-%H%M}-multiagent-{variant}"
     root.mkdir(parents=True, exist_ok=True)
     (root / "models.json").write_text(json.dumps(models, indent=1))
     log(f"multi-agent experiment: {len(jobs)} jobs, models {models} -> {root}")
