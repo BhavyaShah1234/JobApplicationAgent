@@ -195,3 +195,25 @@ applies (applicants, candidate, people, you, employment) never are.
 bullets and skills unused, short or wrong project descriptions, too few or weaker projects, an empty skills line, an
 over-long page. Details and evidence: `outputs/experiments/20261031-1910-doordash-adobe-symbotic/CONCLUSION.md`.
 Next: the multi-agent builder with a validator agent that checks against that list and routes ATS advice.
+
+## Multi-agent builder (2026-11-01/02)
+
+`jobagent multi-agent <job_dir>:<slug> ... [--same-model M]` (`steps/multi_agent.py`, LangGraph): section agents
+(experience, projects, skills, summary), a validator (one page, bullet rules, JD coverage, space planner, rendered-page
+checks, Summary checks, content review, vision review) and an ATS router that sends each site's missing words and
+advice to the agent owning that section. A version with a hard issue (not one page, a one-line project, a blank band at
+the bottom, an empty skills line) can't be kept, whatever its score. Same 3 postings as the cancelled model run:
+
+| Variant | DoorDash | Adobe | Symbotic | Average | Hard issues |
+|---|---|---|---|---|---|
+| Single model devstral2-123b (cancelled run) | 75.7 | 78.2 | 84.5 | 79.5 | the user's review list |
+| Agents, same model (devstral2-123b) | 76.3 | 76.8 | 81.8 | 78.3 | none |
+| Agents, different models (devstral2-123b, gpt-oss-120b, glm-5-3-flash, llama4-scout-17b, glm-5-3) | 74.3 | 77.3 | 81.8 | 77.8 | none |
+
+No variant reached 90: AutoApplyMax reached 85-90 and Jobalytics 87-90, but HireFlow stayed at 53-70. The agents
+keep the page clean where the single model didn't, at about the same score. Lessons: the validator must also check
+the Summary (llama4-scout-17b as the summary agent copied the posting's requirement list and overflowed the page);
+a model that hangs in one structured-output mode is remembered so it costs one timeout, not one per call; the space
+planner (full projects before extra bullets) is what stopped the 2-short-projects pattern. Results:
+`outputs/experiments/20261101-1949-multiagent-same-devstral2-123b/`, `20261101-2339-multiagent-team/` (Adobe,
+Symbotic) and `20261102-0310-multiagent-team/` (DoorDash rerun).

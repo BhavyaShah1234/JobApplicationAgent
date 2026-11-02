@@ -42,8 +42,10 @@ AGENTS = ("experience", "projects", "skills", "summary")
 # 20261031-1910-doordash-adobe-symbotic/SECTIONS.md): experience = fewest bullet issues and best keyword sub-score,
 # projects = paragraphs on target length, skills = fewest half-empty lines (after devstral), summary = HireFlow
 # experience fit (fast), validator/router = glm-5-3. Override with --role agent=model or --same-model.
+# Summary moved from llama4-scout-17b to devstral2-123b (2026-11-02): as an agent llama4-scout copied the posting's
+# requirement list into a ~5-line Summary and ignored the length limit in every validator pass.
 DEFAULT_MODELS = {"experience": "devstral2-123b", "projects": "gpt-oss-120b", "skills": "glm-5-3-flash",
-                  "summary": "llama4-scout-17b", "router": "glm-5-3"}
+                  "summary": "devstral2-123b", "router": "glm-5-3"}
 SITES = tuple(x for x in ats_sites.DEFAULT_SITES if x not in ats_sites.BUDGET_SITES)
 LAYOUT_PASSES, ATS_ROUNDS, TARGET = 5, 5, 90.0
 BLANK_HARD_PT = 24  # more free height than this (about 2 lines) at the bottom disqualifies a version
@@ -411,8 +413,10 @@ def check_layout(state: State) -> dict:
                                  "another fits.")
         tasks["experience"].append("Room is needed for one more project: shorten the two longest bullets to one line.")
     if st:
+        known_titles = {t.lower() for t, _ in P.known_entries(r.tex).values()}  # the user's own titles stay as they are
         for i, e in enumerate(st["ranked"][:st["kept"]], 1):
-            if "/" not in e["title"] and e["title"].lower() == e["repo"].split("/")[-1].lower():
+            if "/" not in e["title"] and e["title"].lower() == e["repo"].split("/")[-1].lower() and \
+                    e["title"].lower() not in known_titles:
                 tasks["projects"].append(f"Project {i} is titled with its bare repo name '{e['title']}': give it a "
                                          "real project title and a full 3-sentence description.")
     if pages == 1 and not err and not state.get("reviewed"):
