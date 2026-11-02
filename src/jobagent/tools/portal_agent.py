@@ -38,9 +38,11 @@ SNAPSHOT_JS = r"""() => {
     out.push({tag: e.tagName.toLowerCase(), type: t, label: label(e).slice(0, 80),
               checked: e.checked === true, value_set: !!(e.value && t !== 'checkbox' && t !== 'radio' && t !== 'submit')});
   });
-  const text = [...document.querySelectorAll('h1, h2, h3, [role=alert], .error, [class*=error i], p')]
+  const text = [...document.querySelectorAll('h1, h2, h3, [role=alert], [aria-live], .error, [class*=error i], ' +
+      '[id*=error i], [data-testid*=error i], [class*=hint i], [class*=helper i], [id*=hint i], p')]
       .filter(vis).map(e => e.innerText.trim()).filter(Boolean).join(' | ').slice(0, 900);
-  return {items: out.slice(0, 80), text};
+  const pw = [...document.querySelectorAll('input[type=password]')].filter(vis).length;
+  return {items: out.slice(0, 80), text, pw};
 }"""
 
 ACTION_JS = r"""([i, kind, value]) => {
@@ -79,7 +81,8 @@ ONE action. Rules:
   this portal).
 - A field already filled (value_set) needs no refill unless it's wrong.
 - When the page asks for a verification code sent by email, answer code_sent (the code will be read from the inbox and
-  given to you as {CODE}); when it says a confirmation link was emailed, answer link_sent.
+  given to you as {CODE}; for a code split over one-character boxes, fill {CODE} into the FIRST box only);
+  when it says a confirmation link was emailed, answer link_sent.
 - Answer signed_in when the page clearly shows a signed-in candidate (account menu, the email, "sign out", candidate
   home/dashboard/profile) or the application form itself with no sign-in asked. Answer no_account_needed when the
   posting's application form needs no account at all (e.g. Lever, Greenhouse).
@@ -107,6 +110,8 @@ def snapshot(page: Page) -> tuple[str, list]:
                           f"{' (checked)' if x['checked'] else ''}{' (filled)' if x['value_set'] else ''}"
                           for i, x in enumerate(snap["items"]))
         parts.append(f"FRAME {n} {f.url[:100]}\nTEXT: {snap['text']}\nELEMENTS:\n{items}")
+        if snap.get("pw", 0) >= 2:
+            parts.append("NEW_PASSWORD_FORM")  # marker for the code: a set/confirm-password form is showing
     return "\n\n".join(parts), dict(kept)
 
 
@@ -127,7 +132,7 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
     history: list[str] = []
     state = {"state": "failed", "registered": False, "verified_mail": False, "steps": history}
     since = datetime.now(UTC)
-    code, challenges, repeats, last_action = "", 0, 0, None
+    code, challenges, repeats, last_action, pw_submitted = "", 0, 0, None, False
     state["alt_password_used"] = False
     for step in range(MAX_STEPS):
         page.wait_for_timeout(2500)
@@ -148,6 +153,15 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
                      "(http://localhost:6080) and press its submit/verify button, then answer 'done'.")
             history.append(f"the user solved a {c.kind} challenge")
         view, frames = snapshot(page)
+        if "NEW_PASSWORD_FORM" in view and pw_submitted and not state["alt_password_used"]:
+            # the same set-password form came back after {PASSWORD} was submitted: the site refused it
+            history.append("the site did NOT accept {PASSWORD} (the new-password form came back): fill "
+                           "{ALT_PASSWORD} into BOTH password fields and submit")
+            log(f"portal {host}: the shared password was refused; switching to this portal's own password")
+            pw_submitted = False
+        if "NEW_PASSWORD_FORM" in view and any("{PASSWORD}" in h for h in history[-3:]) and \
+                not state["alt_password_used"]:
+            pw_submitted = True
         msgs = [SystemMessage(PROMPT),
                 HumanMessage(f"PORTAL: {host}\nURL: {page.url[:150]}\n"
                              + (f"NOTES FROM EARLIER VISITS: {list(notes)[-6:]}\n" if notes else "")
@@ -208,11 +222,16 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
         if loc is None:
             history.append(f"{a.action} on F{a.frame}[{a.element}] failed: no such element")
             continue
-        value = a.value
+        value = re.sub(r"\{CODE\[(\d+)\]\}", lambda m: code[int(m.group(1))] if int(m.group(1)) < len(code) else "",
+                       a.value)  # one digit of a code split over several boxes (0-based)
         for k, v in {**values, "CODE": code}.items():
             value = value.replace("{" + k + "}", v or "")
         try:
-            if a.action == "fill":
+            if a.action == "fill" and code and value == code and loc.get_attribute("maxlength") == "1":
+                # a code split over one-character boxes: type it; such boxes move to the next box by themselves
+                loc.click()
+                page.keyboard.type(code, delay=120)
+            elif a.action == "fill":
                 loc.fill(value)
             elif a.action == "click":
                 loc.click(timeout=10000)
