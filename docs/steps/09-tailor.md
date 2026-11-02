@@ -11,12 +11,18 @@ locked parts unchanged, every required posting item covered by a new bullet, 0 f
 role, 2-3 projects, letters consistent with their resumes, no dashes as punctuation. Failures along the way were
 fixed in code; no output was edited by hand.
 
+**Since 2026-11-02 the default builder is the multi-agent team** (section agents + a validator, devstral2-123b for
+every agent; see `10-ats.md`, "Multi-agent builder"). The one-model pipeline described here is still there as
+`jobagent tailor --single`, and the multi-agent agents reuse its prompts, rules and checks. Everything this page
+lists as changed after the gate is in "Changed after the gate" at the end.
+
 ## Run it
 
 ```bash
 jobagent scrape <url>                                     # step 7 → outputs/<company>/<job-id>/
 jobagent research "<Company>"                             # step 8 → state/companies/<slug>.md
-jobagent tailor outputs/<company>/<job-id> <slug>         # resume + cover letter (.tex/.pdf), changes.md
+jobagent tailor outputs/<company>/<job-id> <slug>         # agent team + ATS loop, then cover letter (default)
+jobagent tailor outputs/<company>/<job-id> <slug> --single  # this page's one-model pipeline instead
 jobagent cover-letter outputs/<company>/<job-id> <slug>   # rewrite the letter after you edit resume.tex
 jobagent step tailor-check                                # the gate: 5 postings end to end
 python -m jobagent.tools.repo_cards [workers] [--force]    # (re)build the GitHub repo cards on their own
@@ -65,7 +71,7 @@ flowchart TD
     C["Top up any role with fewer than 2 bullets<br/>from your % backfill bullets"] --> D
     D["Code checks every bullet<br/>(rules table below)"] --> E
     E["Render the LaTeX<br/>locked parts copied verbatim"] --> F
-    F["Fit the page<br/>most projects first: full, then short, then drop one"] --> G
+    F["Fit the page (P.layouts)<br/>full paragraphs first; a 2-line short form<br/>only adds one extra project"] --> G
     G["Compile the PDF<br/>a squeezed page counts as too long"] --> H
     H{"One page and every<br/>REQUIRED item covered?"}
     H -- "no" --> FB["Send the problems back<br/>to the model"]
@@ -80,8 +86,10 @@ flowchart TD
 
 Notes on the diagrams:
 
-- **The model** is Voyager's `glm-5-3`, always with an enforced JSON schema. Every prompt ends with today's date in
-  America/Phoenix (`jobagent.clock`), so "present", "latest" and "recent" mean the same thing everywhere.
+- **The model** is `settings.model_writer` (`MODEL_WRITER`): Voyager's `devstral2-123b` since 2026-11-02, `glm-5-3`
+  before. Calls go through `llm.structured_invoke`, which falls back across json_schema, function calling and plain
+  JSON and remembers a mode a model hangs or loops in. Every prompt ends with today's date in America/Phoenix
+  (`jobagent.clock`), so "present", "latest" and "recent" mean the same thing everywhere.
 - **A failed model call** (timeout, token limit, connection error) costs one round, not the whole job.
 - **"Squeezed"**: TeX shrinks spacing to fit a nearly full page without warning; `compile_pdf` turns that warning on
   (`\vbadness=0`) and treats a squeezed page like a second page, so sections never get crushed.
@@ -106,9 +114,9 @@ Notes on the diagrams:
 | Resume part | What happens |
 |---|---|
 | Preamble, header, section names, role subheadings, Education | Copied byte-for-byte from your template |
-| Summary | Written fresh per job and company: the posting's title wording, the requirements you meet, one clause about the company; only facts (degree, years) come from the template |
+| Summary | Written fresh per job and company: the posting's title wording, the requirements you meet, one clause about the company; years of experience up to your declared total (`claims.years_experience` in `data/master_profile.yaml`, 5), degrees only as on the resume |
 | Experience | New bullets from the posting's technical duties and qualifications first; your `% backfill` bullets added where a role has room; 2-4 bullets per role |
-| Projects | 2-4 GitHub projects: heading (linked name, stack, month and year) + one unbulleted paragraph (problem, solution, system); your template's titles kept when a repo is already there |
+| Projects | 2-4 GitHub projects: heading (linked name, stack, month and year) + one unbulleted paragraph of 3 sentences, 300-420 characters (problem, system, wow factor); your template's titles kept when a repo is already there, and your template's projects are always candidates |
 | Technical Skills | Rebuilt from the posting's tech stack and qualifications; abstract terms carry concrete tools ("Machine Vision (OpenCV, YOLOv8)"), your own tools preferred |
 
 ## Rules enforced in code
@@ -126,6 +134,9 @@ Each rule is checked after the model writes; a broken rule goes back to the mode
 | A change by a percentage takes "by" ("cutting failed runs by 45%") | prompts + `to_latex` inserts it |
 | Locked parts unchanged; LaTeX compiles; one page without squeezing | `apply_fill`, `compile_pdf` |
 | Every estimated number is listed for you to confirm | `fill_checks` → `changes.md` |
+| A Technical Skills category whose terms were all deduplicated away is left out (no empty "Databases:" line) | `apply_fill` |
+| `<` `>` `×` `±` become LaTeX commands (the template's default font printed them as ¡ ¿ Ö) | `to_latex` |
+| The rendered page is checked (blank bottom, 1-3-word last lines, half-empty skills lines, one-line projects) | `tools/layout.py` |
 
 ## Projects and repo cards
 
@@ -165,3 +176,21 @@ Each rule is checked after the model writes; a broken rule goes back to the mode
 - In LaTeX source `\%` is an escaped percent, not a comment.
 - Icon fonts extract as junk characters for an ATS; the templates give the icons empty "actual text" (`accsupp`).
 - Voyager is slow with 3 jobs in parallel (rounds of 4-20 minutes, occasional time-outs and connection blips).
+
+## Changed after the gate
+
+All found while working on step 10 (details there); the gate results above are from before these changes.
+
+| Date | Change | Why |
+|---|---|---|
+| 2026-10-29 | Claims policy: years of experience up to the declared 5, any skill, the posting's title; never invented degrees, certifications, clearance, citizenship or work authorization, employers, titles, dates, or a location | User decision; `data/master_profile.yaml` `claims` |
+| 2026-10-29 | Writer model is a setting; `structured_invoke` falls back across output modes | Every Voyager chat model had to be testable |
+| 2026-10-31 | Projects prompt: a worked (made-up) example, exactly 3 sentences, problem + system + wow factor | One-line descriptions; no example in the prompt |
+| 2026-10-31 | Page fitter keeps full paragraphs; a short form only adds an extra project (`P.layouts`) | It shortened every project to one sentence before dropping one |
+| 2026-10-31 | Layout validator in the rounds; a vision model (qwen38-27b) reviews clean pages | Problems only visible on the rendered page |
+| 2026-10-31 | `<` `>` `×` `±` escaped | Printed as ¡ ¿ Ö in 3 of 30 experiment resumes |
+| 2026-10-31 | Project paragraphs 250-480 characters (too long: trimmed to whole sentences; too short: sent back); duplicate projects rejected | devstral wrote 700-character paragraphs; olmo3-7b listed SolBot twice |
+| 2026-11-01 | Template's own projects always candidates; empty skills lines dropped | SolBot lost to InternshipChatbot; an empty "Databases:" line |
+| 2026-11-02 | Short project form is 2 sentences, 180-230 characters (two full lines) | 130-200 characters printed as one line |
+| 2026-11-02 | `jobagent tailor` runs the multi-agent team (devstral2-123b); `--single` for this pipeline | User's choice after the multi-agent runs |
+

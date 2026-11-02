@@ -5,6 +5,14 @@ keywords and the checkers' own advice in where they truthfully fit, and rescores
 average of 90.
 Every score is recorded, and the cover letter is written afterwards from the final resume.
 
+> **Current state (2026-11-02).** The resume builder is the **multi-agent team with devstral2-123b for every agent**
+> (`jobagent tailor`; section agents + a validator + the ATS router, see "Multi-agent builder" below). It is scored
+> every round on AutoApplyMax, Jobalytics and HireFlow (HireFlow averaged over 2 runs). No setup has reached a 90
+> average on any posting: best builders score 77.8-79.5 over the 3 entry-level test postings; AutoApplyMax reaches
+> 85-90 and Jobalytics 87-90, HireFlow stays at 53-70. Comparing the same-model team with a hybrid team (different
+> model per agent) is deferred to plan step 10b. The sections below are in the order the work happened; later
+> sections supersede earlier ones where they disagree.
+
 **Gate passed 2026-10-29** (`jobagent step tailor-check` on the 5 step-7 postings, tailoring + ATS loop + cover
 letter): every resume and letter passes the step 9 criteria; every score is recorded in `ats_runs`; each scorer
 ran 24 times across the 5 jobs with 0 failures. No posting reached the 90 average, so the gap is reported:
@@ -31,8 +39,11 @@ city/state in the header (a locked template part, reported to the user).
 ## Run it
 
 ```bash
-jobagent tailor outputs/<company>/<job-id> <slug>               # step 9 + this loop + cover letter (default)
-jobagent ats-loop outputs/<company>/<job-id> <slug> [--target 90]   # the loop on an already-tailored resume
+jobagent tailor outputs/<company>/<job-id> <slug>               # agent team (+ ATS loop) + cover letter (default)
+jobagent tailor outputs/<company>/<job-id> <slug> --single      # one-model step 9 + the advice loop below
+jobagent multi-agent <job_dir>:<slug> ... [--same-model M] [--role agent=model] [--no-ats]   # experiment runs
+jobagent model-experiment <job_dir>:<slug> ... [--model M] [--workers 6]   # every Voyager model, same harness
+jobagent ats-loop outputs/<company>/<job-id> <slug> [--target 90]   # the advice loop on an already-tailored resume
 jobagent ats outputs/<company>/<job-id>                        # one round of online scores, recorded
 jobagent ats-record outputs/<company>/<job-id> skillsfirst 92  # a score you got by hand; joins the average
 ```
@@ -53,7 +64,7 @@ flowchart TD
     SC --> AVG{"Average at least 90<br/>or nothing left to add?"}
     AVG -- "yes" --> OUT
     AVG -- "no" --> F["Collect missing keywords and advice<br/>word-overlap lists filtered to real skills,<br/>eligibility items dropped, template advice to the user"]
-    F --> KP["Advice pass (glm-5-3)<br/>skills to the right category, phrases and soft skills<br/>into bullets or the Summary, repeated words varied"]
+    F --> KP["Advice pass (writer model)<br/>skills to the right category, phrases and soft skills<br/>into bullets or the Summary, repeated words varied"]
     KP --> CHK["Code checks<br/>no duplicates, posting's spelling,<br/>no filler category, no new bullet issues"]
     CHK --> FIT["Re-render and re-fit the page<br/>projects: full, then short, then one fewer"]
     FIT --> OK{"One page, nothing worse, and the<br/>per-round average rose (or held while more<br/>ATS Friendly phrases are now present)?"}
@@ -78,8 +89,14 @@ The agent's own local scorer was removed at the user's request: every score now 
 | ATS Friendly | yes (agent account via Google, 2026-10-29); 2 free scans a week, so start + final only, and a scan of the exact same PDF is reused | Job match: missing hard skills, soft skills and other keywords; job title, contact details, education notes |
 | SkillsFirst, Jobscan, SkillSyncer, AtsAlign, Novoresume, RemoWork, Lessie | no: their terms forbid bots or scraping | Run by hand; `jobagent ats-record` |
 | ApplyCove, Resmume | no: CAPTCHA on every scan | Run by hand; `jobagent ats-record` |
+| GotResumeBuilder, Resume Match Lab, CV Analyzer AI, Resume Worded, JobShinobi | no: no job-description form to automate, or unclear terms on automated use | Not used |
+| ResyMatch | not built: about 5 free credits in total, too few for a per-round loop | Not used |
+| Resume Optimizer Pro | in the user's first pick, never built (no reason recorded) | Not used |
 
-Scores the user records by hand count in the average for the exact resume version they scanned.
+About 21 sites were looked at; 5 are automated, and only AutoApplyMax, Jobalytics and HireFlow are free with no scan
+cap, allow automated use and show no CAPTCHA, so they are the ones every experiment uses. The user wanted the
+terms-forbidding sites automated anyway; that was declined because it breaks their terms of service. Scores the user
+records by hand count in the average for the exact resume version they scanned.
 
 ## Rules
 
@@ -89,10 +106,12 @@ Scores the user records by hand count in the average for the exact resume versio
 | A skill already in any category is not added again; the posting's spelling is used ("Rust", "AWS") | `tailor.apply_keyword_pass` |
 | No filler category ("Technical Skills", "Other"), at most 8 categories | `tailor.apply_keyword_pass` |
 | A change is kept only if the page stays one page, no bullet issue or uncovered item is added, and the average rises | `steps/ats.run` |
-| Work phrases from a site ("leading small projects independently") go into an existing bullet; eligibility (years, degree, authorisation) is never written in | `steps/ats.evaluate`, keyword prompt |
-| Projects make room first (short paragraphs, then one fewer, at least 2) | `projects.fit` |
+| Work phrases from a site ("leading small projects independently") go into an existing bullet. Since 2026-10-29 (claims policy) years and domain experience are written in up to the declared total (`claims.years_experience: 5`); credentials (certifications, clearance, PhD), citizenship/work authorization and location never are | `steps/ats.ELIGIBILITY`, keyword prompt |
+| Projects: full paragraphs first, a 2-line short form only adds an extra project, at least 2 (`P.layouts`); the multi-agent space planner also drops 4th bullets before shortening a project | `projects.fit`, `multi_agent.plan_space` |
+| Words for whoever applies (applicants, candidate, people, you, employment) are never written in; other non-generic AutoApplyMax words (finance, compliance, product, AWS) may go into the Summary, bullets, skills or project descriptions | `steps/ats.APPLICANT_WORDS` |
+| A change that makes the rendered page read worse (layout issues up) is rejected before scoring | `steps/ats.run`, `tools/layout.py` |
 | Every score of every round is recorded | `ats_runs` (`tools/ats_sites.record`) |
-| Advice about years, degrees or eligibility is dropped; advice about locked template parts (header links, city/state in the header, the posting's title) is logged for the user, never applied | `steps/ats.evaluate`, `breakdown["template"]` |
+| Advice about credentials, work authorization or location is dropped; header advice (hidden links) is logged for the user, never applied. City/state/country is never added to the header and no longer reported (the user doesn't want proximity screening). ATS Friendly's job-title and degree-field notes are advice (the Summary opens with the posting's title; the B.Tech in Computer Science is real) | `steps/ats.evaluate`, `ats_sites.atsfriendly` |
 | Soft skills are shown through the work in bullets or the Summary, never listed in Technical Skills | keyword prompt |
 | The Summary may be rewritten (80-500 characters, same facts) | `tailor.apply_keyword_pass` |
 | Every site gets the PDF as `First_Middle_Last_Resume.pdf` (Jobalytics flags `resume.pdf`) | `ats_sites.upload_name` |
@@ -217,3 +236,51 @@ a model that hangs in one structured-output mode is remembered so it costs one t
 planner (full projects before extra bullets) is what stopped the 2-short-projects pattern. Results:
 `outputs/experiments/20261101-1949-multiagent-same-devstral2-123b/`, `20261101-2339-multiagent-team/` (Adobe,
 Symbotic) and `20261102-0310-multiagent-team/` (DoorDash rerun).
+
+### The multi-agent runs, folder by folder
+
+All under `outputs/experiments/`, postings DoorDash Software Engineer I, Adobe 2027 University Graduate ML Engineer,
+Symbotic Robotics Planning Engineer (All Levels). "Team" = experience devstral2-123b, projects gpt-oss-120b, skills
+glm-5-3-flash, summary llama4-scout-17b, validator/router glm-5-3. "Same" = devstral2-123b for everything.
+
+| Folder | What it was | Outcome |
+|---|---|---|
+| `20261031-1746-multiagent` | First dry run (no ATS sites), first design, provisional team (qwen3-coder-next, laguna-s-2-1, qwen35-27b, glm-5-3), DoorDash | Worked end to end; qwen35-27b took 190-816 s per skills call; the experience agent rewrote every bullet on each pass (then: targeted edits, a skills size budget) |
+| `20261101-1539-multiagent` | Dry run of validator v1 (the user's review list), same model, DoorDash | Findings 22 -> 9; the content review never ran and findings weren't logged (both fixed) |
+| `20261101-1605-multiagent-team` | First full run with ATS, validator v1 | Stopped ~19:50: blank space and short projects (validator rules conflicted, no gate); Symbotic 82.7 |
+| `20261101-1605-multiagent-same-devstral2-123b` | Same-model counterpart | 82.0 (overstated: HireFlow failed, averaged over 2 sites) / 72.2 / 81.7; same problems |
+| `20261101-1931-multiagent-same-devstral2-123b` | Dry run of the space planner, DoorDash | Page filled, 3 projects; the short form printed as one line (then: 2-line short form) |
+| `20261101-1948-multiagent-team` | Team rerun with space planner + gate | Stopped ~23:40: every experience call hung 20 min in json_schema mode (then: hung modes remembered, no client retry) |
+| **`20261101-1949-multiagent-same-devstral2-123b`** | Same model with space planner + gate | **76.3 / 76.8 / 81.8 (78.3)**, one page, no hard issues; the user's chosen builder (Symbotic's projects still short, below) |
+| `20261101-2339-multiagent-team` | Team after the hang fix | Adobe 77.3, Symbotic 81.8; DoorDash never fit one page (its PDF there is a leftover draft) |
+| `20261102-0310-multiagent-team` | Team, DoorDash only, after the Summary checks | 74.3, one page |
+
+### Why some resumes still had short project descriptions
+
+`20261101-1949-...-same.../symbotic` and `20261101-2339-multiagent-team/adobe` kept 2 projects, both in their short
+form (166-216 characters), while DoorDash and Adobe in the same-model run kept 2 in full (384-454 characters). The
+cause was the Summary: 588 and 577 characters (4-5 lines) against 429 for the good Adobe resume; those runs predate
+the Summary checks, the space planner can't trim bullets below 3 per role (all roles were at 3) and can't shorten
+the Summary, so the fitter fell back to two short projects, and the gate only treated a one-line description as a
+hard issue (these printed as two lines). Fixed 2026-11-02: fewer than 2 projects in full is a hard issue, and when
+projects are squeezed the Summary agent is told to cut to 300 characters and the skills agent to one line per
+category. The team's llama4-scout-17b also ignored the Summary limit pass after pass; the team's Summary agent is now
+devstral2-123b. The bare-repo-title check exempts the template's own titles (it flagged "CloudForge", which the
+projects prompt says to keep).
+
+### Decision (2026-11-02)
+
+The user liked the same-model resumes (`20261101-1949-multiagent-same-devstral2-123b`, DoorDash and Adobe) and chose
+that setup as the builder: `jobagent tailor` = multi-agent team with devstral2-123b for every agent, then the cover
+letter; `settings.model_writer` defaults to devstral2-123b. Finishing the same-model vs hybrid comparison (quality
+and speed) is plan step 10b, after the core steps. Earlier single-model findings: the cancelled 37-model run's
+`CONCLUSION.md` and `SECTIONS.md` (per-section strengths used to pick the hybrid team).
+
+### What still blocks a 90 average
+
+HireFlow (53-70 on every builder and model): its keyword match counts the posting's exact phrases ("Experience with
+Terraform", "2 years experience in fraud or abuse analysis") and its fit scores are model judgements that vary by
+about ±4 on an unchanged resume. Jobalytics stops at 90 (a general score with a constant "Bullets Consistency" issue);
+AutoApplyMax reaches 85-95. Ideas not yet tried: making HireFlow's exact phrases mandatory insertions, or adding a
+hand-scanned checker (`jobagent ats-record`) so HireFlow weighs less in the average.
+
