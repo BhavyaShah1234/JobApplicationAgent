@@ -408,6 +408,9 @@ def check_layout(state: State) -> dict:
                     f"About {round(lay.free_pt / 11)} line(s) of the page are free: add bullets (up to {T.MAX_BULLETS} "
                     f"per role) to {[f'role_{e.role} ({len(e.bullets)} now)' for e in thin]}, preferring the candidate's "
                     f"own template bullets that fit the posting: {spare}. Keep every REQUIRED item covered.")
+    if st and st["kept"] - len(st["short"]) < min(2, len(st["ranked"])):
+        tasks["summary"].append("Projects are squeezed to short forms: shorten the Summary to at most 300 characters.")
+        tasks["skills"].append("Projects are squeezed to short forms: keep every category to one line.")
     if st and st["kept"] < min(3, len(st["ranked"])):
         tasks["projects"].append(f"Only {st['kept']} project(s) fit: make every paragraph 300-340 characters so "
                                  "another fits.")
@@ -469,6 +472,13 @@ def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
     pdf = ctx["job_dir"] / "resume.pdf"
     lay = layout.check(pdf)
     out = [i for i in lay.issues if i.startswith("the resume is") or i.startswith("the project")]
+    proj = ctx["job_dir"] / "projects.json"
+    if proj.exists():  # a short form only adds an extra project: at least 2 (or all available) must be in full
+        st = json.loads(proj.read_text())
+        full, want = st["kept"] - len(st["short"]), min(2, len(st["ranked"]))
+        if full < want:
+            out.append(f"only {full} project(s) in full (short forms: {st['short']}); shorten the Summary or skills "
+                       "to make room")
     if lay.pages == 1 and lay.free_pt is not None and lay.free_pt > BLANK_HARD_PT:
         out.append(f"{round(lay.free_pt / 11)} blank lines at the bottom")
     out += [f"empty skills line {sl.category}" for sl in f.skills if not sl.render()]
@@ -598,6 +608,10 @@ def route(state: State) -> dict:
         ctx["log"](f"router failed ({type(e).__name__}); every agent gets the full list")
         tasks = {a: [f"Work in what fits your section: {missing}; advice: {ev['advice']}"] for a in AGENTS}
     for h in best.get("hard", []):  # page problems the kept version still has
+        if h.startswith("only "):  # projects squeezed to short forms: the Summary and skills give the room back
+            tasks.setdefault("summary", []).append(f"Page problem: {h}. Shorten the Summary to at most 300 characters.")
+            tasks.setdefault("skills", []).append(f"Page problem: {h}. Keep every category to one line.")
+            continue
         agent = "projects" if "project" in h or "blank" in h else "skills" if "skills" in h else "experience"
         tasks.setdefault(agent, []).append(f"Page problem to fix: {h}")
     ctx["log"]("routed: " + ", ".join(f"{a} {len(t)}" for a, t in tasks.items()))

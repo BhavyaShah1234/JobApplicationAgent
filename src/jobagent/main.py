@@ -273,11 +273,27 @@ def tailor_cmd(
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> from `jobagent scrape`."),
     company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md)."),
     no_ats: bool = typer.Option(False, "--no-ats", help="Skip the step 10 ATS loop."),
+    single: bool = typer.Option(False, "--single", help="The older one-model writer instead of the agent team."),
 ) -> None:
-    """Tailor the resume to a scraped job (one page), run the ATS loop, then write the matching cover letter."""
-    from jobagent.steps.tailor import main
+    """Tailor the resume to a scraped job (one page) with the agent team and its validator (ATS loop included), then
+    write the matching cover letter."""
+    from pathlib import Path
 
-    main(job_dir, company, ats=not no_ats)
+    from jobagent.config import get_settings
+    from jobagent.steps.tailor import cover_letter, main
+
+    log = lambda m: console.print(m, highlight=False)
+    if single:
+        main(job_dir, company, ats=not no_ats)
+        return
+    from jobagent.steps import multi_agent as M
+
+    d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
+    model = get_settings().model_writer  # the same model for every agent (chosen 2026-11-02)
+    res = M.run_job(d, company, {k: model for k in M.DEFAULT_MODELS}, () if no_ats else M.SITES, log=log)
+    log(f"resume: average {res['average']} {res['scores']}, {res['pages']} page(s), hard issues {res['hard_issues']}")
+    cl = cover_letter(d, company, log=log)
+    log(f"cover letter: {cl['words']} words, {len(cl['issues'])} issue(s)")
 
 
 @app.command("cover-letter")

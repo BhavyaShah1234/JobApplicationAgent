@@ -30,8 +30,9 @@ class Settings(BaseSettings):
     model_vision: str = "qwen38-27b"
     model_fast: str = "qwen3-30b-a3b"
     model_embed: str = "qwen3-embedding-8b"
-    # Writes the resume, projects, ATS advice pass and cover letter (MODEL_WRITER; the model experiment sets it)
-    model_writer: str = "glm-5-3"
+    # Writes the resume, projects, ATS advice pass and cover letter (MODEL_WRITER; the model experiment sets it).
+    # devstral2-123b since 2026-11-02: the user picked its same-model multi-agent resumes (best and fastest).
+    model_writer: str = "devstral2-123b"
     fallback_planner: str = "qwen3:4b"
     fallback_vision: str = "qwen2.5vl:3b"
     fallback_fast: str = "qwen3:4b"
