@@ -67,6 +67,7 @@ def test_a_timeout_gets_one_other_method_then_gives_up():
     m = FakeModel({"json_schema": [t()], "function_calling": [Out(name="ok")], "json_mode": []})
     assert llm.structured_invoke(m, Out, [HumanMessage("x")]).name == "ok"
     m = FakeModel({"json_schema": [t()], "function_calling": [t()], "json_mode": ['{"name": "x"}']})
+    m.model_name = "slow"  # a different model: nothing remembered about it yet
     with pytest.raises(llm.StructuredError, match="twice"):
         llm.structured_invoke(m, Out, [HumanMessage("x")])
     assert m.calls == ["json_schema", "function_calling"]
