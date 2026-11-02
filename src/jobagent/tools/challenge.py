@@ -37,6 +37,12 @@ _WIDGET_SIGNS = [
 ]
 
 
+# Is the element really shown: no ancestor hidden or (nearly) transparent, and inside the viewport horizontally
+_SHOWN_JS = """e => { for (let n = e; n && n.nodeType === 1; n = n.parentElement) { const s = getComputedStyle(n);
+  if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) < 0.1) return false; }
+  const r = e.getBoundingClientRect(); return r.right > 0 && r.left < innerWidth && r.top < innerHeight; }"""
+
+
 @dataclass
 class Challenge:
     kind: str
@@ -55,13 +61,21 @@ def detect(page: Page) -> Challenge | None:
     for kind, pattern in _TEXT_SIGNS:
         if pattern.search(blob):
             return Challenge(kind, page.url, " ".join(text.split())[:200])
-    for kind, selector in _WIDGET_SIGNS:
-        widget = page.locator(selector)
-        for i in range(min(widget.count(), 3)):
-            box = widget.nth(i).bounding_box()
-            # Invisible reCAPTCHA v3 / badge-only frames are tiny or off-screen: not a challenge for the user.
-            if box and box["width"] >= 100 and box["height"] >= 60:
-                return Challenge(kind, page.url, " ".join(text.split())[:200])
+    # Widgets can sit inside a portal's own iframe (iCIMS puts hCaptcha there): look in every frame.
+    for frame in page.frames:
+        for kind, selector in _WIDGET_SIGNS:
+            try:
+                widget = frame.locator(selector)
+                for i in range(min(widget.count(), 3)):
+                    el = widget.nth(i)
+                    box = el.bounding_box()
+                    # Invisible reCAPTCHA v3 / badge-only frames are tiny or off-screen, and portals pre-load a
+                    # full-size challenge frame kept hidden (opacity 0) until it's needed: neither is a challenge.
+                    if box and box["width"] >= 100 and box["height"] >= 60 and el.is_visible() and \
+                            el.evaluate(_SHOWN_JS) and box["y"] + box["height"] > 0:
+                        return Challenge(kind, page.url, " ".join(text.split())[:200])
+            except Exception:
+                continue  # a frame that went away mid-check
     return None
 
 

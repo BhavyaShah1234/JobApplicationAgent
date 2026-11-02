@@ -77,10 +77,20 @@ def _wd_click(page: Page, automation_id: str) -> None:
     (layer.first if layer.count() else btn).click()
 
 
+def _shot(page: Page, what: str) -> None:
+    """A screenshot shortly after a submit, for the portal notes and debugging (state/logs/portal-<host>-<what>.png)."""
+    from jobagent.tools.browser import screenshot
+    page.wait_for_timeout(3000)
+    screenshot(page, f"/app/state/logs/portal-{urlparse(page.url).netloc}-{what}.png")
+
+
 def _wd_signed_in(page: Page) -> bool:
-    return page.locator('[data-automation-id="utilityButtonSignIn"]').filter(visible=True).count() == 0 and \
-        page.locator('[data-automation-id="accountSettingsButton"], [data-automation-id="utilityButtonAccount"], '
-                     'button[aria-label*="Account" i]').filter(visible=True).count() > 0
+    """No Sign In button, and the header shows the account (its email, Candidate Home or Settings)."""
+    if page.locator('[data-automation-id="utilityButtonSignIn"]').filter(visible=True).count():
+        return False
+    bar = page.locator('[data-automation-id="utilityButtonBar"], header').first
+    text = bar.inner_text() if bar.count() else ""
+    return bool(re.search(r"(?i)@|candidate home|settings|sign out", text))
 
 
 def _wd_open_email_form(page: Page) -> None:
@@ -94,8 +104,14 @@ def _wd_open_email_form(page: Page) -> None:
 
 
 def _wd_error(page: Page) -> str:
-    errs = page.locator('[data-automation-id="errorMessage"], [data-automation-id*="Alert" i], [role="alert"]')
-    return " ".join(e.inner_text().strip() for e in errs.filter(visible=True).all())[:300]
+    """Error text inside the sign-in / create-account dialog (the page's own live region says things like
+    'Search for Jobs page is loaded', which is not an error)."""
+    box = page.locator('[data-automation-id="signInContent"]')
+    if not box.count():
+        return ""
+    errs = box.first.locator('[data-automation-id="errorMessage"], [data-automation-id*="Alert" i], [role="alert"], '
+                             '[data-automation-id*="error" i]')
+    return " ".join(t for e in errs.filter(visible=True).all() if (t := e.inner_text().strip()))[:300]
 
 
 def _wd_sign_in(page: Page, email: str, password: str) -> str:
@@ -104,6 +120,7 @@ def _wd_sign_in(page: Page, email: str, password: str) -> str:
     page.locator('[data-automation-id="email"]').first.fill(email)
     page.locator('[data-automation-id="password"]').first.fill(password)
     _wd_click(page, "signInSubmitButton")
+    _shot(page, "signin")
     for _ in range(20):
         page.wait_for_timeout(1000)
         if _wd_signed_in(page):
@@ -125,15 +142,23 @@ def _wd_create(page: Page, email: str, password: str) -> str:
     if box.count() and box.first.is_visible() and not box.first.is_checked():
         box.first.check()
     _wd_click(page, "createAccountSubmitButton")
-    for _ in range(25):
-        page.wait_for_timeout(1000)
-        if _wd_signed_in(page):
-            return ""
-        text = page.locator("body").inner_text()
-        if re.search(r"(?i)verif(y|ication).{0,60}(email|account)|check your (e-?mail|inbox)", text):
-            return ""
-        if err := _wd_error(page):
-            return err
+    for attempt in range(2):
+        for _ in range(15):
+            page.wait_for_timeout(1000)
+            if _wd_signed_in(page):
+                return ""
+            dialog = page.locator('[data-automation-id="signInContent"]')
+            text = dialog.first.inner_text() if dialog.count() else ""
+            # accepted: Workday goes back to the sign-in choices (and mails a verification link) or says so
+            if not dialog.count() or re.search(r"(?i)sign in with email|verif(y|ication).{0,60}(email|account)|"
+                                               r"check your (e-?mail|inbox)", text):
+                _shot(page, "create")
+                return ""
+            if err := _wd_error(page):
+                return err
+        if attempt == 0:  # the click didn't take: submit the form with Enter
+            page.locator('[data-automation-id="verifyPassword"]').first.press("Enter")
+    _shot(page, "create")
     return "no result after creating the account"
 
 
@@ -142,10 +167,10 @@ def _wd_create(page: Page, email: str, password: str) -> str:
 ADAPTERS = {"workday": (_wd_site, _wd_sign_in, _wd_create, _wd_signed_in)}
 
 
-def _confirm_email(page: Page, inbox, host: str, since: datetime, log, purpose: str) -> bool:
+def _confirm_email(page: Page, inbox, host: str, since: datetime, log, purpose: str, timeout_s: float = 300) -> bool:
     """Use the portal's verification mail (a link opened in this browser, or a code typed into the page)."""
     try:
-        mail, v = inbox.wait_for_verification(f"https://{host}", since, kind="portal", timeout_s=300)
+        mail, v = inbox.wait_for_verification(f"https://{host}", since, kind="portal", timeout_s=timeout_s)
     except TimeoutError:
         log(f"portal {host}: no verification mail within 5 min")
         return False
@@ -165,11 +190,71 @@ def _confirm_email(page: Page, inbox, host: str, since: datetime, log, purpose: 
     return True
 
 
-def ensure_account(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print) -> PortalLogin:
-    """Signed in to the portal of `url` with the agent's account (created the first time)."""
+def portal_password(vault: Vault) -> str:
+    """The password for every portal account: the vault's `portal_default` entry (the user's choice, so the agent
+    always signs in on the first try), else a generated one."""
+    return (vault.get("portal_default") or {}).get("password") or new_password()
+
+
+NO_ACCOUNT = re.compile(r"(?i)no account|not (registered|found)|doesn.?t exist|does not exist|create an account|"
+                        r"invalid (email|user)|wrong email|incorrect (email|user)|couldn.?t find")
+EXISTS = re.compile(r"(?i)already (exists|in use|registered|have an account)|account with this email")
+
+
+def candidate_values(email: str, password: str) -> dict:
+    """What the general portal agent may type: the agent's email, the shared password, the user's name and phone."""
+    import yaml
+
+    from jobagent.config import get_settings
+    info = yaml.safe_load((get_settings().data_dir / "personal_info.yaml").read_text()) or {}
+    name, contact = info.get("name") or {}, info.get("contact") or info
+    return {"EMAIL": email, "PASSWORD": password, "FIRST_NAME": name.get("preferred_first") or name.get("first", ""),
+            "LAST_NAME": name.get("last", ""), "PHONE": str(contact.get("phone", ""))}
+
+
+def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print,
+                      fresh: bool = False) -> PortalLogin:
+    """Any portal without an adapter: the general agent (tools/portal_agent.py) signs in or registers."""
+    from jobagent.tools import portal_agent
+    host = urlparse(url).netloc.lower()
+    key = f"portal:{host}"
+    res = PortalLogin(host, platform_of(url))
+    mem = PortalMemory(portal_key(url))
+    db.record_agent_domain(inbox.conn, f"https://{host}", "portal")
+    creds = vault.get(key) or {}
+    password = creds.get("password") or portal_password(vault)
+    if not creds:
+        vault.set(key, email=email, password=password, platform=res.platform,
+                  attempted=datetime.now(UTC).isoformat(), verified=False)  # saved before anything is submitted
+    if fresh:
+        page.context.clear_cookies(domain=host)
+    challenge.goto(page, url, hitl, log=log)
+    out = portal_agent.run(page, url, candidate_values(email, password), inbox, hitl, host, log=log,
+                           notes=mem.data.get("notes", []))
+    res.created, res.verified_mail = out["registered"], out["verified_mail"]
+    res.signed_in = out["state"] in ("signed_in", "no_account_needed")
+    res.notes = out["steps"][-8:]
+    if out["state"] == "no_account_needed":
+        res.notes.append("no account needed: the posting's form takes applications directly")
+    old = vault.get(key) or {}
+    vault.set(key, **{**old, "account": old.get("account") or (res.signed_in and out["state"] == "signed_in"),
+                      "verified": res.signed_in, "no_account": out["state"] == "no_account_needed",
+                      **({"created": datetime.now(UTC).isoformat()} if res.created else {})})
+    mem.note(f"{out['state']}: " + " > ".join(s[:40] for s in out["steps"][-6:]))
+    mem.record_visit(url, res.signed_in, platform=res.platform)
+    log(f"portal {host}: state={out['state']} signed in={res.signed_in} registered={res.created} "
+        f"verified_mail={res.verified_mail}")
+    return res
+
+
+def ensure_account(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print,
+                   fresh: bool = False) -> PortalLogin:
+    """Signed in to the portal of `url` with the agent's account: sign in first (stored or shared password); register
+    only when the portal has no account for the email; never a password reset. Workday has its own adapter; every
+    other portal goes to the general agent."""
     platform = platform_of(url)
     if platform not in ADAPTERS:
-        raise PortalError(f"no adapter for {urlparse(url).netloc} ({platform})")
+        return ensure_with_agent(page, url, vault, inbox, hitl, email, log=log, fresh=fresh)
     site, sign_in, create, signed_in = ADAPTERS[platform]
     host = urlparse(url).netloc.lower()
     key = f"portal:{host}"
@@ -183,51 +268,68 @@ def ensure_account(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email:
         if (c := challenge.detect(page)) is not None:
             challenge.wait_for_user(page, c, hitl, log=log)
 
+    def save(password: str, **extra):
+        old = vault.get(key) or {}
+        vault.set(key, **{**old, "email": email, "password": password, "platform": platform, **extra})
+
+    if fresh:  # test a real sign-in: forget this portal's session first
+        page.context.clear_cookies(domain=host)
     visit()
     if signed_in(page):
         res.signed_in = True
         res.notes.append("session still signed in")
-    creds = vault.get(key)
-    if not res.signed_in and creds:
-        err = sign_in(page, creds["email"], creds["password"])
+    creds = vault.get(key) or {}
+    password = creds.get("password") or portal_password(vault)
+    err = ""
+    if not res.signed_in:  # 1. sign in (an account made for another posting at this employer is reused)
+        err = sign_in(page, email, password)
         if not err:
             res.signed_in = True
-        elif re.search(r"(?i)verif", err) and not creds.get("verified"):
-            since = datetime.fromisoformat(creds["created"])
-            if _confirm_email(page, inbox, host, since, log, "portal_verify"):
+            save(password, verified=True, account=True)
+        elif creds.get("attempted") or creds.get("account"):
+            # registered earlier but the email isn't confirmed yet (Workday then says "wrong email or password or
+            # your account might be locked"): use that verification mail before ever registering again
+            since = datetime.fromisoformat(creds.get("created") or creds["attempted"])
+            if _confirm_email(page, inbox, host, since, log, "portal_verify", timeout_s=90):
                 res.verified_mail = True
-                vault.set(key, **{**creds, "verified": True})
-                visit()
-                res.signed_in = not sign_in(page, creds["email"], creds["password"])
-        else:
-            res.notes.append(f"stored credentials failed: {err}")
-            log(f"portal {host}: stored credentials failed ({err}); a reset is needed")
-            raise PortalError(f"sign-in failed with stored credentials: {err}")
-    if not res.signed_in and not creds:
-        password = new_password()
+                for _ in range(2):  # Workday can take a moment after activation
+                    visit()
+                    if signed_in(page) or not sign_in(page, email, password):
+                        res.signed_in = True
+                        break
+                    page.wait_for_timeout(10000)
+            # a used verification mail proves the account exists: never register again
+            save(password, verified=res.signed_in, account=res.verified_mail or res.signed_in,
+                 created=since.isoformat())
+            creds = vault.get(key) or {}
+    if not res.signed_in and not creds.get("account"):  # 2. register (only if no account is known to exist)
         since = datetime.now(UTC)
-        vault.set(key, email=email, password=password, platform=platform, created=since.isoformat(), verified=False)
-        log(f"portal {host}: creating an account for {email}")
-        err = create(page, email, password)
-        if err:
-            if re.search(r"(?i)already (exists|in use|registered)", err):
-                vault.set(key, email=email, password="", platform=platform, created=since.isoformat(), verified=False,
-                          note="account existed before; password unknown (reset needed)")
-            raise PortalError(f"account creation failed: {err}")
+        save(password, attempted=since.isoformat(), verified=False)  # saved before submitting
+        log(f"portal {host}: no account yet (sign-in said: {err or 'nothing'}); registering {email}")
+        visit()
+        cerr = create(page, email, password)
+        if cerr and EXISTS.search(cerr):
+            res.notes.append("an account already existed with another password")
+            raise PortalError(f"{host}: an account for {email} exists with a different password; reset it once "
+                              "(or set it to the shared password) and run again")
+        if cerr:
+            raise PortalError(f"account creation failed: {cerr}")
         res.created = True
+        save(password, account=True, created=since.isoformat())
         if not signed_in(page):
             if _confirm_email(page, inbox, host, since, log, "portal_verify"):
                 res.verified_mail = True
             visit()
-            err = sign_in(page, email, password)
-            res.signed_in = not err
-            if err:
-                res.notes.append(f"sign-in after creation: {err}")
+            serr = sign_in(page, email, password)
+            res.signed_in = not serr
+            if serr:
+                res.notes.append(f"sign-in after creation: {serr}")
         else:
             res.signed_in = True
-        vault.set(key, email=email, password=password, platform=platform, created=since.isoformat(),
-                  verified=res.verified_mail or res.signed_in)
-    mem.note(f"{platform} account for {email}: signed in {res.signed_in}")
+        save(password, verified=res.signed_in)
+    if not res.signed_in:
+        raise PortalError(f"{host}: could not sign in ({err or 'unknown'})")
+    mem.note(f"{platform} account for {email}: signed in")
     mem.record_visit(url, res.signed_in, platform=platform)
     log(f"portal {host}: signed in={res.signed_in} created={res.created} verified_mail={res.verified_mail}")
     return res

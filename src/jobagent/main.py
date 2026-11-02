@@ -395,7 +395,10 @@ def multi_agent_cmd(
 
 
 @app.command("portal-login")
-def portal_login_cmd(url: str = typer.Argument(..., help="A posting or career-site URL on the portal.")) -> None:
+def portal_login_cmd(
+    url: str = typer.Argument(..., help="A posting or career-site URL on the portal."),
+    fresh: bool = typer.Option(False, "--fresh", help="Forget the portal's session first (tests a real sign-in)."),
+) -> None:
     """Step 11: sign in to the posting's job portal with the agent's email (the account is created the first time)."""
     from jobagent.tools.browser import persistent_context
     from jobagent.tools.hitl import open_hitl
@@ -407,7 +410,7 @@ def portal_login_cmd(url: str = typer.Argument(..., help="A posting or career-si
     vault = open_vault()
     email = (vault.get("gmail") or {})["email"]
     with open_inbox() as inbox, persistent_context() as ctx:
-        res = ensure_account(ctx.pages[0], url, vault, inbox, open_hitl(log), email, log=log)
+        res = ensure_account(ctx.pages[0], url, vault, inbox, open_hitl(log), email, log=log, fresh=fresh)
     console.print(res, highlight=False)
 
 
