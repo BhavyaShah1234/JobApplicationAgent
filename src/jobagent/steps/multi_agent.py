@@ -45,7 +45,8 @@ AGENTS = ("experience", "projects", "skills", "summary")
 DEFAULT_MODELS = {"experience": "devstral2-123b", "projects": "gpt-oss-120b", "skills": "glm-5-3-flash",
                   "summary": "llama4-scout-17b", "router": "glm-5-3"}
 SITES = tuple(x for x in ats_sites.DEFAULT_SITES if x not in ats_sites.BUDGET_SITES)
-LAYOUT_PASSES, ATS_ROUNDS, TARGET = 3, 5, 90.0
+LAYOUT_PASSES, ATS_ROUNDS, TARGET = 5, 5, 90.0
+BLANK_HARD_PT = 24  # more free height than this (about 2 lines) at the bottom disqualifies a version
 # Tasks that need the whole Experience section rewritten (coverage, length); anything else is a targeted bullet edit
 FULL_REWRITE = __import__("re").compile(r"(?i)not covered|pages?; it must be one|overflows|failed to compile|"
                                         r"add bullets")
@@ -152,6 +153,7 @@ class State(TypedDict, total=False):
     layout_pass: int
     layout_issues: list
     reviewed: bool
+    hard: list
     history: Annotated[list, operator.add]
 
 
@@ -247,7 +249,11 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
                     ctx["log"](f"  projects: swapped in {sw.entry.repo}")
             new = json.dumps(st, indent=1)
         if new:
-            proj.write_text(new)
+            st = json.loads(new)
+            for e in st["ranked"]:  # an over-long rewrite takes 5 lines: keep whole sentences up to the limit
+                if len(e["paragraph"]) > P.MAX_PARAGRAPH:
+                    e["paragraph"] = P._sentences(e["paragraph"], P.MAX_PARAGRAPH - 10)
+            proj.write_text(json.dumps(st, indent=1))
     return g
 
 
@@ -288,18 +294,70 @@ def write_initial(state: State) -> dict:
     return {"f": f, "tasks": {}, "last": "", "ats_round": 0, "layout_pass": 0, "history": ["draft"]}
 
 
-def render(state: State) -> tuple[str, list[str], int, str]:
-    ctx = state["ctx"]
-    return A.render_keeping_projects(ctx["r"], state["f"], ctx["r"].tex, ctx["job_dir"])
+def _fit(ctx: dict, f: T.Filled) -> tuple[str, list[str], int, str, int, int]:
+    """Render f with the best projects layout that fits (all projects in full first; see P.layouts).
+    Returns (tex, problems, pages, err, kept, n_short)."""
+    tex, problems = T.apply_fill(ctx["r"], f)
+    job_dir = ctx["job_dir"]
+    fitted = P.fit(tex, job_dir, lambda t: T.compile_pdf(t, job_dir))
+    if not fitted:
+        return (tex, problems, *T.compile_pdf(tex, job_dir), 0, 0)
+    tex, pages, err, kept, short = fitted
+    if pages == 1 and not err:
+        P.update_state(job_dir, kept, short)
+    return tex, problems, pages, err, kept, len(short)
+
+
+def _removable(ctx: dict, f: T.Filled) -> tuple[int, int] | None:
+    """(role, bullet index) of the bullet to drop to make room: the last bullet of the role with the most bullets
+    (>= 4, then >= 3... never below 3), whose removal leaves every REQUIRED JD item covered."""
+    base = set(T.fill_checks(ctx["r"], ctx["jd"], f)[0])
+    for e in sorted(f.roles, key=lambda e: -len(e.bullets)):
+        if len(e.bullets) <= 3:
+            break
+        for j in range(len(e.bullets) - 1, -1, -1):
+            g = f.model_copy(deep=True)
+            next(x for x in g.roles if x.role == e.role).bullets.pop(j)
+            if set(T.fill_checks(ctx["r"], ctx["jd"], g)[0]) <= base:
+                return e.role, j
+    return None
+
+
+def plan_space(ctx: dict, f: T.Filled) -> tuple[T.Filled, str, list[str], int, str]:
+    """Space planner: full project paragraphs come before extra bullets. Fit the projects; while fewer than
+    min(3, available) projects fit in full, drop a 4th bullet (one whose duty another bullet covers) and refit.
+    Returns the planned resume and its compiled render."""
+    st = json.loads((ctx["job_dir"] / "projects.json").read_text())
+    want = min(3, len(st["ranked"]))
+    best = None
+    for _ in range(5):
+        tex, problems, pages, err, kept, n_short = _fit(ctx, f)
+        full = kept - n_short
+        key = (pages == 1 and not err, min(full, want), sum(len(e.bullets) for e in f.roles))
+        if best is None or key > best[0]:
+            best = (key, f, tex, problems, pages, err)
+        if (pages == 1 and not err and full >= want) or not (cut := _removable(ctx, f)):
+            break
+        f = f.model_copy(deep=True)
+        role, j = cut
+        dropped = next(x for x in f.roles if x.role == role).bullets.pop(j)
+        ctx["log"](f"  space planner: dropped role_{role} bullet '{dropped.text[:50]}...' to fit full projects")
+    f = best[1]
+    tex, problems, pages, err, _, _ = _fit(ctx, f)  # the chosen plan on disk (resume.pdf, projects.json)
+    return f, tex, problems, pages, err
+
+
+def render(state: State) -> tuple[T.Filled, str, list[str], int, str]:
+    return plan_space(state["ctx"], state["f"])
 
 
 def check_layout(state: State) -> dict:
     """Validator: checks the resume against the known failure list (one page, bullet rules, JD coverage, page filled,
     template bullets and skills used where they fit, enough full projects, no empty skills line), then the rendered
     page (tools/layout.py), then a content review; every finding goes to the agent whose section it is about."""
-    ctx, f = state["ctx"], state["f"]
+    ctx = state["ctx"]
     r, jd, job_dir, log = ctx["r"], ctx["jd"], ctx["job_dir"], ctx["log"]
-    tex, problems, pages, err = render(state)
+    f, tex, problems, pages, err = render(state)
     tasks: dict[str, list[str]] = {a: [] for a in AGENTS}
     if err:
         tasks["experience"].append(f"The LaTeX failed to compile ({err}); write plain text only.")
@@ -326,9 +384,17 @@ def check_layout(state: State) -> dict:
         used = " ".join(x for sl in f.skills for x in sl.render()).lower()
         pool = [t.strip() for _, items in r.skills for t in T.to_plain(items).split(",")
                 if t.strip() and t.strip().lower() not in used][:15]
-        if lay.short_skills and pool:
-            tasks["skills"].append(f"Fill the short lines with relevant skills from TEMPLATE SKILLS not yet listed: {pool}")
-        if lay.free_pt and lay.free_pt > 12:  # at least a line free: use it
+        if lay.short_skills:
+            room = {k: f"about {round((1 - v) * 115)} more characters" for k, v in lay.skill_fill.items() if v < 0.85}
+            tasks["skills"].append(f"Each category's last line should be full. Room left: {room}. Fill it with relevant "
+                                   f"skills{' (prefer TEMPLATE SKILLS not yet listed: ' + str(pool) + ')' if pool else ''}"
+                                   "; never wrap a category onto a new line for one or two words.")
+        full_projects = (st["kept"] - len(st["short"])) if st else 0
+        if lay.free_pt and lay.free_pt > 12 and st and st["short"]:
+            tasks["projects"].append(f"About {round(lay.free_pt / 11)} line(s) are free but projects are in their short "
+                                     "form: make every paragraph a full 3 sentences of 300-380 characters.")
+        if lay.free_pt and lay.free_pt > 12 and full_projects >= min(3, len(st["ranked"]) if st else 0):
+            # space beyond full projects: more bullets (the space planner trims them again if projects need room)
             thin = [e for e in f.roles if len(e.bullets) < T.MAX_BULLETS]
             if thin:
                 spare = {e.role: [T.to_plain(b) for j, b in enumerate(r.roles[e.role].bullets)
@@ -363,9 +429,21 @@ def check_layout(state: State) -> dict:
     log(f"validator pass {state.get('layout_pass', 0)}: {pages} page(s), {n} finding(s) "
         f"{ {a: len(t) for a, t in tasks.items()} }" +
         "".join(f"\n    [{a}] {t[:200]}" for a, ts in tasks.items() for t in ts))
-    return {"tasks": tasks, "layout_issues": [x for t in tasks.values() for x in t],
+    return {"f": f, "tasks": tasks, "layout_issues": [x for t in tasks.values() for x in t], "hard": hard_issues(ctx, f),
             "layout_pass": state.get("layout_pass", 0) + 1, "history": [f"validator {n}"],
             "reviewed": reviewed}
+
+
+def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
+    """What disqualifies a version whatever its ATS score (the user's review list): not one page, a one-line project
+    description, a blank band at the bottom, an empty skills line. Reads the resume.pdf on disk."""
+    pdf = ctx["job_dir"] / "resume.pdf"
+    lay = layout.check(pdf)
+    out = [i for i in lay.issues if i.startswith("the resume is") or i.startswith("the project")]
+    if lay.pages == 1 and lay.free_pt is not None and lay.free_pt > BLANK_HARD_PT:
+        out.append(f"{round(lay.free_pt / 11)} blank lines at the bottom")
+    out += [f"empty skills line {sl.category}" for sl in f.skills if not sl.render()]
+    return out
 
 
 def content_review(ctx: dict, f: T.Filled) -> list:
@@ -387,6 +465,7 @@ def content_review(ctx: dict, f: T.Filled) -> list:
 
 
 def after_layout(state: State) -> str:
+    """Keep fixing while the validator has findings (up to LAYOUT_PASSES); then score."""
     if state["tasks"] and state["layout_pass"] <= LAYOUT_PASSES:
         return "fix"
     return "score"
@@ -403,9 +482,9 @@ def edit_sections(state: State) -> dict:
 
 def score(state: State) -> dict:
     """ATS validator: score the current page (one page only); keep it if better than the best so far, else roll back."""
-    ctx, f = state["ctx"], state["f"]
+    ctx = state["ctx"]
     job_dir, jd, log = ctx["job_dir"], ctx["jd"], ctx["log"]
-    tex, problems, pages, err = render(state)
+    f, tex, problems, pages, err = render(state)
     rnd = state.get("ats_round", 0)
     best = state.get("best")
     if pages != 1 or err:
@@ -413,14 +492,29 @@ def score(state: State) -> dict:
         return _rollback(state, "UNDONE: the edit broke the one-page layout; keep lines short") if best else \
             {"ats_round": rnd + 1, "last": "the page overflowed: shorten bullets"}
     ev = A.evaluate(job_dir, jd, ctx["jd_text"], rnd, ctx["sites"], log)
+    missing_sites = [x for x in ctx["sites"] if x not in ev["scores"]]
+    if missing_sites:  # a checker failed: once more, else the round doesn't count (no average over fewer sites)
+        again = A.evaluate(job_dir, jd, ctx["jd_text"], rnd, tuple(missing_sites), log)
+        ev["scores"].update(again["scores"]); ev["missing"].update(again["missing"]); ev["advice"] += again["advice"]
+        missing_sites = [x for x in ctx["sites"] if x not in ev["scores"]]
+    if missing_sites:
+        log(f"ats round {rnd}: {missing_sites} failed twice; this round doesn't count")
+        return _rollback(state, "a checker failed; the same version will be rescored") if best else \
+            {"ats_round": rnd + 1, "last": ""}
     avg = A.average(ev["scores"])
     n_layout = len(layout.check(job_dir / "resume.pdf").issues)
-    log(f"ats round {rnd}: average {avg} {ev['scores']}, layout issues {n_layout}")
-    if best and not (avg > best["avg"] or (avg >= best["avg"] - A.NOISE and n_layout < best["layout"])):
-        return _rollback(state, f"UNDONE: the last edits moved the scores to {ev['scores']} (average {avg}, best "
-                                f"{best['avg']}); try different wording or other items", ev)
+    hard = hard_issues(ctx, f)
+    log(f"ats round {rnd}: average {avg} {ev['scores']}, layout issues {n_layout}, hard issues {hard}")
+    if best:
+        better = (len(hard) < len(best["hard"]) or
+                  (len(hard) == len(best["hard"]) and
+                   (avg > best["avg"] or (avg >= best["avg"] - A.NOISE and n_layout < best["layout"]))))
+        if not better:
+            return _rollback(state, f"UNDONE: the last edits moved the scores to {ev['scores']} (average {avg}, best "
+                                    f"{best['avg']}) with page problems {hard}; try different wording or other items",
+                             ev)
     proj = job_dir / "projects.json"
-    new_best = {"avg": avg, "scores": ev["scores"], "f": f.model_copy(deep=True), "layout": n_layout,
+    new_best = {"avg": avg, "scores": ev["scores"], "f": f.model_copy(deep=True), "layout": n_layout, "hard": hard,
                 "tex": (job_dir / "resume.tex").read_text(), "pdf": (job_dir / "resume.pdf").read_bytes(),
                 "projects": proj.read_text() if proj.exists() else None, "ev": ev}
     last = f"KEPT: the scores are {ev['scores']} (average {avg})" if best else ""
@@ -446,7 +540,7 @@ def after_score(state: State) -> str:
     best = state.get("best")
     if not state["ctx"]["sites"] and best:  # dry run (no ATS sites): the drafted, layout-checked page is the result
         return "done"
-    if best and best["avg"] >= TARGET or state.get("ats_round", 0) > ATS_ROUNDS:
+    if best and best["avg"] >= TARGET and not best["hard"] or state.get("ats_round", 0) > ATS_ROUNDS:
         return "done"
     return "route"
 
@@ -474,6 +568,9 @@ def route(state: State) -> dict:
     except Exception as e:
         ctx["log"](f"router failed ({type(e).__name__}); every agent gets the full list")
         tasks = {a: [f"Work in what fits your section: {missing}; advice: {ev['advice']}"] for a in AGENTS}
+    for h in best.get("hard", []):  # page problems the kept version still has
+        agent = "projects" if "project" in h or "blank" in h else "skills" if "skills" in h else "experience"
+        tasks.setdefault(agent, []).append(f"Page problem to fix: {h}")
     ctx["log"]("routed: " + ", ".join(f"{a} {len(t)}" for a, t in tasks.items()))
     return {"tasks": tasks, "layout_pass": 0, "reviewed": False}
 
@@ -511,10 +608,12 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> d
         (job_dir / "resume.pdf").write_bytes(best["pdf"])
         (job_dir / "filled.json").write_text(best["f"].model_dump_json(indent=1))
     lay = layout.check(job_dir / "resume.pdf").issues if best else []
+    hard = best.get("hard", []) if best else []
     hist = [h for h in final.get("history", []) if h.startswith("ats ")]
     return {"average": best["avg"] if best else None, "scores": best["scores"] if best else {},
             "history": [float(h.split()[1]) for h in hist], "reached": bool(best and best["avg"] >= TARGET),
             "pages": layout.page_count(job_dir / "resume.pdf") if best else None, "layout_issues": lay,
+            "hard_issues": hard,
             "steps": final.get("history", [])}
 
 
@@ -559,14 +658,15 @@ def run(jobs: list[tuple[str | Path, str]], models: dict | None = None, sites=SI
     (root / "results.json").write_text(json.dumps(results, indent=1))
     lines = [f"# Multi-agent experiment ({now():%Y-%m-%d %H:%M} America/Phoenix)", "",
              "Agents and models: " + ", ".join(f"{k} = {v}" for k, v in models.items()), "",
-             "| Job | Average | Rounds | " + " | ".join(sites) + " | Pages | Layout issues | Minutes | Status |",
-             "|---|---|---|" + "---|" * len(sites) + "---|---|---|---|"]
+             "| Job | Average | Rounds | " + " | ".join(sites) + " | Pages | Hard issues | Layout issues | Minutes | Status |",
+             "|---|---|---|" + "---|" * len(sites) + "---|---|---|---|---|"]
     for r in results:
         sc = r.get("scores") or {}
         lines.append(f"| {r['job']} | {r.get('average', '-')}{' ✓' if r.get('reached') else ''} | "
                      f"{' → '.join(map(str, r.get('history') or [])) or '-'} | " +
                      " | ".join(str(sc.get(x, "-")) for x in sites) +
-                     f" | {r.get('pages', '-')} | {len(r.get('layout_issues') or [])} | {r['minutes']} | "
+                     f" | {r.get('pages', '-')} | {'; '.join(r.get('hard_issues') or []) or 'none'} | "
+                     f"{len(r.get('layout_issues') or [])} | {r['minutes']} | "
                      f"{r['status'][:80]} |")
     avgs = [r["average"] for r in results if r.get("average") is not None]
     lines += ["", f"Average over jobs: {round(sum(avgs) / len(avgs), 1) if avgs else '-'}"]

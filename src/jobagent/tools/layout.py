@@ -42,6 +42,7 @@ class Layout:
     free_pt: float | None          # free height LaTeX left at the bottom of the last page
     issues: list[str] = field(default_factory=list)
     short_skills: list[str] = field(default_factory=list)
+    skill_fill: dict[str, float] = field(default_factory=dict)  # category -> share of its last line used
     one_line_projects: list[str] = field(default_factory=list)
 
 
@@ -141,6 +142,7 @@ def check(pdf: Path) -> Layout:
             cats[-1].append(r)
     for c in cats:
         fill = (c[-1].x1 - left) / width
+        lay.skill_fill[c[0].text.split(":")[0]] = round(fill, 2)
         if fill < SKILL_FILL:
             name = c[0].text.split(":")[0]
             lay.short_skills.append(name)

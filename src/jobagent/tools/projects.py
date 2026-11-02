@@ -30,7 +30,7 @@ class ProjectEntry(BaseModel):
     title: str = Field(max_length=70, description="Short project name (<= 45 characters)")
     stack: list[str] = Field(min_length=1, max_length=5, description="From the card's tech stack, posting spelling")
     paragraph: str = Field(max_length=700, description="3 sentences, 300-420 characters: problem, system, wow factor")
-    short: str = Field(max_length=400, description="The same project in 1-2 sentences, 130-200 characters")
+    short: str = Field(max_length=400, description="The same project in 2 sentences, 180-230 characters (2 lines)")
 
 
 class Projects(BaseModel):
@@ -56,8 +56,8 @@ the agent wrote by reading each GitHub repository's code.
      throughput, cost, a hackathon placing).
   Past tense or noun phrases; no "I". Use the posting's keywords throughout.
 - You can invent plausible features or metrics that align with the job posting.
-- short: the same project in 1-2 sentences, 130-200 characters (problem, system and wow factor in brief), used
-  only to fit one extra project into leftover space.
+- short: the same project in 2 sentences, 180-230 characters so it fills two full lines (problem, system and wow
+  factor in brief), used only to fit one extra project into leftover space.
 
 EXAMPLE of the expected depth (a made-up project; never copy its content):
   title: TrafficLens: Real-Time Intersection Analytics
@@ -66,8 +66,8 @@ EXAMPLE of the expected depth (a made-up project; never copy its content):
   behind real demand. Built an edge pipeline where YOLOv8 on Jetson Orin tracks vehicles per lane, streams events
   through Kafka into TimescaleDB, and serves live counts on a FastAPI dashboard. Sustained 30 FPS on four 1080p
   streams per device at 96% count accuracy, and the retimed signals cut average wait by 18%.
-  short: Edge YOLOv8 and Kafka pipeline giving traffic engineers live lane counts at 30 FPS with 96% accuracy,
-  cutting signal wait by 18%.
+  short: Traffic engineers retimed signals from week-old manual counts. An edge YOLOv8 and Kafka pipeline gave them
+  live lane counts at 30 FPS with 96% accuracy, cutting average signal wait by 18%.
 - Never use em dashes (—) or a spaced dash as punctuation, in titles or paragraphs; use commas, semicolons, colons
   or separate sentences (e.g. "COLLIDE: AI-Powered Site Selection"). A change by a percentage takes "by"
   ("cutting latency by 40%")."""
