@@ -8,6 +8,11 @@ from pydantic import BaseModel
 from jobagent import llm
 
 
+@pytest.fixture(autouse=True)
+def fresh_memory():
+    llm._LOOPS.clear()  # which methods hung or looped is remembered per model name across calls
+
+
 class Out(BaseModel):
     name: str
 
@@ -73,6 +78,15 @@ def test_a_method_that_ran_out_of_tokens_is_tried_last_next_time():
     m = FakeModel({"json_schema": [LengthFinishReasonError("cap")], "function_calling": [Out(name="a"), Out(name="b")],
                    "json_mode": []})
     m.model_name = "looper"
+    assert llm.structured_invoke(m, Out, [HumanMessage("x")]).name == "a"
+    assert llm.structured_invoke(m, Out, [HumanMessage("x")]).name == "b"
+    assert m.calls == ["json_schema", "function_calling", "function_calling"]
+
+
+def test_a_method_that_hung_is_tried_last_next_time():
+    t = lambda: openai.APITimeoutError(request=None)
+    m = FakeModel({"json_schema": [t()], "function_calling": [Out(name="a"), Out(name="b")], "json_mode": []})
+    m.model_name = "hanger"
     assert llm.structured_invoke(m, Out, [HumanMessage("x")]).name == "a"
     assert llm.structured_invoke(m, Out, [HumanMessage("x")]).name == "b"
     assert m.calls == ["json_schema", "function_calling", "function_calling"]

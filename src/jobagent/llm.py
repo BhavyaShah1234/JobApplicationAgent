@@ -78,7 +78,7 @@ def writer(max_tokens: int = 16000, timeout: float = 600, settings: Settings | N
     one retry."""
     s = settings or get_settings()
     return ChatOpenAI(model=model or WRITER_MODEL.get() or s.model_writer, base_url=s.openai_base_url, api_key=s.openai_api_key,
-                      max_retries=1, timeout=timeout, temperature=0, max_tokens=max_tokens)
+                      max_retries=0, timeout=timeout, temperature=0, max_tokens=max_tokens)  # structured_invoke retries
 
 
 class StructuredError(RuntimeError):
@@ -127,9 +127,11 @@ def structured_invoke(model: ChatOpenAI, schema: type[BaseModel], messages: list
                     return out
                 errors.append(f"{method}: empty answer")
             except (openai.APITimeoutError, TimeoutError) as e:
-                # A hang in one mode (e.g. a model looping in json_schema) gets one other method; two hangs = slow
+                # A hang in one mode (e.g. a model looping in json_schema) gets one other method; two hangs = slow.
+                # The mode is tried last for this model from then on (one hang per run, not one per call).
                 timeouts += 1
                 errors.append(f"{method}: timeout")
+                _LOOPS.setdefault(model.model_name, set()).add(method)
                 if timeouts >= 2:
                     raise StructuredError(f"timeout ({type(e).__name__}) twice") from e
                 break
