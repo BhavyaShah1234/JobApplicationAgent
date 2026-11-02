@@ -66,7 +66,7 @@ flowchart TD
     AVG -- "no" --> F["Collect missing keywords and advice<br/>word-overlap lists filtered to real skills,<br/>eligibility items dropped, template advice to the user"]
     F --> KP["Advice pass (writer model)<br/>skills to the right category, phrases and soft skills<br/>into bullets or the Summary, repeated words varied"]
     KP --> CHK["Code checks<br/>no duplicates, posting's spelling,<br/>no filler category, no new bullet issues"]
-    CHK --> FIT["Re-render and re-fit the page<br/>projects: full, then short, then one fewer"]
+    CHK --> FIT["Re-render and re-fit the page<br/>full project paragraphs first;<br/>a short form only adds an extra project"]
     FIT --> OK{"One page, nothing worse, and the<br/>per-round average rose (or held while more<br/>ATS Friendly phrases are now present)?"}
     OK -- "yes: keep" --> SC
     OK -- "no: undo" --> AVG
