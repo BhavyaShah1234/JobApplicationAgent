@@ -70,9 +70,13 @@ careers site. Each turn you see the visible fields and buttons (by frame and ind
 ONE action. Rules:
 - Sign in FIRST with {EMAIL} and {PASSWORD}. Only if the site clearly says there is no account for this email (or the
   sign-in fails as "user not found" / "no account" and the site offers a create-account / sign-up path) REGISTER a new
-  account with {EMAIL}, {PASSWORD} (and confirm-password {PASSWORD}), {FIRST_NAME}, {LAST_NAME}, {PHONE} where asked;
+  account with {EMAIL}, {PASSWORD} (and confirm-password {PASSWORD}), {FIRST_NAME}, {LAST_NAME}, {PHONE} where asked
+  ({LEGAL_FIRST_NAME} when the field asks for the legal first name);
   tick only checkboxes that accept terms or privacy needed to continue. Set registered=true when you submit it.
 - Never use "forgot / reset password". If {PASSWORD} is rejected for an existing account, answer failed.
+- If, while CREATING an account or setting a NEW password, the site rejects {PASSWORD} as too weak, too common or
+  not meeting its rules, use {ALT_PASSWORD} in every password and confirm field from then on (it's stored for
+  this portal).
 - A field already filled (value_set) needs no refill unless it's wrong.
 - When the page asks for a verification code sent by email, answer code_sent (the code will be read from the inbox and
   given to you as {CODE}); when it says a confirmation link was emailed, answer link_sent.
@@ -123,12 +127,26 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
     history: list[str] = []
     state = {"state": "failed", "registered": False, "verified_mail": False, "steps": history}
     since = datetime.now(UTC)
-    code = ""
+    code, challenges, repeats, last_action = "", 0, 0, None
+    state["alt_password_used"] = False
     for step in range(MAX_STEPS):
         page.wait_for_timeout(2500)
         if (c := challenge.detect(page)) is not None:
-            log(f"portal {host}: {c.kind} challenge, handing it to the user")
-            challenge.wait_for_user(page, c, hitl, log=log)
+            # A puzzle can close by itself (timeout) without being solved; then the next submit brings a new one.
+            # So the user says when it's solved, and a puzzle that keeps coming back stops the run.
+            challenges += 1
+            if challenges > 2:
+                log(f"portal {host}: {c.kind} keeps coming back; stopping")
+                state["state"] = "failed"
+                history.append(f"{c.kind} challenge came back {challenges} times")
+                break
+            shot = f"/app/state/logs/challenge-{host}-{challenges}.png"
+            from jobagent.tools.browser import screenshot
+            screenshot(page, shot)
+            log(f"portal {host}: {c.kind} challenge, handing it to the user ({shot})")
+            hitl.ask(f"{host}: a {c.kind} puzzle is on the page (screenshot {shot}). Solve it in noVNC "
+                     "(http://localhost:6080) and press its submit/verify button, then answer 'done'.")
+            history.append(f"the user solved a {c.kind} challenge")
         view, frames = snapshot(page)
         msgs = [SystemMessage(PROMPT),
                 HumanMessage(f"PORTAL: {host}\nURL: {page.url[:150]}\n"
@@ -146,6 +164,11 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
             if a.action == "need_human":
                 hitl.ask(f"{host}: {a.thought} Please handle it in noVNC (http://localhost:6080), then answer 'done'.")
                 history.append(f"user handled: {a.thought[:80]}")
+                continue
+            if a.action == "signed_in" and not signed_in_evidence(page, values):
+                history.append("CLAIMED signed in but the page shows no account (no email or name): open the "
+                               "profile / account page (it shows the email when signed in) and sign in if it asks")
+                log(f"portal {host}: 'signed in' not confirmed by the page; continuing")
                 continue
             state["state"] = a.action
             break
@@ -165,6 +188,22 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
             state["verified_mail"] = True
             log(f"portal {host}: verification mail used and trashed ({mail.subject!r})")
             continue
+        key = (a.action, a.frame, a.element, a.value)
+        repeats = repeats + 1 if key == last_action else 0
+        last_action = key
+        if repeats >= 2:  # the same action three times: the page isn't moving; stop and say what it shows
+            from jobagent.tools.browser import screenshot
+            shot = f"/app/state/logs/portal-stuck-{host}.png"
+            screenshot(page, shot)
+            log(f"portal {host}: stuck repeating {a.action}; page says: {view.split('ELEMENTS:')[0][-400:]} ({shot})")
+            history.append("stuck: the same action three times")
+            break
+        if "{ALT_PASSWORD}" in a.value:
+            state["alt_password_used"] = True
+        if a.action == "fill" and history and history[-1].startswith(f"fill {a.value}") and \
+                re.search(r"(?i)click|continue|next|submit|proceed", a.thought):
+            # the model said "click Continue" but re-sent the same fill: submit the form from that field instead
+            a = a.model_copy(update={"action": "press_enter"})
         loc = _target(frames, a)
         if loc is None:
             history.append(f"{a.action} on F{a.frame}[{a.element}] failed: no such element")
@@ -193,6 +232,20 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
             except Exception:
                 pass
     return state
+
+
+def signed_in_evidence(page: Page, values: dict) -> bool:
+    """The page itself shows the account: its email or the candidate's first name."""
+    keys = [values.get("EMAIL", ""), values.get("FIRST_NAME", "").split()[0] if values.get("FIRST_NAME") else ""]
+    for f in page.frames:
+        try:
+            text = f.locator("body").inner_text(timeout=3000)
+        except Exception:
+            continue
+        # a "Sign out" link alone isn't proof: amazon.jobs keeps it in its menu for signed-out visitors too
+        if any(k and k.lower() in text.lower() for k in keys):
+            return True
+    return False
 
 
 def _label(frames: dict, a: AuthAction) -> str:

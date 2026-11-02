@@ -68,6 +68,7 @@ ATS_SENDER_FAMILIES = [
     {"successfactors.com", "sapsf.com"},
     {"taleo.net", "oracle.com"},
     {"jobvite.com"},
+    {"amazon.jobs", "amazon.dev"},  # amazon.jobs codes come from Amazon's sign-in service (idprism-auth.amazon.dev)
 ]
 
 

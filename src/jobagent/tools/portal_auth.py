@@ -209,7 +209,9 @@ def candidate_values(email: str, password: str) -> dict:
     info = yaml.safe_load((get_settings().data_dir / "personal_info.yaml").read_text()) or {}
     name, contact = info.get("name") or {}, info.get("contact") or info
     return {"EMAIL": email, "PASSWORD": password, "FIRST_NAME": name.get("preferred_first") or name.get("first", ""),
-            "LAST_NAME": name.get("last", ""), "PHONE": str(contact.get("phone", ""))}
+            "LEGAL_FIRST_NAME": name.get("first", ""), "LAST_NAME": name.get("last", ""),
+            "ALT_PASSWORD": "",  # filled per portal by ensure_with_agent
+            "PHONE": str(contact.get("phone", ""))}
 
 
 def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print,
@@ -229,8 +231,16 @@ def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, ema
     if fresh:
         page.context.clear_cookies(domain=host)
     challenge.goto(page, url, hitl, log=log)
-    out = portal_agent.run(page, url, candidate_values(email, password), inbox, hitl, host, log=log,
-                           notes=mem.data.get("notes", []))
+    # A portal that rejects the shared password as weak/common gets its own strong one, saved before it's typed
+    alt = (vault.get(key) or {}).get("alt_password") or new_password()
+    vault.set(key, **{**(vault.get(key) or {}), "alt_password": alt})
+    values = {**candidate_values(email, password), "ALT_PASSWORD": alt}
+    out = portal_agent.run(page, url, values, inbox, hitl, host, log=log, notes=mem.data.get("notes", []))
+    if out.get("alt_password_used"):
+        old = vault.get(key) or {}
+        vault.set(key, **{**old, "password": alt, "note": "this portal rejected the shared password; its own "
+                                                        "password is stored here"})
+        log(f"portal {host}: rejected the shared password; its own strong password is saved in the vault")
     res.created, res.verified_mail = out["registered"], out["verified_mail"]
     res.signed_in = out["state"] in ("signed_in", "no_account_needed")
     res.notes = out["steps"][-8:]
