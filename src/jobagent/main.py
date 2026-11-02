@@ -394,6 +394,23 @@ def multi_agent_cmd(
         log=lambda m: console.print(m, highlight=False))
 
 
+@app.command("portal-login")
+def portal_login_cmd(url: str = typer.Argument(..., help="A posting or career-site URL on the portal.")) -> None:
+    """Step 11: sign in to the posting's job portal with the agent's email (the account is created the first time)."""
+    from jobagent.tools.browser import persistent_context
+    from jobagent.tools.hitl import open_hitl
+    from jobagent.tools.inbox import open_inbox
+    from jobagent.tools.portal_auth import ensure_account
+    from jobagent.tools.vault import open_vault
+
+    log = lambda m: console.print(m, highlight=False)
+    vault = open_vault()
+    email = (vault.get("gmail") or {})["email"]
+    with open_inbox() as inbox, persistent_context() as ctx:
+        res = ensure_account(ctx.pages[0], url, vault, inbox, open_hitl(log), email, log=log)
+    console.print(res, highlight=False)
+
+
 @app.command("research")
 def research_cmd(
     companies: list[str] = typer.Argument(None),
