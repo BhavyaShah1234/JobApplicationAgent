@@ -369,6 +369,7 @@ def check_layout(state: State) -> dict:
     uncovered = T.fill_checks(r, jd, f)[0]
     if uncovered:
         tasks["experience"].append(f"REQUIRED JD item indices not covered by any NEW bullet: {uncovered}.")
+    tasks["summary"] += summary_issues(f.summary, bool(pages and pages > 1))
     empty = [sl.category for sl in f.skills if not sl.render()]
     if empty:
         tasks["skills"].append(f"These categories render empty (their terms repeat other lines): {empty}; give each "
@@ -432,6 +433,30 @@ def check_layout(state: State) -> dict:
     return {"f": f, "tasks": tasks, "layout_issues": [x for t in tasks.values() for x in t], "hard": hard_issues(ctx, f),
             "layout_pass": state.get("layout_pass", 0) + 1, "history": [f"validator {n}"],
             "reviewed": reviewed}
+
+
+SUMMARY_MAX = 450
+
+
+def summary_issues(summary: str, overflow: bool) -> list[str]:
+    """The Summary's own rules: short (it shares the page), 2-3 sentences, no claims beyond the candidate's declared
+    facts (years above the declared total, internships), no copied qualification list."""
+    import re
+    out = []
+    sentences = [x for x in re.split(r"(?<=[.!?])\s+", summary.strip()) if x]
+    if len(summary) > SUMMARY_MAX or len(sentences) > 3:
+        out.append(f"The Summary is {len(summary)} characters / {len(sentences)} sentences: rewrite it in 2-3 "
+                   f"sentences, at most {SUMMARY_MAX - 50} characters.")
+    elif overflow and len(summary) > 330:
+        out.append("The page overflows: shorten the Summary to at most 300 characters.")
+    years = T.declared_claims().get("years_experience")
+    claimed = [int(n) for n in re.findall(r"(\d+)\+?\s*(?:years?|yrs)", summary, re.I)]
+    if years and any(n > years for n in claimed):
+        out.append(f"The Summary claims more than the declared {years} years of experience.")
+    if re.search(r"(?i)\binternships?\b|\bor related (field|discipline)|\bsuch as\b.*\bor\b", summary):
+        out.append("The Summary copies the posting's qualification wording (internships, 'or related discipline', "
+                   "'such as X or Y'): state what the candidate did, from the resume, never the posting's list.")
+    return out
 
 
 def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
