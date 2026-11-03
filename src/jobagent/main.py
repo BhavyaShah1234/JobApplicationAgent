@@ -414,6 +414,22 @@ def portal_login_cmd(
     console.print(res, highlight=False)
 
 
+@app.command("portal-logout")
+def portal_logout_cmd(url: str = typer.Argument(..., help="A posting or career-site URL on the portal.")) -> None:
+    """Sign the agent out of a job portal (confirmed: the site no longer shows the account)."""
+    from jobagent.tools.browser import persistent_context
+    from jobagent.tools.hitl import open_hitl
+    from jobagent.tools.inbox import open_inbox
+    from jobagent.tools.portal_auth import sign_out
+    from jobagent.tools.vault import open_vault
+
+    log = lambda m: console.print(m, highlight=False)
+    email = (open_vault().get("gmail") or {})["email"]
+    with open_inbox() as inbox, persistent_context() as ctx:
+        ok = sign_out(ctx.pages[0], url, open_vault(), inbox, open_hitl(log), email, log=log)
+    console.print(f"signed out: {ok}", highlight=False)
+
+
 @app.command("research")
 def research_cmd(
     companies: list[str] = typer.Argument(None),

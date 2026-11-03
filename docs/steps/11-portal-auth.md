@@ -14,6 +14,7 @@ session cleared signs in with the stored password without registering again. Ora
 ```bash
 jobagent portal-login <posting or career-site URL>          # sign in (register the first time)
 jobagent portal-login --fresh <URL>                        # forget the site's session first: a real sign-in
+jobagent portal-logout <URL>                               # sign out (confirmed: the site no longer shows the account)
 ```
 
 ## How it works
@@ -53,6 +54,8 @@ flowchart TD
 | "Signed in" only with proof: the account email or first name on the page, or on the site's own profile page (a "Sign out" link isn't proof) | `portal_agent.signed_in_evidence` |
 | A visible CAPTCHA (also inside a portal's iframe) goes to the user; a hidden pre-loaded one doesn't; a puzzle that keeps coming back stops the run | `challenge.detect`, `portal_agent.run` |
 | The same action three times stops the run with a screenshot (`state/logs/portal-stuck-<host>.png`) | `portal_agent.run` |
+| Workday adapter can't find its elements (a redesigned page): the general agent takes over the same portal | `portal_auth.ensure_account` |
+| Sign out: the agent opens the account menu and clicks Sign out / Log out; done when the landing page no longer shows the account (the profile page isn't revisited: a remembered browser can be signed straight back in) | `portal_auth.sign_out`, `portal_agent.run(goal="sign_out")` |
 | Verification mail: sender domain in the portal's family (e.g. Workday tenants mail from myworkday.com, amazon.jobs from amazon.dev) and sent after the agent's action; used mail trashed with a `verification_log` row; nothing else is touched | `inbox.wait_for_verification`, `db.ATS_SENDER_FAMILIES` |
 
 ## Portal survey (`asu_contacts.csv`, top 120 companies)
@@ -71,6 +74,9 @@ flowchart TD
   Jobs page is loaded") as an error; an unverified account answers "wrong email or password or your account might
   be locked"; after registering, Workday returns to the sign-in choices. Symbotic's tenant needs no email
   confirmation. "Create Account" is reliably submitted with Enter in the last field.
+- Oracle Cloud candidate sites have no sign-up page: "Manage profile" only finds an existing profile ("We couldn't
+  find this email"); a profile is created by starting an application on a posting (Apply, email, terms, an
+  emailed code), so for Oracle registration happens at the start of step 12's application flow.
 - iCIMS and Oracle Cloud show an hCaptcha puzzle after the email is submitted. hCaptcha closes by itself after a
   while and re-appears on every submit, so the user must say when it's solved.
 - Oracle pre-loads a full-size hCaptcha frame hidden with opacity 0: only a frame that's really shown counts.
@@ -82,3 +88,22 @@ flowchart TD
   before and checks each message's own timestamp.
 - The model often says "click Continue" but re-sends the same fill: a repeated fill becomes Enter; an entered code
   is submitted by code.
+- Workday keeps the sign-in in session cookies (`CALYPSO_SESSION`, `PLAY_SESSION`): a sign-in doesn't survive into
+  the next `jobagent` command's browser, so the application (step 12) signs in and applies in one browser session.
+  Sign-in then sign-out in one session works (Adobe: open the account button, "Sign Out").
+- amazon.jobs looks the same signed in or out (its menu always has "Sign out"); the model never declared itself
+  signed out, so a click on a Sign out / Log out control followed by a clear landing page counts. Sign-in then
+  sign-out works in two steps.
+
+## How robust is it
+
+| Part | Survives a redesigned page? | Proven on | Not handled |
+|---|---|---|---|
+| JD scrape (step 7) | Mostly: structured data, then visible text by headings, a model labels sections; vision fallback | 5 ATS families + company pages | promo / degree text sometimes labelled as duties; postings behind a sign-in |
+| Workday adapter | No by itself (Workday's element ids), but falls back to the general agent | Adobe, Symbotic | |
+| General agent | Yes by design (reads the visible page each step), reliability depends on the model; every mistake seen so far is now a code guard | Lever, Amazon | phone / SMS checks, authenticator apps, Google/LinkedIn-only sign-in, CAPTCHAs (user in noVNC) |
+| Sign out | Yes (account menu, Sign out / Log out) | Adobe (Workday), Amazon | |
+
+Next for robustness: a test suite of about 10 portals (one per platform in `asu_contacts.csv`) with success rates
+and steps per portal, and replaying a portal's last successful route from its notes before asking the model.
+

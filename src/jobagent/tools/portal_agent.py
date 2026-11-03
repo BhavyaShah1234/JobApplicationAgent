@@ -58,7 +58,7 @@ ACTION_JS = r"""([i, kind, value]) => {
 
 class AuthAction(BaseModel):
     thought: str = Field(max_length=300, description="What the page shows and why this action")
-    action: Literal["fill", "click", "check", "select", "press_enter", "wait", "signed_in", "code_sent",
+    action: Literal["fill", "click", "check", "select", "press_enter", "wait", "signed_in", "signed_out", "code_sent",
                     "link_sent", "no_account_needed", "need_human", "failed"]
     element: int | None = Field(None, description="F<frame>:<index> is given as two numbers: use the index in the "
                                                   "frame named by `frame`")
@@ -90,6 +90,12 @@ ONE action. Rules:
   to you); CAPTCHAs are checked separately, so never answer need_human just because a CAPTCHA script exists.
   failed when stuck.
 - Never fill fields that ask for anything other than the candidate's identity and contact (no answers, no resumes)."""
+
+
+SIGN_OUT_PROMPT = """You operate a job portal in a browser for the candidate, to SIGN THEM OUT of their account on
+this careers site. Each turn you see the visible fields and buttons (by frame and index) and the page text; choose ONE
+action. Open the account / profile / "My career" menu if needed, then click "Sign out" / "Log out". Answer
+signed_out when the page shows a sign-in link and no account; failed when stuck. Never fill anything."""
 
 
 def snapshot(page: Page) -> tuple[str, list]:
@@ -125,7 +131,7 @@ def _target(frames: dict, a: AuthAction):
 
 
 def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, model: str | None = None,
-        notes: list[str] = ()) -> dict:
+        notes: list[str] = (), goal: str = "sign_in") -> dict:
     """Drive the portal until signed in (or no account needed). Returns {"state", "registered", "verified_mail",
     "steps": [what was done]}."""
     agent = llm.writer(3000, timeout=240, model=model)
@@ -165,7 +171,7 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
         if "NEW_PASSWORD_FORM" in view and typed and not state["alt_password_used"] and \
                 any(h.startswith(("click", "press_enter")) for h in recent[typed[-1] + 1:]):
             pw_submitted = True
-        msgs = [SystemMessage(PROMPT),
+        msgs = [SystemMessage(PROMPT if goal == "sign_in" else SIGN_OUT_PROMPT),
                 HumanMessage(f"PORTAL: {host}\nURL: {page.url[:150]}\n"
                              + (f"NOTES FROM EARLIER VISITS: {list(notes)[-6:]}\n" if notes else "")
                              + (f"A verification code is available as {{CODE}}.\n" if code else "")
@@ -177,6 +183,14 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
             continue
         state["registered"] |= a.registered
         log(f"portal {host} step {step}: {a.action} F{a.frame}[{a.element}] {a.value!r} - {a.thought[:120]}")
+        if a.action == "signed_out":
+            # judged on the page the site lands on: visiting its profile page again can sign a remembered browser
+            # straight back in (amazon.jobs' sign-in service does)
+            if goal == "sign_out" and not _shows_account(page, values):
+                state["state"] = "signed_out"
+                break
+            history.append("CLAIMED signed out but the account still shows: find the Sign out / Log out control")
+            continue
         if a.action in ("signed_in", "no_account_needed", "need_human", "failed"):
             if a.action == "need_human":
                 hitl.ask(f"{host}: {a.thought} Please handle it in noVNC (http://localhost:6080), then answer 'done'.")
@@ -249,7 +263,14 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
             elif a.action == "fill":
                 loc.fill(value)
             elif a.action == "click":
+                label = _label(frames, a)
                 loc.click(timeout=10000)
+                if goal == "sign_out" and re.search(r"(?i)\b(sign|log)\s?out\b", label):
+                    page.wait_for_timeout(4000)
+                    if not _shows_account(page, values):  # the site took the sign-out; its landing page is clear
+                        history.append(f"clicked \"{label}\"; the account no longer shows")
+                        state["state"] = "signed_out"
+                        break
             elif a.action == "check":
                 loc.check(timeout=10000)
             elif a.action == "select":

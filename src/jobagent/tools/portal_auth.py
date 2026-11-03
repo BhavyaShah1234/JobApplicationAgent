@@ -272,6 +272,35 @@ def ensure_account(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email:
     platform = platform_of(url)
     if platform not in ADAPTERS:
         return ensure_with_agent(page, url, vault, inbox, hitl, email, log=log, fresh=fresh)
+    try:
+        return _ensure_with_adapter(page, url, vault, inbox, hitl, email, log=log, fresh=fresh)
+    except PortalError:
+        raise  # a real answer from the portal (e.g. the account exists with another password)
+    except Exception as e:  # the adapter's elements weren't there (a redesigned page): the general agent takes over
+        log(f"portal {urlparse(url).netloc}: {platform} adapter failed ({type(e).__name__}: {str(e)[:100]}); "
+            "handing over to the general agent")
+        return ensure_with_agent(page, url, vault, inbox, hitl, email, log=log, fresh=False)
+
+
+def sign_out(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print) -> bool:
+    """Sign the agent out of the portal of `url`; True once the site no longer shows the account."""
+    from jobagent.tools import portal_agent
+    host = urlparse(url).netloc.lower()
+    challenge.goto(page, url, hitl, log=log)
+    page.wait_for_timeout(5000)  # many portals draw their header (with the account) after the page loads
+    values = candidate_values(email, "")
+    if not portal_agent.signed_in_evidence(page, values):
+        log(f"portal {host}: already signed out")
+        return True
+    challenge.goto(page, url, hitl, log=log)  # back from the profile page the check may have opened
+    out = portal_agent.run(page, url, values, inbox, hitl, host, log=log, goal="sign_out")
+    log(f"portal {host}: sign-out {out['state']}")
+    return out["state"] == "signed_out"
+
+
+def _ensure_with_adapter(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print,
+                         fresh: bool = False) -> PortalLogin:
+    platform = platform_of(url)
     site, sign_in, create, signed_in = ADAPTERS[platform]
     host = urlparse(url).netloc.lower()
     key = f"portal:{host}"
