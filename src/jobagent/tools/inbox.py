@@ -210,7 +210,10 @@ class Inbox:
         Both are required: the inbox also receives the user's own sign-up codes, which must never be used.
         """
         allowed = db.record_agent_domain(self.conn, site, kind) if self.conn is not None else {db.registrable_domain(site)}
-        criteria = f'SINCE "{since.strftime("%d-%b-%Y")}"'
+        # IMAP SINCE is a calendar date in the server's own time zone (Gmail: US Pacific). A UTC date can already be
+        # tomorrow there (evenings in Arizona), which hid every code arriving after 5 pm: search from the day before;
+        # the exact cut-off (mail sent after the agent's action) is checked on each message's own timestamp below.
+        criteria = f'SINCE "{(since - timedelta(days=1)).strftime("%d-%b-%Y")}"'
         found: dict[str, Verification] = {}
 
         def match(m: Mail) -> bool:

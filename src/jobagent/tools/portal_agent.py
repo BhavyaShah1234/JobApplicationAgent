@@ -159,8 +159,11 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
                            "{ALT_PASSWORD} into BOTH password fields and submit")
             log(f"portal {host}: the shared password was refused; switching to this portal's own password")
             pw_submitted = False
-        if "NEW_PASSWORD_FORM" in view and any("{PASSWORD}" in h for h in history[-3:]) and \
-                not state["alt_password_used"]:
+        # submitted = {PASSWORD} was typed and then a button was clicked / Enter pressed on the set-password form
+        recent = history[-4:]
+        typed = [i for i, h in enumerate(recent) if "{PASSWORD}" in h and h.startswith("fill")]
+        if "NEW_PASSWORD_FORM" in view and typed and not state["alt_password_used"] and \
+                any(h.startswith(("click", "press_enter")) for h in recent[typed[-1] + 1:]):
             pw_submitted = True
         msgs = [SystemMessage(PROMPT),
                 HumanMessage(f"PORTAL: {host}\nURL: {page.url[:150]}\n"
@@ -187,6 +190,14 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
             state["state"] = a.action
             break
         if a.action in ("code_sent", "link_sent"):
+            page_text = view.split("ELEMENTS:")[0][-500:]
+            log(f"portal {host}: page before waiting for the mail: {' '.join(page_text.split())[:400]}")
+            if re.search(r'(?i)"(send|get|email|resend)( me)?( a| the)?( verification)? (code|otp)"|"send code"|'
+                         r'"send verification', view) and not any("send-code button" in h for h in history[-3:]):
+                history.append("the page has a send-code button: click it so the code is actually sent, then "
+                               "answer code_sent")
+                log(f"portal {host}: a send-code button is on the page; clicking it first")
+                continue
             try:
                 mail, v = inbox.wait_for_verification(f"https://{host}", since, kind="portal", timeout_s=300)
             except TimeoutError:
@@ -226,6 +237,10 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
                        a.value)  # one digit of a code split over several boxes (0-based)
         for k, v in {**values, "CODE": code}.items():
             value = value.replace("{" + k + "}", v or "")
+        if a.action == "fill" and "PASSWORD}" in a.value and (loc.get_attribute("type") or "").lower() != "password":
+            history.append(f"refused: {a.value} may only go into a password field, not \"{_label(frames, a)}\"; "
+                           "submit the email first if no password field is shown")
+            continue
         try:
             if a.action == "fill" and code and value == code and loc.get_attribute("maxlength") == "1":
                 # a code split over one-character boxes: type it; such boxes move to the next box by themselves
@@ -242,6 +257,16 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
             elif a.action == "press_enter":
                 loc.press("Enter")
             history.append(f"{a.action} {a.value or ''} on \"{_label(frames, a)}\"".strip())
+            if a.action == "fill" and code and "{CODE" in a.value:
+                # a code is entered: submit it (models tend to re-type it instead of pressing Verify)
+                btn = frames[a.frame].get_by_role("button", name=re.compile(
+                    r"^\s*(verify|submit|confirm|continue|next|sign in)\b", re.I)).filter(visible=True)
+                if btn.count():
+                    btn.first.click()
+                    history.append("submitted the code (clicked the verify button)")
+                else:
+                    page.keyboard.press("Enter")
+                    history.append("submitted the code (Enter)")
         except Exception as e:
             history.append(f"{a.action} failed: {type(e).__name__}: {str(e)[:80]}")
         finally:
@@ -254,6 +279,25 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
 
 
 def signed_in_evidence(page: Page, values: dict) -> bool:
+    """The account is shown: its email or the candidate's first name on this page, or else on the site's own
+    profile / account page (many portals show neither on their home or menu pages, e.g. amazon.jobs)."""
+    if _shows_account(page, values):
+        return True
+    hrefs = page.evaluate("""() => [...document.querySelectorAll('a[href]')].map(a => a.href)
+        .filter(h => /profile|user\\/details|my-?account|account-?info|candidate-?home|dashboard/i.test(h)
+                     && !/logout|signout|sign-out|help|faq|privacy/i.test(h)).slice(0, 3)""")
+    for href in hrefs:
+        try:
+            page.goto(href, wait_until="domcontentloaded")
+            page.wait_for_timeout(4000)
+        except Exception:
+            continue
+        if _shows_account(page, values):
+            return True
+    return False
+
+
+def _shows_account(page: Page, values: dict) -> bool:
     """The page itself shows the account: its email or the candidate's first name."""
     keys = [values.get("EMAIL", ""), values.get("FIRST_NAME", "").split()[0] if values.get("FIRST_NAME") else ""]
     for f in page.frames:

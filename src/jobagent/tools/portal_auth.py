@@ -201,6 +201,13 @@ NO_ACCOUNT = re.compile(r"(?i)no account|not (registered|found)|doesn.?t exist|d
 EXISTS = re.compile(r"(?i)already (exists|in use|registered|have an account)|account with this email")
 
 
+def _clear_site_cookies(page: Page, host: str) -> None:
+    """Forget the site's session: cookies of its registrable domain and every subdomain (sign-in often lives on
+    another subdomain, e.g. passport.amazon.jobs)."""
+    base = db.registrable_domain(f"https://{host}")
+    page.context.clear_cookies(domain=re.compile(rf"(^|\.){re.escape(base)}$"))
+
+
 def candidate_values(email: str, password: str) -> dict:
     """What the general portal agent may type: the agent's email, the shared password, the user's name and phone."""
     import yaml
@@ -229,7 +236,7 @@ def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, ema
         vault.set(key, email=email, password=password, platform=res.platform,
                   attempted=datetime.now(UTC).isoformat(), verified=False)  # saved before anything is submitted
     if fresh:
-        page.context.clear_cookies(domain=host)
+        _clear_site_cookies(page, host)
     challenge.goto(page, url, hitl, log=log)
     # A portal that rejects the shared password as weak/common gets its own strong one, saved before it's typed
     alt = (vault.get(key) or {}).get("alt_password") or new_password()
@@ -283,7 +290,7 @@ def ensure_account(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email:
         vault.set(key, **{**old, "email": email, "password": password, "platform": platform, **extra})
 
     if fresh:  # test a real sign-in: forget this portal's session first
-        page.context.clear_cookies(domain=host)
+        _clear_site_cookies(page, host)
     visit()
     if signed_in(page):
         res.signed_in = True

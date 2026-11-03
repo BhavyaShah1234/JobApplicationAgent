@@ -158,3 +158,23 @@ def test_sweep_only_trashes_stale_verification(tmp_path):
     trashed = inbox.sweep_stale_verification(max_age_h=24)
     assert inbox._imap.moved == ["1"] and len(trashed) == 1
     assert set(mails) == {"2", "3", "4"}
+
+
+def test_verification_search_starts_the_day_before(monkeypatch):
+    """IMAP SINCE is a date in the server's zone: an evening-in-Arizona UTC date is already tomorrow there."""
+    from datetime import datetime, UTC
+    from jobagent.tools import inbox as I
+    ib = I.Inbox.__new__(I.Inbox)
+    ib.conn = None
+    seen = {}
+
+    def fake_wait_for(predicate, criteria="ALL", timeout_s=180, poll_s=5):
+        seen["criteria"] = criteria
+        raise TimeoutError
+
+    monkeypatch.setattr(ib, "wait_for", fake_wait_for, raising=False)
+    try:
+        ib.wait_for_verification("https://www.amazon.jobs", datetime(2026, 11, 3, 1, 30, tzinfo=UTC), timeout_s=1)
+    except TimeoutError:
+        pass
+    assert seen["criteria"] == 'SINCE "02-Nov-2026"'
