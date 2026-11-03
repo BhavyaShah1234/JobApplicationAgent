@@ -1,3 +1,5 @@
+# Any section may also hold agent_instructions (how the agent answers that section's form questions) and
+# tools (lookups it may run for them: web_search, maps). Instructions never make the agent invent a personal fact.
 # Your real personal details, used to fill application forms.
 # This folder is bind-mounted from the host, so edits survive container rebuilds.
 # The agent never invents values here; anything left empty is asked about at the pre-submit review.
@@ -8,11 +10,15 @@ name:
   last: ""
   preferred: ""          # name you go by, if different
   pronouns: ""           # optional
+  suffix: ""             # Jr., III, ... (Workday "Suffix")
 
 contact:
   email: ""              # your personal email for recruiters (the agent's own Gmail is used for portal accounts)
   phone: ""              # E.164 preferred, e.g. +14805551234
   phone_country_code: "+1"
+  phone_device_type: "Mobile"   # Workday: Mobile / Home / Work
+  phone_extension: ""
+  agent_instructions: ""   # e.g. "Use the contact email on forms without an account"
 
 # Current home address — always filled exactly as written here.
 address:
@@ -21,6 +27,9 @@ address:
   city: ""
   state: ""              # full name or 2-letter code; select fields are fuzzy-matched
   postal_code: ""
+  county: ""             # some Workday tenants ask for it
+  agent_instructions: ""   # e.g. "A 'Location (City)' field takes 'City, State'; a county field: look it up"
+  tools: []                # e.g. [maps] to look up a county or a full street address from the ZIP
   country: "United States"
 
 links:
@@ -35,6 +44,7 @@ work_authorization:
   requires_sponsorship_future: false
   visa_status: ""                     # e.g. F-1 OPT, H-1B, US citizen, permanent resident
   citizenship: ""
+  agent_instructions: ""   # e.g. "If a question counts STEM OPT as sponsorship, answer ..."
 
 education:
   - school: ""
@@ -47,6 +57,10 @@ education:
 availability:
   start_date: ""                      # YYYY-MM-DD or "2 weeks notice"
   notice_period: ""
+  willing_to_travel: ""         # e.g. "up to 25%"
+  shift_preference: ""          # e.g. "day", "any"
+  agent_instructions: ""   # e.g. "Earliest start: the Monday 2 weeks after today; internships: after graduation"
+  tools: []
 
 # Voluntary self-identification. "Decline to self-identify" is used when empty.
 eeo:
@@ -55,3 +69,16 @@ eeo:
   hispanic_latino: ""
   veteran_status: ""
   disability_status: ""
+  transgender: ""               # empty = "I don't wish to answer"
+  sexual_orientation: ""        # empty = "I don't wish to answer"
+  agent_instructions: ""   # e.g. "Decline every self-identification question except gender"
+
+# --- Fields Workday asks for ("My Information" / "My Experience"); other portals ask a subset of these ---------------
+previous_employment:
+  government_employee: ""      # current or former US government employee (defense / public-sector forms ask)
+  related_to_employee: ""      # name of a relative working at the company you apply to, if any (else "")
+  non_compete: ""              # bound by a non-compete or similar agreement
+
+languages: []                  # e.g. [{language: English, native: false, reading: Fluent, writing: Fluent, speaking: Fluent}]
+certifications: []             # e.g. [{name: AWS Certified ..., issuer: Amazon, number: "", issued: 2025-06, expires: ""}]
+security_clearance: ""         # e.g. "none" or "Secret (active)"; never claimed beyond this

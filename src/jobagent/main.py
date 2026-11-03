@@ -430,6 +430,33 @@ def portal_logout_cmd(url: str = typer.Argument(..., help="A posting or career-s
     console.print(f"signed out: {ok}", highlight=False)
 
 
+@app.command("apply")
+def apply_cmd(
+    job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with jd.json, resume.pdf (and cover_letter.pdf)."),
+    company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md)."),
+    no_submit: bool = typer.Option(True, "--no-submit/--submit", help="Step 12 always stops at the review screen."),
+) -> None:
+    """Step 12: fill the job's application up to its review screen and read every field back (never submits)."""
+    from jobagent.steps.apply import run
+    from jobagent.tools.browser import persistent_context
+    from jobagent.tools.hitl import open_hitl
+    from jobagent.tools.inbox import open_inbox
+    from jobagent.tools.portal_auth import ensure_account
+    from jobagent.tools.vault import open_vault
+
+    if not no_submit:
+        raise typer.BadParameter("submitting comes with the human review (step 13)")
+    log = lambda m: console.print(m, highlight=False)
+    vault = open_vault()
+    email = (vault.get("gmail") or {})["email"]
+    with open_inbox() as inbox, persistent_context() as ctx:
+        page = ctx.pages[0]
+        sign_in = lambda url: log(f"portal: {ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log)}")
+        res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log))
+    console.print(f"apply: {res['state']}; {res['verified']}/{len(res['fields'])} fields verified; "
+                  f"{len(res['flags'])} for review -> {job_dir}/application/application.md", highlight=False)
+
+
 @app.command("portal-reset")
 def portal_reset_cmd(url: str = typer.Argument(..., help="A career-site URL on the portal.")) -> None:
     """One user-approved password reset of an existing portal account to the shared password, then sign in."""
