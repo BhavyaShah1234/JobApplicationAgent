@@ -4,9 +4,9 @@
 portal in the same session when it needs an account), then page by page:
 
 1. reads every visible field (forms.read_page) and opens each combobox to learn its options;
-2. one model call plans an answer for every field from the candidate's own files (personal_info, qa_bank,
-   preferences, the tailored resume, the JD, the company profile), with the source of each answer and a flag for
-   anything the user should look at;
+2. one model call plans an answer for every field from the candidate's own files (data/applicant.yaml, the
+   tailored resume, the JD, the company profile), with the source of each answer and a flag for anything the user
+   should look at; a second call checks each answer really comes from the file it cites;
 3. code fills each field (option fields matched to the page's own options) and reads every value back;
 4. new fields that appeared (conditional questions) get another round; then Next / Continue / Save and Continue;
    a page that only offers Submit is the review screen: stop there.
@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field as PField
 
 from jobagent import llm
 from jobagent.clock import now
-from jobagent.tools import forms
+from jobagent.tools import applicant, forms
 from jobagent.tools.browser import screenshot
 
 DATA = Path("/app/data")
@@ -48,14 +48,14 @@ class Answer(BaseModel):
     value: str = PField(description="Text to type; for select/radio/combobox the option text exactly as listed; for "
                                     "checkboxes the chosen options joined with '; '; for a single checkbox 'checked' "
                                     "or ''; '' leaves the field as it is")
-    source: Literal["personal_info", "qa_bank", "preferences", "resume", "jd", "company", "written", "declared",
-                    "learned", "human", "lookup", "already_filled", "none"]
+    source: Literal["applicant", "resume", "jd", "company", "written", "learned", "human", "lookup",
+                    "already_filled", "none"]
     flag: str = PField("", max_length=240, description="Why the user should check this at review; '' when the "
                                                        "answer is plainly right")
-    lookup: str = PField("", description="When the answer needs a lookup first (a QA_BANK entry's tools, e.g. a "
-                                         "commute or an office address): 'web: <query>', 'place: <address>' or "
+    lookup: str = PField("", description="When the answer needs a lookup first (an APPLICANT entry's tools, e.g. "
+                                         "a salary median or an office address): 'web: <query>', 'place: <address>' or "
                                          "'maps: <origin> | <destination>'; '' otherwise")
-    ask_human: bool = PField(False, description="True when the candidate's files and LEARNED answers don't answer "
+    ask_human: bool = PField(False, description="True when APPLICANT (learned answers included) doesn't answer "
                                                 "this question: the candidate is asked now and the answer is kept")
 
 
@@ -68,65 +68,47 @@ class Plan(BaseModel):
 PROMPT = """You fill a job application form for the candidate, from the candidate's own files only. For each field
 listed (id, kind, label, options, current value) give the answer to put in it.
 
+APPLICANT is the candidate's answer file: entries of question, seen (wordings portals use), answer, instructions,
+tools; its `learned` section holds answers the candidate gave on earlier forms (with the company). A field marked
+MATCHES is the APPLICANT entry for that question: use its answer, following its instructions.
+
 Rules:
-- Identity, contact, links, education, work authorization, sponsorship, citizenship, EEO / self-identification:
-  ONLY from PERSONAL_INFO, exactly. Never invent an address, city, ZIP, date of birth, SSN or any other personal
-  fact the files don't hold: leave value '' with source none and ask_human true.
-- A self-identification question PERSONAL_INFO doesn't cover (e.g. transgender, sexual orientation): choose the
-  "I don't wish to answer" / "decline" option if there is one (source personal_info), else ask_human.
-- A PERSONAL_INFO section may hold `agent_instructions` (how to answer that section's questions, e.g. how to state a
-  start date) and `tools` (lookups allowed for it): follow them, use lookup for the tools. They never license
-  inventing a personal fact the file doesn't hold (an empty address stays ask_human).
-- LEARNED answers were given by the candidate on earlier forms: use one for the same question (same company: as
-  is; another company: only if the question isn't specific to that company); source learned.
-- A question none of the files answer (company-specific: teams, offices, "have you interviewed with us", essay
-  prompts about the candidate's own choices) and that you can't write truthfully from the RESUME: ask_human true.
-- A QA_BANK entry with `tools`, or a fact only a lookup can give (distance / commute to the office, an office
-  address, a public fact about the company): set lookup; the result comes back to you as LOOKUP RESULTS.
-- Contact email: PERSONAL_INFO contact.email, unless the form already shows the portal account's email (keep it).
-  Phone: digits as in PERSONAL_INFO (choose the country / country-code option for its country code separately).
-- First / last name: legal names from PERSONAL_INFO; a "preferred name" field gets preferred_first.
-- Sponsorship / authorization questions: answer as PERSONAL_INFO says. If the question's own wording counts the
-  candidate's visa status (e.g. F-1 OPT / STEM OPT) as needing sponsorship, still answer from PERSONAL_INFO but flag
-  "sponsorship wording includes OPT; you hold <visa_status>".
-- Screening questions: QA_BANK first (follow its agent_instructions), then PREFERENCES, then the RESUME and
-  DECLARED facts (years of experience up to the declared total). "Have you worked at <company> before?": no unless
-  the resume lists that employer. Graduation date, GPA, degree, school: from PERSONAL_INFO education (the latest
-  degree unless the question says otherwise; DATE_FACTS says whether it is already past); if PERSONAL_INFO and the
-  RESUME disagree, use PERSONAL_INFO and flag it. The posting's own target dates never change the candidate's facts.
-  For an option list of ranges, pick the range containing the true value.
-- Open questions ("Why do you want to work here?", cover-letter text boxes, short behavioural questions): write a
-  truthful answer from the RESUME and COMPANY profile, specific and plain, within the length asked (default
-  80-150 words), no clichés; source written.
-- Choice fields: the value must be one of the listed options, copied exactly; when the true value isn't offered
-  (a field of study, a degree name), choose the closest option and flag "closest option to <true value>". A combobox whose options are
-  categories (Workday "How did you hear": "Job Board", "Social Media", "<Company> Source"): answer
-  'Category > what you mean' (e.g. '<Company> Source > company careers website'); the entry is picked inside it. A combobox listed without options is a
-  search box: give the full name to search for (e.g. the school's full name).
-- "How did you hear": per QA_BANK. Referral fields: only the REFERRAL given below, else ''.
-- Consent / acknowledgement checkboxes or options required to apply (privacy notice, data processing, terms):
-  agree. Marketing, SMS / WhatsApp messages, talent-community newsletters: decline (no / unchecked) unless required.
-- Location preference questions ("which locations would you work in", "open to relocation"): from PREFERENCES
-  (open to relocating anywhere: choose all US locations offered). A current-address "Location (City)" field is the
-  candidate's own city from PERSONAL_INFO, never the job's.
-- A field marked MATCHES has a QA_BANK / LEARNED entry for that question: follow it (answer and instructions).
-- Work history / education sections: one entry per role in RESUME_ROLES, all of them, in that order (job title, company, location, dates, the
-  role's bullets as its description; "currently work here" only for a role the resume shows as Present) and per
-  degree in PERSONAL_INFO education. When more entries are needed than the form shows, put the matching ADD BUTTON
-  id in `add` once per missing entry (3 roles, 1 entry shown -> [id, id]) and leave those entries for the next
-  round (their fields appear then). Never add an entry for something the files don't hold (no certifications,
-  languages or awards in PERSONAL_INFO -> add nothing there).
-- date_parts fields: the value in the field's format (MM/YYYY -> '08/2024', YYYY -> '2024'). A role the resume
-  shows as Present: tick its "I currently work here" box ('checked') and leave its To date ''.
-- A skills search box: the RESUME's skills most relevant to the JD, '; '-separated (at most 15).
+- Personal facts (name, contact, address, education, work authorization, sponsorship, citizenship,
+  self-identification) ONLY from APPLICANT, exactly. Never invent an address, city, ZIP, date of birth, SSN or any
+  other personal fact it doesn't hold: leave value '' with source none and ask_human true. Instructions never
+  license inventing one.
+- An answer that is empty in APPLICANT but has instructions: follow the instructions (compute, write, or look it up).
+  Empty with no instructions: ask_human true.
+- Self-identification APPLICANT leaves empty: the "I don't wish to answer" / "decline" option (source applicant).
+- learned answers: the same company's answer as is; another company's only if the question isn't specific to it.
+- A question APPLICANT doesn't cover (company-specific: teams, offices, essay prompts about the candidate's own
+  choices) that you can't answer truthfully from the RESUME: ask_human true.
+- An entry with `tools`, or a fact only a lookup can give (an office address, a salary median): set lookup; the
+  result comes back to you as LOOKUP RESULTS.
+- Email: APPLICANT's, unless the form already shows the portal account's email (keep it). Phone: its digits (the
+  country / country-code option separately). Names: legal names; a "preferred name" field gets the preferred one.
+- Sponsorship / authorization: as APPLICANT says. If the question's own wording counts the candidate's visa status
+  (e.g. F-1 OPT / STEM OPT) as needing sponsorship, still answer from APPLICANT but flag "sponsorship wording
+  includes OPT; you hold <visa_status>".
+- Dates: DATE_FACTS says whether a degree has ended; the posting's own target dates never change the candidate's
+  facts. For an option list of ranges, pick the range containing the true value.
+- Work history: one entry per role in RESUME_ROLES, all of them, in that order (job title, company, location, dates,
+  the role's bullets as its description; "currently work here" only for a role shown as Present). Education: one
+  entry per degree in APPLICANT. When more entries are needed than the form shows, put the matching ADD BUTTON id in
+  `add` once per missing entry (3 roles, 1 entry shown -> [id, id]) and leave those entries for the next round.
+  Never add an entry APPLICANT has nothing for (no certifications -> add none).
+- date_parts fields: the value in the field's format (MM/YYYY -> '08/2024', YYYY -> '2024'). A role shown as Present:
+  tick its "I currently work here" box ('checked') and leave its To date ''.
+- Open questions (why this company, behavioural, technical): a truthful answer from the RESUME and COMPANY profile,
+  specific and plain, within the length asked (default 80-150 words), no cliches; source written.
+- Choice fields: the value must be one of the listed options, copied exactly; when the true value isn't offered (a
+  field of study, a degree name), the closest option, flagged "closest option to <true value>". A combobox whose
+  options are categories ("Job Board", "<Company> Source"): 'Category > what you mean'. A combobox listed without
+  options is a search box: give the full name to search for. A skills search box: '; '-separated values.
+- Referral fields: only the REFERRAL given below, else ''.
 - File fields: value 'resume' for a resume / CV upload, 'cover_letter' for a cover letter upload, '' otherwise.
 - A field with a current value that is already right: repeat it with source already_filled. Wrong: correct it.
 - Answer every listed field id exactly once."""
-
-
-def _load(name: str) -> str:
-    p = DATA / name
-    return p.read_text() if p.exists() else ""
 
 
 def context(job_dir: Path, company: str) -> dict:
@@ -135,32 +117,41 @@ def context(job_dir: Path, company: str) -> dict:
     if (job_dir / "resume.pdf").exists():
         resume = subprocess.run(["pdftotext", "-layout", str(job_dir / "resume.pdf"), "-"], capture_output=True,
                                 text=True).stdout
-    profile = yaml.safe_load(_load("master_profile.yaml")) or {}
-    declared = {k: v for k, v in (profile.get("claims") or {}).items()} if isinstance(profile.get("claims"), dict) else {}
     jd = json.loads((job_dir / "jd.json").read_text()) if (job_dir / "jd.json").exists() else {}
     comp = Path(f"/app/state/companies/{company}.md")
     return {
-        "PERSONAL_INFO": _load("personal_info.yaml"),
-        "QA_BANK": _load("qa_bank.yaml"),
-        "PREFERENCES": _load("preferences.yaml"),
-        "DECLARED": json.dumps(declared) or "{}",
+        "APPLICANT": applicant.text(),
         "RESUME": resume[:6000],
         "JD": ((job_dir / "jd.md").read_text() if (job_dir / "jd.md").exists() else "")[:5000],
         "COMPANY": (comp.read_text() if comp.exists() else "")[:3000],
-        "LEARNED": _load("learned_answers.yaml") or "(none yet)",
-        "REFERRAL": "none (no referral for this job: never answer 'Referral' / 'Employee referral')",
+        "REFERRAL": referral(jd.get("company") or company),
         "RESUME_ROLES": resume_roles(job_dir),
         "TODAY": now().strftime("%Y-%m-%d"),
-        "DATE_FACTS": date_facts(yaml.safe_load(_load("personal_info.yaml")) or {}),
+        "DATE_FACTS": date_facts(applicant.degrees()),
         "_jd": jd,
     }
 
 
 def _has_data(ctx: dict, section: str) -> bool:
-    """personal_info holds entries for this section (certifications, languages, ...)."""
-    info = yaml.safe_load(ctx.get("PERSONAL_INFO") or "") or {}
+    """APPLICANT holds entries for this form section (certifications, languages, ...)."""
     key = re.sub(r"[^a-z]", "", section.lower())
-    return any(v for k, v in info.items() if isinstance(v, list) and re.sub(r"[^a-z]", "", k.lower())[:6] in key)
+    for _, e in applicant.entries(yaml.safe_load(ctx.get("APPLICANT") or "") or {}):
+        q = re.sub(r"[^a-z]", "", e["question"].lower())
+        if q[:6] and q[:6] in key and e.get("answer"):
+            return True
+    return False
+
+
+def referral(company: str) -> str:
+    """A referral the candidate may name: a data/targets.csv contact at this company with referral_consent yes."""
+    import csv
+    p = DATA / "targets.csv"
+    if p.exists():
+        for row in csv.DictReader(p.open()):
+            if (row.get("company", "").strip().lower() == company.strip().lower()
+                    and row.get("referral_consent", "").strip().lower() in ("yes", "y", "true") and row.get("contact_name")):
+                return f"{row['contact_name']} ({row.get('contact_email', '')}), who agreed to refer the candidate"
+    return "none (no referral for this job: never answer 'Referral' / 'Employee referral')"
 
 
 def resume_roles(job_dir: Path) -> str:
@@ -176,31 +167,59 @@ def resume_roles(job_dir: Path) -> str:
         or "(none)"
 
 
-def hints(fields: list[forms.Field]) -> dict[int, str]:
-    """For each field, the QA_BANK entry or LEARNED answer whose question it asks (fuzzy match on the wording), so
-    the planner sees it next to the field instead of having to find it."""
-    bank = []
-    for name in ("qa_bank.yaml", "learned_answers.yaml"):
-        for e in (yaml.safe_load(_load(name)) or []) if _load(name) else []:
-            if isinstance(e, dict) and e.get("question"):
-                bank.append((name.split(".")[0], e, [e["question"], *(e.get("aliases") or [])]))
+SECTION_ENTRY = [(re.compile(r"(?i)work experience|employment history|experience \d"), "Work history"),
+                 (re.compile(r"(?i)^education"), "Degrees")]
+
+
+def _match(label: str, wording: str) -> float:
+    """How well a form label asks an entry's question: a short wording ("City", "Company") must be the label itself;
+    a long one may be worded a little differently."""
+    if len(wording.split()) <= 2:
+        return fuzz.ratio(label, wording)
+    ratio = len(wording.split()) / max(1, len(label.split()))
+    whole = fuzz.token_set_ratio(label, wording) if 0.5 <= ratio <= 2 else fuzz.token_sort_ratio(label, wording)
+    # a long label that contains the wording ("..., can you provide documentation establishing your identity ...")
+    part = fuzz.partial_ratio(label, wording) if len(wording.split()) >= 4 and len(label) > len(wording) else 0
+    return max(whole, part)
+
+
+def hints(fields: list[forms.Field], company: str = "") -> dict[int, str]:
+    """For each field, the APPLICANT entry whose question it asks (fuzzy match of the label on the entry's question
+    and the wordings seen on portals), so the planner sees it next to the field instead of having to find it. Fields
+    of a work-experience / education entry belong to those entries."""
+    pairs = applicant.entries()
+    bank = [(sec, e, [e["question"], *(e.get("seen") or [])]) for sec, e in pairs]
+    by_q = {e["question"]: (sec, e) for sec, e in pairs}
     out = {}
     for f in fields:
-        label = re.sub(r"[*✱]", "", f.label)[:200]
-        best = max(((fuzz.token_set_ratio(label.lower(), q.lower()), src, e) for src, e, qs in bank for q in qs),
-                   default=(0, "", {}), key=lambda x: x[0])
+        label = re.sub(r"\((mm|dd|yyyy)[/a-z]*\)|[*✱]", "", f.label.lower())[:200].strip(" :?")
+        if company:
+            label = label.replace(company.lower(), "<company>")
+        best, best_len = (0, "", {}), -10**6
+        for pat, q in SECTION_ENTRY:
+            if pat.search(f.section) and q in by_q:
+                best = (100, *by_q[q])
+                break
+        else:
+            for sec, e, qs in bank:
+                for q in qs:
+                    sc = _match(label, q.lower().strip(" :?"))
+                    # on a tie the wording closest to the label itself wins ("First Name": legal, not preferred)
+                    if (sc, -abs(len(q) - len(label))) > (best[0], best_len):
+                        best, best_len = (sc, sec, e), -abs(len(q) - len(label))
         if best[0] >= 85:
             e = best[2]
-            out[f.id] = (f"{best[1]}: answer={e.get('answer')!r}"
-                         + (f" instructions={e.get('agent_instructions')!r}" if e.get("agent_instructions") else "")
+            out[f.id] = (f"{best[1]}: {e['question']!r} answer={e.get('answer')!r}"
+                         + (f" instructions={e.get('instructions')!r}" if e.get("instructions") else "")
+                         + (f" tools={e.get('tools')}" if e.get("tools") else "")
                          + (f" company={e.get('company')}" if e.get("company") else ""))
     return out
 
 
-def date_facts(info: dict) -> str:
+def date_facts(degrees: list[dict]) -> str:
     """Dates worked out by code, so the model compares facts instead of guessing (a graduation already past)."""
     lines, today = [], now().date()
-    for ed in info.get("education") or []:
+    for ed in degrees:
         try:
             end = datetime.strptime(str(ed.get("end", "")).strip(), "%B %Y").date()
         except ValueError:
@@ -214,7 +233,7 @@ def date_facts(info: dict) -> str:
 def plan(fields: list[forms.Field], ctx: dict, model, log=print, feedback: str = "", adds: list[dict] = (),
          filled: list[forms.Field] = ()) -> tuple[dict[int, Answer], list[int]]:
     files = "\n\n".join(f"== {k} ==\n{v}" for k, v in ctx.items() if not k.startswith("_"))
-    h = hints(fields)
+    h = hints(fields, ctx.get("_jd", {}).get("company", ""))
     msgs = [SystemMessage(PROMPT),
             HumanMessage(f"{files}\n\n"
                          + ("== ALREADY ON THIS PAGE (planned earlier) ==\n" + "\n".join(f.brief() for f in filled)
@@ -244,12 +263,11 @@ class Checks(BaseModel):
 CHECK_PROMPT = """You check a planned job application against the candidate's files. For each planned answer
 (field, value, cited source, reasoning) decide whether the cited file REALLY states it. An answer is unsupported when
 the file is silent and the planner assumed it (a language not listed, an eligibility, a consent the candidate never
-gave, a "how did you hear" that differs from QA_BANK, an option chosen while QA_BANK names another that is offered).
-For unsupported answers give the value the files do support (QA_BANK 'Company careers page' means the company's own
-website option), or ask_human when none does. Written answers (source written) are supported when true to the
-RESUME. Rules are support too: agreeing to a consent / terms / acknowledgement needed to apply, declining marketing
-and SMS, choosing "I don't wish to answer" for self-identification PERSONAL_INFO doesn't cover, and QA_BANK
-instructions. PERSONAL_INFO wins over the RESUME where they disagree (never swap one for the other: that is flagged, not
+gave, an option chosen while the APPLICANT entry for that question says another that is offered). For unsupported
+answers give the value the files do support, or ask_human when none does. Written answers (source written) are
+supported when true to the RESUME. Following an APPLICANT entry's instructions is support, and so are these rules:
+agreeing to a consent needed to apply, choosing "I don't wish to answer" for self-identification APPLICANT leaves
+empty. APPLICANT wins over the RESUME where they disagree (never swap one for the other: that is flagged, not
 corrected). A corrected value for a choice field must be one of its listed options, copied exactly. Return one check
 per planned answer."""
 
@@ -273,9 +291,9 @@ def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, mode
         if a is None or c.supported:
             continue
         f = next((x for x in fields if x.id == c.id), None)
-        if a.source == "personal_info":
+        if a.source == "applicant":
             # credited to the candidate's own file but not in it (or in conflict with the resume): theirs to say
-            log(f"  check: [{c.id}] {a.value[:40]!r} isn't in personal_info as planned; asking the candidate")
+            log(f"  check: [{c.id}] {a.value[:40]!r} isn't in applicant.yaml as planned; asking the candidate")
             answers[c.id] = a.model_copy(update={"ask_human": True, "value": "",
                                                  "flag": (a.flag + f" planned {a.value[:40]!r}").strip()})
             continue
@@ -311,23 +329,15 @@ ENTRY_OK = re.compile(r"(?i)work experience|employment|education|^experience")
 ERRORS_HEAD = re.compile(r"(?i)^errors? found|^\d+ errors?|^error")
 ADDRESS = re.compile(r"(?i)\baddress\b|\bstreet\b|^\s*city\b|\bstate\b|province|postal|\bzip\b|county|"
                      r"current location|location \(city\)")
-LEARNED = DATA / "learned_answers.yaml"
-LEARNED_HEAD = """# Answers you gave the agent on the spot (step 12), kept so the same question isn't asked again.
-# The agent appends here; edit or delete entries freely. `company: any` makes an answer apply everywhere.
-"""
 
 
 def learn(question: str, options: list[str], answer: str, company: str, host: str) -> None:
-    """Keep the candidate's answer to a question for the next form that asks it."""
-    entries = (yaml.safe_load(LEARNED.read_text()) if LEARNED.exists() else None) or []
-    entries = [e for e in entries if not (e.get("question") == question and e.get("company") == company)]
-    entries.append({"question": question, "options": options[:30] or None, "answer": answer, "company": company,
-                    "portal": host, "date": now().strftime("%Y-%m-%d")})
-    LEARNED.write_text(LEARNED_HEAD + yaml.safe_dump(entries, sort_keys=False, allow_unicode=True, width=120))
+    """Keep the candidate's answer to a question for the next form that asks it (applicant.yaml, `learned`)."""
+    applicant.learn(question, options, answer, company, host)
 
 
 def ask_human(hitl, f: forms.Field, company: str, host: str, log, timeout_s: float = 1800) -> str:
-    """Ask the candidate one question now (answer in `jobagent hitl`); the answer is kept in learned_answers.yaml."""
+    """Ask the candidate one question now (answer in `jobagent hitl`); the answer is kept in applicant.yaml."""
     from jobagent.tools.hitl import HitlTimeout
     opts = f" Options: {' | '.join(f.options[:25])}." if f.options else ""
     try:
@@ -378,16 +388,16 @@ def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict,
         ask = flagged + later
     addr = [f for f in ask if ADDRESS.search(f.label)]
     if addr:
-        # the address belongs in personal_info.yaml (never in learned answers): one request for all its fields
+        # the address belongs in applicant.yaml's address entry (not a learned answer): one request for all its fields
         from jobagent.tools.hitl import HitlTimeout
         try:
             ans = env["hitl"].ask(f"{env['company']} application needs your address ({', '.join(f.label[:30] for f in addr)}). "
-                                  "Fill `address` in data/personal_info.yaml, then answer 'done' ('skip' leaves it "
+                                  "Fill 'Current address' in data/applicant.yaml, then answer 'done' ('skip' leaves it "
                                   "for review).", timeout_s=env.get("ask_s", 1800)).strip().lower()
         except HitlTimeout:
             ans = ""
         if ans == "done":
-            ctx["PERSONAL_INFO"] = _load("personal_info.yaml")
+            ctx["APPLICANT"] = applicant.text()
             try:
                 answers.update(plan(addr, ctx, model, log)[0])
             except Exception as e:
@@ -434,7 +444,7 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
         for i in add[:8]:  # more entries (a second job, a second degree): their blank fields come next round
             a = next((x for x in view.adds if x["id"] == i), None)
             if a and not ENTRY_OK.search(a["section"] + " " + a["text"]) and not _has_data(ctx, a["section"]):
-                log(f"  not adding an entry under {a['section'][:40]!r}: nothing for it in personal_info")
+                log(f"  not adding an entry under {a['section'][:40]!r}: nothing for it in applicant.yaml")
                 continue
             if a:
                 view.frames[a["frame"]].locator(f'[data-jf-add="{i}"]').first.click(timeout=8000)

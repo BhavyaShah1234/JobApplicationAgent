@@ -435,6 +435,8 @@ def apply_cmd(
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with jd.json, resume.pdf (and cover_letter.pdf)."),
     company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md)."),
     no_submit: bool = typer.Option(True, "--no-submit/--submit", help="Step 12 always stops at the review screen."),
+    ask_minutes: float = typer.Option(30, help="How long to wait for your answer to a question (then it's left for review)."),
+    model: str = typer.Option(None, help="Voyager model that plans the answers (default: the writer model)."),
 ) -> None:
     """Step 12: fill the job's application up to its review screen and read every field back (never submits)."""
     from jobagent.steps.apply import run
@@ -452,7 +454,8 @@ def apply_cmd(
     with open_inbox() as inbox, persistent_context() as ctx:
         page = ctx.pages[0]
         sign_in = lambda url: log(f"portal: {ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log)}")
-        res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log))
+        res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
+                  ask_s=ask_minutes * 60, model_name=model)
     console.print(f"apply: {res['state']}; {res['verified']}/{len(res['fields'])} fields verified; "
                   f"{len(res['flags'])} for review -> {job_dir}/application/application.md", highlight=False)
 

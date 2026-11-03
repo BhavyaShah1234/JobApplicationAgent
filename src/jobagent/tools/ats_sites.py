@@ -308,12 +308,10 @@ def cached(resume_pdf: Path, site: str) -> SiteScore | None:
 
 
 def upload_name() -> str:
-    """"First_Middle_Last_Resume.pdf" from personal_info.yaml ("Resume.pdf" without a name)."""
-    import yaml
-
-    from jobagent.config import get_settings
+    """"First_Middle_Last_Resume.pdf" from the applicant's legal name ("Resume.pdf" without a name)."""
+    from jobagent.tools import applicant
     try:
-        n = yaml.safe_load((get_settings().data_dir / "personal_info.yaml").read_text())["name"]
+        n = applicant.name()
         parts = " ".join(str(n.get(k) or "") for k in ("first", "middle", "last")).split()
     except Exception:
         parts = []

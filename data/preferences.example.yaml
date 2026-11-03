@@ -1,4 +1,4 @@
-# Job-search preferences used by role matching, form answers and tailoring.
+# Job-search preferences used by role matching and tailoring (form answers live in applicant.yaml).
 
 locations:
   preferred: ["Phoenix, AZ", "Remote (US)"]
@@ -6,15 +6,6 @@ locations:
   remote_ok: true
   hybrid_ok: true
   onsite_ok: true
-
-relocation:
-  willing_to_relocate: true
-  relocation_note: "Open to relocating for the right role."
-
-salary:
-  currency: USD
-  min: null          # annual base; leave null to answer "open"
-  target: null
 
 seniority: ["intern", "new grad", "entry", "junior", "mid"]
 employment_types: ["full-time", "internship"]

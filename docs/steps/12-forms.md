@@ -36,15 +36,19 @@ flowchart TD
 
 ## Where answers come from
 
-| What | File |
-|---|---|
-| Name, contact, links, address, education, work authorization, EEO, availability, and Workday's extra personal fields (suffix, phone type, languages, certifications, clearance, previous employment) | `data/personal_info.yaml` |
-| How to answer a section's questions, and lookups allowed for it | `agent_instructions` / `tools` keys inside any `personal_info` section |
-| Screening questions (authorization, sponsorship, relocation, salary, locations, graduation date, GPA, internships, experience, teams, start date, consents) | `data/qa_bank.yaml` (`answer`, `agent_instructions`, `tools: [web_search, maps]`) |
-| Answers you gave on the spot (with the question, options, company, portal, date) | `data/learned_answers.yaml` (written by the agent; edit freely; `company: any` applies everywhere) |
-| Work history entries | the tailored resume's Experience section (`RESUME_ROLES`), all roles, in order |
-| Written answers ("Why this company?", behavioural questions) | the resume and the company profile (step 8) |
-| Years of experience | `master_profile.yaml` `claims.years_experience` (flagged for review) |
+One file, `data/applicant.yaml` (template: `data/applicant.example.yaml`), holds every answer. It was built from the
+unique questions the three test portals asked (Workday: Adobe, 59 fields; Greenhouse: DoorDash, 31; Lever: Palantir,
+24 -> 97 distinct labels -> 55 questions) and replaces `personal_info.yaml`, `qa_bank.yaml`, `learned_answers.yaml`
+and the form parts of `preferences.yaml`. Each entry has `question`, `seen` (the wordings portals use), `answer`,
+`instructions` and `tools` (`web_search`, `maps`); sections: identity, contact, address, links, work authorization,
+education, experience, employer history, preferences, sourcing, written answers, consents, self-identification,
+documents, and `learned` (answers given on the spot, appended by the agent with company, portal and date).
+
+`apply.hints` matches each form label to its entry (a short wording must equal the label; a long one may be worded
+differently or be part of a longer label; fields inside a Work Experience / Education entry go to "Work history" /
+"Degrees") and shows the entry next to the field: 122 of the 128 test fields match (the rest are upload boxes,
+handled by code, and unlabelled boxes). Work history comes from the tailored resume (`RESUME_ROLES`); written answers
+from the resume and the company profile (step 8); a referral only from `data/targets.csv` with `referral_consent: yes`.
 
 ## Rules
 
@@ -55,7 +59,7 @@ flowchart TD
 | A field's matching `qa_bank` / learned entry is shown next to it (fuzzy match on the wording) | `apply.hints` |
 | Dates are worked out by code (a degree that ended in May 2026 is "graduated" on 2026-11-03), so ranges are compared, not guessed | `apply.date_facts` |
 | The checker sends assumed answers (a consent never given, an eligibility, a language) to the candidate; it can't swap the candidate's own file for the resume, and its corrections must be real options | `apply.check` |
-| Questions asked on the spot: required fields and company-specific choices; an optional text box with no data stays empty | `apply.resolve` |
+| Questions asked on the spot: required fields and company-specific choices; an optional text box with no data stays empty; the answer is appended to `applicant.yaml` `learned` | `apply.resolve`, `applicant.learn` |
 | Self-identification `personal_info` doesn't cover: "I don't wish to answer" | `apply.PROMPT` |
 | Marketing / SMS / talent-community: declined; consents needed to apply: agreed | `apply.PROMPT`, `qa_bank.yaml` |
 | Entries are added only for work experience / education, or a section `personal_info` has data for (no blank Certifications entry) | `apply.ENTRY_OK`, `apply._has_data` |

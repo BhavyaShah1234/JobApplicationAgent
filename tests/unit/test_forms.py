@@ -1,6 +1,5 @@
 import yaml
 
-from jobagent.steps import apply
 from jobagent.tools.forms import SUBMIT, NEXT, match_option, same_value
 
 
@@ -38,10 +37,41 @@ def test_submit_buttons_are_recognised_and_next_is_not_submit():
     assert not SUBMIT.search("Apply Manually")
 
 
-def test_learned_answers_replace_the_same_question_per_company(tmp_path, monkeypatch):
-    monkeypatch.setattr(apply, "LEARNED", tmp_path / "learned_answers.yaml")
-    apply.learn("Preferred office?", ["NYC", "SF"], "NYC", "doordash", "x.io")
-    apply.learn("Preferred office?", ["NYC", "SF"], "SF", "doordash", "x.io")
-    apply.learn("Preferred office?", [], "Remote", "adobe", "y.io")
-    data = yaml.safe_load((tmp_path / "learned_answers.yaml").read_text())
-    assert [(e["company"], e["answer"]) for e in data] == [("doordash", "SF"), ("adobe", "Remote")]
+def test_learned_answers_are_appended_to_the_applicant_file(tmp_path, monkeypatch):
+    from jobagent.tools import applicant
+    f = tmp_path / "applicant.yaml"
+    f.write_text("# my notes\nidentity:\n  - question: Pronouns\n    answer: He/Him\n\nlearned:\n")
+    monkeypatch.setattr(applicant, "path", lambda: f)
+    applicant.learn("Preferred office?", ["NYC", "SF"], "SF", "doordash", "x.io")
+    applicant.learn("Preferred office?", [], "Remote", "adobe", "y.io")
+    data = yaml.safe_load(f.read_text())
+    assert "# my notes" in f.read_text()  # the user's comments stay
+    assert [(e["company"], e["answer"]) for e in data["learned"]] == [("doordash", "SF"), ("adobe", "Remote")]
+    assert applicant.answer("Pronouns", data) == "He/Him"
+
+
+def test_form_labels_find_their_applicant_entry(tmp_path, monkeypatch):
+    from jobagent.steps.apply import hints
+    from jobagent.tools import applicant
+    from jobagent.tools.forms import Field
+    f = tmp_path / "applicant.yaml"
+    f.write_text(open("data/applicant.example.yaml").read())
+    monkeypatch.setattr(applicant, "path", lambda: f)
+    cases = {  # label as the portal shows it -> the entry's question
+        "First Name*": "Legal name", "City": "Current address", "Country*": "Current address",
+        "Phone Device Type*": "Phone", "Location (City)*": "Current location (city)",
+        "Have you worked at Adobe?*": "Have you worked for this company before?",
+        "Are you able to work on a daily basis in the work location listed for this position? If not, are you "
+        "willing to relocate?*": "Able to work on site in the job's location?",
+        "If you are offered employment by Adobe, can you provide documentation establishing your identity and right "
+        "to work in the United States?*": "Can you provide documents proving your identity and right to work?",
+        "Gender*": "Gender", "Do you identify as transgender?*": "Transgender?",
+        "Will you now require immigration sponsorship by our company to attain or maintain your employment "
+        "eligibility?*": "Will you now require sponsorship?",
+    }
+    fields = [Field(id=i, kind="text", label=label) for i, label in enumerate(cases)]
+    fields.append(Field(id=99, kind="text", label="Job Title*", section="Work Experience 2"))
+    got = hints(fields, "Adobe")
+    for i, (label, question) in enumerate(cases.items()):
+        assert repr(question) in got.get(i, ""), (label, got.get(i))
+    assert "'Work history'" in got[99]

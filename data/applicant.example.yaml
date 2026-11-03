@@ -1,0 +1,284 @@
+# Everything the agent answers on job applications, in one file.
+#
+# Copy to data/applicant.yaml and fill in. Built 2026-11-03 from the questions three real portals asked (Workday: Adobe; Greenhouse: DoorDash; Lever:
+# Palantir). Each entry:
+#   question:      what is asked, in plain words
+#   seen:          how portals actually worded it (the agent matches form labels against question + seen)
+#   answer:        your answer (text, yes/no, or a few named parts); "" = no answer: the agent asks you on the spot
+#   instructions:  how the agent should answer (it may compute, write, or look things up)
+#   tools:         lookups it may run for this question: web_search, maps
+# Choice fields are matched to each form's own options ("USA" -> "United States of America").
+# The agent never invents a personal fact you haven't written here; instructions can't make it do so.
+
+# --- Identity and contact ----------------------------------------------------------------------------------------
+identity:
+  - question: "Legal name"
+    seen: ["First Name", "Last Name", "Full name", "Legal first name", "Middle name", "Suffix"]
+    answer: {first: "", middle: "", last: "", suffix: ""}
+  - question: "Preferred name"
+    seen: ["Preferred name", "Preferred first name", "I have a preferred name"]
+    answer: {first: "", last: "", full: ""}
+  - question: "Pronouns"
+    seen: ["Pronouns"]
+    answer: ""
+
+contact:
+  - question: "Email"
+    seen: ["Email", "Email Address"]
+    answer: ""
+    instructions: "On portals with an account the form shows the account's email (the agent's Gmail): keep that."
+  - question: "Phone"
+    seen: ["Phone", "Phone Number", "Phone Device Type", "Country Phone Code", "Phone Extension"]
+    answer: {number: "", country_code: "", country: "", device_type: "", extension: ""}
+
+# Current home address. Must be your real address: it is checked at the background check / I-9.
+address:
+  - question: "Current address"
+    seen: ["Address Line 1", "Address Line 2", "City", "State", "Postal Code", "County", "Country"]
+    answer: {line1: "", line2: "", city: "", state: "", postal_code: "", county: "", country: ""}
+  - question: "Current location (city)"
+    seen: ["Location (City)", "Current location", "Where are you located?"]
+    answer: ""
+    instructions: "'City, State' of the current address above."
+
+links:
+  - question: "LinkedIn"
+    seen: ["LinkedIn Profile", "LinkedIn URL", "Share your LinkedIn Profile site"]
+    answer: ""
+  - question: "GitHub"
+    seen: ["GitHub URL"]
+    answer: ""
+  - question: "Portfolio / website"
+    seen: ["Portfolio URL", "Website", "Personal website"]
+    answer: ""
+
+# --- Work authorization ------------------------------------------------------------------------------------------
+work_authorization:
+  - question: "Are you legally authorized to work in the United States?"
+    seen: ["Are you legally authorized to work in the United States?",
+           "Are you legally authorized to work in the country for which you are applying?"]
+    answer: ""
+  - question: "Will you now require sponsorship?"
+    seen: ["Will you now require immigration sponsorship by our company"]
+    answer: ""
+  - question: "Will you in the future require sponsorship for employment visa status?"
+    seen: ["Will you in the future require immigration sponsorship", "Will you now or in the future require sponsorship",
+           "Do you require visa sponsorship?"]
+    answer: ""
+    instructions: ""   # some forms count STEM OPT as sponsorship (DoorDash); the agent flags those for your review
+  - question: "Visa status / citizenship"
+    seen: ["Visa status", "Citizenship", "Country of citizenship"]
+    answer: {visa_status: "", citizenship: ""}
+  - question: "Are you of legal age to work?"
+    seen: ["Are you of legal age to work in the country in which this position will be based?"]
+    answer: ""
+  - question: "Can you provide documents proving your identity and right to work?"
+    seen: ["can you provide documentation establishing your identity and right to work"]
+    answer: ""
+  - question: "Do you hold a security clearance?"
+    seen: ["Do you currently hold an active security clearance?", "active UK security clearance"]
+    answer: ""
+  - question: "Are you eligible to obtain a security clearance?"
+    seen: ["Are you eligible to obtain the security clearance specified in the job description?"]
+    answer: ""
+    instructions: ""   # e.g. US clearances need US citizenship; UK ones have residency rules
+
+# --- Education ---------------------------------------------------------------------------------------------------
+education:
+  - question: "Degrees"
+    seen: ["School or University", "School", "Degree", "Field of Study", "Discipline", "Overall Result (GPA)", "What is your degree major and/or minor?", "University"]
+    answer:
+      - {school: "", degree: "", field: "",
+         start: "", end: "", gpa: ""}
+      - {school: "", degree: "", field: "",
+         start: "", end: "", gpa: ""}
+    instructions: "One education entry per degree. When the form's list doesn't have the exact name, the closest option."
+  - question: "Graduation date"
+    seen: ["Please confirm your graduation date", "What is your current estimated graduation date (MM/YYYY)", "Expected graduation"]
+    answer: ""
+    instructions: "In the form's format (05/2026); for a list of ranges, the range containing May 2026."
+  - question: "GPA"
+    seen: ["Please indicate your most recent GPA", "Cumulative GPA"]
+    answer: ""
+    instructions: "For a list of ranges, the range containing this GPA."
+  - question: "Current education status"
+    seen: ["Which one of the following best describes your current status?"]
+    answer: ""
+  - question: "Academic scholarship, fellowship or honor"
+    seen: ["Have you received a competitive academic scholarship, fellowship, or academic honor?"]
+    answer: ""
+    instructions: "Yes only if the resume lists one; otherwise No."
+  - question: "PhD focus / research statement"
+    seen: ["For PhD candidates, what is your focus area or research statement?"]
+    answer: ""
+    instructions: "Leave empty (not a PhD candidate) unless required; then 'Not applicable'."
+
+# --- Experience --------------------------------------------------------------------------------------------------
+experience:
+  - question: "Work history"
+    seen: ["Job Title", "I currently work here", "Role Description"]
+    answer: ""
+    instructions: "One entry per role in the tailored resume's Experience section, in order; the role's bullets as its description; 'I currently work here' only for a role shown as Present."
+  - question: "Current company"
+    seen: ["Current company", "Current employer"]
+    answer: ""
+    instructions: "The resume's role shown as Present (its company)."
+  - question: "Years of relevant experience"
+    seen: ["How many years of relevant, post college work experience do you have?", "Do you have over 2 years of industry work experience (non-internship experience)?"]
+    answer: ""
+    instructions: "The declared total; for 'over N years' questions compare with it."
+  - question: "Number of internships"
+    seen: ["How many software engineering or closely related technical internships have you completed?"]
+    answer: ""
+    instructions: "Count the internship roles on the resume."
+  - question: "Skills"
+    seen: ["Type to Add Skills", "Skills"]
+    answer: ""
+    instructions: "The resume's skills most relevant to the job description, at most 15."
+  - question: "Languages"
+    seen: ["Language Skill(s) (Check all that apply)", "Languages", "Language", "Fluent", "Reading", "Writing", "Speaking"]
+    answer:
+      - {language: "", native: "", reading: "", writing: "", speaking: ""}
+  - question: "Certifications"
+    seen: ["Certification", "Certification Number", "Issued Date", "Expiration Date"]
+    answer: []   # e.g. {name: "", issuer: "", number: "", issued: "", expires: ""}
+
+# --- History with the employer -----------------------------------------------------------------------------------
+employer_history:
+  - question: "Have you worked for this company before?"
+    seen: ["Have you been employed by <company> in the past?", "Have you worked at <company>?", "Have you ever worked at <company> in the following capacity", "Previous worker"]
+    answer: ""
+    instructions: "Yes only if the company is an employer on the resume."
+  - question: "Have you applied or interviewed here before?"
+    seen: ["Have you previously applied", "Have you interviewed with us before?"]
+    answer: ""
+  - question: "Current or former government employee?"
+    seen: ["Are you a current or former government employee?"]
+    answer: ""
+  - question: "Relatives working at the company?"
+    seen: ["Do you have relatives employed by", "related to an employee"]
+    answer: ""   # name of a relative working at the company you apply to, if any
+  - question: "Bound by a non-compete agreement?"
+    seen: ["non-compete", "restrictive covenant"]
+    answer: ""
+
+# --- Job preferences ---------------------------------------------------------------------------------------------
+preferences:
+  - question: "Willing to relocate?"
+    seen: ["Are you willing to relocate?", "Open to relocation?"]
+    answer: ""
+  - question: "Which locations would you work in?"
+    seen: ["Select all locations you would be open to being placed", "Preferred work location", "Office location preference"]
+    answer: ""
+    instructions: "Every US location the form offers; remote is fine too."
+  - question: "Able to work on site in the job's location?"
+    seen: ["Are you able to work on a daily basis in the work location listed for this position?"]
+    answer: ""
+  - question: "Remote / hybrid / on-site"
+    seen: ["Work arrangement", "Are you open to hybrid work?"]
+    answer: {remote: "", hybrid: "", onsite: ""}
+  - question: "Willing to travel?"
+    seen: ["Are you willing to travel?", "Percentage of travel"]
+    answer: ""
+    instructions: "The travel percentage the job description gives; if none, 100%."
+  - question: "Earliest start date"
+    seen: ["When can you start?", "Available start date", "Date available"]
+    answer: ""
+    instructions: "The coming Monday's date; in a list, 'immediately'."
+  - question: "Shift preference"
+    seen: ["Shift", "Preferred shift"]
+    answer: ""
+  - question: "Desired salary"
+    seen: ["Desired salary", "Salary expectations", "Expected compensation"]
+    answer: ""
+    instructions: "The job description's range; if none, the median for this role in the job's county."
+    tools: [web_search]
+  - question: "Competing offer deadlines?"
+    seen: ["Do you have any competing offer deadlines?"]
+    answer: ""
+
+# --- Interest and sourcing ---------------------------------------------------------------------------------------
+sourcing:
+  - question: "How did you hear about this position?"
+    seen: ["How Did You Hear About Us?", "Please tell us how you heard about this opportunity", "Source"]
+    answer: ""
+    instructions: "The company's own website / careers site option (Workday: '<Company> Source > <company>.com'). 'Referral' only when data/targets.csv has a contact with referral_consent: yes for this company."
+  - question: "Technical areas / teams you're interested in"
+    seen: ["Which technical domains are you most interested in?", "Which engineering organizations are you most interested in?"]
+    answer: ""
+    instructions: "The ones closest to the job description and the resume, within the number allowed (default 2-3)."
+
+# --- Written answers ---------------------------------------------------------------------------------------------
+written:
+  - question: "Why do you want to work here?"
+    seen: ["Why do you want to work at <company>?", "Why are you interested in this role?", "Why this company?"]
+    answer: ""
+    instructions: "80-150 words from the company research (mission, products) tied to my matching experience. No cliches."
+  - question: "Technical experience question"
+    seen: ["Describe your experience designing and implementing a backend service"]
+    answer: ""
+    instructions: "A truthful example from the resume, with what was built and the result, within the length asked (default 120-200 words)."
+  - question: "Favorite project or proudest accomplishment"
+    seen: ["What has been your favorite project or proudest accomplishment? Why?"]
+    answer: ""
+    instructions: "The resume project closest to the job description; what it does, my part, the result, why it mattered."
+  - question: "Additional information"
+    seen: ["ADDITIONAL INFORMATION", "Anything else you'd like us to know?"]
+    answer: ""
+    instructions: "Leave empty."
+
+# --- Consents ----------------------------------------------------------------------------------------------------
+consents:
+  - question: "Privacy notice / data processing acknowledgement"
+    seen: ["Applicant Privacy Acknowledgement", "I have read the privacy notice", "Check this box to confirm the statement above"]
+    answer: ""
+  - question: "SMS / WhatsApp messages about the application"
+    seen: ["Would you like to receive communications via SMS and/or WhatsApp"]
+    answer: ""
+  - question: "Contact about future job opportunities"
+    seen: ["has my consent to contact me about future job opportunities", "Join our talent community"]
+    answer: ""
+  - question: "AI notetakers in interviews"
+    seen: ["we may use AI notetakers to transcribe conversations"]
+    answer: ""
+  - question: "Willing to submit to a background check?"
+    seen: ["Are you willing to submit a background check during the hiring process?"]
+    answer: ""
+
+# --- Voluntary self-identification (empty = "I don't wish to answer") --------------------------------------------
+self_identification:
+  - question: "Gender"
+    seen: ["Gender", "Please select your gender"]
+    answer: ""
+  - question: "Race / ethnicity"
+    seen: ["Race", "Race (Please select one option that best describes how you identify)", "Please select your ethnicity"]
+    answer: ""
+  - question: "Hispanic or Latino?"
+    seen: ["Are you Hispanic or Latinx?"]
+    answer: ""
+  - question: "Veteran status"
+    seen: ["Protected Veteran Status", "Please select your veteran status"]
+    answer: ""
+  - question: "Disability status"
+    seen: ["Disability Status"]
+    answer: ""
+  - question: "Transgender?"
+    seen: ["Do you identify as transgender?"]
+    answer: ""
+  - question: "Sexual orientation"
+    seen: ["Sexual orientation"]
+    answer: ""
+
+# --- Documents ---------------------------------------------------------------------------------------------------
+documents:
+  - question: "Resume / CV"
+    seen: ["Resume/CV", "Upload a file", "Attach resume"]
+    instructions: "The tailored resume.pdf of the job."
+  - question: "Cover letter"
+    seen: ["Cover Letter", "Attach cover letter"]
+    instructions: "The job's cover_letter.pdf when the form takes one."
+
+# --- Learned on the spot -----------------------------------------------------------------------------------------
+# Answers you gave the agent while it filled a form (`jobagent hitl`), appended here so the same question isn't asked
+# again. Edit or delete freely; `company: any` makes an answer apply everywhere.
+learned:

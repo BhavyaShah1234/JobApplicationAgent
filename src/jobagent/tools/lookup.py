@@ -1,4 +1,4 @@
-"""Lookups a form answer may need (a qa_bank entry's `tools`, or the planner asking for one): web search, a place's
+"""Lookups a form answer may need (an applicant.yaml entry's `tools`, or the planner asking for one): web search, a place's
 address, and the distance / driving time between two places.
 
 Maps use OpenStreetMap's Nominatim (geocoding, at most one request a second, with an identifying User-Agent as its

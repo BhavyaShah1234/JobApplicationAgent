@@ -210,15 +210,12 @@ def _clear_site_cookies(page: Page, host: str) -> None:
 
 def candidate_values(email: str, password: str) -> dict:
     """What the general portal agent may type: the agent's email, the shared password, the user's name and phone."""
-    import yaml
-
-    from jobagent.config import get_settings
-    info = yaml.safe_load((get_settings().data_dir / "personal_info.yaml").read_text()) or {}
-    name, contact = info.get("name") or {}, info.get("contact") or info
-    return {"EMAIL": email, "PASSWORD": password, "FIRST_NAME": name.get("preferred_first") or name.get("first", ""),
-            "LEGAL_FIRST_NAME": name.get("first", ""), "LAST_NAME": name.get("last", ""),
+    from jobagent.tools import applicant
+    name = applicant.name()
+    return {"EMAIL": email, "PASSWORD": password, "FIRST_NAME": name["preferred_first"] or name["first"],
+            "LEGAL_FIRST_NAME": name["first"], "LAST_NAME": name["last"],
             "ALT_PASSWORD": "",  # filled per portal by ensure_with_agent
-            "PHONE": str(contact.get("phone", ""))}
+            "PHONE": applicant.phone()}
 
 
 def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print,
