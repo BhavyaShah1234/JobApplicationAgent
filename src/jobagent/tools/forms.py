@@ -19,6 +19,7 @@ CAPTCHA_FRAME = re.compile(r"(?i)hcaptcha|recaptcha|google\.com/recaptcha|challe
 # Buttons that send the application: never clicked by the agent (the user submits after review, step 13)
 SUBMIT = re.compile(r"(?i)^\s*(submit|send)\b|submit (my |your )?application|^\s*finish\b|complete (my |your )?"
                     r"application|^\s*apply\s*$")
+TEXT_KINDS = ("date_parts", "text", "email", "tel", "url", "number", "date", "textarea", "spin", "password")
 NEXT = re.compile(r"(?i)^\s*(next|continue|save (and|&) continue|proceed|review( (my |your )?application)?)\b")
 
 FIELDS_JS = r"""(start) => {
@@ -33,30 +34,45 @@ FIELDS_JS = r"""(start) => {
   const ownText = e => { const l = e.closest('label'); return l ? clean(l.innerText) : ''; };
   const question = e => {
     // the question a control belongs to: aria, label[for], wrapping label, legend, or the nearest container text
+    // Workday: the form field's own label (a list button's aria-label holds its value: "Select One Required")
+    const ff = e.closest('[data-automation-id^=formField-]');
+    const fl = ff && ff.querySelector(':scope > label, :scope > legend, :scope > fieldset > legend, label');
+    if (fl && clean(fl.innerText)) return clean(fl.innerText).slice(0, 300);
     let t = byIds(e.getAttribute('aria-labelledby'));
     if (!t && e.id) { const l = document.querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) t = clean(l.innerText); }
     if (!t) t = clean(e.getAttribute('aria-label'));
     if (!t) { const l = e.closest('label'); if (l) t = clean(l.innerText); }
     if (!t) { const fs = e.closest('fieldset'); const lg = fs && fs.querySelector('legend'); if (lg) t = clean(lg.innerText); }
     if (!t) t = clean(e.placeholder || e.getAttribute('title') || '');
-    if (!t) { let a = e.parentElement;
-      for (let k = 0; a && k < 5; k++, a = a.parentElement) { const x = clean(a.innerText); if (x && x.length < 300) { t = x; break; } } }
+    if (!t) t = around(e, ownOf(e));
     return t.slice(0, 300); };
+  const ownOf = e => e.tagName === 'SELECT' ? [...e.options].map(o => clean(o.text)) : [clean(e.value)];
+  const around = (e, own) => {
+    // the nearest container whose text, without the control's own options / value, says something: the question
+    // (Lever and many custom forms put it in a sibling div, not a label)
+    let a = e.parentElement;
+    for (let k = 0; a && k < 6; k++, a = a.parentElement) {
+      let x = clean(a.innerText);
+      for (const o of own) if (o) x = x.split(o).join(' ');
+      x = clean(x);
+      if (x.length > 1 && x.length < 400) return x;
+      if (x.length >= 400) break; }
+    return ''; };
   const groupQuestion = (e, name) => {
     // radio / checkbox groups: the group's legend or aria label, else the container text before the options
+    if (e.closest('[data-automation-id^=formField-]')) return question(e);  // Workday: the form field's label
     const g = e.closest('fieldset, [role=radiogroup], [role=group]');
     if (g) { const lg = g.querySelector('legend');
       const t = (lg && clean(lg.innerText)) || byIds(g.getAttribute('aria-labelledby')) || clean(g.getAttribute('aria-label'));
       if (t) return t.slice(0, 300); }
-    let a = e.parentElement;
-    for (let k = 0; a && k < 6; k++, a = a.parentElement) {
-      const n = a.querySelectorAll(`input[name="${CSS.escape(name)}"]`).length;
-      const x = clean(a.innerText);
-      if (n > 1 && x) { return x.slice(0, 300); } }
-    return question(e); };
+    const labels = [...document.querySelectorAll(`input[name="${CSS.escape(name)}"]`)].map(b => {
+      const l = b.closest('label') || (b.id && document.querySelector(`label[for="${CSS.escape(b.id)}"]`));
+      return l ? clean(l.innerText) : clean(b.value); });
+    return (around(e, labels) || question(e)).slice(0, 300); };
   const section = e => {
     // the nearest heading above the field (e.g. "Work Experience 2", "Voluntary Self-Identification")
-    const hs = [...document.querySelectorAll('h1, h2, h3, h4, legend, [role=heading]')].filter(vis);
+    // headings only: a legend is a field's own label (Workday's "To*" date), not a section
+    const hs = [...document.querySelectorAll('h1, h2, h3, h4, h5, [role=heading]')].filter(vis);
     let best = '';
     for (const h of hs) { if (h.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING) best = clean(h.innerText); }
     return best.slice(0, 80); };
@@ -66,7 +82,22 @@ FIELDS_JS = r"""(start) => {
   const ctl = 'input, select, textarea, [role=combobox], button[aria-haspopup=listbox], [role=checkbox], [role=radio], [role=spinbutton]';
   for (const e of document.querySelectorAll(ctl)) {
     const t = (e.getAttribute('type') || '').toLowerCase();
-    if (t === 'hidden' || t === 'submit' || t === 'button' || t === 'image' || t === 'reset' || e.disabled) continue;
+    if (t === 'hidden' || t === 'submit' || t === 'image' || t === 'reset' || e.disabled) continue;
+    if (t === 'button' && e.getAttribute('aria-haspopup') !== 'listbox') continue;
+    const dw = e.closest('[data-automation-id=dateInputWrapper]');
+    if (dw) {
+      // Workday's date: month / day / year boxes (zero-size inputs, the visible text is drawn beside them)
+      if (dw.hasAttribute('data-jf') || !vis(dw) || !shown(dw)) continue;
+      const ff = dw.closest('[data-automation-id^=formField-]') || dw.parentElement;
+      const lg = ff.querySelector('legend, label');
+      const q = clean(lg ? lg.innerText : dw.getAttribute('aria-label'));
+      const parts = [...dw.querySelectorAll('[data-automation-id$=-display]')].map(d => clean(d.innerText));
+      const fmt = [...dw.querySelectorAll('[data-automation-id^=dateSection][data-automation-id$=-input]')]
+          .map(i => ({Month: 'MM', Day: 'DD', Year: 'YYYY'})[i.getAttribute('aria-label')] || '??').join('/');
+      const val = parts.join('/');
+      add(dw, {kind: 'date_parts', label: q + ' (' + fmt + ')', required: required(dw.querySelector('input') || dw, q),
+               value: /[A-Z]{2}/.test(val) ? '' : val, format: fmt});
+      continue; }
     if (t === 'file') {
       // file inputs are often hidden behind an "Attach" button: count them when their container shows
       const box = e.closest('div, section, fieldset') || e.parentElement;
@@ -90,10 +121,17 @@ FIELDS_JS = r"""(start) => {
       const l = e.closest('label') || (e.id && document.querySelector(`label[for="${CSS.escape(e.id)}"]`));
       if (!l || !vis(l)) continue; }
     if (!shown(seenBox) && !(t === 'radio' || t === 'checkbox')) continue;
-    if (e.closest('[data-jf-skip]')) continue;
-    if (t === 'radio' || (t === 'checkbox' && e.name && document.querySelectorAll(`input[type=checkbox][name="${CSS.escape(e.name)}"]`).length > 1)) {
-      const key = t + ':' + e.name; if (seen.has(key)) continue; seen.add(key);
-      const boxes = [...document.querySelectorAll(`input[type=${t}][name="${CSS.escape(e.name)}"]`)];
+    if (e.closest('[data-jf-skip], header, nav, [role=banner], [data-automation-id=navigationContainer]')) continue;
+    if (e.closest('[data-automation-id=promptOption], [data-automation-id=activeListContainer], [role=option]')) continue;  // inside an open option list
+    // a group is the boxes sharing a name inside one question (Workday repeats a name in every work-experience entry)
+    const scope = e.closest('fieldset, [role=group], [role=radiogroup], [data-automation-id^=formField-]') || document;
+    const sameName = t === 'radio' || t === 'checkbox' ? [...scope.querySelectorAll(`input[type=${t}][name="${CSS.escape(e.name || '')}"]`)] : [];
+    if (e.hasAttribute('data-jf')) continue;  // already part of a group
+    const ffBoxes = t === 'checkbox' && e.closest('[data-automation-id^=formField-]')
+        ? [...e.closest('[data-automation-id^=formField-]').querySelectorAll('input[type=checkbox]')] : [];
+    if (t === 'radio' || (t === 'checkbox' && ((e.name && sameName.length > 1) || ffBoxes.length > 1))) {
+      // Workday lists one question's checkboxes under one form field, each with its own name
+      const boxes = ffBoxes.length > 1 ? ffBoxes : (e.name ? sameName : [e]);
       const opts = boxes.map(b => { let l = ownText(b);
         if (!l && b.id) { const x = document.querySelector(`label[for="${CSS.escape(b.id)}"]`); if (x) l = clean(x.innerText); }
         return l || clean(b.getAttribute('aria-label')) || b.value; });
@@ -105,6 +143,12 @@ FIELDS_JS = r"""(start) => {
       continue; }
     const role = (e.getAttribute('role') || '').toLowerCase();
     const q = question(e);
+    if (e.getAttribute('data-uxi-widget-type') === 'selectinput') {
+      // Workday's search picker ("How Did You Hear About Us?", "Country Phone Code"): chosen items are listed apart
+      const ms = e.closest('[data-automation-id=multiSelectContainer]') || e.parentElement;
+      const sel = [...ms.querySelectorAll('[data-automation-id=selectedItemList] li')].map(x => clean(x.innerText)).filter(Boolean);
+      add(e, {kind: 'combobox', label: q, required: required(e, q), value: [...new Set(sel)].join('; ')});
+      continue; }
     if (t === 'checkbox' || role === 'checkbox') {
       const on = e.checked === true || e.getAttribute('aria-checked') === 'true';
       add(e, {kind: 'checkbox', label: q, required: required(e, q), value: on ? 'checked' : ''}); continue; }
@@ -127,11 +171,18 @@ FIELDS_JS = r"""(start) => {
   const buttons = [...document.querySelectorAll('button, [role=button], input[type=submit], a[href]')]
       .filter(b => vis(b) && shown(b) && !b.disabled && !b.hasAttribute('data-jf'))
       .map(b => clean(b.innerText || b.value || b.getAttribute('aria-label'))).filter(t => t && t.length < 60);
+  // "Add" / "Add Another" buttons (Workday work experience, education, languages): the planner may ask for entries
+  const adds = [];
+  for (const b of document.querySelectorAll('button, [role=button]')) {
+    const tx = clean(b.innerText || b.getAttribute('aria-label'));
+    if (!/^add( another)?\b/i.test(tx) || !vis(b) || !shown(b) || tx.length > 40) continue;
+    b.setAttribute('data-jf-add', String(adds.length));
+    adds.push({id: adds.length, text: tx, section: section(b) || clean(b.getAttribute('aria-label'))}); }
   const errors = [...document.querySelectorAll('[role=alert], [aria-invalid=true], [class*=error i], [id*=error i], [data-automation-id*=error i]')]
       .filter(vis).map(e => clean(e.innerText)).filter(t => t && t.length < 300);
   const headings = [...document.querySelectorAll('h1, h2, h3, [data-automation-id=pageHeader], [aria-current=step]')]
       .filter(vis).map(h => clean(h.innerText)).filter(Boolean).slice(0, 8);
-  return {fields: out, next: n, buttons: [...new Set(buttons)].slice(0, 60), errors: [...new Set(errors)].slice(0, 20), headings};
+  return {fields: out, next: n, adds, buttons: [...new Set(buttons)].slice(0, 60), errors: [...new Set(errors)].slice(0, 20), headings};
 }"""
 
 
@@ -148,6 +199,7 @@ class Field:
     multiple: bool = False
     accept: str = ""
     maxlength: int | None = None
+    format: str = ""
 
     def brief(self) -> str:
         opts = ""
@@ -157,7 +209,8 @@ class Field:
         return (f"[{self.id}] {self.kind}{' REQUIRED' if self.required else ''} \"{self.label[:200]}\""
                 f"{f' section=\"{self.section}\"' if self.section else ''}{opts}"
                 f"{f' current=\"{self.value[:80]}\"' if self.value else ''}"
-                f"{f' maxlength={self.maxlength}' if self.maxlength else ''}")
+                f"{f' maxlength={self.maxlength}' if self.maxlength else ''}"
+                f"{f' format={self.format}' if self.format else ''}")
 
 
 @dataclass
@@ -167,6 +220,7 @@ class PageView:
     errors: list[str]
     headings: list[str]
     frames: dict[int, Frame]
+    adds: list[dict] = field(default_factory=list)
 
 
 def frames_of(page: Page) -> list[Frame]:
@@ -176,11 +230,11 @@ def frames_of(page: Page) -> list[Frame]:
 
 def read_page(page: Page) -> PageView:
     """Every visible field on the page and in its iframes, numbered across frames."""
-    fields, buttons, errors, headings, frames, n = [], [], [], [], {}, 0
+    fields, buttons, errors, headings, frames, n, adds = [], [], [], [], {}, 0, []
     for k, f in enumerate(frames_of(page)):
         try:
-            f.evaluate("() => document.querySelectorAll('[data-jf], [data-jf-opt]').forEach(e => "
-                       "{e.removeAttribute('data-jf'); e.removeAttribute('data-jf-opt')})")
+            f.evaluate("() => document.querySelectorAll('[data-jf], [data-jf-opt], [data-jf-add]').forEach(e => "
+                       "{e.removeAttribute('data-jf'); e.removeAttribute('data-jf-opt'); e.removeAttribute('data-jf-add')})")
             snap = f.evaluate(FIELDS_JS, n)
         except Exception:
             continue
@@ -190,12 +244,13 @@ def read_page(page: Page) -> PageView:
             fields.append(Field(id=x["id"], kind=x["kind"], label=x["label"], required=bool(x.get("required")),
                                 value=x.get("value") or "", options=x.get("options") or [], section=x.get("section", ""),
                                 frame=k, multiple=bool(x.get("multiple")), accept=x.get("accept", ""),
-                                maxlength=x.get("maxlength")))
+                                maxlength=x.get("maxlength"), format=x.get("format", "")))
+        adds += [{**a, "frame": k} for a in snap.get("adds", [])]
         buttons += snap["buttons"]
         errors += snap["errors"]
         headings += snap["headings"]
     return PageView(fields, list(dict.fromkeys(buttons)), list(dict.fromkeys(errors)), list(dict.fromkeys(headings)),
-                    frames)
+                    frames, adds)
 
 
 # --- option matching ------------------------------------------------------------------------------------------------
@@ -245,7 +300,7 @@ def match_option(answer: str, options: list[str], cutoff: int = 80) -> tuple[str
 def same_value(want: str, got: str, kind: str) -> bool:
     """The page shows the value that was meant (read-back check)."""
     w, g = _norm(want), _norm(got)
-    if kind in ("tel",):
+    if kind == "tel" or re.fullmatch(r"[\d\s()+.-]{7,}", want.strip()):
         return re.sub(r"\D", "", want)[-10:] == re.sub(r"\D", "", got)[-10:]
     if kind == "checkbox":
         return (w in ("checked", "yes", "true")) == (g == "checked")
@@ -255,16 +310,24 @@ def same_value(want: str, got: str, kind: str) -> bool:
         return bool(got) and (w in g or _norm(want.rsplit("/", 1)[-1]) in g)
     if w == g:
         return True
+    if kind == "date_parts":
+        return bool(re.sub(r"\D", "", want)) and re.sub(r"\D", "", want) == re.sub(r"\D", "", got)
+    if kind == "combobox" and ";" in want:
+        return {_norm(x) for x in want.split(";") if x.strip()} <= {_norm(x) for x in got.split(";")} | {g}
+    if " > " in want and _norm(want.rsplit(" > ", 1)[-1]) == g:
+        return True
     return kind in ("combobox", "select", "radio") and (w in g or fuzz.token_set_ratio(w, g) >= 90)
 
 
 # --- comboboxes ------------------------------------------------------------------------------------------------------
 
-OPTIONS_JS = r"""() => [...document.querySelectorAll('[role=option], [role=menuitem], [data-automation-id=promptOption]')]
-  .filter(e => { const r = e.getBoundingClientRect(); return r.width > 1 && r.height > 1; })
-  .map(e => (e.innerText || e.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean)"""
+OPTIONS_JS = r"""() => [...new Set([...document.querySelectorAll('[role=option], [role=menuitem], [data-automation-id=promptOption]')]
+  .filter(e => { const r = e.getBoundingClientRect(); return r.width > 1 && r.height > 1
+                 && !e.closest('[data-automation-id=selectedItemList], [data-automation-id=selectedItem]'); })
+  .map(e => (e.innerText || e.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean))]"""
 
-_NO_OPTIONS = re.compile(r"(?i)^(no (options|results|items)( found)?|loading\.*|type to search|start typing.*)$")
+_NO_OPTIONS = re.compile(r"(?i)^(no (options|results|items|matches)( found)?\.?|loading\.*|type to search|start typing.*|"
+                         r"select one)$")
 
 
 def locate(view: PageView, f: Field):
@@ -285,12 +348,41 @@ def discover_options(page: Page, view: PageView, log=print) -> None:
         if f.kind != "combobox" or f.options:
             continue
         try:
-            f.options = _open_options(view.frames[f.frame], locate(view, f), page)[:300]
+            loc = locate(view, f)
+            f.options = _open_options(view.frames[f.frame], loc, page)[:300]
+            if loc.get_attribute("data-uxi-widget-type") == "selectinput" and len(f.options) <= 15:
+                f.options = _expand_categories(page, view.frames[f.frame], loc, f.options)
         except Exception as e:
             log(f"forms: options of \"{f.label[:50]}\" unreadable: {type(e).__name__}")
         finally:
             page.keyboard.press("Escape")
             page.wait_for_timeout(200)
+
+
+def _expand_categories(page: Page, frame: Frame, loc, top: list[str]) -> list[str]:
+    """Workday pickers list categories whose entries open on a click: list them as "Category > Entry"."""
+    out = []
+    for cat in top:
+        try:
+            page.keyboard.press("Escape")
+            _open_options(frame, loc, page)
+            frame.locator("[role=option], [data-automation-id=promptOption]").filter(
+                has_text=re.compile(rf"^\s*{re.escape(cat)}\s*$")).first.click(timeout=5000)
+            page.wait_for_timeout(1000)
+            chosen = loc.evaluate("e => [...(e.closest('[data-automation-id=multiSelectContainer]') || e.parentElement)"
+                                  ".querySelectorAll('[data-automation-id=selectedItemList] li')].length")
+            if chosen:  # a plain option: it got selected; undo by leaving the list (Escape) and keep it as is
+                out.append(cat)
+                loc.evaluate("e => (e.closest('[data-automation-id=multiSelectContainer]') || e.parentElement)"
+                             ".querySelectorAll('[data-automation-id=selectedItemList] [data-automation-id=DELETE_charm], "
+                             "[data-automation-id=selectedItemList] [aria-label*=delete i]').forEach(b => b.click())")
+                continue
+            sub = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o) and o not in top]
+            out += [f"{cat} > {o}" for o in sub[:40]] or [cat]
+        except Exception:
+            out.append(cat)
+    page.keyboard.press("Escape")
+    return out[:300]
 
 
 # --- filling -------------------------------------------------------------------------------------------------------
@@ -321,6 +413,24 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         loc.fill(answer, timeout=8000)
         loc.blur() if hasattr(loc, "blur") else None
         return answer
+    if f.kind == "date_parts":  # Workday's date: click its first box and type the digits; it moves on by itself
+        digits = re.sub(r"\D", "", answer)
+        loc.locator("[data-automation-id$=-display]").first.click(timeout=8000)
+        page.keyboard.type(digits, delay=80)
+        page.keyboard.press("Tab")
+        return answer
+    if f.kind == "combobox" and ";" in answer and loc.get_attribute("data-uxi-widget-type") == "selectinput":
+        # a multi-value search picker (Workday skills): add each value the site knows; skip the ones it doesn't
+        added = []
+        for item in [x.strip() for x in answer.split(";") if x.strip()]:
+            try:
+                one = Field(**{**f.__dict__, "options": []})
+                added.append(fill_field(page, view, one, item, files, None))
+            except Exception:
+                page.keyboard.press("Escape")
+        if not added:
+            raise FillError(f"none of {answer[:80]!r} is offered")
+        return "; ".join(added)
     if f.kind == "spin":  # Workday's month / year boxes take typed digits
         loc.click(timeout=8000)
         page.keyboard.press("Control+A")
@@ -355,6 +465,14 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         return "; ".join(chosen)
     if f.kind == "combobox":
         opts = _open_options(frame, loc, page)
+        if " > " in answer and loc.get_attribute("data-uxi-widget-type") == "selectinput":
+            # "Category > meaning": open the category, then the entry that means the rest
+            cat, answer = (x.strip() for x in answer.split(" > ", 1))
+            first = _choose(f.label, cat, opts, tie_break)
+            frame.locator("[role=option], [data-automation-id=promptOption]").filter(
+                has_text=re.compile(rf"^\s*{re.escape(first)}\s*$")).first.click(timeout=8000)
+            page.wait_for_timeout(1200)
+            opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
         opt, _ = match_option(answer, opts) if opts else (None, 0)
         if opt is None and (loc.evaluate("e => e.tagName") == "INPUT"):
             # a search box: type the answer (or its first words) and pick from what the site suggests
@@ -363,6 +481,8 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                     continue
                 loc.fill("")
                 loc.type(probe, delay=40)
+                if loc.get_attribute("data-uxi-widget-type") == "selectinput":
+                    loc.press("Enter")  # Workday searches on Enter
                 page.wait_for_timeout(1800)
                 opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
                 if opts:
@@ -374,13 +494,30 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 opt = _choose(f.label, answer, opts, tie_break)
             except FillError:
                 page.keyboard.press("Escape")
+                page.keyboard.press("Escape")
                 raise
         option = frame.get_by_role("option", name=opt, exact=True)
         if not option.count():
             option = frame.locator("[role=option], [role=menuitem], [data-automation-id=promptOption]").filter(
                 has_text=re.compile(rf"^\s*{re.escape(opt)}\s*$"))
-        option.first.click(timeout=8000)
-        page.wait_for_timeout(500)
+        try:
+            option.first.click(timeout=8000)
+        finally:
+            page.wait_for_timeout(1200)
+        if loc.get_attribute("data-uxi-widget-type") == "selectinput":
+            # a Workday category ("Job Board") opens its own list ("LinkedIn", "Indeed"): pick again from that
+            for _ in range(2):
+                chosen = loc.evaluate("e => [...(e.closest('[data-automation-id=multiSelectContainer]') || e.parentElement)"
+                                      ".querySelectorAll('[data-automation-id=selectedItemList] li')].length")
+                sub = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
+                if chosen or not sub:
+                    break
+                pick = _choose(f.label, answer, sub, tie_break)
+                frame.locator("[role=option], [data-automation-id=promptOption]").filter(
+                    has_text=re.compile(rf"^\s*{re.escape(pick)}\s*$")).first.click(timeout=8000)
+                page.wait_for_timeout(1200)
+                opt = f"{opt} > {pick}"
+            page.keyboard.press("Escape")
         return opt
     raise FillError(f"unknown field kind {f.kind}")
 
@@ -394,10 +531,12 @@ def click_button(page: Page, view: PageView, pattern: re.Pattern, allow_submit: 
             continue
         if SUBMIT.search(text) and not allow_submit:
             continue
+        # innerText follows CSS text-transform ("APPLY") while the accessible name doesn't ("Apply")
+        name = re.compile(rf"^\s*{re.escape(text)}\s*$", re.I)
         for frame in view.frames.values():
-            btn = frame.get_by_role("button", name=text, exact=True)
+            btn = frame.get_by_role("button", name=name)
             if not btn.count():
-                btn = frame.get_by_role("link", name=text, exact=True)
+                btn = frame.get_by_role("link", name=name)
             btn = btn.filter(visible=True)
             if btn.count():
                 btn.first.click(timeout=10000)

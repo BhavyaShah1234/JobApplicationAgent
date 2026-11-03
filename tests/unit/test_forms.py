@@ -26,6 +26,8 @@ def test_read_back_comparisons():
     assert same_value("Backend; Machine Learning", "Machine Learning; Backend", "checkboxes")
     assert same_value("checked", "checked", "checkbox") and not same_value("checked", "", "checkbox")
     assert not same_value("Bhavya", "Bhavyaa Shah", "text")
+    assert same_value("08/2024", "08/2024", "date_parts") and not same_value("Present", "", "date_parts")
+    assert same_value("Job Board > LinkedIn", "LinkedIn", "combobox")
 
 
 def test_submit_buttons_are_recognised_and_next_is_not_submit():

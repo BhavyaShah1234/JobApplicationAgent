@@ -36,7 +36,7 @@
   aliases: ["Source", "Where did you find this job?"]
   answer: "Company careers page"
   type: select
-  agent_instructions: "If a referral contact with consent exists for this company, choose 'Referral' instead."
+  agent_instructions: "The company's own website / careers site option (e.g. 'Adobe Source > Adobe.com', 'Palantir Website', 'Company Website'). Only if a referral contact with consent exists for this company, choose 'Referral' instead."
 
 - question: "Desired salary"
   aliases: ["Salary expectations", "Expected compensation"]
