@@ -10,6 +10,7 @@ challenge (CAPTCHA, bot check) is handed to the user. What worked is kept in the
 
 import json
 import re
+from urllib.parse import urlparse
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -75,7 +76,9 @@ ONE action. Rules:
   account with {EMAIL}, {PASSWORD} (and confirm-password {PASSWORD}), {FIRST_NAME}, {LAST_NAME}, {PHONE} where asked
   ({LEGAL_FIRST_NAME} when the field asks for the legal first name);
   tick only checkboxes that accept terms or privacy needed to continue. Set registered=true when you submit it.
-- Never use "forgot / reset password". If {PASSWORD} is rejected for an existing account, answer failed.
+- Never use "forgot / reset password". If {PASSWORD} is rejected ("wrong username or password") and the site offers
+  "Continue / Sign in with Google", click that instead: the browser is signed in to Google as {EMAIL}, and an account
+  made with Google has no password. Otherwise, if {PASSWORD} is rejected for an existing account, answer failed.
 - If, while CREATING an account or setting a NEW password, the site rejects {PASSWORD} as too weak, too common or
   not meeting its rules, use {ALT_PASSWORD} in every password and confirm field from then on (it's stored for
   this portal).
@@ -96,6 +99,17 @@ SIGN_OUT_PROMPT = """You operate a job portal in a browser for the candidate, to
 this careers site. Each turn you see the visible fields and buttons (by frame and index) and the page text; choose ONE
 action. Open the account / profile / "My career" menu if needed, then click "Sign out" / "Log out". Answer
 signed_out when the page shows a sign-in link and no account; failed when stuck. Never fill anything."""
+
+
+RESET_PROMPT = """You operate a job portal in a browser for the candidate. The user approved ONE password reset for this
+portal's existing account (its password is unknown). Each turn you see the visible fields and buttons (by frame and
+index) and the page text; choose ONE action:
+- Enter {EMAIL} where asked and follow "Forgot / Reset your password".
+- When the page says a reset link or code was emailed, answer link_sent or code_sent (it's read from the inbox).
+- On the set-new-password form, fill {PASSWORD} into the new and confirm fields and submit (if the site refuses it
+  as too weak or common, use {ALT_PASSWORD} in both).
+- Then sign in with {EMAIL} and the new password, and answer signed_in when the page shows the account.
+Never change anything else (profile, email, security settings); failed when stuck."""
 
 
 def snapshot(page: Page) -> tuple[str, list]:
@@ -138,7 +152,7 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
     history: list[str] = []
     state = {"state": "failed", "registered": False, "verified_mail": False, "steps": history}
     since = datetime.now(UTC)
-    code, challenges, repeats, last_action, pw_submitted = "", 0, 0, None, False
+    code, challenges, repeats, last_action, pw_submitted, wrong_pw = "", 0, 0, None, False, 0
     state["alt_password_used"] = False
     for step in range(MAX_STEPS):
         page.wait_for_timeout(2500)
@@ -158,7 +172,23 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
             hitl.ask(f"{host}: a {c.kind} puzzle is on the page (screenshot {shot}). Solve it in noVNC "
                      "(http://localhost:6080) and press its submit/verify button, then answer 'done'.")
             history.append(f"the user solved a {c.kind} challenge")
+        if urlparse(page.url).netloc == "accounts.google.com":  # Google's own pages: handled by code, not the model
+            note = _google_step(page, values.get("EMAIL", ""))
+            history.append(note)
+            log(f"portal {host}: google sign-in: {note}")
+            if note.startswith("blocked"):
+                state["state"] = "failed"
+                break
+            continue
         view, frames = snapshot(page)
+        if re.search(r"(?i)wrong (username|email|e-mail) or password|incorrect (username|email|password)|"
+                     r"invalid (username|email|credentials|password)", view.split("ELEMENTS:")[0]):
+            wrong_pw += 1
+            if wrong_pw >= 2 and "PASSWORD REJECTED" not in " ".join(history[-2:]):
+                history.append("PASSWORD REJECTED twice: never type a password again here (lockout risk). If the "
+                               "site offers Continue with Google use it; if not visible, go back to the first "
+                               "sign-in page (an Edit / Back link) where it is shown; otherwise answer failed")
+                log(f"portal {host}: the password was rejected twice; no more password attempts")
         if "NEW_PASSWORD_FORM" in view and pw_submitted and not state["alt_password_used"]:
             # the same set-password form came back after {PASSWORD} was submitted: the site refused it
             history.append("the site did NOT accept {PASSWORD} (the new-password form came back): fill "
@@ -171,7 +201,7 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
         if "NEW_PASSWORD_FORM" in view and typed and not state["alt_password_used"] and \
                 any(h.startswith(("click", "press_enter")) for h in recent[typed[-1] + 1:]):
             pw_submitted = True
-        msgs = [SystemMessage(PROMPT if goal == "sign_in" else SIGN_OUT_PROMPT),
+        msgs = [SystemMessage({"sign_in": PROMPT, "sign_out": SIGN_OUT_PROMPT, "reset_password": RESET_PROMPT}[goal]),
                 HumanMessage(f"PORTAL: {host}\nURL: {page.url[:150]}\n"
                              + (f"NOTES FROM EARLIER VISITS: {list(notes)[-6:]}\n" if notes else "")
                              + (f"A verification code is available as {{CODE}}.\n" if code else "")
@@ -251,6 +281,12 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
                        a.value)  # one digit of a code split over several boxes (0-based)
         for k, v in {**values, "CODE": code}.items():
             value = value.replace("{" + k + "}", v or "")
+        if a.action == "fill" and "PASSWORD}" in a.value and wrong_pw >= 2 and goal == "sign_in":
+            history.append("refused: the password was already rejected twice (lockout risk)")
+            continue
+        if a.action == "fill" and not a.value and (loc.input_value() if loc.evaluate("e => 'value' in e") else ""):
+            history.append(f"refused: an empty fill would clear \"{_label(frames, a)}\"; click the button instead")
+            continue
         if a.action == "fill" and "PASSWORD}" in a.value and (loc.get_attribute("type") or "").lower() != "password":
             history.append(f"refused: {a.value} may only go into a password field, not \"{_label(frames, a)}\"; "
                            "submit the email first if no password field is shown")
@@ -297,6 +333,26 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
             except Exception:
                 pass
     return state
+
+
+def _google_step(page: Page, email: str) -> str:
+    """One step on accounts.google.com for 'Continue with Google': pick the agent's account, confirm consent."""
+    from jobagent.tools.google_auth import BLOCKED
+    body = page.locator("body").inner_text(timeout=10000)
+    if BLOCKED.search(body):
+        return "blocked: Google refused this browser"
+    acc = page.get_by_text(email, exact=False)
+    if acc.count() and re.search(r"(?i)choose an account|sign in with google|to continue to", body):
+        acc.first.click()
+        page.wait_for_timeout(3000)
+        return f"chose {email} in Google's account chooser"
+    btn = page.get_by_role("button", name=re.compile(r"^(continue|allow)$", re.I))
+    if btn.count():
+        btn.first.click()
+        page.wait_for_timeout(3000)
+        return "confirmed Google's consent screen"
+    page.wait_for_timeout(3000)
+    return "waited on a Google page"
 
 
 def signed_in_evidence(page: Page, values: dict) -> bool:

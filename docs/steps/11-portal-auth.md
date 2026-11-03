@@ -4,10 +4,11 @@ Before an application is filled (step 12), the agent must be signed in to the em
 email (`bhavya24091952@gmail.com`). It signs in first; it registers only when the portal has no account for that
 email; it never resets a password and never registers twice on the same portal.
 
-**Status (2026-11-02):** Workday (Adobe, Symbotic), Lever and Amazon's own portal pass: account created, email
+**Status (2026-11-03):** Workday (Adobe, Symbotic), Lever and Amazon's own portal pass: account created, email
 confirmed from the inbox, the used verification mail moved to Trash with an audit row, and a second run with the
 session cleared signs in with the stored password without registering again. Oracle Cloud (JPMorgan) and iCIMS
-(General Dynamics) show an hCaptcha puzzle after the email is submitted, so they need the user in noVNC.
+(General Dynamics) create accounts only when an application is started, so they move to step 12; both show an
+hCaptcha after the email that the user solves in noVNC.
 
 ## Run it
 
@@ -77,6 +78,12 @@ flowchart TD
 - Oracle Cloud candidate sites have no sign-up page: "Manage profile" only finds an existing profile ("We couldn't
   find this email"); a profile is created by starting an application on a posting (Apply, email, terms, an
   emailed code), so for Oracle registration happens at the start of step 12's application flow.
+- iCIMS (General Dynamics): the agent's email had no iCIMS account. The password was rejected, reset mails were
+  never sent (iCIMS says "Check your email" either way), and "Continue with Google" answered that the iCIMS account must
+  already be linked to Google. A new candidate's account is created by starting an application ("Apply for this job
+  online", email, then a profile form with a password); the posting's `/login` page only signs in. So for iCIMS, as for
+  Oracle, registration happens at the start of step 12. The agent now stops password attempts after two rejections
+  (lockout risk) and tries "Continue with Google" where offered.
 - iCIMS and Oracle Cloud show an hCaptcha puzzle after the email is submitted. hCaptcha closes by itself after a
   while and re-appears on every submit, so the user must say when it's solved.
 - Oracle pre-loads a full-size hCaptcha frame hidden with opacity 0: only a frame that's really shown counts.
