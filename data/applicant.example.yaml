@@ -114,27 +114,28 @@ education:
     instructions: "Leave empty (not a PhD candidate) unless required; then 'Not applicable'."
 
 # --- Experience --------------------------------------------------------------------------------------------------
+# Work history, current company, skills, years of experience and internships are taken from each job's tailored
+# resume (resume.tex) when its form is filled, so the form always says what the uploaded resume says. Nothing to fill
+# here; change the resume (master_profile.yaml / the template) instead.
 experience:
   - question: "Work history"
     seen: ["Job Title", "I currently work here", "Role Description"]
-    answer: ""
-    instructions: "One entry per role in the tailored resume's Experience section, in order; the role's bullets as its description; 'I currently work here' only for a role shown as Present."
+    answer: ""   # from the job's resume: every role with title, company, location, dates and bullets
+    instructions: "One entry per role, in order; the role's bullets as its description; 'I currently work here' only for the current role."
   - question: "Current company"
     seen: ["Current company", "Current employer"]
-    answer: ""
-    instructions: "The resume's role shown as Present (its company)."
+    answer: ""   # from the job's resume: the role shown as Present
   - question: "Years of relevant experience"
     seen: ["How many years of relevant, post college work experience do you have?", "Do you have over 2 years of industry work experience (non-internship experience)?"]
-    answer: ""
-    instructions: "The declared total; for 'over N years' questions compare with it."
+    answer: ""   # from the job's resume: the months its roles cover, overlaps counted once
+    instructions: "For 'over N years' questions compare with it."
   - question: "Number of internships"
     seen: ["How many software engineering or closely related technical internships have you completed?"]
-    answer: ""
-    instructions: "Count the internship roles on the resume."
+    answer: ""   # from the job's resume: roles titled intern / internship
   - question: "Skills"
     seen: ["Type to Add Skills", "Skills"]
-    answer: ""
-    instructions: "The resume's skills most relevant to the job description, at most 15."
+    answer: ""   # from the job's resume: its Technical Skills section
+    instructions: "The ones most relevant to the job description, at most 15."
   - question: "Languages"
     seen: ["Language Skill(s) (Check all that apply)", "Languages", "Language", "Fluent", "Reading", "Writing", "Speaking"]
     answer:

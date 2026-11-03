@@ -47,8 +47,14 @@ documents, and `learned` (answers given on the spot, appended by the agent with 
 `apply.hints` matches each form label to its entry (a short wording must equal the label; a long one may be worded
 differently or be part of a longer label; fields inside a Work Experience / Education entry go to "Work history" /
 "Degrees") and shows the entry next to the field: 122 of the 128 test fields match (the rest are upload boxes,
-handled by code, and unlabelled boxes). Work history comes from the tailored resume (`RESUME_ROLES`); written answers
-from the resume and the company profile (step 8); a referral only from `data/targets.csv` with `referral_consent: yes`.
+handled by code, and unlabelled boxes). The experience answers (work history with each role's bullets, current company,
+skills, years of experience with overlaps counted once, internships) are taken from the job's tailored `resume.tex`
+when its form is filled (`applicant.resume_experience`, `applicant.with_resume`), so the form says what the uploaded
+resume says. Written answers come from the resume and the company profile (step 8).
+
+Two facts are enforced in code whatever an instruction says (`apply.enforce`): address fields only from the "Current
+address" entry (never looked up or made up; empty -> asked), and a referral option only for a `data/targets.csv`
+contact with `referral_consent: yes` (otherwise asked).
 
 ## Rules
 

@@ -46,9 +46,10 @@ def test_keyword_prompt_includes_advice_and_summary(monkeypatch):
     assert "ADVICE:\n- Name the teams" in text and "SUMMARY:\nEngineer with 3+ years" in text
 
 
-def test_upload_name_from_personal_info(tmp_path, monkeypatch):
-    (tmp_path / "personal_info.yaml").write_text('name:\n  first: "Bhavya Minesh"\n  middle: ""\n  last: "Shah"\n')
-    monkeypatch.setattr("jobagent.config.get_settings", lambda: type("S", (), {"data_dir": tmp_path})())
+def test_upload_name_from_the_applicant_file(tmp_path, monkeypatch):
+    (tmp_path / "applicant.yaml").write_text('identity:\n  - question: "Legal name"\n'
+                                             '    answer: {first: "Bhavya Minesh", middle: "", last: "Shah"}\n')
+    monkeypatch.setattr("jobagent.tools.applicant.get_settings", lambda: type("S", (), {"data_dir": tmp_path})())
     assert ats_sites.upload_name() == "Bhavya_Minesh_Shah_Resume.pdf"
 
 

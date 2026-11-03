@@ -75,3 +75,37 @@ def test_form_labels_find_their_applicant_entry(tmp_path, monkeypatch):
     for i, (label, question) in enumerate(cases.items()):
         assert repr(question) in got.get(i, ""), (label, got.get(i))
     assert "'Work history'" in got[99]
+
+
+RESUME_TEX = r"""\section{Experience}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {\underline{Robotics Researcher}}{January 2026 -- Present}
+      {Logos Robotics Lab}{Tempe, Arizona}
+      \resumeItemListStart
+        \resumeItem{Built CNN models in PyTorch, improving precision by 25\%.}
+      \resumeItemListEnd
+    \resumeSubheading
+      {\underline{Software Engineering Intern}}{May 2025 -- December 2025}
+      {Acme \& Co}{Phoenix, Arizona}
+      \resumeItemListStart
+        \resumeItem{Shipped REST APIs.}
+      \resumeItemListEnd
+\section{Technical Skills}
+     \textbf{Languages}{: Python, C++} \\
+     \textbf{Tools}{: Docker, Python}
+\end{document}"""
+
+
+def test_experience_answers_come_from_the_tailored_resume(monkeypatch):
+    from datetime import date
+    from jobagent.tools import applicant
+    monkeypatch.setattr(applicant, "date", type("D", (), {"today": staticmethod(lambda: date(2026, 4, 15))}))
+    exp = applicant.resume_experience(RESUME_TEX)
+    assert [r["company"] for r in exp["roles"]] == ["Logos Robotics Lab", "Acme & Co"]
+    assert exp["roles"][0]["current"] and exp["roles"][0]["description"].endswith("by 25%.")
+    assert exp["current_company"] == "Logos Robotics Lab" and exp["internships"] == 1
+    assert exp["skills"] == ["Python", "C++", "Docker"]
+    assert exp["years"] == 1.0  # May 2025 - Apr 2026, overlap counted once
+    data = {"experience": [{"question": "Current company", "answer": "old"}]}
+    assert applicant.answer("Current company", applicant.with_resume(data, exp)) == "Logos Robotics Lab"

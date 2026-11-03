@@ -92,8 +92,9 @@ Rules:
   includes OPT; you hold <visa_status>".
 - Dates: DATE_FACTS says whether a degree has ended; the posting's own target dates never change the candidate's
   facts. For an option list of ranges, pick the range containing the true value.
-- Work history: one entry per role in RESUME_ROLES, all of them, in that order (job title, company, location, dates,
-  the role's bullets as its description; "currently work here" only for a role shown as Present). Education: one
+- Work history: one entry per role in APPLICANT's "Work history" (taken from the tailored resume), all of them, in
+  that order (title, company, location, from, to, description; "currently work here" only where current is true).
+  Current company, skills, years of experience and internships: as APPLICANT's experience answers say. Education: one
   entry per degree in APPLICANT. When more entries are needed than the form shows, put the matching ADD BUTTON id in
   `add` once per missing entry (3 roles, 1 entry shown -> [id, id]) and leave those entries for the next round.
   Never add an entry APPLICANT has nothing for (no certifications -> add none).
@@ -119,16 +120,19 @@ def context(job_dir: Path, company: str) -> dict:
                                 text=True).stdout
     jd = json.loads((job_dir / "jd.json").read_text()) if (job_dir / "jd.json").exists() else {}
     comp = Path(f"/app/state/companies/{company}.md")
+    tex = (job_dir / "resume.tex").read_text() if (job_dir / "resume.tex").exists() else ""
+    data = applicant.with_resume(applicant.load(), applicant.resume_experience(tex))
     return {
-        "APPLICANT": applicant.text(),
+        # the answer file, its experience answers taken from this job's tailored resume
+        "APPLICANT": yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=120),
         "RESUME": resume[:6000],
         "JD": ((job_dir / "jd.md").read_text() if (job_dir / "jd.md").exists() else "")[:5000],
         "COMPANY": (comp.read_text() if comp.exists() else "")[:3000],
         "REFERRAL": referral(jd.get("company") or company),
-        "RESUME_ROLES": resume_roles(job_dir),
         "TODAY": now().strftime("%Y-%m-%d"),
         "DATE_FACTS": date_facts(applicant.degrees()),
         "_jd": jd,
+        "_applicant": data,
     }
 
 
@@ -154,19 +158,6 @@ def referral(company: str) -> str:
     return "none (no referral for this job: never answer 'Referral' / 'Employee referral')"
 
 
-def resume_roles(job_dir: Path) -> str:
-    """The resume's Experience entries (title, dates, company, location), one per line: a form's work history gets
-    exactly these."""
-    tex = (job_dir / "resume.tex").read_text() if (job_dir / "resume.tex").exists() else ""
-    sec = re.search(r"\\section\{Experience\}(.*?)(\\section\{|\\end\{document\})", tex, re.S)
-    if not sec:
-        return "(none)"
-    clean = lambda t: re.sub(r"\\underline\{(.*?)\}", r"\1", t).replace("\\&", "&").replace("--", "-").strip()
-    roles = re.findall(r"\\resumeSubheading\s*\{(.*?)\}\{(.*?)\}\s*\{(.*?)\}\{(.*?)\}", sec.group(1), re.S)
-    return "\n".join(f"{i}. {clean(t)} | {clean(c)} | {clean(l)} | {clean(d)}" for i, (t, d, c, l) in enumerate(roles, 1)) \
-        or "(none)"
-
-
 SECTION_ENTRY = [(re.compile(r"(?i)work experience|employment history|experience \d"), "Work history"),
                  (re.compile(r"(?i)^education"), "Degrees")]
 
@@ -183,11 +174,11 @@ def _match(label: str, wording: str) -> float:
     return max(whole, part)
 
 
-def hints(fields: list[forms.Field], company: str = "") -> dict[int, str]:
+def hints(fields: list[forms.Field], company: str = "", data: dict | None = None) -> dict[int, str]:
     """For each field, the APPLICANT entry whose question it asks (fuzzy match of the label on the entry's question
     and the wordings seen on portals), so the planner sees it next to the field instead of having to find it. Fields
     of a work-experience / education entry belong to those entries."""
-    pairs = applicant.entries()
+    pairs = applicant.entries(data)
     bank = [(sec, e, [e["question"], *(e.get("seen") or [])]) for sec, e in pairs]
     by_q = {e["question"]: (sec, e) for sec, e in pairs}
     out = {}
@@ -233,7 +224,7 @@ def date_facts(degrees: list[dict]) -> str:
 def plan(fields: list[forms.Field], ctx: dict, model, log=print, feedback: str = "", adds: list[dict] = (),
          filled: list[forms.Field] = ()) -> tuple[dict[int, Answer], list[int]]:
     files = "\n\n".join(f"== {k} ==\n{v}" for k, v in ctx.items() if not k.startswith("_"))
-    h = hints(fields, ctx.get("_jd", {}).get("company", ""))
+    h = hints(fields, ctx.get("_jd", {}).get("company", ""), ctx.get("_applicant"))
     msgs = [SystemMessage(PROMPT),
             HumanMessage(f"{files}\n\n"
                          + ("== ALREADY ON THIS PAGE (planned earlier) ==\n" + "\n".join(f.brief() for f in filled)
@@ -329,6 +320,28 @@ ENTRY_OK = re.compile(r"(?i)work experience|employment|education|^experience")
 ERRORS_HEAD = re.compile(r"(?i)^errors? found|^\d+ errors?|^error")
 ADDRESS = re.compile(r"(?i)\baddress\b|\bstreet\b|^\s*city\b|\bstate\b|province|postal|\bzip\b|county|"
                      r"current location|location \(city\)")
+
+
+REFERRAL_OPTION = re.compile(r"(?i)referr")
+
+
+def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
+    """Two facts only the candidate can state, whatever an instruction says: the current address (from the address
+    entry, never looked up or made up) and a referral (only a data/targets.csv contact who agreed to refer)."""
+    addr = applicant.answer("Current address", ctx.get("_applicant")) or {}
+    has_addr = isinstance(addr, dict) and any(addr.get(k) for k in ("line1", "city", "postal_code"))
+    for f in todo:
+        a = answers.get(f.id)
+        if a is None:
+            continue
+        if ADDRESS.search(f.label) and not has_addr and a.value:
+            log(f"  [{f.id}] {f.label[:40]!r}: no address on file; not using {a.value[:30]!r}")
+            answers[f.id] = a.model_copy(update={"value": "", "source": "none", "ask_human": True, "lookup": "",
+                                                 "flag": "needs your real address (applicant.yaml Current address)"})
+        elif REFERRAL_OPTION.search(a.value) and ctx.get("REFERRAL", "none").startswith("none"):
+            log(f"  [{f.id}] {f.label[:40]!r}: {a.value[:40]!r} claims a referral; no consenting contact on file")
+            answers[f.id] = a.model_copy(update={"value": "", "ask_human": True,
+                                                 "flag": "referral only with a data/targets.csv contact who agreed"})
 
 
 def learn(question: str, options: list[str], answer: str, company: str, host: str) -> None:
@@ -451,6 +464,7 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                 page.wait_for_timeout(1500)
                 log(f"  added an entry: {a['text']} ({a['section'][:40]})")
         check(todo, answers, ctx, model, log)
+        enforce(todo, answers, ctx, log)
         deferred: list[forms.Field] = []
         resolve(todo, answers, ctx, model, env or {}, log, deferred)
         for f in todo:
