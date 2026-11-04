@@ -402,6 +402,12 @@ def _tie_break(model, log):
 
 ENTRY_OK = re.compile(r"(?i)work experience|employment|education|^experience")
 ERRORS_HEAD = re.compile(r"(?i)^errors? found|^\d+ errors?|^error")
+def is_address(label: str) -> bool:
+    """An address part ("City", "State", "Postal Code", "Address Line 1"), not a question that mentions one
+    ("Are you a current Federal, State or local government employee?")."""
+    return bool(ADDRESS.search(label)) and (len(label) <= 40 or re.search(r"(?i)\baddress\b", label) is not None)
+
+
 ADDRESS = re.compile(r"(?i)\baddress\b|\bstreet\b|^\s*city\b|\bstate\b|^\s*region\b|province|postal|\bzip\b|county|"
                      r"current location|location \(city\)")
 
@@ -446,7 +452,7 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
         a = answers.get(f.id)
         if a is None:
             continue
-        if ADDRESS.search(f.label) and not has_addr and (a.value or a.lookup) and not f.value:
+        if is_address(f.label) and not has_addr and (a.value or a.lookup) and not f.value:
             log(f"  [{f.id}] {f.label[:40]!r}: no address on file; not using {(a.value or a.lookup)[:40]!r}")
             answers[f.id] = a.model_copy(update={"value": "", "source": "none", "ask_human": True, "lookup": "",
                                                  "flag": "needs your real address (applicant.yaml Current address)"})
@@ -512,13 +518,13 @@ def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict,
                and (f.required or f.kind not in forms.TEXT_KINDS)]
     # a required field the planner left empty without asking may vanish once the page is filled (the To date of a
     # job marked "I currently work here"): asked after filling, if it's still there
-    later = [f for f in unanswered if f.required and f not in flagged and not ADDRESS.search(f.label)]
+    later = [f for f in unanswered if f.required and f not in flagged and not is_address(f.label)]
     if deferred is not None:
         deferred += later
-        ask = flagged + [f for f in unanswered if f.required and ADDRESS.search(f.label) and f not in flagged]
+        ask = flagged + [f for f in unanswered if f.required and is_address(f.label) and f not in flagged]
     else:
         ask = flagged + later
-    addr = [f for f in ask if ADDRESS.search(f.label)]
+    addr = [f for f in ask if is_address(f.label)]
     if addr:
         # the address belongs in applicant.yaml's address entry (not a learned answer): one request for all its fields
         from jobagent.tools.hitl import HitlTimeout
