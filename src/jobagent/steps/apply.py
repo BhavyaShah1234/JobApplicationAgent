@@ -582,7 +582,18 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
             except Exception as e:
                 log(f"apply: second planning failed ({type(e).__name__})")
         room = entry_room(view, ctx)
-        for i in add[:8]:  # more entries (a second job, a second degree): their blank fields come next round
+        if rnd == 0 and not known:
+            # one entry per resume role / degree on file, whatever the plan asked for: code clicks "Add" for them
+            for kind, pat in ENTRY_KINDS.items():
+                btn = next((a for a in view.adds if pat.search(a["section"] + " " + a["text"])), None)
+                for _ in range(max(0, room.get(kind, 0))):
+                    if btn is None:
+                        break
+                    view.frames[btn["frame"]].locator(f'[data-jf-add="{btn["id"]}"]').first.click(timeout=8000)
+                    page.wait_for_timeout(1500)
+                    log(f"  added a {kind} entry ({btn['section'][:40]})")
+                room[kind] = 0
+        for i in add[:8]:  # more entries (other sections the plan asked for): their blank fields come next round
             a = next((x for x in view.adds if x["id"] == i), None)
             kind = next((k for k, pat in ENTRY_KINDS.items() if a and pat.search(a["section"] + " " + a["text"])), None)
             if a and kind and room.get(kind, 0) <= 0:
@@ -650,8 +661,13 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
     # read-back: every field as the page shows it now
     view = forms.read_page(page)
     shown = {_key(f): f for f in view.fields}
+    by_label: dict[tuple, list] = {}
+    for g in view.fields:
+        by_label.setdefault(_key(g)[:3], []).append(g)
     for key, e in done.items():
         f = shown.get(key)
+        if f is None and len(by_label.get(key[:3], [])) == 1:
+            f = by_label[key[:3]][0]  # the same field; only the heading above it changed
         e["readback"] = f.value if f else "(field gone)"
         if e["kind"] == "file" and e["filled"] and not (f and f.value and Path(e["filled"]).name in f.value):
             # the upload box is replaced by the file's name once attached
@@ -674,8 +690,8 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
 def _start(page: Page, url: str, ensure_signed_in, log) -> forms.PageView:
     """Open the posting and get to the application form: click Apply / Apply Manually, sign in when asked."""
     page.goto(url, wait_until="domcontentloaded")
-    signed = False
-    for _ in range(8):
+    signed, empty = False, 0
+    for _ in range(12):
         page.wait_for_timeout(4000)
         view = forms.read_page(page)
         pw = any(f.kind == "password" for f in view.fields)
@@ -694,7 +710,9 @@ def _start(page: Page, url: str, ensure_signed_in, log) -> forms.PageView:
         else:
             if len(view.fields) >= 1:
                 return view
-            raise RuntimeError(f"no application form and no Apply button on {page.url}")
+            empty += 1  # still loading (clicks don't wait for the next page), or really nothing here
+            if empty >= 4:
+                raise RuntimeError(f"no application form and no Apply button on {page.url}")
     return forms.read_page(page)
 
 
