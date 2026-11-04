@@ -634,7 +634,14 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                 entry["flag"] = entry["flag"] or f"no {a.value} file in the job folder"
                 continue
             try:
-                entry["filled"] = forms.fill_field(page, view, f, a.value, files, tie)
+                try:
+                    entry["filled"] = forms.fill_field(page, view, f, a.value, files, tie)
+                except forms.FillError:
+                    raise
+                except Exception:  # a click that timed out (an option list closed under it): once more
+                    page.keyboard.press("Escape")
+                    page.wait_for_timeout(800)
+                    entry["filled"] = forms.fill_field(page, view, f, a.value, files, tie)
                 log(f"  [{f.kind}] {f.label[:60]!r} <- {entry['filled'][:60]!r} ({a.source})")
             except Exception as e:
                 entry["error"] = f"{type(e).__name__}: {str(e)[:200]}"
