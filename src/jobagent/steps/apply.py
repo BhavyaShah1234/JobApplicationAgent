@@ -69,7 +69,10 @@ PROMPT = """You fill a job application form for the candidate, from the candidat
 listed (id, kind, label, options, current value) give the answer to put in it.
 
 APPLICANT is the candidate's answer file: entries of question, seen (wordings portals use), answer, instructions,
-tools; its `learned` section holds answers the candidate gave on earlier forms (with the company). A field marked
+tools; its `learned` section holds answers the candidate gave on earlier forms (with the company). An answer given
+as a LIST of words (e.g. degree: ["Master of Science", "MS", "Master's degree"]) lists acceptable variants of one
+answer in order of preference: use the first one the form offers (or the closest option to it); "Other" in such a
+list is the last resort. A list of entries (degrees, work history) is one entry per item. A field marked
 MATCHES is the APPLICANT entry for that question: use its answer, following its instructions.
 
 Rules:
@@ -105,7 +108,9 @@ Rules:
 - Choice fields: the value must be one of the listed options, copied exactly; when the true value isn't offered (a
   field of study, a degree name), the closest option, flagged "closest option to <true value>". A combobox whose
   options are categories ("Job Board", "<Company> Source"): 'Category > what you mean'. A combobox listed without
-  options is a search box: give the full name to search for. A skills search box: '; '-separated values.
+  options (or with a cut-off list) is a search box: give the answer's variants in preference order joined with
+  ' | ' (e.g. 'Artificial Intelligence and Robotics | Robotics | Computer Science'); the first the site offers is
+  chosen. A skills search box: '; '-separated values.
 - Referral fields: only the REFERRAL given below, else ''.
 - File fields: value 'resume' for a resume / CV upload, 'cover_letter' for a cover letter upload, '' otherwise.
 - A field with a current value that is already right: repeat it with source already_filled. Wrong: correct it.
@@ -258,9 +263,30 @@ gave, an option chosen while the APPLICANT entry for that question says another 
 answers give the value the files do support, or ask_human when none does. Written answers (source written) are
 supported when true to the RESUME. Following an APPLICANT entry's instructions is support, and so are these rules:
 agreeing to a consent needed to apply, choosing "I don't wish to answer" for self-identification APPLICANT leaves
-empty. APPLICANT wins over the RESUME where they disagree (never swap one for the other: that is flagged, not
+empty. An answer listed as a list of words gives variants of one answer: any of
+them is supported. APPLICANT wins over the RESUME where they disagree (never swap one for the other: that is flagged, not
 corrected). A corrected value for a choice field must be one of its listed options, copied exactly. Return one check
 per planned answer."""
+
+
+def _leaves(x) -> list[str]:
+    if isinstance(x, dict):
+        return [v for k, y in x.items() if k not in ("instructions", "seen", "question") for v in _leaves(y)]
+    if isinstance(x, list):
+        return [v for y in x for v in _leaves(y)]
+    if isinstance(x, bool):
+        return ["Yes" if x else "No"]
+    return [str(x)] if x not in (None, "") else []
+
+
+def in_applicant(value: str, data: dict) -> bool:
+    """The answer file holds this value: as an answer or one of an answer's listed variants (option wording aside:
+    "Masters" for "Master's degree", "Yes" for true)."""
+    vals = [v for _, e in applicant.entries(data) for v in _leaves(e.get("answer"))]
+    want = value.rsplit(" > ", 1)[-1]
+    nums = [float(v) for v in vals if re.fullmatch(r"\d+(\.\d+)?", v)]
+    return any(forms.match_option(v, [want], cutoff=88)[0] is not None for v in vals) or \
+        any(forms.in_range(want, n) for n in nums)
 
 
 def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, model, log) -> None:
@@ -277,11 +303,15 @@ def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, mode
     except Exception as e:
         log(f"apply: plan check failed ({type(e).__name__}); keeping the plan")
         return
+    data = ctx.get("_applicant") or {}
+    h = hints(fields, ctx.get("_jd", {}).get("company", ""), data)
     for c in out.checks:
         a = answers.get(c.id)
         if a is None or c.supported:
             continue
         f = next((x for x in fields if x.id == c.id), None)
+        if a.source == "applicant" and (in_applicant(a.value, data) or "instructions=" in h.get(c.id, "")):
+            continue  # the file does say it (one of an answer's variants), or its instructions give it
         if a.source == "applicant":
             # credited to the candidate's own file but not in it (or in conflict with the resume): theirs to say
             log(f"  check: [{c.id}] {a.value[:40]!r} isn't in applicant.yaml as planned; asking the candidate")
@@ -318,11 +348,39 @@ def _tie_break(model, log):
 
 ENTRY_OK = re.compile(r"(?i)work experience|employment|education|^experience")
 ERRORS_HEAD = re.compile(r"(?i)^errors? found|^\d+ errors?|^error")
-ADDRESS = re.compile(r"(?i)\baddress\b|\bstreet\b|^\s*city\b|\bstate\b|province|postal|\bzip\b|county|"
+ADDRESS = re.compile(r"(?i)\baddress\b|\bstreet\b|^\s*city\b|\bstate\b|^\s*region\b|province|postal|\bzip\b|county|"
                      r"current location|location \(city\)")
 
 
+ENTRY_KINDS = {"role": re.compile(r"(?i)work experience|employment"), "degree": re.compile(r"(?i)education")}
+
+
+def entry_room(view: forms.PageView, ctx: dict) -> dict:
+    """How many more entries each repeated section may get: roles on the resume / degrees on file, minus the
+    entries the form shows ("Work Experience 1", "Education 2", ...)."""
+    data = ctx.get("_applicant") or {}
+    need = {"role": len(applicant.answer("Work history", data) or []), "degree": len(applicant.degrees(data))}
+    shown = {k: len({f.section for f in view.fields if pat.search(f.section)}) for k, pat in ENTRY_KINDS.items()}
+    return {k: need[k] - shown[k] for k in need}
+
+
 REFERRAL_OPTION = re.compile(r"(?i)referr")
+HEARD = re.compile(r"(?i)hear about|heard about|how did you (find|learn)|^\s*source\b")
+
+
+def own_site_option(options: list[str], company: str) -> str:
+    """The option meaning the company's own website / careers site ("Adobe Source > Adobe.com", "Palantir Website",
+    "Company careers page")."""
+    core = re.sub(r"(?i)\b(inc|llc|corp(oration)?|technologies|ltd|co)\b\.?|[^a-z0-9 ]", "", company.lower()).strip()
+    leaf = lambda o: o.rsplit(" > ", 1)[-1].lower()
+    for test in (lambda o: core and core in leaf(o) and re.search(r"website|careers?|\.com|site", leaf(o)),
+                 lambda o: re.search(r"(company|corporate) (website|careers?|site)|careers? (site|page|website)", leaf(o)),
+                 lambda o: core and core in leaf(o) and not re.search(r"employee|referr|event|recruiter|academy|max", leaf(o)),
+                 lambda o: re.search(r"\bwebsite\b|\bcareers?\b", leaf(o)) and not REFERRAL_OPTION.search(o)):
+        hit = next((o for o in options if test(o)), None)
+        if hit:
+            return hit
+    return ""
 
 
 def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
@@ -334,10 +392,16 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
         a = answers.get(f.id)
         if a is None:
             continue
-        if ADDRESS.search(f.label) and not has_addr and a.value:
-            log(f"  [{f.id}] {f.label[:40]!r}: no address on file; not using {a.value[:30]!r}")
+        if ADDRESS.search(f.label) and not has_addr and (a.value or a.lookup) and not f.value:
+            log(f"  [{f.id}] {f.label[:40]!r}: no address on file; not using {(a.value or a.lookup)[:40]!r}")
             answers[f.id] = a.model_copy(update={"value": "", "source": "none", "ask_human": True, "lookup": "",
                                                  "flag": "needs your real address (applicant.yaml Current address)"})
+        elif HEARD.search(f.label) and ctx.get("REFERRAL", "none").startswith("none") and \
+                (site := own_site_option(f.options, ctx.get("_jd", {}).get("company", ""))) and a.value != site:
+            # no referral to name: the company's own website / careers site, which is where the agent found the job
+            log(f"  [{f.id}] {f.label[:40]!r}: {a.value[:40] or 'no answer'!r} -> {site!r} (no consenting referral)")
+            answers[f.id] = a.model_copy(update={"value": site or "", "ask_human": not site, "source": "applicant",
+                                                 "flag": "referral only with a data/targets.csv contact who agreed"})
         elif REFERRAL_OPTION.search(a.value) and ctx.get("REFERRAL", "none").startswith("none"):
             log(f"  [{f.id}] {f.label[:40]!r}: {a.value[:40]!r} claims a referral; no consenting contact on file")
             answers[f.id] = a.model_copy(update={"value": "", "ask_human": True,
@@ -383,6 +447,7 @@ def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict,
                 answers[i] = a.model_copy(update={"lookup": "", "source": a.source if a.source != "none" else "lookup"})
         except Exception as e:
             log(f"apply: planning after lookups failed ({type(e).__name__})")
+        enforce(todo, answers, ctx, log)  # a lookup never supplies an address or a referral
     if env.get("hitl") is None:
         return
     unanswered = [f for f in todo if f.kind != "file" and not f.value
@@ -454,8 +519,23 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
         except Exception as e:
             log(f"apply: planning failed ({type(e).__name__}: {str(e)[:120]})")
             break
+        missed = [f for f in todo if f.id not in answers and f.kind != "file"]
+        if missed:  # long forms: the model sometimes skips a few fields; ask again for just those
+            log(f"  planning again for {len(missed)} field(s) the plan skipped")
+            try:
+                answers.update(plan(missed, ctx, model, log, feedback,
+                                    filled=[f for f in view.fields if f not in missed])[0])
+            except Exception as e:
+                log(f"apply: second planning failed ({type(e).__name__})")
+        room = entry_room(view, ctx)
         for i in add[:8]:  # more entries (a second job, a second degree): their blank fields come next round
             a = next((x for x in view.adds if x["id"] == i), None)
+            kind = next((k for k, pat in ENTRY_KINDS.items() if a and pat.search(a["section"] + " " + a["text"])), None)
+            if a and kind and room.get(kind, 0) <= 0:
+                log(f"  not adding another {kind} entry: the form already has one per {kind} on file")
+                continue
+            if kind:
+                room[kind] -= 1
             if a and not ENTRY_OK.search(a["section"] + " " + a["text"]) and not _has_data(ctx, a["section"]):
                 log(f"  not adding an entry under {a['section'][:40]!r}: nothing for it in applicant.yaml")
                 continue
@@ -465,6 +545,12 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                 log(f"  added an entry: {a['text']} ({a['section'][:40]})")
         check(todo, answers, ctx, model, log)
         enforce(todo, answers, ctx, log)
+        for f in todo:  # uploads are decided by their caption, not by the model
+            if f.kind == "file":
+                kind = "cover_letter" if re.search(r"(?i)cover", f.label) else \
+                    "resume" if re.search(r"(?i)resume|\bcv\b|upload a file", f.label) else ""
+                if kind:
+                    answers[f.id] = Answer(id=f.id, why="upload by its caption", value=kind, source="applicant")
         deferred: list[forms.Field] = []
         resolve(todo, answers, ctx, model, env or {}, log, deferred)
         for f in todo:
@@ -475,7 +561,8 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                      "source": a.source if a else "none", "flag": a.flag if a else "not answered by the planner",
                      "filled": "", "error": ""}
             done[_key(f)] = entry
-            if not a or not a.value or a.source == "already_filled" and forms.same_value(a.value, f.value, f.kind):
+            if not a or not a.value or (f.value and forms.same_value(a.value, f.value, f.kind)):
+                # nothing to put in, or the page already shows it (Workday's prefilled Country Phone Code)
                 continue
             if f.kind == "file" and a.value not in files:
                 entry["flag"] = entry["flag"] or f"no {a.value} file in the job folder"

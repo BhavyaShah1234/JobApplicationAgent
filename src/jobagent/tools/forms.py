@@ -109,7 +109,8 @@ FIELDS_JS = r"""(start) => {
         if (x.length > 2) cap = clean(x).slice(0, 120); }
       const q = [question(e), cap, e.id || e.name].filter(t => t && !/^attach$/i.test(t)).join(' / ');
       add(e, {kind: 'file', label: q, required: required(e, cap),
-              value: e.files && e.files.length ? [...e.files].map(f => f.name).join(', ') : clean(box.innerText).slice(0, 120),
+              // only files really attached: the box's caption ("ATTACH RESUME/CV") is not a value
+              value: e.files && e.files.length ? [...e.files].map(f => f.name).join(', ') : '',
               accept: e.getAttribute('accept') || ''});
       continue; }
     // a react-select input shrinks to nothing once a value is chosen: its control box is what shows
@@ -260,6 +261,11 @@ _SYNONYMS = {
     "yes": ["y", "true", "i am", "i do", "i will"],
     "no": ["n", "false", "i am not", "i do not", "i don't", "i will not"],
     "male": ["man", "m"],
+    # degree levels as portals list them ("Masters", "Master's Degree") and as people write them ("MS", "M.S.")
+    "masters": ["master s degree", "master s", "masters degree", "master of science", "ms", "m.s.", "master",
+                "master of science (m.s.)"],
+    "bachelors": ["bachelor s degree", "bachelor s", "bachelors degree", "bachelor of technology", "b.tech",
+                  "bachelor of science", "bs", "b.s.", "bachelor", "bachelor of engineering", "b.e."],
     "female": ["woman", "f"],
 }
 
@@ -297,8 +303,22 @@ def match_option(answer: str, options: list[str], cutoff: int = 80) -> tuple[str
     return None, int(best[1]) if best else 0
 
 
+def in_range(option: str, x: float) -> bool:
+    """A range option ("3.75+", "3.4 - 3.70", "Below 3.4", "2-5 years") holds x."""
+    o = option.lower().replace("–", "-")
+    if m := re.search(r"(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)", o):
+        return float(m.group(1)) <= x <= float(m.group(2))
+    if m := re.search(r"(\d+(?:\.\d+)?)\s*\+|(?:above|over|at least|more than)\s*(\d+(?:\.\d+)?)", o):
+        return x >= float(m.group(1) or m.group(2))
+    if m := re.search(r"(?:below|under|less than)\s*(\d+(?:\.\d+)?)", o):
+        return x < float(m.group(1))
+    return False
+
+
 def same_value(want: str, got: str, kind: str) -> bool:
     """The page shows the value that was meant (read-back check)."""
+    if " | " in want:
+        return any(same_value(v.strip(), got, kind) for v in want.split(" | "))
     w, g = _norm(want), _norm(got)
     if kind == "tel" or re.fullmatch(r"[\d\s()+.-]{7,}", want.strip()):
         return re.sub(r"\D", "", want)[-10:] == re.sub(r"\D", "", got)[-10:]
@@ -306,8 +326,8 @@ def same_value(want: str, got: str, kind: str) -> bool:
         return (w in ("checked", "yes", "true")) == (g == "checked")
     if kind in ("checkboxes",):
         return {_norm(x) for x in want.split(";") if x.strip()} == {_norm(x) for x in got.split(";") if x.strip()}
-    if kind == "file":
-        return bool(got) and (w in g or _norm(want.rsplit("/", 1)[-1]) in g)
+    if kind == "file":  # the attached file's name
+        return bool(got) and _norm(want.rsplit("/", 1)[-1]) in g
     if w == g:
         return True
     if kind == "date_parts":
@@ -400,7 +420,20 @@ def _choose(question: str, answer: str, options: list[str], tie_break) -> str:
     return opt
 
 
-def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[str, str], tie_break=None) -> str:
+def strict_option(answer: str, options: list[str]) -> str | None:
+    """For lists of names (skills): the same name, or the same name with a qualifier ("Machine Learning (ML)",
+    "C++ Programming Language"), never a different thing that contains it ("Python IDLE", "SAP R")."""
+    a = _norm(answer)
+    for o in options:
+        n = _norm(o)
+        if n == a or n.startswith(a + " (") or o.lower().startswith(answer.lower() + " (") \
+                or n == a + " programming language":
+            return o
+    return None
+
+
+def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[str, str], tie_break=None,
+               strict: bool = False) -> str:
     """Put `answer` into the field. Returns what was chosen (the option text for choice fields)."""
     frame, loc = view.frames[f.frame], locate(view, f)
     if f.kind == "file":
@@ -415,17 +448,33 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         return answer
     if f.kind == "date_parts":  # Workday's date: click its first box and type the digits; it moves on by itself
         digits = re.sub(r"\D", "", answer)
-        loc.locator("[data-automation-id$=-display]").first.click(timeout=8000)
-        page.keyboard.type(digits, delay=80)
-        page.keyboard.press("Tab")
+        for _ in range(2):  # the box sometimes drops the first keystrokes: type again if nothing shows
+            loc.locator("[data-automation-id$=-display]").first.click(timeout=8000)
+            page.wait_for_timeout(300)
+            page.keyboard.type(digits, delay=80)
+            page.keyboard.press("Tab")
+            page.wait_for_timeout(400)
+            shown = re.sub(r"\D", "", "".join(loc.locator("[data-automation-id$=-display]").all_inner_texts()))
+            if shown == digits:
+                break
         return answer
+    if " | " in answer and f.kind in ("combobox", "select", "radio"):
+        # variants of one answer in preference order ("AI and Robotics | Robotics | Other"): the first the site has
+        errors = []
+        for variant in [x.strip() for x in answer.split(" | ") if x.strip()]:
+            try:
+                return fill_field(page, view, f, variant, files, None)
+            except Exception as e:
+                errors.append(f"{variant}: {str(e)[:60]}")
+                page.keyboard.press("Escape")
+        raise FillError("no variant offered: " + "; ".join(errors)[:300])
     if f.kind == "combobox" and ";" in answer and loc.get_attribute("data-uxi-widget-type") == "selectinput":
         # a multi-value search picker (Workday skills): add each value the site knows; skip the ones it doesn't
         added = []
         for item in [x.strip() for x in answer.split(";") if x.strip()]:
             try:
                 one = Field(**{**f.__dict__, "options": []})
-                added.append(fill_field(page, view, one, item, files, None))
+                added.append(fill_field(page, view, one, item, files, None, strict=True))
             except Exception:
                 page.keyboard.press("Escape")
         if not added:
@@ -473,7 +522,8 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 has_text=re.compile(rf"^\s*{re.escape(first)}\s*$")).first.click(timeout=8000)
             page.wait_for_timeout(1200)
             opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
-        opt, _ = match_option(answer, opts) if opts else (None, 0)
+        pick = (lambda ans, o: (strict_option(ans, o), 0)) if strict else match_option
+        opt, _ = pick(answer, opts) if opts else (None, 0)
         if opt is None and (loc.evaluate("e => e.tagName") == "INPUT"):
             # a search box: type the answer (or its first words) and pick from what the site suggests
             for probe in dict.fromkeys([answer[:60], " ".join(answer.split()[:3]), answer.split()[0] if answer else ""]):
@@ -486,9 +536,12 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 page.wait_for_timeout(1800)
                 opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
                 if opts:
-                    opt, _ = match_option(answer, opts)
+                    opt, _ = pick(answer, opts)
                     if opt:
                         break
+        if opt is None and strict:
+            page.keyboard.press("Escape")
+            raise FillError(f"{answer!r} isn't offered as such")
         if opt is None:
             try:
                 opt = _choose(f.label, answer, opts, tie_break)
@@ -539,6 +592,8 @@ def click_button(page: Page, view: PageView, pattern: re.Pattern, allow_submit: 
                 btn = frame.get_by_role("link", name=name)
             btn = btn.filter(visible=True)
             if btn.count():
-                btn.first.click(timeout=10000)
+                # don't wait for the navigation here (Lever's apply page can take longer than the click timeout);
+                # the next read of the page waits for it
+                btn.first.click(timeout=10000, no_wait_after=True)
                 return text
     return None

@@ -21,7 +21,7 @@ def test_no_close_option_is_left_to_the_tie_break():
 
 def test_read_back_comparisons():
     assert same_value("6233329509", "(623) 332-9509", "tel")
-    assert same_value("outputs/x/resume.pdf", "resume.pdf", "file")
+    assert same_value("outputs/x/resume.pdf", "resume.pdf", "file") and not same_value("outputs/x/resume.pdf", "ATTACH RESUME/CV", "file")
     assert same_value("Backend; Machine Learning", "Machine Learning; Backend", "checkboxes")
     assert same_value("checked", "checked", "checkbox") and not same_value("checked", "", "checkbox")
     assert not same_value("Bhavya", "Bhavyaa Shah", "text")
@@ -109,3 +109,50 @@ def test_experience_answers_come_from_the_tailored_resume(monkeypatch):
     assert exp["years"] == 1.0  # May 2025 - Apr 2026, overlap counted once
     data = {"experience": [{"question": "Current company", "answer": "old"}]}
     assert applicant.answer("Current company", applicant.with_resume(data, exp)) == "Logos Robotics Lab"
+
+
+def test_degree_level_wordings_match():
+    assert match_option("Master of Science", ["Bachelors", "Masters", "Doctorate"])[0] == "Masters"
+    assert match_option("B.Tech", ["Bachelor's Degree", "Master's Degree"])[0] == "Bachelor's Degree"
+    assert match_option("Master's degree", ["Associates", "Masters"])[0] == "Masters"
+
+
+def test_own_site_option_and_applicant_variants():
+    from jobagent.steps.apply import in_applicant, own_site_option
+    assert own_site_option(["Job Board > LinkedIn", "Adobe Source > Adobe MAX", "Adobe Source > Adobe.com"], "Adobe") \
+        == "Adobe Source > Adobe.com"
+    assert own_site_option(["Palantir Event", "Palantir Website", "Referral"], "Palantir Technologies") == "Palantir Website"
+    data = {"education": [{"question": "Degrees", "answer": [{"degree": ["Master of Science", "MS"], "gpa": "4.0"}]}]}
+    assert in_applicant("Masters", data) and in_applicant("4.0", data) and not in_applicant("3.57", data)
+
+
+def test_range_options_and_variant_read_back():
+    from jobagent.tools.forms import in_range
+    assert in_range("3.75+", 4.0) and in_range("3.4 - 3.70", 3.5) and in_range("Below 3.4", 3.0)
+    assert not in_range("3.4 - 3.70", 4.0) and not in_range("Below 3.4", 3.57)
+    assert same_value("AI and Robotics | Robotics", "Robotics", "combobox")
+
+
+def test_address_lookups_are_never_used(monkeypatch):
+    from jobagent.steps.apply import Answer, enforce
+    from jobagent.tools.forms import Field
+    ctx = {"_applicant": {"address": [{"question": "Current address", "answer": {"line1": "", "city": ""}}]},
+           "REFERRAL": "none", "_jd": {"company": "Adobe"}}
+    fields = [Field(id=1, kind="text", label="Address Line 1"), Field(id=2, kind="text", label="City"),
+              Field(id=3, kind="combobox", label="How Did You Hear About Us?*",
+                    options=["Job Board > LinkedIn", "Adobe Source > Adobe.com", "Referral"])]
+    answers = {1: Answer(id=1, value="", source="lookup", lookup="web: a street in San Jose"),
+               2: Answer(id=2, value="San Jose", source="applicant"),
+               3: Answer(id=3, value="Job Board > LinkedIn", source="applicant")}
+    enforce(fields, answers, ctx, lambda m: None)
+    assert answers[1].value == "" and answers[1].lookup == "" and answers[1].ask_human
+    assert answers[2].value == "" and answers[2].ask_human
+    assert answers[3].value == "Adobe Source > Adobe.com"
+
+
+def test_skill_names_match_strictly():
+    from jobagent.tools.forms import strict_option
+    opts = ["Python IDLE", "Python (Programming Language)", "SAP R", "R", "C NMR", "Machine Learning (ML)"]
+    assert strict_option("Python", opts) == "Python (Programming Language)"
+    assert strict_option("R", opts) == "R" and strict_option("C", opts) is None
+    assert strict_option("machine learning", opts) == "Machine Learning (ML)"

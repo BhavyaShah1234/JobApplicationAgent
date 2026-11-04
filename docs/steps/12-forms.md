@@ -74,11 +74,11 @@ contact with `referral_consent: yes` (otherwise asked).
 
 ## Results (2026-11-03)
 
-| Portal | Posting | Pages | Fields read back OK | Stopped at |
+| Portal | Posting | Pages | Fields read back OK | Left for the user |
 |---|---|---|---|---|
-| Greenhouse | DoorDash, Software Engineer I | 1 | 29 / 31 (city not on file; GPA asked: files disagree) | review (the filled form, Submit not clicked) |
-| Lever | Palantir, Backend Software Engineer | 1 | 21 / 24 (location, UK clearance eligibility, AI-notetaker consent: asked) | review |
-| Workday | Adobe, 2027 University Graduate ML Engineer | 6 (My Information, My Experience with 4 roles + 2 degrees, Application Questions 1-2, Voluntary Disclosures, Review) | 73 / 73 | Review page |
+| Workday | Adobe, 2027 University Graduate ML Engineer | 6 (to the Review page) | 73 / 73 | address (optional on Adobe, left empty) |
+| Greenhouse | DoorDash, Software Engineer I | 1 (the form itself) | 28 / 30 | current city (no address on file); internships (the form offers 1 or 2+, the resume shows 0) |
+| Lever | Palantir, Backend Software Engineer | 1 | 22 / 24 | current location; eligibility for the UK clearance (empty in applicant.yaml) |
 
 Every field the agent could answer from the files reads back as planned; the ones left are questions only the user
 can answer (asked through `jobagent hitl`, not answered during the test runs).
@@ -87,6 +87,22 @@ Open for the user: the current address (empty in `personal_info.yaml`), the ASU 
 resume's 3.57), the "How did you hear" entry in `qa_bank.yaml` (answer "Referral" vs its instruction "the company's
 own website unless a referral exists"), and a `qa_bank` entry for "willing to submit to a background check"
 (answered "Yes" without a file saying so).
+
+## Answer rules added after the filled applicant.yaml run (2026-11-03)
+
+- An answer written as a list of words is a list of variants of one answer, in preference order (degree:
+  ["Master of Science", "MS", "Master's degree"]); a search picker gets them joined with " | " and code tries each in
+  turn; the checker accepts any variant (`apply.in_applicant`), and degree levels match portal wording ("Masters",
+  "Bachelor's Degree").
+- A range option holds the file's value: GPA 4.0 -> "3.75+" (`forms.in_range`).
+- "How did you hear": the company's own site option when no consenting referral is on file (`apply.own_site_option`).
+- Address fields: never from a lookup; enforced before and after lookups.
+- Repeated entries: at most one per resume role / degree on file (`apply.entry_room`).
+- Skills: only the same name or the same name with a qualifier ("Python (Programming Language)"), never a different
+  thing containing it ("Python IDLE", "SAP R") (`forms.strict_option`).
+- Uploads by caption; an upload's value is only a file really attached (its caption "ATTACH RESUME/CV" isn't one).
+- Fields the planner skips get a second, smaller planning call; a field the page already shows right isn't refilled;
+  Workday dates are retyped when they don't take; clicks don't wait for slow navigations (Lever).
 
 ## Learned while building
 
