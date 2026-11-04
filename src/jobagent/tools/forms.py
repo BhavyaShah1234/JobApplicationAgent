@@ -432,8 +432,16 @@ def strict_option(answer: str, options: list[str]) -> str | None:
     return None
 
 
+def close_option(answer: str, options: list[str]) -> str | None:
+    """The option that is this answer, written a little differently ("Computer and Informational Sciences" ->
+    "Computer and Information Sciences"); not merely a related one ("Computer Engineering")."""
+    a = _norm(answer)
+    best = max(options, key=lambda o: fuzz.ratio(a, _norm(o)), default=None)
+    return best if best is not None and (fuzz.ratio(a, _norm(best)) >= 90 or _norm(best) == a) else None
+
+
 def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[str, str], tie_break=None,
-               strict: bool = False) -> str:
+               strict: bool = False, close: bool = False) -> str:
     """Put `answer` into the field. Returns what was chosen (the option text for choice fields)."""
     frame, loc = view.frames[f.frame], locate(view, f)
     if f.kind == "file":
@@ -460,13 +468,16 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         return answer
     if " | " in answer and f.kind in ("combobox", "select", "radio"):
         # variants of one answer in preference order ("AI and Robotics | Robotics | Other"): the first the site has
-        errors = []
-        for variant in [x.strip() for x in answer.split(" | ") if x.strip()]:
-            try:
-                return fill_field(page, view, f, variant, files, None)
-            except Exception as e:
-                errors.append(f"{variant}: {str(e)[:60]}")
-                page.keyboard.press("Escape")
+        # first pass: a variant the form offers as such, in the candidate's order; then the closest option to any
+        errors, variants = [], [x.strip() for x in answer.split(" | ") if x.strip()]
+        for close_only in (True, False):
+            for variant in variants:
+                try:
+                    return fill_field(page, view, f, variant, files, None if close_only else tie_break,
+                                      close=close_only)
+                except Exception as e:
+                    errors.append(f"{variant}: {str(e)[:60]}")
+                    page.keyboard.press("Escape")
         raise FillError("no variant offered: " + "; ".join(errors)[:300])
     if f.kind == "combobox" and ";" in answer and loc.get_attribute("data-uxi-widget-type") == "selectinput":
         # a multi-value search picker (Workday skills): add each value the site knows; skip the ones it doesn't
@@ -486,7 +497,9 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         page.keyboard.type(answer, delay=60)
         return answer
     if f.kind == "select":
-        opt = _choose(f.label, answer, f.options, tie_break)
+        opt = close_option(answer, f.options) if close else _choose(f.label, answer, f.options, tie_break)
+        if opt is None:
+            raise FillError(f"{answer!r} isn't offered as such")
         loc.select_option(label=opt, timeout=8000)
         return opt
     if f.kind == "checkbox":
@@ -499,7 +512,9 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         return "checked" if want else ""
     if f.kind in ("radio", "checkboxes"):
         wanted = [a.strip() for a in (answer.split(";") if f.kind == "checkboxes" else [answer]) if a.strip()]
-        chosen = [_choose(f.label, a, f.options, tie_break) for a in wanted]
+        chosen = [close_option(a, f.options) if close else _choose(f.label, a, f.options, tie_break) for a in wanted]
+        if None in chosen:
+            raise FillError(f"{answer!r} isn't offered as such")
         for k, o in enumerate(f.options):
             box = frame.locator(f'[data-jf="{f.id}"][data-jf-opt="{k}"]').first
             on = o in chosen
@@ -522,7 +537,8 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 has_text=re.compile(rf"^\s*{re.escape(first)}\s*$")).first.click(timeout=8000)
             page.wait_for_timeout(1200)
             opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
-        pick = (lambda ans, o: (strict_option(ans, o), 0)) if strict else match_option
+        pick = (lambda ans, o: (strict_option(ans, o), 0)) if strict else \
+            (lambda ans, o: (close_option(ans, o), 0)) if close else match_option
         opt, _ = pick(answer, opts) if opts else (None, 0)
         if opt is None and (loc.evaluate("e => e.tagName") == "INPUT"):
             # a search box: type the answer (or its first words) and pick from what the site suggests
@@ -539,7 +555,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                     opt, _ = pick(answer, opts)
                     if opt:
                         break
-        if opt is None and strict:
+        if opt is None and (strict or close):
             page.keyboard.press("Escape")
             raise FillError(f"{answer!r} isn't offered as such")
         if opt is None:

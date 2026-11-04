@@ -179,10 +179,10 @@ def _match(label: str, wording: str) -> float:
     return max(whole, part)
 
 
-def hints(fields: list[forms.Field], company: str = "", data: dict | None = None) -> dict[int, str]:
-    """For each field, the APPLICANT entry whose question it asks (fuzzy match of the label on the entry's question
-    and the wordings seen on portals), so the planner sees it next to the field instead of having to find it. Fields
-    of a work-experience / education entry belong to those entries."""
+def match_entries(fields: list[forms.Field], company: str = "", data: dict | None = None) -> dict[int, tuple]:
+    """For each field, (section, entry) of the APPLICANT entry whose question it asks: fuzzy match of the label on the
+    entry's question and the wordings seen on portals. Fields of a work-experience / education entry belong to
+    "Work history" / "Degrees"."""
     pairs = applicant.entries(data)
     bank = [(sec, e, [e["question"], *(e.get("seen") or [])]) for sec, e in pairs]
     by_q = {e["question"]: (sec, e) for sec, e in pairs}
@@ -204,12 +204,66 @@ def hints(fields: list[forms.Field], company: str = "", data: dict | None = None
                     if (sc, -abs(len(q) - len(label))) > (best[0], best_len):
                         best, best_len = (sc, sec, e), -abs(len(q) - len(label))
         if best[0] >= 85:
-            e = best[2]
-            out[f.id] = (f"{best[1]}: {e['question']!r} answer={e.get('answer')!r}"
-                         + (f" instructions={e.get('instructions')!r}" if e.get("instructions") else "")
-                         + (f" tools={e.get('tools')}" if e.get("tools") else "")
-                         + (f" company={e.get('company')}" if e.get("company") else ""))
+            out[f.id] = (best[1], best[2])
     return out
+
+
+def hints(fields: list[forms.Field], company: str = "", data: dict | None = None) -> dict[int, str]:
+    """The matched APPLICANT entry of each field, as the planner sees it next to the field."""
+    out = {}
+    for fid, (sec, e) in match_entries(fields, company, data).items():
+        out[fid] = (f"{sec}: {e['question']!r} answer={e.get('answer')!r}"
+                    + (f" instructions={e.get('instructions')!r}" if e.get("instructions") else "")
+                    + (f" tools={e.get('tools')}" if e.get("tools") else "")
+                    + (f" company={e.get('company')}" if e.get("company") else ""))
+    return out
+
+
+EDU_PART = [("school", re.compile(r"(?i)school|university|college|institution")),
+            ("degree", re.compile(r"(?i)\bdegree\b(?!.*major)")),
+            ("field", re.compile(r"(?i)field of study|major|discipline|area of study"))]
+
+
+def _as_list(v) -> list[str]:
+    return [str(x) for x in v] if isinstance(v, list) else ([str(v)] if v not in (None, "") else [])
+
+
+def apply_variants(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
+    """An answer written as a list in applicant.yaml is that answer's accepted wordings, in the candidate's order:
+    code puts them in the field (a text box gets the first; an option list or search box tries each in turn, the
+    first the form offers wins). Not where the entry gives instructions: then the planner's answer stands."""
+    data = ctx.get("_applicant") or {}
+    degrees = applicant.degrees(data)
+    matched = match_entries(todo, ctx.get("_jd", {}).get("company", ""), data)
+    # which degree each "Education N" block is: by the school the plan put there, else by position
+    by_section = {}
+    for f in todo:
+        m = re.search(r"(?i)education\s*(\d+)", f.section)
+        if m and EDU_PART[0][1].search(f.label):
+            val = (answers.get(f.id).value if answers.get(f.id) else "") or f.value
+            hit = next((i for i, d in enumerate(degrees)
+                        if any(forms.close_option(val, [s]) or forms._norm(s) in forms._norm(val)
+                               for s in _as_list(d.get("school")) if val)), None)
+            by_section[f.section] = hit if hit is not None else int(m.group(1)) - 1
+    for f in todo:
+        variants, entry = [], matched.get(f.id, ("", {}))[1]
+        if entry.get("question") == "Degrees" and degrees:
+            part = next((name for name, pat in EDU_PART if pat.search(f.label)), None)
+            idx = by_section.get(f.section, 0)
+            d = degrees[idx] if 0 <= idx < len(degrees) else None
+            if d and part and not (part == "field" and d.get("instructions")):
+                variants = _as_list(d.get(part))
+        elif isinstance(entry.get("answer"), list) and all(isinstance(x, str) for x in entry["answer"]) \
+                and not entry.get("instructions"):
+            variants = entry["answer"]
+        if len(variants) < 2 or f.kind == "file":
+            continue
+        value = variants[0] if f.kind in ("text", "textarea", "email", "url") else " | ".join(variants)
+        a = answers.get(f.id)
+        if a is None or a.value != value:
+            log(f"  [{f.id}] {f.label[:40]!r}: from applicant.yaml's list -> {value[:80]!r}")
+            answers[f.id] = Answer(id=f.id, why="the answer's accepted wordings in applicant.yaml, in order",
+                                   value=value, source="applicant", flag=a.flag if a else "")
 
 
 def date_facts(degrees: list[dict]) -> str:
@@ -544,6 +598,7 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                 page.wait_for_timeout(1500)
                 log(f"  added an entry: {a['text']} ({a['section'][:40]})")
         check(todo, answers, ctx, model, log)
+        apply_variants(todo, answers, ctx, log)
         enforce(todo, answers, ctx, log)
         for f in todo:  # uploads are decided by their caption, not by the model
             if f.kind == "file":

@@ -156,3 +156,28 @@ def test_skill_names_match_strictly():
     assert strict_option("Python", opts) == "Python (Programming Language)"
     assert strict_option("R", opts) == "R" and strict_option("C", opts) is None
     assert strict_option("machine learning", opts) == "Machine Learning (ML)"
+
+
+def test_list_answers_are_tried_in_order():
+    from jobagent.steps.apply import Answer, apply_variants
+    from jobagent.tools.forms import Field, close_option
+    degrees = [{"school": "Arizona State University", "degree": ["Master of Science", "MS"],
+                "field": ["Artificial Intelligence and Robotics", "Robotics"], "instructions": "pick by the JD"},
+               {"school": ["Vellore Institute of Technology", "Other"], "degree": ["Bachelor of Technology", "B.Tech"],
+                "field": ["Computer Science and Engineering", "Computer Science", "Computer and Informational Sciences"]}]
+    ctx = {"_applicant": {"education": [{"question": "Degrees", "answer": degrees}]}, "_jd": {"company": "Adobe"}}
+    fields = [Field(id=1, kind="text", label="School or University*", section="Education 2"),
+              Field(id=2, kind="combobox", label="Field of Study", section="Education 2"),
+              Field(id=3, kind="combobox", label="Field of Study", section="Education 1"),
+              Field(id=4, kind="text", label="School or University*", section="Education 1")]
+    answers = {1: Answer(id=1, value="Vellore Institute of Technology", source="applicant"),
+               2: Answer(id=2, value="Computer Engineering", source="applicant"),
+               3: Answer(id=3, value="Artificial Intelligence and Robotics", source="applicant"),
+               4: Answer(id=4, value="Arizona State University", source="applicant")}
+    apply_variants(fields, answers, ctx, lambda m: None)
+    assert answers[2].value == "Computer Science and Engineering | Computer Science | Computer and Informational Sciences"
+    assert answers[3].value == "Artificial Intelligence and Robotics"  # its degree has instructions: the plan stands
+    assert answers[1].value == "Vellore Institute of Technology"
+    opts = ["Computer Engineering", "Computer and Information Sciences", "Computer Science"]
+    assert close_option("Computer and Informational Sciences", opts) == "Computer and Information Sciences"
+    assert close_option("Computer Science and Engineering", opts) is None
