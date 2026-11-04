@@ -131,6 +131,7 @@ def test_range_options_and_variant_read_back():
     assert in_range("3.75+", 4.0) and in_range("3.4 - 3.70", 3.5) and in_range("Below 3.4", 3.0)
     assert not in_range("3.4 - 3.70", 4.0) and not in_range("Below 3.4", 3.57)
     assert same_value("AI and Robotics | Robotics", "Robotics", "combobox")
+    assert not same_value("Arizona State University - Tempe | Arizona State University", "Arizona State University - West", "combobox")
 
 
 def test_address_lookups_are_never_used(monkeypatch):
@@ -181,3 +182,18 @@ def test_list_answers_are_tried_in_order():
     opts = ["Computer Engineering", "Computer and Information Sciences", "Computer Science"]
     assert close_option("Computer and Informational Sciences", opts) == "Computer and Information Sciences"
     assert close_option("Computer Science and Engineering", opts) is None
+
+
+def test_close_option_takes_an_abbreviation_not_a_campus():
+    from jobagent.tools.forms import close_option
+    opts = ["Other", "Vellore Institute of Technology (VIT) University", "Arizona State University - West"]
+    assert close_option("Vellore Institute of Technology", opts) == "Vellore Institute of Technology (VIT) University"
+    assert close_option("Arizona State University", opts) is None
+
+
+def test_a_later_variant_in_the_field_is_tried_again():
+    from jobagent.tools.forms import lower_variant
+    want = "Vellore Institute of Technology | Other"
+    assert lower_variant(want, "Other")
+    assert not lower_variant(want, "Vellore Institute of Technology (VIT) University")
+    assert not lower_variant("Masters", "Masters")

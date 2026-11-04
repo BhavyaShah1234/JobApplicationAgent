@@ -13,7 +13,7 @@
 # --- Identity and contact ----------------------------------------------------------------------------------------
 identity:
   - question: "Legal name"
-    seen: ["First Name", "Last Name", "Full name", "Legal first name", "Middle name", "Suffix"]
+    seen: ["Name", "First Name", "Last Name", "Full name", "Legal first name", "Middle name", "Suffix"]
     answer: {first: "", middle: "", last: "", suffix: ""}
   - question: "Preferred name"
     seen: ["Preferred name", "Preferred first name", "I have a preferred name"]
@@ -31,7 +31,7 @@ contact:
     seen: ["Phone", "Phone Number", "Phone Device Type", "Country Phone Code", "Phone Extension"]
     answer: {number: "", country_code: "", country: "", device_type: "", extension: ""}
 
-# Current home address. Must be your real address: it is checked at the background check / I-9.
+# At application time, the agent overlays a web-selected, geocoded address matching the JD city/state. The selection is cached per job.
 address:
   - question: "Current address"
     seen: ["Address Line 1", "Address Line 2", "City", "State", "Postal Code", "County", "Country"]
@@ -266,6 +266,10 @@ self_identification:
   - question: "Transgender?"
     seen: ["Do you identify as transgender?"]
     answer: ""
+  - question: "Signature date"
+    seen: ["Date", "Today's date", "Date signed"]
+    answer: ""
+    instructions: "Today's date in the form's format (MM/DD/YYYY)."
   - question: "Sexual orientation"
     seen: ["Sexual orientation"]
     answer: ""

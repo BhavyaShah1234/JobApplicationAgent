@@ -303,6 +303,15 @@ def match_option(answer: str, options: list[str], cutoff: int = 80) -> tuple[str
     return None, int(best[1]) if best else 0
 
 
+def lower_variant(want: str, got: str) -> bool:
+    """The field holds one of the answer's later wordings ("Other") while an earlier one may be offered: try again."""
+    variants = [v.strip() for v in want.split(" | ") if v.strip()]
+    if len(variants) < 2:
+        return False
+    first = variants[0]
+    return not (_norm(first) == _norm(got) or close_option(first, [got]) == got)
+
+
 def in_range(option: str, x: float) -> bool:
     """A range option ("3.75+", "3.4 - 3.70", "Below 3.4", "2-5 years") holds x."""
     o = option.lower().replace("–", "-")
@@ -318,7 +327,9 @@ def in_range(option: str, x: float) -> bool:
 def same_value(want: str, got: str, kind: str) -> bool:
     """The page shows the value that was meant (read-back check)."""
     if " | " in want:
-        return any(same_value(v.strip(), got, kind) for v in want.split(" | "))
+        # one of the candidate's wordings exactly: "Arizona State University" is not "Arizona State University - West"
+        g = _norm(got)
+        return any(_norm(v) == g or close_option(v, [got]) == got for v in want.split(" | ") if v.strip())
     w, g = _norm(want), _norm(got)
     if kind == "tel" or re.fullmatch(r"[\d\s()+.-]{7,}", want.strip()):
         return re.sub(r"\D", "", want)[-10:] == re.sub(r"\D", "", got)[-10:]
@@ -436,8 +447,12 @@ def close_option(answer: str, options: list[str]) -> str | None:
     """The option that is this answer, written a little differently ("Computer and Informational Sciences" ->
     "Computer and Information Sciences"); not merely a related one ("Computer Engineering")."""
     a = _norm(answer)
+    for o in options:  # the same name plus only an abbreviation: "Vellore Institute of Technology (VIT) University"
+        if o.lower().startswith(answer.lower()) and re.fullmatch(
+                r"\s*\([^)]{1,12}\)\s*(university|college|institute)?\s*", o[len(answer):], re.I):
+            return o
     best = max(options, key=lambda o: fuzz.ratio(a, _norm(o)), default=None)
-    return best if best is not None and (fuzz.ratio(a, _norm(best)) >= 90 or _norm(best) == a) else None
+    return best if best is not None and (fuzz.ratio(a, _norm(best)) >= 94 or _norm(best) == a) else None
 
 
 def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[str, str], tie_break=None,
@@ -528,6 +543,20 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 lab.click(timeout=8000)
         return "; ".join(chosen)
     if f.kind == "combobox":
+        if f.value and not strict and loc.get_attribute("data-uxi-widget-type") == "selectinput":
+            # a single-choice Workday picker that already holds something else (an earlier run's pick): its chip
+            # sits over the input, so remove it before choosing
+            box = loc.locator("xpath=ancestor::*[@data-automation-id='multiSelectContainer'][1]")
+            pill = box.locator("[data-automation-id=selectedItem]")  # "Other, press delete to clear value."
+            for _ in range(3):
+                if not pill.count():
+                    break
+                try:
+                    pill.first.focus()
+                    page.keyboard.press("Delete")
+                except Exception:
+                    box.locator("[data-automation-id=DELETE_charm]").first.click(timeout=5000, force=True)
+                page.wait_for_timeout(700)
         opts = _open_options(frame, loc, page)
         if " > " in answer and loc.get_attribute("data-uxi-widget-type") == "selectinput":
             # "Category > meaning": open the category, then the entry that means the rest
@@ -551,6 +580,18 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                     loc.press("Enter")  # Workday searches on Enter
                 page.wait_for_timeout(1800)
                 opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
+                if not opts and loc.get_attribute("data-uxi-widget-type") == "selectinput":
+                    # Workday picks a search's only result by itself: no list, just the new chip
+                    chips = loc.evaluate("e => [...(e.closest('[data-automation-id=multiSelectContainer]') || "
+                                         "e.parentElement).querySelectorAll('[data-automation-id=selectedItem]')]"
+                                         ".map(x => x.innerText.trim())")
+                    if chips and pick(answer, chips)[0]:
+                        return chips[-1]
+                    for _ in chips if not strict else []:  # it picked something else: undo
+                        box = loc.locator("xpath=ancestor::*[@data-automation-id='multiSelectContainer'][1]")
+                        box.locator("[data-automation-id=selectedItem]").last.focus()
+                        page.keyboard.press("Delete")
+                        page.wait_for_timeout(500)
                 if opts:
                     opt, _ = pick(answer, opts)
                     if opt:

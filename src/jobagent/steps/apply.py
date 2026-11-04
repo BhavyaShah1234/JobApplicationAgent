@@ -38,7 +38,9 @@ DATA = Path("/app/data")
 MAX_PAGES = 15
 START = [re.compile(p, re.I) for p in (r"^apply manually$", r"^apply now$", r"^apply( for this (job|position))?( online)?$",
                                        r"^(i'?m interested|start (your |my )?application|begin application)$",
-                                       r"^apply to (this )?job$")]
+                                       r"^apply to (this )?job$",
+                                       # a posting already started (signed in): Workday offers to continue it
+                                       r"^(continue|resume)( my| your)?( job)? application$")]
 
 
 class Answer(BaseModel):
@@ -633,7 +635,7 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                      "source": a.source if a else "none", "flag": a.flag if a else "not answered by the planner",
                      "filled": "", "error": ""}
             done[_key(f)] = entry
-            if not a or not a.value or (f.value and forms.same_value(a.value, f.value, f.kind)):
+            if not a or not a.value or (f.value and forms.same_value(a.value, f.value, f.kind) and not forms.lower_variant(a.value, f.value)):
                 # nothing to put in, or the page already shows it (Workday's prefilled Country Phone Code)
                 continue
             if f.kind == "file" and a.value not in files:
@@ -704,7 +706,7 @@ def _start(page: Page, url: str, ensure_signed_in, log) -> forms.PageView:
     """Open the posting and get to the application form: click Apply / Apply Manually, sign in when asked."""
     page.goto(url, wait_until="domcontentloaded")
     signed, empty = False, 0
-    for _ in range(12):
+    for _ in range(18):
         page.wait_for_timeout(4000)
         view = forms.read_page(page)
         pw = any(f.kind == "password" for f in view.fields)
@@ -724,8 +726,10 @@ def _start(page: Page, url: str, ensure_signed_in, log) -> forms.PageView:
             if len(view.fields) >= 1:
                 return view
             empty += 1  # still loading (clicks don't wait for the next page), or really nothing here
-            if empty >= 4:
-                raise RuntimeError(f"no application form and no Apply button on {page.url}")
+            if empty >= 10:  # a slow portal can show its form's spinner for half a minute
+                screenshot(page, "/app/state/logs/apply-start.png")
+                raise RuntimeError(f"no application form and no Apply button on {page.url} (buttons: "
+                                   f"{view.buttons[:12]}; screenshot state/logs/apply-start.png)")
     return forms.read_page(page)
 
 
