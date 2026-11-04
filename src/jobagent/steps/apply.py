@@ -781,14 +781,14 @@ def run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, lo
                 break
         page.wait_for_timeout(1500)
         view = forms.read_page(page)
-        if view.errors and [h for h in view.headings if not ERRORS_HEAD.search(h)] == before:
-            # the site refused Next on this page
+        if [h for h in view.headings if not ERRORS_HEAD.search(h)] == before:
+            # the site refused Next on this page (its error banner may be out of view: the page just didn't move)
             same += 1
             if same >= 2:
                 result["state"] = "blocked"
                 log(f"apply: the page keeps refusing Next: {view.errors[:5]}")
                 break
-            known, errors = done, view.errors
+            known, errors = done, view.errors or ["the page did not move on after Next / Save and Continue"]
         else:
             known, errors, same = None, [], 0
     result["fields"] = record

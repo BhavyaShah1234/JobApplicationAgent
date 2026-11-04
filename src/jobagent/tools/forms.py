@@ -461,9 +461,14 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
     frame, loc = view.frames[f.frame], locate(view, f)
     if f.kind == "file":
         path = files.get(answer) or answer
-        loc.set_input_files(path)
-        page.wait_for_timeout(2500)
-        return path
+        name = path.rsplit("/", 1)[-1]
+        for _ in range(2):  # the upload counts once the page shows the file's name
+            loc.set_input_files(path)
+            for _ in range(10):
+                page.wait_for_timeout(2000)
+                if any(name in fr.locator("body").inner_text(timeout=5000) for fr in view.frames.values()):
+                    return path
+        raise FillError(f"{name} was attached but the page never showed it")
     loc.scroll_into_view_if_needed(timeout=5000)
     if f.kind in ("text", "email", "tel", "url", "number", "textarea", "date", "password"):
         loc.fill(answer, timeout=8000)
