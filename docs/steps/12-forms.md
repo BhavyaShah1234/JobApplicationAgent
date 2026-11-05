@@ -3,6 +3,9 @@
 The agent fills a job's application up to its review screen, reads every field back, and stops: it never clicks
 Submit (the user approves and submits in step 13).
 
+**Status (2026-11-05): done.** Five postings on four platforms reach their review screen with every field the
+candidate's files answer read back correctly (table below); the rest are questions only the candidate can answer.
+
 ## Run it
 
 ```bash
@@ -10,6 +13,8 @@ jobagent apply outputs/<company>/<job-id> <company-slug>               # e.g. ou
 jobagent apply ... --ask-minutes 5                                     # how long a question waits for you (default 30)
 jobagent apply ... --model qwen35-397b-a17b                            # another Voyager model plans the answers
 jobagent hitl answer <id> '<answer>'                                   # answer a question the agent asks on the spot
+jobagent hitl answer <id> 'rule: <how to answer questions like this>'  # teach it for every company
+jobagent learned ["<question>"]                                        # what it learned / would look up for a question
 ```
 
 The job folder needs `jd.json` (step 7), `resume.pdf` / `resume.tex` (step 9) and, when the form takes one,
@@ -20,103 +25,74 @@ value the page shows, its source, read back OK or not, flags), `application.json
 
 ```mermaid
 flowchart TD
-    J[/"Job folder: jd.json, resume, cover letter"/] --> S["Open the posting; click Apply / Apply Manually;<br/>sign in with step 11 in the same browser when asked"]
-    S --> R["Read the page: every visible field in every frame<br/>(text, select, radio and checkbox groups, uploads,<br/>react-select and Workday pickers, Workday dates)"]
+    J[/"Job folder: jd.json, resume, cover letter"/] --> S["Open the posting; Apply / Apply Manually / Continue Application;<br/>sign in with step 11 in the same browser when asked"]
+    S --> R["Read the page: every visible field in every frame<br/>(text, select, radio and checkbox groups, uploads, react-select,<br/>Workday pickers and dates, Ashby blocks, Lever place boxes)"]
     R --> O["Open each picker once to read its options<br/>(Workday categories listed as 'Category > Entry')"]
-    O --> P["Planner model: one answer per field, with its source<br/>and a flag; 'add' entries for every resume role / degree"]
+    O --> P["Planner model: one answer per field from applicant.yaml<br/>(+ experience from the tailored resume), with source and flag"]
     P --> C["Checker model: is each answer really in the cited file?<br/>no: corrected, or asked"]
-    C --> L["Lookups the answer needs (web search, maps)"]
-    L --> H["Asked on the spot (jobagent hitl): required fields and<br/>company questions the files don't answer;<br/>kept in data/learned_answers.yaml"]
-    H --> F["Code fills each field; options matched to the page's own;<br/>every value read back"]
+    C --> K["Code rules: list answers in order, own-site sourcing,<br/>uploads by caption, one entry per role / degree, address only from the file"]
+    K --> Q{"Questions applicant.yaml didn't answer?"}
+    Q -- "yes" --> LR["learned.yaml: the closest few entries (wording + embeddings);<br/>plan those fields again with them"]
+    LR --> H["Still unanswered: asked on the spot (jobagent hitl);<br/>a 'rule:' reply is kept for every company"]
+    Q -- "no" --> F
+    H --> F["Code fills each field; options matched to the page's own;<br/>one repair pass; every value read back"]
     F --> N{"Next / Save and Continue?"}
     N -- "yes" --> W["Wait for the new page"] --> R
-    N -- "refused (errors)" --> E["Re-plan only the fields the errors name"] --> F
+    N -- "refused (errors, or the page didn't move)" --> E["Re-plan only the fields not confirmed"] --> F
     N -- "only Submit left" --> V[/"Review screen: stop (Submit never clicked)"/]
 ```
 
 ## Where answers come from
 
-One file, `data/applicant.yaml` (template: `data/applicant.example.yaml`), holds every answer. It was built from the
-unique questions the three test portals asked (Workday: Adobe, 59 fields; Greenhouse: DoorDash, 31; Lever: Palantir,
-24 -> 97 distinct labels -> 55 questions) and replaces `personal_info.yaml`, `qa_bank.yaml`, `learned_answers.yaml`
-and the form parts of `preferences.yaml`. Each entry has `question`, `seen` (the wordings portals use), `answer`,
-`instructions` and `tools` (`web_search`, `maps`); sections: identity, contact, address, links, work authorization,
-education, experience, employer history, preferences, sourcing, written answers, consents, self-identification,
-documents, and `learned` (answers given on the spot, appended by the agent with company, portal and date).
+| Source | Used for |
+|---|---|
+| `data/applicant.yaml` (template `applicant.example.yaml`) | everything about the candidate; only the candidate edits it. Built from the unique questions of Workday, Greenhouse and Lever forms: entries of `question`, `seen` (portal wordings), `answer` (a list = accepted wordings in order), `instructions`, `tools` |
+| the job's `resume.tex` / `resume.pdf` | work history (with bullets), current company, skills, years, internships (`applicant.with_resume`); written answers |
+| `data/learned.yaml` | only for questions applicant.yaml doesn't answer: the closest few entries (`learned.relevant`); written by the agent from on-the-spot replies (locked, backed up, validated) |
+| `jd.json` / `jd.md`, `state/companies/<slug>.md` | job context; "Why this company?" |
+| `data/targets.csv` | a referral, only with `referral_consent: yes` |
 
-`apply.hints` matches each form label to its entry (a short wording must equal the label; a long one may be worded
-differently or be part of a longer label; fields inside a Work Experience / Education entry go to "Work history" /
-"Degrees") and shows the entry next to the field: 122 of the 128 test fields match (the rest are upload boxes,
-handled by code, and unlabelled boxes). The experience answers (work history with each role's bullets, current company,
-skills, years of experience with overlaps counted once, internships) are taken from the job's tailored `resume.tex`
-when its form is filled (`applicant.resume_experience`, `applicant.with_resume`), so the form says what the uploaded
-resume says. Written answers come from the resume and the company profile (step 8).
-
-Two facts are enforced in code whatever an instruction says (`apply.enforce`): address fields only from the "Current
-address" entry (never looked up or made up; empty -> asked), and a referral option only for a `data/targets.csv`
-contact with `referral_consent: yes` (otherwise asked).
+The planner prompt is about 28k characters per page (applicant.yaml ~16k, resume, JD, company profile) and does not
+grow with what the agent learns.
 
 ## Rules
 
 | Rule | Where |
 |---|---|
 | Submit / Send / Finish / a bare "Apply" on a form page is never clicked | `forms.SUBMIT`, `forms.click_button` |
-| Personal facts only from the candidate's files; an empty address is asked for (fill `personal_info.yaml`, answer "done"), never invented | `apply.PROMPT`, `apply.resolve` |
-| A field's matching `qa_bank` / learned entry is shown next to it (fuzzy match on the wording) | `apply.hints` |
-| Dates are worked out by code (a degree that ended in May 2026 is "graduated" on 2026-11-03), so ranges are compared, not guessed | `apply.date_facts` |
-| The checker sends assumed answers (a consent never given, an eligibility, a language) to the candidate; it can't swap the candidate's own file for the resume, and its corrections must be real options | `apply.check` |
-| Questions asked on the spot: required fields and company-specific choices; an optional text box with no data stays empty; the answer is appended to `applicant.yaml` `learned` | `apply.resolve`, `applicant.learn` |
-| Self-identification `personal_info` doesn't cover: "I don't wish to answer" | `apply.PROMPT` |
-| Marketing / SMS / talent-community: declined; consents needed to apply: agreed | `apply.PROMPT`, `qa_bank.yaml` |
-| Entries are added only for work experience / education, or a section `personal_info` has data for (no blank Certifications entry) | `apply.ENTRY_OK`, `apply._has_data` |
-| A required field left empty is asked about after the page is filled, only if still shown (a current job's To date disappears) | `apply.fill_page` |
-| A value is only "verified" when the page shows it after filling (dates by digits, phones by digits, pickers by their chosen items) | `forms.same_value` |
+| Personal facts only from applicant.yaml; address fields only from its "Current address" entry (empty: asked, never looked up or made up) | `apply.PROMPT`, `apply.enforce` |
+| A referral option only for a consenting `targets.csv` contact; otherwise the company's own site option | `apply.enforce`, `apply.own_site_option` |
+| A list answer is tried in the candidate's order; the closest option only when none is offered; a field holding a later variant ("Other") is improved | `apply.apply_variants`, `forms.close_option`, `forms.lower_variant` |
+| A field is left alone only when it really shows the answer (never "United States Minor Outlying Islands" for "United States") | `forms.already_shows`, `forms.match_option` |
+| Dates worked out by code (graduated or not, today, the coming Monday); date fields get dates | `apply.date_facts` |
+| The checker sends answers a file doesn't support to the candidate; it can't swap the candidate's file for the resume | `apply.check` |
+| One work entry per resume role, one education entry per degree; no blank entries (certifications) | `apply.entry_room`, `apply.ENTRY_OK` |
+| Uploads by caption (resume / cover letter); autofill boxes skipped; an upload counts once the page shows the file | `apply.fill_page`, `forms.fill_field` |
+| Skills: the same name or the same name with a qualifier, never a different thing containing it | `forms.strict_option` |
+| A page that doesn't move after Next is a refusal: one retry of the unconfirmed fields, then `blocked` with a screenshot | `apply.run` |
 
-## Results (2026-11-03)
+## Results (2026-11-05, final retest)
 
-| Portal | Posting | Pages | Fields read back OK | Left for the user |
+| Platform | Posting | Pages | Read back OK | Left for the candidate |
 |---|---|---|---|---|
-| Workday | Adobe, 2027 University Graduate ML Engineer | 6 (to the Review page) | 73 / 73 | address (optional on Adobe, left empty) |
-| Greenhouse | DoorDash, Software Engineer I | 1 (the form itself) | 28 / 30 | current city (no address on file); internships (the form offers 1 or 2+, the resume shows 0) |
-| Lever | Palantir, Backend Software Engineer | 1 | 22 / 24 | current location; eligibility for the UK clearance (empty in applicant.yaml) |
-
-Every field the agent could answer from the files reads back as planned; the ones left are questions only the user
-can answer (asked through `jobagent hitl`, not answered during the test runs).
-
-Open for the user: the current address (empty in `personal_info.yaml`), the ASU GPA (`personal_info` 4.0 vs the
-resume's 3.57), the "How did you hear" entry in `qa_bank.yaml` (answer "Referral" vs its instruction "the company's
-own website unless a referral exists"), and a `qa_bank` entry for "willing to submit to a background check"
-(answered "Yes" without a file saying so).
-
-## Answer rules added after the filled applicant.yaml run (2026-11-03)
-
-- An answer written as a list of words is a list of variants of one answer, in preference order (degree:
-  ["Master of Science", "MS", "Master's degree"]); a search picker gets them joined with " | " and code tries each in
-  turn; the checker accepts any variant (`apply.in_applicant`), and degree levels match portal wording ("Masters",
-  "Bachelor's Degree").
-- A range option holds the file's value: GPA 4.0 -> "3.75+" (`forms.in_range`).
-- "How did you hear": the company's own site option when no consenting referral is on file (`apply.own_site_option`).
-- Address fields: never from a lookup; enforced before and after lookups.
-- Repeated entries: at most one per resume role / degree on file (`apply.entry_room`).
-- Skills: only the same name or the same name with a qualifier ("Python (Programming Language)"), never a different
-  thing containing it ("Python IDLE", "SAP R") (`forms.strict_option`).
-- Uploads by caption; an upload's value is only a file really attached (its caption "ATTACH RESUME/CV" isn't one).
-- Fields the planner skips get a second, smaller planning call; a field the page already shows right isn't refilled;
-  Workday dates are retyped when they don't take; clicks don't wait for slow navigations (Lever).
+| Workday | Adobe, 2027 University Graduate ML Engineer | 6, to Review | 73 / 73 | none |
+| Workday | Intel, AI Software Development Engineer (account created by the agent) | 6, to Review | 70 / 70 | none |
+| Greenhouse | DoorDash, Software Engineer I | 1 | 28 / 29 | internships (the form offers 1 or 2+, the resume shows 0) |
+| Lever | Palantir, Backend Software Engineer | 1 | 24 / 24 | none |
+| Ashby | Mercor, AI Infrastructure Engineer | 1 | 8 / 8 | none (office question answered from a learned rule) |
 
 ## Learned while building
 
-- react-select (Greenhouse) shrinks its input to nothing once a value is chosen: a combobox is judged visible by its
-  control box, and its value read from the `single-value` element.
-- Lever writes button text in capitals with CSS ("APPLY") while the accessible name is "Apply": buttons are matched
-  without case. Lever puts each question in a sibling element: a field's question is the nearest container text
-  minus its own options.
-- Workday: header controls (language menu) aren't form fields; "Select One" list buttons are `type=button`; a list
-  button's `aria-label` holds its value, so the form field's own label is used; dates are zero-size month / year
-  inputs drawn next to their text, filled by typing digits; search pickers (`selectinput`) search on Enter and keep
-  chosen items in a separate list; "How did you hear" is two levels (category, then entry); one question's checkboxes
-  each have their own name; every work-experience entry repeats the same checkbox name; a new page shows a
-  placeholder first, so the agent waits until the headings change.
-- A refused Next re-plans only the fields the errors name; nothing is asked twice.
-- The planner (devstral2-123b) credits answers to files that don't hold them (a language, a background-check "yes",
-  "no competing offers"): the checker pass catches these and asks.
+- react-select (Greenhouse) shrinks its input once a value is chosen: judged by its control box; value from
+  `single-value`.
+- Lever: CSS capitals on buttons ("APPLY"); questions in sibling elements; "Current location" keeps only a picked
+  suggestion (`.dropdown-results`), so the city is typed and the matching "Tempe, AZ, USA" picked; slow page loads.
+- Workday: header controls aren't fields; list buttons are `type=button` and their aria-label holds the value; dates are
+  zero-size inputs; search pickers search on Enter, auto-pick a single result and hold chosen items as chips (cleared
+  with Delete on the chip); "How did you hear" is two levels; one question's checkboxes have their own names; a signed-in
+  posting offers "Continue Application"; forms can show a spinner for 30 s; changing the country rebuilds the address
+  section; "United States" must never match "United States Minor Outlying Islands".
+- Ashby (Mercor): the question is the field block's first label (placeholders "Start typing…" aren't questions); one
+  question's checkboxes each have their own name; "Autofill from resume" would overwrite answers.
+- The planner (devstral2-123b) credits answers to files that don't hold them; the checker, code rules and a second
+  planning call for skipped fields keep the record honest.
