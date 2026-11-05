@@ -460,6 +460,23 @@ def apply_cmd(
                   f"{len(res['flags'])} for review -> {job_dir}/application/application.md", highlight=False)
 
 
+@app.command("learned")
+def learned_cmd(question: str = typer.Argument(None, help="Show the entries closest to this question instead.")) -> None:
+    """What the agent learned from your on-the-spot replies (data/learned.yaml): rules for every company and
+    company-specific answers. With a question: the entries the agent would look up for it."""
+    from rich.table import Table
+
+    from jobagent.tools import learned
+
+    entries = learned.relevant(question, "", k=5) if question else learned.load()
+    table = Table("question", "rule / answer", "company", "learned")
+    for e in entries:
+        table.add_row(e["question"][:70], (f"rule: {e['instructions']}" if e.get("instructions")
+                                           else str(e.get("answer")))[:90], str(e.get("company", "")),
+                      str(e.get("learned_from") or e.get("date", "")))
+    console.print(table if entries else "nothing learned yet" if not question else "nothing close")
+
+
 @app.command("portal-reset")
 def portal_reset_cmd(url: str = typer.Argument(..., help="A career-site URL on the portal.")) -> None:
     """One user-approved password reset of an existing portal account to the shared password, then sign in."""

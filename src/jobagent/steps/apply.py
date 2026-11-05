@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field as PField
 
 from jobagent import llm
 from jobagent.clock import now
-from jobagent.tools import applicant, forms
+from jobagent.tools import applicant, forms, learned
 from jobagent.tools.browser import screenshot
 
 DATA = Path("/app/data")
@@ -57,7 +57,7 @@ class Answer(BaseModel):
     lookup: str = PField("", description="When the answer needs a lookup first (an APPLICANT entry's tools, e.g. "
                                          "a salary median or an office address): 'web: <query>', 'place: <address>' or "
                                          "'maps: <origin> | <destination>'; '' otherwise")
-    ask_human: bool = PField(False, description="True when APPLICANT (learned answers included) doesn't answer "
+    ask_human: bool = PField(False, description="True when APPLICANT and the LEARNED entries shown don't answer "
                                                 "this question: the candidate is asked now and the answer is kept")
 
 
@@ -71,7 +71,10 @@ PROMPT = """You fill a job application form for the candidate, from the candidat
 listed (id, kind, label, options, current value) give the answer to put in it.
 
 APPLICANT is the candidate's answer file: entries of question, seen (wordings portals use), answer, instructions,
-tools; its `learned` section holds answers the candidate gave on earlier forms (with the company). An answer given
+tools. LEARNED, when given, holds the few things the candidate taught on earlier forms that are closest to this
+page's unanswered questions: a rule (instructions, company any) says how to answer questions like that one, apply
+it to this form's options; a plain answer from the same company may be reused, one from another company only if the
+question isn't specific to that company. An answer given
 as a LIST of words (e.g. degree: ["Master of Science", "MS", "Master's degree"]) lists acceptable variants of one
 answer in order of preference: use the first one the form offers (or the closest option to it); "Other" in such a
 list is the last resort. A list of entries (degrees, work history) is one entry per item. A field marked
@@ -85,7 +88,6 @@ Rules:
 - An answer that is empty in APPLICANT but has instructions: follow the instructions (compute, write, or look it up).
   Empty with no instructions: ask_human true.
 - Self-identification APPLICANT leaves empty: the "I don't wish to answer" / "decline" option (source applicant).
-- learned answers: the same company's answer as is; another company's only if the question isn't specific to it.
 - A question APPLICANT doesn't cover (company-specific: teams, offices, essay prompts about the candidate's own
   choices) that you can't answer truthfully from the RESUME: ask_human true.
 - An entry with `tools`, or a fact only a lookup can give (an office address, a salary median): set lookup; the
@@ -496,11 +498,47 @@ def ask_human(hitl, f: forms.Field, company: str, host: str, log, timeout_s: flo
         return "answer", ""
     if RULE.match(ans):
         rule = RULE.sub("", ans).strip()
-        applicant.learn(f.label, f.options, "", company, host, rule=rule)
+        learned.add(f.label, f.options, "", company, host, rule=rule)
         log(f"apply: learned a rule for \"{f.label[:60]}\": {rule[:100]}")
         return "rule", rule
-    applicant.learn(f.label, f.options, ans, company, host)
+    learned.add(f.label, f.options, ans, company, host)
     return "answer", ans
+
+
+def consult_learned(todo: list[forms.Field], answers: dict, ctx: dict, model, log) -> None:
+    """Questions applicant.yaml didn't answer: look up what the candidate taught on earlier forms (data/learned.yaml,
+    only the few entries closest to each question) and plan those fields again with them."""
+    stuck = [f for f in todo if f.kind != "file" and not is_address(f.label)
+             and ((a := answers.get(f.id)) is None or a.ask_human or (f.required and not a.value and not f.value))]
+    if not stuck:
+        return
+    company = ctx.get("_jd", {}).get("company", "")
+    found, lines = [], []
+    for f in stuck:
+        try:
+            near = learned.relevant(f.label, company)
+        except Exception as e:
+            log(f"apply: learned lookup failed ({type(e).__name__})")
+            return
+        if near:
+            found.append(f)
+            lines += [f"[{f.id}] {f.label[:120]!r}:"] + [
+                f"    - {e['question']!r}: " + (f"rule: {e['instructions']}" if e.get("instructions")
+                                                 else f"answer {e.get('answer')!r} (given for {e.get('company')})")
+                for e in near]
+    if not found:
+        return
+    log(f"  learned.yaml has something close for {len(found)} question(s); planning them again with it")
+    try:
+        again, _ = plan(found, {**ctx, "LEARNED": "\n".join(lines)}, model, log,
+                        "Answer these with the LEARNED entries shown for each (follow a rule for this form's options);"
+                        " if they don't fit the question, ask_human true.")
+    except Exception as e:
+        log(f"apply: planning with learned entries failed ({type(e).__name__})")
+        return
+    for i, a in again.items():
+        if a.value and not a.ask_human:
+            answers[i] = a.model_copy(update={"source": "learned"})
 
 
 def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict, log,
@@ -522,6 +560,7 @@ def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict,
         except Exception as e:
             log(f"apply: planning after lookups failed ({type(e).__name__})")
         enforce(todo, answers, ctx, log)  # a lookup never supplies an address or a referral
+    consult_learned(todo, answers, ctx, model, log)
     if env.get("hitl") is None:
         return
     unanswered = [f for f in todo if f.kind != "file" and not f.value
@@ -560,15 +599,10 @@ def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict,
         if f in addr:
             continue
         kind, text = ask_human(env["hitl"], f, env["company"], env["host"], log, env.get("ask_s", 1800))
-        if kind == "rule":  # plan this field again, now with the candidate's rule among the APPLICANT entries
-            data = ctx.get("_applicant") or {}
-            if not isinstance(data.get("learned"), list):
-                data["learned"] = []
-            data["learned"].append({"question": f.label, "seen": [f.label], "answer": "", "instructions": text,
-                                    "company": "any"})
-            ctx["APPLICANT"] = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=120)
+        if kind == "rule":  # plan this field again with the candidate's new rule
             try:
-                again, _ = plan([f], ctx, model, log, f"RULE FROM THE CANDIDATE for this question: {text}")
+                again, _ = plan([f], {**ctx, "LEARNED": f"[{f.id}] rule: {text}"}, model, log,
+                                f"RULE FROM THE CANDIDATE for this question: {text}")
                 if again.get(f.id) and again[f.id].value:
                     answers[f.id] = again[f.id].model_copy(update={"source": "learned", "ask_human": False})
             except Exception as e:

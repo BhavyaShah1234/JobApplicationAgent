@@ -282,9 +282,3 @@ documents:
   - question: "Cover letter"
     seen: ["Cover Letter", "Attach cover letter"]
     instructions: "The job's cover_letter.pdf when the form takes one."
-
-# --- Learned on the spot -----------------------------------------------------------------------------------------
-# What you taught the agent while it filled a form (`jobagent hitl`), appended here so the question isn't asked again.
-# Reply "rule: <how to answer questions like this>" to save an instruction for every company (preferred: e.g. the
-# office question below); a plain reply is saved as that company's answer. Edit or delete freely.
-learned:

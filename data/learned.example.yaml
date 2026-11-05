@@ -1,0 +1,7 @@
+# What you taught the agent while it filled forms (`jobagent hitl`). The agent appends here; applicant.yaml is
+# never written by code. It looks here only for questions applicant.yaml doesn't answer, and then only at the few
+# entries closest to that question.
+# Reply "rule: <how to answer questions like this>" to save an instruction for every company (company: any);
+# a plain reply is saved as that company's answer. Edit or delete entries freely (`jobagent learned` lists them).
+
+[]

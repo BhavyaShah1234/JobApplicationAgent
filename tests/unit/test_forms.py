@@ -37,19 +37,6 @@ def test_submit_buttons_are_recognised_and_next_is_not_submit():
     assert not SUBMIT.search("Apply Manually")
 
 
-def test_learned_answers_are_appended_to_the_applicant_file(tmp_path, monkeypatch):
-    from jobagent.tools import applicant
-    f = tmp_path / "applicant.yaml"
-    f.write_text("# my notes\nidentity:\n  - question: Pronouns\n    answer: He/Him\n\nlearned:\n")
-    monkeypatch.setattr(applicant, "path", lambda: f)
-    applicant.learn("Preferred office?", ["NYC", "SF"], "SF", "doordash", "x.io")
-    applicant.learn("Preferred office?", [], "Remote", "adobe", "y.io")
-    data = yaml.safe_load(f.read_text())
-    assert "# my notes" in f.read_text()  # the user's comments stay
-    assert [(e["company"], e["answer"]) for e in data["learned"]] == [("doordash", "SF"), ("adobe", "Remote")]
-    assert applicant.answer("Pronouns", data) == "He/Him"
-
-
 def test_form_labels_find_their_applicant_entry(tmp_path, monkeypatch):
     from jobagent.steps.apply import hints
     from jobagent.tools import applicant
@@ -203,15 +190,36 @@ def test_a_rule_reply_is_kept_for_every_company(tmp_path, monkeypatch):
     from jobagent.steps import apply as A
     from jobagent.tools import applicant
     from jobagent.tools.forms import Field
-    f = tmp_path / "applicant.yaml"
-    f.write_text("learned:\n")
-    monkeypatch.setattr(applicant, "path", lambda: f)
+    from jobagent.tools import learned
+    settings = type("S", (), {"data_dir": tmp_path, "state_dir": tmp_path / "state", "model_embed": "m"})()
+    monkeypatch.setattr(learned, "get_settings", lambda: settings)
     hitl = type("H", (), {"ask": lambda self, prompt, timeout_s=None: "rule: select every office; else a random one"})()
     field = Field(id=1, kind="checkboxes", label="Which office are you applying to?", options=["SF", "NYC"])
     assert A.ask_human(hitl, field, "mercor", "www.mercor.com", lambda m: None) == \
         ("rule", "select every office; else a random one")
-    entry = yaml.safe_load(f.read_text())["learned"][0]
+    entry = learned.load()[0]
     assert entry["company"] == "any" and entry["answer"] == "" and entry["instructions"].startswith("select every")
     plain = type("H", (), {"ask": lambda self, prompt, timeout_s=None: "NYC"})()
     assert A.ask_human(plain, field, "mercor", "www.mercor.com", lambda m: None) == ("answer", "NYC")
-    assert yaml.safe_load(f.read_text())["learned"][1]["company"] == "mercor"
+    assert learned.load()[1]["company"] == "mercor"
+
+
+def test_learned_store_is_separate_locked_and_retrieved_by_closeness(tmp_path, monkeypatch):
+    from jobagent.tools import applicant, learned
+    settings = type("S", (), {"data_dir": tmp_path, "state_dir": tmp_path / "state", "model_embed": "m"})()
+    (tmp_path / "state").mkdir()
+    monkeypatch.setattr(learned, "get_settings", lambda: settings)
+    monkeypatch.setattr(applicant, "get_settings", lambda: settings)
+    monkeypatch.setattr(learned, "_vectors", lambda texts: None)  # wording match only in this test
+    (tmp_path / "applicant.yaml").write_text("identity:\n  - question: Pronouns\n    answer: He/Him\n")
+    learned.add("Which office are you applying to?", ["SF", "NYC"], "", "mercor", "m.com", rule="select all")
+    learned.add("Do you have a security clearance?", [], "No", "intel", "i.com")
+    learned.add("Which office are you applying to?", [], "", "intel", "i.com", rule="select all offices")
+    entries = learned.load()
+    assert len(entries) == 2 and entries[-1]["instructions"] == "select all offices"  # the newer rule replaced it
+    assert "learned" not in applicant.load() and "learned" not in (tmp_path / "applicant.yaml").read_text()
+    near = learned.relevant("Which office are you applying to? (Select both if appropriate)", "adobe")
+    assert [e["question"] for e in near] == ["Which office are you applying to?"]
+    # another company's literal answer to a differently worded question isn't offered
+    assert learned.relevant("Clearance level held", "adobe") == []
+    assert list((tmp_path / "state" / "backups").glob("learned-*.yaml"))
