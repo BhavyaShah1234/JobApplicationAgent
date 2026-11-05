@@ -817,8 +817,9 @@ def _start(page: Page, url: str, ensure_signed_in, log) -> forms.PageView:
 
 
 def run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, log=print, model=None,
-        hitl=None, ask_s: float = 1800, model_name: str | None = None) -> dict:
-    """Fill the application to its review screen. Never clicks Submit."""
+        hitl=None, ask_s: float = 1800, model_name: str | None = None, at_review=None) -> dict:
+    """Fill the application to its review screen. Never clicks Submit itself: `at_review(page, view, result)` (step 13's
+    approval and submission) is called there, in the same browser session, when given."""
     job_dir = Path(job_dir)
     ctx = context(job_dir, company)
     url = ctx["_jd"].get("apply_url") or ctx["_jd"].get("source_url")
@@ -879,6 +880,9 @@ def run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, lo
     result["flags"] = [e for e in record if e["flag"] or e["error"] or not e.get("verified")]
     (out_dir / "application.json").write_text(json.dumps(result, indent=2))
     (out_dir / "application.md").write_text(report(result, ctx["_jd"]))
+    if at_review is not None and result["state"] == "review":
+        result["submission"] = at_review(page, view, result)
+        (out_dir / "application.json").write_text(json.dumps(result, indent=2))
     return result
 
 

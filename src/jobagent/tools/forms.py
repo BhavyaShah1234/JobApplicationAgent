@@ -89,6 +89,20 @@ FIELDS_JS = r"""(start) => {
   const required = (e, q) => e.required || e.getAttribute('aria-required') === 'true' || /\*\s*$|\*\s|\(required\)/i.test(q);
   const out = []; let n = start; const seen = new Set();
   const add = (e, f) => { e.setAttribute('data-jf', String(n)); f.id = n++; f.section = section(e); out.push(f); };
+  // choice buttons: a question answered by pressing one of a few buttons (Ashby's Yes / No: aria-pressed)
+  for (const g of new Set([...document.querySelectorAll('button[aria-pressed]')].map(b => b.parentElement))) {
+    const btns = [...g.querySelectorAll(':scope > button[aria-pressed]')];
+    if (btns.length < 2 || !vis(g) || !shown(g) || g.hasAttribute('data-jf')) continue;
+    const blk = g.closest('[data-field-path], [data-field-entry-id], fieldset') || g.parentElement;
+    const l = blk && [...blk.querySelectorAll('label, legend')].find(x => !x.contains(g) && clean(x.innerText));
+    const q = (l ? clean(l.innerText) : around(btns[0], btns.map(b => clean(b.innerText)))).slice(0, 300);
+    btns.forEach((b, k) => { b.setAttribute('data-jf-opt', String(k)); b.setAttribute('data-jf-btn', '1'); });
+    const hidden = blk && blk.querySelector('input');
+    add(g, {kind: 'buttons', label: q, required: !!(hidden && hidden.required) || /\*\s*$/.test(q),
+            options: btns.map(b => clean(b.innerText)),
+            value: btns.filter(b => b.getAttribute('aria-pressed') === 'true').map(b => clean(b.innerText)).join('; ')});
+    btns.forEach(b => b.setAttribute('data-jf', String(n - 1)));
+  }
   const ctl = 'input, select, textarea, [role=combobox], button[aria-haspopup=listbox], [role=checkbox], [role=radio], [role=spinbutton]';
   for (const e of document.querySelectorAll(ctl)) {
     const t = (e.getAttribute('type') || '').toLowerCase();
@@ -383,7 +397,7 @@ def same_value(want: str, got: str, kind: str) -> bool:
         return {_norm(x) for x in want.split(";") if x.strip()} <= {_norm(x) for x in got.split(";")} | {g}
     if " > " in want and _norm(want.rsplit(" > ", 1)[-1]) == g:
         return True
-    return kind in ("combobox", "select", "radio") and (w in g or fuzz.token_set_ratio(w, g) >= 90)
+    return kind in ("combobox", "select", "radio", "buttons") and (w in g or fuzz.token_set_ratio(w, g) >= 90)
 
 
 # --- comboboxes ------------------------------------------------------------------------------------------------------
@@ -617,6 +631,14 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             if loc.is_checked() != want:
                 frame.locator(f'label:has([data-jf="{f.id}"])').first.click(timeout=8000)
         return "checked" if want else ""
+    if f.kind == "buttons":  # press the button that is the answer (Ashby Yes / No)
+        opt = close_option(answer, f.options) if close else _choose(f.label, answer, f.options, tie_break)
+        if opt is None:
+            raise FillError(f"{answer!r} isn't offered as such")
+        k = f.options.index(opt)
+        frame.locator(f'[data-jf="{f.id}"][data-jf-opt="{k}"]').first.click(timeout=8000)
+        page.wait_for_timeout(500)
+        return opt
     if f.kind in ("radio", "checkboxes"):
         wanted = [a.strip() for a in (answer.split(";") if f.kind == "checkboxes" else [answer]) if a.strip()]
         chosen = [close_option(a, f.options) if close else _choose(f.label, a, f.options, tie_break) for a in wanted]

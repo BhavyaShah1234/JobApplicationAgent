@@ -42,6 +42,23 @@ CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+-- Step 13: each application's way from a filled form to a confirmed submission.
+CREATE TABLE IF NOT EXISTS applications (
+    id              INTEGER PRIMARY KEY,
+    job_dir         TEXT NOT NULL UNIQUE,   -- outputs/<company>/<job-id>
+    company         TEXT,
+    title           TEXT,
+    url             TEXT,
+    portal          TEXT,
+    state           TEXT NOT NULL,          -- filled | approved | submitted | confirmed | skipped | failed
+    filled_at       TEXT,
+    decided_at      TEXT,                   -- the user's approve / skip
+    submitted_at    TEXT,
+    confirmation_id TEXT,                   -- Message-ID of the confirmation mail
+    confirmation    TEXT,                   -- its sender and subject
+    confirmed_at    TEXT,
+    notes           TEXT
+);
 -- Sites the agent itself signed up on / logged into / applied at. The inbox is shared with the
 -- user's own sign-ups, so only mail from these domains is ever read for codes or trashed.
 CREATE TABLE IF NOT EXISTS agent_domains (

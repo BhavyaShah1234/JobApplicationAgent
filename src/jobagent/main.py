@@ -460,6 +460,74 @@ def apply_cmd(
                   f"{len(res['flags'])} for review -> {job_dir}/application/application.md", highlight=False)
 
 
+@app.command("submit")
+def submit_cmd(
+    job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with jd.json, resume.pdf (and cover_letter.pdf)."),
+    company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md)."),
+    ask_minutes: float = typer.Option(30, help="How long a question while filling waits for your answer."),
+    review_minutes: float = typer.Option(60, help="How long the filled form waits for your approve / skip."),
+    mail_minutes: float = typer.Option(15, help="How long to watch the inbox for the confirmation mail."),
+) -> None:
+    """Step 13: fill the application, show it for review, and submit it only when you answer 'approve'; then match
+    the confirmation mail."""
+    from pathlib import Path
+
+    from jobagent import db
+    from jobagent.steps.apply import run
+    from jobagent.steps.submit import make_at_review
+    from jobagent.tools.browser import persistent_context
+    from jobagent.tools.hitl import open_hitl
+    from jobagent.tools.inbox import open_inbox
+    from jobagent.tools.portal_auth import ensure_account
+    from jobagent.tools.vault import open_vault
+
+    log = lambda m: console.print(m, highlight=False)  # noqa: E731
+    vault = open_vault()
+    email = (vault.get("gmail") or {})["email"]
+    jd = json.loads((Path(job_dir) / "jd.json").read_text())
+    conn = db.connect()
+    with open_inbox() as inbox, persistent_context() as ctx:
+        page = ctx.pages[0]
+        sign_in = lambda url: log(f"portal: {ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log)}")  # noqa: E731
+        hook = make_at_review(Path(job_dir), jd, open_hitl(log), inbox, conn, log, ask_s=review_minutes * 60,
+                              mail_s=mail_minutes * 60)
+        res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
+                  ask_s=ask_minutes * 60, at_review=hook)
+    sub = res.get("submission") or {"state": f"not submitted: the form ended '{res['state']}'"}
+    console.print(f"submit: {sub.get('state')}; {res['verified']}/{len(res['fields'])} fields verified -> "
+                  f"{job_dir}/application/review.md", highlight=False)
+
+
+@app.command("confirm")
+def confirm_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> of a submitted application."),
+                minutes: float = typer.Option(1, help="How long to watch the inbox.")) -> None:
+    """Look for a submitted application's confirmation mail again."""
+    from pathlib import Path
+
+    from jobagent import db
+    from jobagent.steps.submit import confirm
+    from jobagent.tools.inbox import open_inbox
+
+    with open_inbox() as inbox:
+        console.print(confirm(Path(job_dir), inbox, db.connect(), timeout_s=minutes * 60), highlight=False)
+
+
+@app.command("applications")
+def applications_cmd() -> None:
+    """Every application's state: filled, approved, submitted, confirmed, skipped or failed."""
+    from rich.table import Table
+
+    from jobagent import db
+
+    rows = db.connect().execute("SELECT * FROM applications ORDER BY COALESCE(submitted_at, decided_at, filled_at) "
+                                "DESC").fetchall()
+    table = Table("company", "title", "state", "submitted", "confirmation", "notes")
+    for r in rows:
+        table.add_row(r["company"] or "", (r["title"] or "")[:40], r["state"], r["submitted_at"] or "",
+                      (r["confirmation"] or "")[:50], (r["notes"] or "")[:50])
+    console.print(table if rows else "no applications yet")
+
+
 @app.command("learned")
 def learned_cmd(question: str = typer.Argument(None, help="Show the entries closest to this question instead.")) -> None:
     """What the agent learned from your on-the-spot replies (data/learned.yaml): rules for every company and
