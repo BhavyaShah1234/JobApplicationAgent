@@ -47,8 +47,11 @@ def record(conn, job_dir: Path, jd: dict, **fields) -> None:
 
 
 def ats_line(conn, job_dir: Path) -> str:
+    # tailoring records the folder as an absolute path (/app/outputs/...); the command line gives it relative
+    keys = (str(job_dir), str(Path("/app") / job_dir) if not job_dir.is_absolute() else str(job_dir))
+    key = next((k for k in keys if conn.execute("SELECT 1 FROM ats_runs WHERE job_dir = ?", (k,)).fetchone()), keys[0])
     rows = conn.execute("SELECT site, score FROM ats_runs WHERE job_dir = ? AND round = (SELECT MAX(round) FROM "
-                        "ats_runs WHERE job_dir = ?)", (str(job_dir), str(job_dir))).fetchall()
+                        "ats_runs WHERE job_dir = ?)", (key, key)).fetchall()
     scores = {r["site"]: r["score"] for r in rows if r["score"] is not None}
     if not scores:
         return "no ATS scores recorded"
@@ -93,20 +96,28 @@ def click_submit(page: Page, view: forms.PageView) -> str | None:
     return None
 
 
-def submitted_page(page: Page, timeout_s: float = 45) -> tuple[bool, str, list[str]]:
-    """(confirmed, the page's text, errors) after Submit: a thank-you / received page, or the errors that stopped it."""
+def page_text(page: Page) -> str:
+    try:
+        return " ".join(f.locator("body").inner_text(timeout=5000) for f in forms.frames_of(page))
+    except Exception:
+        return ""
+
+
+def submitted_page(page: Page, before: str, shot: Path, timeout_s: float = 60) -> tuple[bool, str, list[str]]:
+    """(confirmed, the thank-you sentence, errors) after Submit. Only a thank-you / received sentence that was NOT on
+    the page before the click counts; it is screenshotted the moment it shows."""
     deadline = datetime.now() + timedelta(seconds=timeout_s)
-    text, errors = "", []
+    errors: list[str] = []
     while datetime.now() < deadline:
         page.wait_for_timeout(3000)
-        try:
-            text = " ".join(f.locator("body").inner_text(timeout=5000) for f in forms.frames_of(page))
-        except Exception:
-            continue
-        if CONFIRMED_PAGE.search(text):
-            return True, text, []
+        text = page_text(page)
+        new = [m.group(0) for m in CONFIRMED_PAGE.finditer(text) if m.group(0) not in before]
+        if new:
+            screenshot(page, str(shot))
+            line = next((ln.strip() for ln in text.splitlines() if new[0] in ln), new[0])
+            return True, line[:300], []
         errors = forms.read_page(page).errors
-    return False, text, errors
+    return False, "", errors
 
 
 def wait_for_confirmation(inbox, conn, jd: dict, since: datetime, timeout_s: float = 900):
@@ -162,6 +173,7 @@ def make_at_review(job_dir: Path, jd: dict, hitl, inbox, conn, log, ask_s: float
             return {"state": "skipped", "answer": answer}
         record(conn, job_dir, jd, state="approved", decided_at=_now())
         view = forms.read_page(page)  # the candidate may have changed things in noVNC
+        before = page_text(page)
         clicked = click_submit(page, view)
         if not clicked:
             record(conn, job_dir, jd, state="failed", notes=f"no Submit button; buttons: {view.buttons[:12]}")
@@ -169,14 +181,15 @@ def make_at_review(job_dir: Path, jd: dict, hitl, inbox, conn, log, ask_s: float
             return {"state": "failed", "reason": "no Submit button"}
         since = datetime.now(UTC)
         log(f"submit: clicked {clicked!r}")
-        ok, text, errors = submitted_page(page)
-        screenshot(page, str(out / "submitted.png"))
+        ok, text, errors = submitted_page(page, before, out / "submitted.png")
+        page.wait_for_timeout(5000)
+        screenshot(page, str(out / "after-submit.png"))
         if not ok and errors:
             record(conn, job_dir, jd, state="failed", notes="the site refused: " + "; ".join(errors)[:400])
             log(f"submit: the site refused it: {errors[:4]}")
             return {"state": "failed", "errors": errors}
         record(conn, job_dir, jd, state="submitted", submitted_at=_now(),
-               notes=None if ok else "no thank-you page seen; waiting for the confirmation mail")
+               notes=f"page said: {text}" if ok else "Submit clicked, no thank-you page seen: not proven received")
         conn.execute("UPDATE jobs SET status = 'applied', updated_at = ? WHERE url = ?",
                      (_now(), jd.get("source_url") or ""))
         conn.commit()
