@@ -697,7 +697,7 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                      "source": a.source if a else "none", "flag": a.flag if a else "not answered by the planner",
                      "filled": "", "error": ""}
             done[_key(f)] = entry
-            if not a or not a.value or (f.value and forms.same_value(a.value, f.value, f.kind) and not forms.lower_variant(a.value, f.value)):
+            if not a or not a.value or (f.value and forms.already_shows(a.value, f.value, f.kind)):
                 # nothing to put in, or the page already shows it (Workday's prefilled Country Phone Code)
                 continue
             if f.kind == "file" and a.value not in files:
@@ -741,6 +741,21 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                 except Exception as e:
                     entry["error"] = f"{type(e).__name__}: {str(e)[:200]}"
                     page.keyboard.press("Escape")
+    # one repair pass: a field that doesn't show its answer now (a section the page rebuilt after an earlier answer,
+    # e.g. the address after the country changed) is filled once more
+    view = forms.read_page(page)
+    now_shown = {_key(g): g for g in view.fields}
+    for key, e in done.items():
+        g = now_shown.get(key)
+        want = e["filled"] or e["answer"]
+        if g is None or not want or e["kind"] == "file" or forms.already_shows(want, g.value, g.kind):
+            continue
+        try:
+            e["filled"] = forms.fill_field(page, view, g, want, files, tie)
+            log(f"  [{g.kind}] {g.label[:60]!r} <- {str(e['filled'])[:60]!r} (again: the page had cleared it)")
+        except Exception as err:
+            e["error"] = f"{type(err).__name__}: {str(err)[:200]}"
+            page.keyboard.press("Escape")
     # read-back: every field as the page shows it now
     view = forms.read_page(page)
     shown = {_key(f): f for f in view.fields}

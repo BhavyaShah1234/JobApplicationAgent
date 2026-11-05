@@ -295,12 +295,20 @@ def match_option(answer: str, options: list[str], cutoff: int = 80) -> tuple[str
     for o in opts:  # exact (normalized) first
         if _norm(o) == a:
             return o, 100
+    lead = a.split(" (")[0].split(" +")[0].strip()  # "united states (+1)" -> "united states"
     for canon, alts in _SYNONYMS.items():  # same meaning written another way
         group = {canon, *alts}
-        if a in group:
+        if a in group or lead in group:
+            # an option that IS one of the wordings wins ("United States of America", "United States of America
+            # (+1)"); "starts with" only as a last resort, never a territory ("United States Minor Outlying Islands")
+            exact = [o for o in opts if _norm(o) in group or _norm(o).split(" (")[0].split(" +")[0].strip() in group]
+            if exact:
+                return exact[0], 95
             for o in opts:
-                if _norm(o) in group or _norm(o).startswith(canon + " ") or _norm(o).startswith(a + ","):
-                    return o, 95
+                n = _norm(o)
+                if (n.startswith(canon + " ") or n.startswith(a + ",")) and not re.search(
+                        r"minor outlying|virgin islands|outlying|territor", n):
+                    return o, 90
     # a yes/no answer against long options ("Yes, I am authorized ...", "No, I will not require ...")
     if a in ("yes", "no"):
         hits = [o for o in opts if re.match(rf"(?i)^\s*{a}\b", o)]
@@ -312,6 +320,23 @@ def match_option(answer: str, options: list[str], cutoff: int = 80) -> tuple[str
         top = [o for o in opts if fuzz.token_set_ratio(a, _norm(o)) == best[1]]
         return (top[0] if len(top) == 1 else max(top, key=lambda o: fuzz.ratio(a, _norm(o)))), int(best[1])
     return None, int(best[1]) if best else 0
+
+
+def already_shows(want: str, got: str, kind: str) -> bool:
+    """The page already holds this answer, so the field is left alone: the same value, a near-identical spelling
+    or an exact synonym ("United States of America" for "United States") - never just a value containing the
+    answer ("United States Minor Outlying Islands")."""
+    if not got:
+        return False
+    if " | " in want:
+        return same_value(want, got, kind) and not lower_variant(want, got)
+    if kind in ("tel", "date_parts", "checkbox", "checkboxes", "file"):
+        return same_value(want, got, kind)
+    w, g = _norm(want), _norm(got)
+    if w == g or close_option(want, [got]) == got:
+        return True
+    lead = lambda x: x.split(" (")[0].split(" +")[0].strip()  # noqa: E731
+    return any(lead(w) in {c, *alts} and lead(g) in {c, *alts} for c, alts in _SYNONYMS.items())
 
 
 def lower_variant(want: str, got: str) -> bool:
@@ -370,6 +395,41 @@ OPTIONS_JS = r"""() => [...new Set([...document.querySelectorAll('[role=option],
 
 _NO_OPTIONS = re.compile(r"(?i)^(no (options|results|items|matches)( found)?\.?|loading\.*|type to search|start typing.*|"
                          r"select one)$")
+
+
+SUGGEST_JS = r"""() => [...document.querySelectorAll('.dropdown-results > *, [class*=dropdown-location], .pac-item, ' +
+    '[class*=suggestion i] li, [class*=autocomplete i] li, [role=option]')]
+  .filter(e => { const r = e.getBoundingClientRect(); return r.width > 1 && r.height > 1; })
+  .map(e => (e.innerText || e.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean)"""
+
+US_STATES = {"alabama": "al", "alaska": "ak", "arizona": "az", "arkansas": "ar", "california": "ca", "colorado": "co",
+             "connecticut": "ct", "delaware": "de", "florida": "fl", "georgia": "ga", "hawaii": "hi", "idaho": "id",
+             "illinois": "il", "indiana": "in", "iowa": "ia", "kansas": "ks", "kentucky": "ky", "louisiana": "la",
+             "maine": "me", "maryland": "md", "massachusetts": "ma", "michigan": "mi", "minnesota": "mn",
+             "mississippi": "ms", "missouri": "mo", "montana": "mt", "nebraska": "ne", "nevada": "nv",
+             "new hampshire": "nh", "new jersey": "nj", "new mexico": "nm", "new york": "ny", "north carolina": "nc",
+             "north dakota": "nd", "ohio": "oh", "oklahoma": "ok", "oregon": "or", "pennsylvania": "pa",
+             "rhode island": "ri", "south carolina": "sc", "south dakota": "sd", "tennessee": "tn", "texas": "tx",
+             "utah": "ut", "vermont": "vt", "virginia": "va", "washington": "wa", "west virginia": "wv",
+             "wisconsin": "wi", "wyoming": "wy", "district of columbia": "dc"}
+
+
+def best_place(answer: str, suggestions: list[str]) -> str | None:
+    """The suggestion that is this place: same city first, then the same state (name or code), then the US
+    ("Tempe, Arizona" -> "Tempe, AZ, USA", not "Tempe, Salerno, ITA")."""
+    parts = [x.strip().lower() for x in answer.split(",") if x.strip()]
+    if not parts:
+        return None
+    city = parts[0]
+    state = next((x for x in parts[1:] if x in US_STATES or x in US_STATES.values()), "")
+    codes = {state, US_STATES.get(state, "")} - {""}
+    same_city = [x for x in suggestions if x.lower().split(",")[0].strip() == city]
+    for x in same_city:
+        bits = {b.strip().lower() for b in x.split(",")[1:]}
+        if codes & bits or any(c in bits for c in [US_STATES.get(b, b) for b in bits] if c in codes):
+            return x
+    us = [x for x in same_city if re.search(r"(?i)\b(usa|us|united states)\b", x)]
+    return (us or same_city or [None])[0]
 
 
 def locate(view: PageView, f: Field):
@@ -481,6 +541,22 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                     return path
         raise FillError(f"{name} was attached but the page never showed it")
     loc.scroll_into_view_if_needed(timeout=5000)
+    if f.kind == "text" and loc.evaluate("e => /location|city|place|autocomplete/i.test([e.name, e.id, e.className, "
+                                         "e.getAttribute('data-qa')].join(' ')) || !!e.getAttribute('aria-autocomplete')"):
+        # a place box that keeps only a picked suggestion (Lever's "Current location"): type the city, pick it
+        city = answer.split(",")[0].strip()
+        loc.fill("")
+        loc.type(city, delay=60)
+        page.wait_for_timeout(2500)
+        pick = best_place(answer, frame.evaluate(SUGGEST_JS))
+        if pick:
+            frame.locator(".dropdown-results > *, [class*=dropdown-location], .pac-item, [class*=suggestion i] li, "
+                          "[class*=autocomplete i] li, [role=option]").filter(
+                has_text=re.compile(rf"^\s*{re.escape(pick)}\s*$")).first.click(timeout=8000)
+            page.wait_for_timeout(800)
+            return pick
+        loc.fill(answer, timeout=8000)  # no suggestions: a plain text box after all
+        return answer
     if f.kind in ("text", "email", "tel", "url", "number", "textarea", "date", "password"):
         loc.fill(answer, timeout=8000)
         loc.blur() if hasattr(loc, "blur") else None

@@ -223,3 +223,26 @@ def test_learned_store_is_separate_locked_and_retrieved_by_closeness(tmp_path, m
     # another company's literal answer to a differently worded question isn't offered
     assert learned.relevant("Clearance level held", "adobe") == []
     assert list((tmp_path / "state" / "backups").glob("learned-*.yaml"))
+
+
+def test_united_states_never_picks_a_territory():
+    opts = ["United States Minor Outlying Islands", "United States of America", "Uruguay"]
+    assert match_option("United States", opts)[0] == "United States of America"
+    codes = ["United States Minor Outlying Islands (+1)", "United States of America (+1)"]
+    assert match_option("United States (+1)", codes)[0] == "United States of America (+1)"
+
+
+def test_best_place_picks_the_same_city_in_the_same_state():
+    from jobagent.tools.forms import best_place
+    sugg = ["Tempe, Sala Consilina, Salerno, ITA", "Tempe, AZ, USA", "Tempe, Sulawesi Selatan, IDN"]
+    assert best_place("Tempe, Arizona", sugg) == "Tempe, AZ, USA"
+    assert best_place("Tempe, Arizona, United States", sugg) == "Tempe, AZ, USA"
+    assert best_place("Phoenix, Arizona", sugg) is None
+
+
+def test_a_field_is_left_alone_only_when_it_really_shows_the_answer():
+    from jobagent.tools.forms import already_shows
+    assert not already_shows("United States", "United States Minor Outlying Islands", "combobox")
+    assert already_shows("United States", "United States of America", "combobox")
+    assert already_shows("6233329509", "(623) 332-9509", "tel")
+    assert not already_shows("Vellore Institute of Technology | Other", "Other", "combobox")
