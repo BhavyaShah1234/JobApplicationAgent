@@ -42,6 +42,11 @@ FIELDS_JS = r"""(start) => {
     if (!t && e.id) { const l = document.querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) t = clean(l.innerText); }
     if (!t) t = clean(e.getAttribute('aria-label'));
     if (!t) { const l = e.closest('label'); if (l) t = clean(l.innerText); }
+    if (!t) {
+      // Ashby and similar: the question is the first label of the field's block, the input itself has none
+      const fc = e.closest('[data-field-path], [data-field-entry-id]');
+      const l = fc && [...fc.querySelectorAll('label, legend')].find(x => !x.contains(e) && clean(x.innerText));
+      if (l) t = clean(l.innerText); }
     if (!t) { const fs = e.closest('fieldset'); const lg = fs && fs.querySelector('legend'); if (lg) t = clean(lg.innerText); }
     if (!t) t = clean(e.placeholder || e.getAttribute('title') || '');
     if (!t) t = around(e, ownOf(e));
@@ -61,6 +66,11 @@ FIELDS_JS = r"""(start) => {
   const groupQuestion = (e, name) => {
     // radio / checkbox groups: the group's legend or aria label, else the container text before the options
     if (e.closest('[data-automation-id^=formField-]')) return question(e);  // Workday: the form field's label
+    const blk = e.closest('[data-field-path], fieldset');
+    if (blk) {  // the block's own question: a label that isn't one of the boxes' labels
+      const ids = new Set([...blk.querySelectorAll('input')].map(b => b.id).filter(Boolean));
+      const q = [...blk.querySelectorAll('label, legend')].find(l => !ids.has(l.getAttribute('for')) && !l.querySelector('input') && clean(l.innerText));
+      if (q) return clean(q.innerText).slice(0, 300); }
     const g = e.closest('fieldset, [role=radiogroup], [role=group]');
     if (g) { const lg = g.querySelector('legend');
       const t = (lg && clean(lg.innerText)) || byIds(g.getAttribute('aria-labelledby')) || clean(g.getAttribute('aria-label'));
@@ -128,8 +138,9 @@ FIELDS_JS = r"""(start) => {
     const scope = e.closest('fieldset, [role=group], [role=radiogroup], [data-automation-id^=formField-]') || document;
     const sameName = t === 'radio' || t === 'checkbox' ? [...scope.querySelectorAll(`input[type=${t}][name="${CSS.escape(e.name || '')}"]`)] : [];
     if (e.hasAttribute('data-jf')) continue;  // already part of a group
-    const ffBoxes = t === 'checkbox' && e.closest('[data-automation-id^=formField-]')
-        ? [...e.closest('[data-automation-id^=formField-]').querySelectorAll('input[type=checkbox]')] : [];
+    // one question's checkboxes, each with its own name: a Workday form field, an Ashby field block, a fieldset
+    const qBlock = t === 'checkbox' ? e.closest('[data-automation-id^=formField-], [data-field-path], fieldset') : null;
+    const ffBoxes = qBlock ? [...qBlock.querySelectorAll('input[type=checkbox]')] : [];
     if (t === 'radio' || (t === 'checkbox' && ((e.name && sameName.length > 1) || ffBoxes.length > 1))) {
       // Workday lists one question's checkboxes under one form field, each with its own name
       const boxes = ffBoxes.length > 1 ? ffBoxes : (e.name ? sameName : [e]);

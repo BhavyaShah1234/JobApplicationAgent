@@ -620,7 +620,10 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
         apply_variants(todo, answers, ctx, log)
         enforce(todo, answers, ctx, log)
         for f in todo:  # uploads are decided by their caption, not by the model
-            if f.kind == "file":
+            if f.kind == "file" and re.search(r"(?i)autofill|auto-fill|parse your resume", f.label):
+                answers[f.id] = Answer(id=f.id, why="an autofill box would overwrite filled answers", value="",
+                                       source="applicant")
+            elif f.kind == "file":
                 kind = "cover_letter" if re.search(r"(?i)cover", f.label) else \
                     "resume" if re.search(r"(?i)resume|\bcv\b|upload a file", f.label) else ""
                 if kind:
