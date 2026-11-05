@@ -18,7 +18,7 @@ The record (`application.json`, `application.md`, a screenshot per page) goes to
 import json
 import re
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
@@ -103,6 +103,10 @@ Rules:
   entry per degree in APPLICANT. When more entries are needed than the form shows, put the matching ADD BUTTON id in
   `add` once per missing entry (3 roles, 1 entry shown -> [id, id]) and leave those entries for the next round.
   Never add an entry APPLICANT has nothing for (no certifications -> add none).
+- A field asking for a date (a start date, a date picker "Pick date..."): a date in the form's format (default
+  MM/DD/YYYY), computed from DATE_FACTS (e.g. "the coming Monday"), never words like "immediately".
+- Location / office choices (checkboxes): APPLICANT's "Which locations would you work in?" (every US location
+  offered), not only the job's own office.
 - date_parts fields: the value in the field's format (MM/YYYY -> '08/2024', YYYY -> '2024'). A role shown as Present:
   tick its "I currently work here" box ('checked') and leave its To date ''.
 - Open questions (why this company, behavioural, technical): a truthful answer from the RESUME and COMPANY profile,
@@ -279,7 +283,10 @@ def date_facts(degrees: list[dict]) -> str:
         state = "graduated" if end <= today else "expected"
         lines.append(f"{ed.get('degree')} ({ed.get('school')}): ends {end:%B %Y} = {end:%Y-%m}, {state} "
                      f"({'before' if end <= today else 'after'} today {today:%Y-%m-%d})")
-    return "\n".join(lines) or "(none)"
+    monday = today + timedelta(days=(7 - today.weekday()) % 7 or 7)
+    lines.append(f"today: {today:%Y-%m-%d} ({today:%m/%d/%Y}, {today:%A}); coming Monday: {monday:%Y-%m-%d} "
+                 f"({monday:%m/%d/%Y})")
+    return "\n".join(lines)
 
 
 def plan(fields: list[forms.Field], ctx: dict, model, log=print, feedback: str = "", adds: list[dict] = (),
