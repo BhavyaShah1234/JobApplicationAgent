@@ -477,25 +477,30 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
                                                  "flag": "referral only with a data/targets.csv contact who agreed"})
 
 
-def learn(question: str, options: list[str], answer: str, company: str, host: str) -> None:
-    """Keep the candidate's answer to a question for the next form that asks it (applicant.yaml, `learned`)."""
-    applicant.learn(question, options, answer, company, host)
+RULE = re.compile(r"(?i)^\s*rule\s*:\s*")
 
 
-def ask_human(hitl, f: forms.Field, company: str, host: str, log, timeout_s: float = 1800) -> str:
-    """Ask the candidate one question now (answer in `jobagent hitl`); the answer is kept in applicant.yaml."""
+def ask_human(hitl, f: forms.Field, company: str, host: str, log, timeout_s: float = 1800) -> tuple[str, str]:
+    """Ask the candidate about one field now (`jobagent hitl`). Returns ("answer", text) for this application or
+    ("rule", text): how to answer questions like this one, kept in applicant.yaml for every company."""
     from jobagent.tools.hitl import HitlTimeout
     opts = f" Options: {' | '.join(f.options[:25])}." if f.options else ""
     try:
-        ans = hitl.ask(f"{company} application asks: \"{f.label[:250]}\"{opts} Your answer? ('skip' leaves it "
-                       "empty; it's saved for next time)", timeout_s=timeout_s).strip()
+        ans = hitl.ask(f"{company} application asks: \"{f.label[:250]}\"{opts} Reply with the answer for this "
+                       "application, or 'rule: <how to answer questions like this>' to teach the agent for every "
+                       "company ('skip' leaves it empty).", timeout_s=timeout_s).strip()
     except HitlTimeout:
         log(f"apply: no answer to \"{f.label[:60]}\" within {timeout_s / 60:.0f} min; left for review")
-        return ""
+        return "answer", ""
     if not ans or ans.lower() == "skip":
-        return ""
-    learn(f.label, f.options, ans, company, host)
-    return ans
+        return "answer", ""
+    if RULE.match(ans):
+        rule = RULE.sub("", ans).strip()
+        applicant.learn(f.label, f.options, "", company, host, rule=rule)
+        log(f"apply: learned a rule for \"{f.label[:60]}\": {rule[:100]}")
+        return "rule", rule
+    applicant.learn(f.label, f.options, ans, company, host)
+    return "answer", ans
 
 
 def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict, log,
@@ -554,9 +559,22 @@ def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict,
     for f in ask:
         if f in addr:
             continue
-        ans = ask_human(env["hitl"], f, env["company"], env["host"], log, env.get("ask_s", 1800))
-        if ans:
-            answers[f.id] = Answer(id=f.id, why="asked the candidate", value=ans, source="human")
+        kind, text = ask_human(env["hitl"], f, env["company"], env["host"], log, env.get("ask_s", 1800))
+        if kind == "rule":  # plan this field again, now with the candidate's rule among the APPLICANT entries
+            data = ctx.get("_applicant") or {}
+            if not isinstance(data.get("learned"), list):
+                data["learned"] = []
+            data["learned"].append({"question": f.label, "seen": [f.label], "answer": "", "instructions": text,
+                                    "company": "any"})
+            ctx["APPLICANT"] = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=120)
+            try:
+                again, _ = plan([f], ctx, model, log, f"RULE FROM THE CANDIDATE for this question: {text}")
+                if again.get(f.id) and again[f.id].value:
+                    answers[f.id] = again[f.id].model_copy(update={"source": "learned", "ask_human": False})
+            except Exception as e:
+                log(f"apply: planning with the new rule failed ({type(e).__name__})")
+        elif text:
+            answers[f.id] = Answer(id=f.id, why="asked the candidate", value=text, source="human")
 
 
 def _key(f: forms.Field) -> tuple:
@@ -673,8 +691,14 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                 g = now_shown.get(_key(f))
                 if g is None or g.value:
                     continue  # gone or filled by the page itself once the rest was answered
-                ans = ask_human(env["hitl"], g, env["company"], env["host"], log, env.get("ask_s", 1800))
+                kind, ans = ask_human(env["hitl"], g, env["company"], env["host"], log, env.get("ask_s", 1800))
                 entry = done.get(_key(f))
+                if kind == "rule" and ans:
+                    try:
+                        again, _ = plan([g], ctx, model, log, f"RULE FROM THE CANDIDATE for this question: {ans}")
+                        ans = again[g.id].value if again.get(g.id) else ""
+                    except Exception:
+                        ans = ""
                 if not ans or entry is None:
                     continue
                 entry.update(answer=ans, source="human", flag="")

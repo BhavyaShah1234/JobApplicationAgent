@@ -124,14 +124,20 @@ def with_resume(data: dict, exp: dict) -> dict:
     return data
 
 
-def learn(question: str, options: list[str], ans: str, company: str, portal: str) -> None:
-    """Append the candidate's on-the-spot answer to the `learned` section (the file's last section), keeping the
-    rest of the file (and its comments) as written."""
+def learn(question: str, options: list[str], ans: str, company: str, portal: str, rule: str = "") -> dict:
+    """Append the candidate's on-the-spot reply to the `learned` section (the file's last section), keeping the
+    rest of the file (and its comments) as written. A `rule` (how to answer questions like this one) is kept for
+    every company; a plain answer only for the company it was given for. Returns the new entry."""
     p = path()
     body = p.read_text() if p.exists() else "learned:\n"
     if "\nlearned:" not in "\n" + body:
         body = body.rstrip("\n") + "\n\nlearned:\n"
-    item = {"question": question, "seen": [question], "answer": ans, "options": options[:30] or None,
-            "company": company, "portal": portal, "date": now().strftime("%Y-%m-%d")}
+    if rule:
+        item = {"question": question, "seen": [question], "answer": "", "instructions": rule, "company": "any",
+                "learned_from": f"{company} ({portal}), {now():%Y-%m-%d}"}
+    else:
+        item = {"question": question, "seen": [question], "answer": ans, "options": options[:30] or None,
+                "company": company, "portal": portal, "date": now().strftime("%Y-%m-%d")}
     dumped = yaml.safe_dump([item], sort_keys=False, allow_unicode=True, width=120)
     p.write_text(body.rstrip("\n") + "\n" + "".join("  " + line + "\n" for line in dumped.splitlines()))
+    return item

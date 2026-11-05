@@ -197,3 +197,21 @@ def test_a_later_variant_in_the_field_is_tried_again():
     assert lower_variant(want, "Other")
     assert not lower_variant(want, "Vellore Institute of Technology (VIT) University")
     assert not lower_variant("Masters", "Masters")
+
+
+def test_a_rule_reply_is_kept_for_every_company(tmp_path, monkeypatch):
+    from jobagent.steps import apply as A
+    from jobagent.tools import applicant
+    from jobagent.tools.forms import Field
+    f = tmp_path / "applicant.yaml"
+    f.write_text("learned:\n")
+    monkeypatch.setattr(applicant, "path", lambda: f)
+    hitl = type("H", (), {"ask": lambda self, prompt, timeout_s=None: "rule: select every office; else a random one"})()
+    field = Field(id=1, kind="checkboxes", label="Which office are you applying to?", options=["SF", "NYC"])
+    assert A.ask_human(hitl, field, "mercor", "www.mercor.com", lambda m: None) == \
+        ("rule", "select every office; else a random one")
+    entry = yaml.safe_load(f.read_text())["learned"][0]
+    assert entry["company"] == "any" and entry["answer"] == "" and entry["instructions"].startswith("select every")
+    plain = type("H", (), {"ask": lambda self, prompt, timeout_s=None: "NYC"})()
+    assert A.ask_human(plain, field, "mercor", "www.mercor.com", lambda m: None) == ("answer", "NYC")
+    assert yaml.safe_load(f.read_text())["learned"][1]["company"] == "mercor"
