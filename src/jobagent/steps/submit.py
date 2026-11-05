@@ -88,6 +88,8 @@ def click_submit(page: Page, view: forms.PageView) -> str | None:
     for pat in SUBMIT_FIRST:
         if (t := forms.click_button(page, view, pat, allow_submit=True)):
             return t
+    if forms.click_submit_input(page):  # an unlabelled submit input (shown once a human check is done)
+        return "the form's submit button"
     return None
 
 
@@ -145,8 +147,11 @@ def make_at_review(job_dir: Path, jd: dict, hitl, inbox, conn, log, ask_s: float
             answer = hitl.ask(
                 f"{jd.get('company')} - {jd.get('title')}: the application is filled and open on its review screen "
                 f"(noVNC http://localhost:6080). Review {out / 'review.md'} ({result.get('verified', 0)}/"
-                f"{len(result.get('fields', []))} fields confirmed, {flagged} to look at). Fix anything in noVNC "
-                "if needed, then answer 'approve' to SUBMIT it or 'skip' to leave it unsubmitted.",
+                f"{len(result.get('fields', []))} fields confirmed, {flagged} to look at). "
+                + (f"The form has a human check ({result['human_check']!r}): tick it yourself in noVNC first. "
+                   if result.get("human_check") else "")
+                + "Fix anything in noVNC if needed, then answer 'approve' to SUBMIT it or 'skip' to leave it "
+                "unsubmitted.",
                 timeout_s=ask_s).strip().lower()
         except HitlTimeout:
             answer = ""

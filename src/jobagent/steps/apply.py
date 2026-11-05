@@ -120,6 +120,7 @@ Rules:
   ' | ' (e.g. 'Artificial Intelligence and Robotics | Robotics | Computer Science'); the first the site offers is
   chosen. A skills search box: '; '-separated values.
 - Referral fields: only the REFERRAL given below, else ''.
+- A "Cover letter" text box (not an upload): the COVER_LETTER text, as it is (from its greeting to the signature).
 - File fields: value 'resume' for a resume / CV upload, 'cover_letter' for a cover letter upload, '' otherwise.
 - A field with a current value that is already right: repeat it with source already_filled. Wrong: correct it.
 - Answer every listed field id exactly once."""
@@ -141,6 +142,7 @@ def context(job_dir: Path, company: str) -> dict:
         "RESUME": resume[:6000],
         "JD": ((job_dir / "jd.md").read_text() if (job_dir / "jd.md").exists() else "")[:5000],
         "COMPANY": (comp.read_text() if comp.exists() else "")[:3000],
+        "COVER_LETTER": cover_letter_text(job_dir),
         "REFERRAL": referral(jd.get("company") or company),
         "TODAY": now().strftime("%Y-%m-%d"),
         "DATE_FACTS": date_facts(applicant.degrees()),
@@ -185,6 +187,15 @@ def _match(label: str, wording: str) -> float:
     # a long label that contains the wording ("..., can you provide documentation establishing your identity ...")
     part = fuzz.partial_ratio(label, wording) if len(wording.split()) >= 4 and len(label) > len(wording) else 0
     return max(whole, part)
+
+
+def cover_letter_text(job_dir: Path) -> str:
+    """The job's cover letter as plain text (for a form's "Cover letter" text box)."""
+    pdf = job_dir / "cover_letter.pdf"
+    if not pdf.exists():
+        return "(none)"
+    text = subprocess.run(["pdftotext", str(pdf), "-"], capture_output=True, text=True).stdout
+    return re.sub(r"\n{3,}", "\n\n", text).strip()[:4000]
 
 
 def match_entries(fields: list[forms.Field], company: str = "", data: dict | None = None) -> dict[int, tuple]:
@@ -473,6 +484,10 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
             log(f"  [{f.id}] {f.label[:40]!r}: {a.value[:40] or 'no answer'!r} -> {site!r} (no consenting referral)")
             answers[f.id] = a.model_copy(update={"value": site or "", "ask_human": not site, "source": "applicant",
                                                  "flag": "referral only with a data/targets.csv contact who agreed"})
+        elif HEARD.search(f.label) and not f.options and f.kind in forms.TEXT_KINDS and \
+                ctx.get("REFERRAL", "none").startswith("none") and (not a.value or REFERRAL_OPTION.search(a.value)):
+            site = f"{ctx.get('_jd', {}).get('company', 'The company')} careers website"
+            answers[f.id] = a.model_copy(update={"value": site, "ask_human": False, "source": "applicant"})
         elif REFERRAL_OPTION.search(a.value) and ctx.get("REFERRAL", "none").startswith("none"):
             log(f"  [{f.id}] {f.label[:40]!r}: {a.value[:40]!r} claims a referral; no consenting contact on file")
             answers[f.id] = a.model_copy(update={"value": "", "ask_human": True,
@@ -849,7 +864,10 @@ def run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, lo
         result["pages"].append({"page": page_no, "headings": view.headings[:4], "screenshot": shot.name,
                                 "errors": view.errors, "buttons": view.buttons})
         if forms.click_button(page, view, forms.NEXT) is None:
-            if any(forms.SUBMIT.search(b) for b in view.buttons):
+            human = forms.human_check(page)
+            if human:
+                result["human_check"] = human  # the candidate ticks it in noVNC; then Submit shows
+            if any(forms.SUBMIT.search(b) for b in view.buttons) or human or forms.has_submit_input(page):
                 result["state"] = "review"  # only Submit is left: the review screen; the user submits (step 13)
                 log("apply: reached the review screen (Submit not clicked)")
             else:

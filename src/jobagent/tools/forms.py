@@ -748,6 +748,50 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
 
 # --- buttons -------------------------------------------------------------------------------------------------------
 
+HUMAN_CHECK = re.compile(r"(?i)\bI'?\s?a?m a human\b|\bI am (a )?human\b|verify (that )?you('re| are) (a )?human|"
+                         r"not a robot")
+
+
+def human_check(page: Page) -> str:
+    """A human check on the form ("I'm a human", "I'm not a robot"): the candidate does it in noVNC, never the agent."""
+    for f in frames_of(page):
+        try:
+            text = f.locator("body").inner_text(timeout=5000)
+        except Exception:
+            continue
+        if (m := HUMAN_CHECK.search(text)):
+            return m.group(0)
+    return ""
+
+
+SUBMIT_INPUT = "form input[type=submit], form button[type=submit]"
+
+
+def has_submit_input(page: Page) -> bool:
+    """The form has a submit control without a label (shown only once the form is complete, e.g. after a human
+    check)."""
+    for f in frames_of(page):
+        try:
+            if f.locator(SUBMIT_INPUT).count():
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def click_submit_input(page: Page) -> bool:
+    """Click the form's visible, unlabelled submit control (step 13, after the candidate's approve)."""
+    for f in frames_of(page):
+        try:
+            loc = f.locator(SUBMIT_INPUT).filter(visible=True)
+            if loc.count():
+                loc.first.click(timeout=10000, no_wait_after=True)
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def click_button(page: Page, view: PageView, pattern: re.Pattern, allow_submit: bool = False) -> str | None:
     """Click the first visible button whose text matches `pattern`; never one that sends the application."""
     for text in view.buttons:
