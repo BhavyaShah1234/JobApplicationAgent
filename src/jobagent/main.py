@@ -731,6 +731,12 @@ def hitl_answer(
 
     hitl = open_hitl()
     reqs = hitl.list_pending()
+    if not req_id and (len(reqs) > 1 or any(_decides_submission(r.prompt) for r in reqs)):
+        # the oldest-pending shortcut never answers a submission decision, nor guesses among several questions
+        console.print("[red]give the request id[/] (`jobagent hitl list`): "
+                      + ("a submission is waiting for approval" if any(_decides_submission(r.prompt) for r in reqs)
+                         else f"{len(reqs)} requests are pending"))
+        raise typer.Exit(1)
     req = next((r for r in reqs if r.id == req_id), reqs[0] if reqs and not req_id else None)
     if req is None:
         console.print("[red]no matching pending request[/]")
@@ -747,8 +753,18 @@ def hitl_done(req_id: str = typer.Argument(None)) -> None:
     """Tell the agent you finished what it asked (e.g. a step in noVNC)."""
     from jobagent.tools.hitl import open_hitl
 
-    req = open_hitl().answer(req_id, "done")
+    hitl = open_hitl()
+    reqs = hitl.list_pending()
+    if not req_id and (len(reqs) > 1 or any(_decides_submission(r.prompt) for r in reqs)):
+        console.print("[red]give the request id[/] (`jobagent hitl list`)")
+        raise typer.Exit(1)
+    req = hitl.answer(req_id or None, "done")
     console.print(f"marked {req.id} done")
+
+
+def _decides_submission(prompt: str) -> bool:
+    """The step 13 review question: only ever answered by its id."""
+    return "'approve' to SUBMIT" in prompt
 
 
 inbox_app = typer.Typer(no_args_is_help=True, help="The agent's Gmail inbox.")
