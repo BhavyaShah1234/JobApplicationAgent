@@ -49,6 +49,16 @@ class Cited(BaseModel):
     sources: list[int] = Field(min_length=1, max_length=4, description="Ids of the sources that state it")
 
 
+class Place(BaseModel):
+    """A company location as its sources name it, resolved to a city."""
+    name: str = Field(default="", max_length=80, description="What the company calls it: 'Corporate Headquarters', "
+                                                           "'Main Campus', 'Innovation Center'; '' for the HQ itself")
+    city: str = Field(max_length=60)
+    state: str = Field(default="", max_length=40, description="State / province, e.g. 'Minnesota'")
+    country: str = Field(default="", max_length=60)
+    sources: list[int] = Field(default_factory=list, max_length=4, description="Ids of the sources that state it")
+
+
 class ProfileDraft(BaseModel):
     """What the model fills in. Sent as an enforced JSON schema: maxItems/maxLength stop the fast model's repetition
     loops, and `sources` (minItems 1) makes citations structural — trailing '[n]' markers were sometimes forgotten."""
@@ -62,6 +72,10 @@ class ProfileDraft(BaseModel):
                                description="Only what fits nowhere above: HQ, size, founding year, locations")
     recent_news: list[Cited] = Field(default_factory=list, max_length=5,
                                      description="'YYYY-MM-DD title — one sentence', newest first, from (news) sources only")
+    headquarters: Place | None = Field(None, description="Where the headquarters is (city, state, country), only "
+                                                         "as a source states it")
+    sites: list[Place] = Field(default_factory=list, max_length=6,
+                               description="Other named sites (campus, R&D center, main office) with their city")
 
 
 class StoredProfile(BaseModel):
@@ -72,6 +86,8 @@ class StoredProfile(BaseModel):
     values: list[Claim] = Field(default_factory=list)
     facts: list[Claim] = Field(default_factory=list)
     recent_news: list[NewsItem] = Field(default_factory=list)
+    headquarters: Place | None = None
+    sites: list[Place] = Field(default_factory=list)
 
 
 class CompanyProfile(StoredProfile):
@@ -288,6 +304,8 @@ RESEARCH_PROMPT = """Write a company profile using ONLY the numbered sources bel
 - Ignore cookie, privacy, legal and site-navigation text.
 - recent_news: up to 5 items taken ONLY from sources marked (news), about events in the last 12 months, newest
   first; leave out items describing older events; none if there are none.
+- headquarters: the HQ's city, state and country as a source states it (null if none does); sites: other named
+  locations (a campus, an R&D center) with their city, each with the sources that state it.
 /no_think"""
 
 _CITE = re.compile(r"\[(\d+)\]")
@@ -371,8 +389,18 @@ def research(company: str, hint_text: str = "", refresh: bool = False, log=print
         recent_news=parse_news([f"{c.text} " + "".join(f"[{i}]" for i in c.sources)
                                 for c in claims(draft.recent_news, news_ids)], news_ids, dates),
     )
+    place_ok = lambda pl: pl is not None and pl.city.strip() and any(i in ids for i in pl.sources)  # noqa: E731
+    profile.headquarters = draft.headquarters if place_ok(draft.headquarters) else None
+    hq = profile.headquarters
+    same = lambda a, b: (a.city.lower(), a.state.lower()) == (b.city.lower(), b.state.lower())  # noqa: E731
+    # a "site" that only repeats the headquarters (or names itself after its city) adds nothing
+    profile.sites = [pl for pl in draft.sites if place_ok(pl)
+                     and not (hq and same(pl, hq) and (not pl.name or pl.city.lower() in pl.name.lower()))]
+    if hq and hq.city.lower() in hq.name.lower():
+        hq.name = ""
     cited = {i for f in ("what_they_do", "mission", "products", "values", "facts", "recent_news")
              for c in getattr(profile, f) for i in c.sources}
+    cited |= {i for pl in [profile.headquarters, *profile.sites] if pl for i in pl.sources if i in ids}
     profile.website = website
     profile.sources = {i: {k: v for k, v in numbered[i].items() if k != "text"} for i in sorted(cited)}
     profile.researched_at = datetime.now(UTC).isoformat(timespec="seconds")
@@ -391,6 +419,10 @@ def render_md(p: CompanyProfile) -> str:
                          ("Values / culture", p.values), ("Facts", p.facts)):
         if items:
             lines += [f"## {title}", ""] + [f"- {c.text}{cite(c.sources)}" for c in items] + [""]
+    places = ([("Headquarters", p.headquarters)] if p.headquarters else []) + [(pl.name or "Site", pl) for pl in p.sites]
+    if places:
+        lines += ["## Locations", ""] + [f"- {label}: {', '.join(x for x in (pl.city, pl.state, pl.country) if x)}"
+                                          f"{cite(pl.sources)}" for label, pl in places] + [""]
     if p.recent_news:
         lines += ["## Recent news", ""] + [f"- {n.date + ' — ' if n.date else ''}{n.title}{': ' + n.summary if n.summary else ''}"
                                            f"{cite(n.sources)}" for n in p.recent_news] + [""]

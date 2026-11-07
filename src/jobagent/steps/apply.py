@@ -107,6 +107,8 @@ Rules:
   Never add an entry APPLICANT has nothing for (no certifications -> add none).
 - A field asking for a date (a start date, a date picker "Pick date..."): a date in the form's format (default
   MM/DD/YYYY), computed from DATE_FACTS (e.g. "the coming Monday"), never words like "immediately".
+- The job's own location is JOB_LOCATION (the posting's words resolved to a city): use it for "which location
+  are you applying for" questions; it is never the candidate's own address.
 - Location / office choices (checkboxes): APPLICANT's "Which locations would you work in?" (every US location
   offered), not only the job's own office.
 - date_parts fields: the value in the field's format (MM/YYYY -> '08/2024', YYYY -> '2024'). A role shown as Present:
@@ -133,6 +135,13 @@ def context(job_dir: Path, company: str) -> dict:
         resume = subprocess.run(["pdftotext", "-layout", str(job_dir / "resume.pdf"), "-"], capture_output=True,
                                 text=True).stdout
     jd = json.loads((job_dir / "jd.json").read_text()) if (job_dir / "jd.json").exists() else {}
+    if jd and "locations_resolved" not in jd:  # "Corporate Headquarters" -> the city it means (once per job)
+        from jobagent.tools import places
+        try:
+            places.resolve_job(job_dir, company, log=lambda m: None)
+            jd = json.loads((job_dir / "jd.json").read_text())
+        except Exception:
+            pass
     comp = Path(f"/app/state/companies/{company}.md")
     tex = (job_dir / "resume.tex").read_text() if (job_dir / "resume.tex").exists() else ""
     data = applicant.with_resume(applicant.load(), applicant.resume_experience(tex))
@@ -144,6 +153,9 @@ def context(job_dir: Path, company: str) -> dict:
         "COMPANY": (comp.read_text() if comp.exists() else "")[:3000],
         "COVER_LETTER": cover_letter_text(job_dir),
         "REFERRAL": referral(jd.get("company") or company),
+        "JOB_LOCATION": "; ".join(f"{x['as_written']} = " + (", ".join(y for y in (x["city"], x["state"], x["country"])
+                                                                        if y) or "unresolved")
+                                  for x in jd.get("locations_resolved") or []) or "(not given)",
         "TODAY": now().strftime("%Y-%m-%d"),
         "DATE_FACTS": date_facts(applicant.degrees()),
         "_jd": jd,

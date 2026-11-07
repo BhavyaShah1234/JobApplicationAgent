@@ -528,6 +528,18 @@ def applications_cmd() -> None:
     console.print(table if rows else "no applications yet")
 
 
+@app.command("locate")
+def locate_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with jd.json."),
+               company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md).")
+               ) -> None:
+    """Resolve the job's locations ("Corporate Headquarters", "HQ", "Main Campus") to cities, into jd.json."""
+    from pathlib import Path
+
+    from jobagent.tools.places import resolve_job
+
+    resolve_job(Path(job_dir), company, log=lambda m: console.print(m, highlight=False))
+
+
 @app.command("learned")
 def learned_cmd(question: str = typer.Argument(None, help="Show the entries closest to this question instead.")) -> None:
     """What the agent learned from your on-the-spot replies (data/learned.yaml): rules for every company and
