@@ -135,7 +135,11 @@ def test_address_lookups_are_never_used(monkeypatch):
     enforce(fields, answers, ctx, lambda m: None)
     assert answers[1].value == "" and answers[1].lookup == "" and answers[1].ask_human
     assert answers[2].value == "" and answers[2].ask_human
-    assert answers[3].value == "Adobe Source > Adobe.com"
+    assert answers[3].value == "" and answers[3].ask_human  # no referrer on file: the candidate says how
+    ctx["REFERRAL"] = "Jane Doe (jane@adobe.com), who agreed to refer the candidate"
+    answers[3] = Answer(id=3, value="Referral", source="applicant")
+    enforce(fields, answers, ctx, lambda m: None)
+    assert answers[3].value == "Referral"  # a referrer on file: the referral option stands
 
 
 def test_skill_names_match_strictly():

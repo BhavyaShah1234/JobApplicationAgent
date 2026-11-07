@@ -478,16 +478,17 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
             log(f"  [{f.id}] {f.label[:40]!r}: no address on file; not using {(a.value or a.lookup)[:40]!r}")
             answers[f.id] = a.model_copy(update={"value": "", "source": "none", "ask_human": True, "lookup": "",
                                                  "flag": "needs your real address (applicant.yaml Current address)"})
-        elif HEARD.search(f.label) and ctx.get("REFERRAL", "none").startswith("none") and \
-                (site := own_site_option(f.options, ctx.get("_jd", {}).get("company", ""))) and a.value != site:
-            # no referral to name: the company's own website / careers site, which is where the agent found the job
-            log(f"  [{f.id}] {f.label[:40]!r}: {a.value[:40] or 'no answer'!r} -> {site!r} (no consenting referral)")
-            answers[f.id] = a.model_copy(update={"value": site or "", "ask_human": not site, "source": "applicant",
-                                                 "flag": "referral only with a data/targets.csv contact who agreed"})
+        elif HEARD.search(f.label) and ctx.get("REFERRAL", "none").startswith("none"):
+            # no referrer on file for this company (data/targets.csv): the candidate says on the spot whether and by
+            # whom they were referred - a referral names an employee the company may check with
+            log(f"  [{f.id}] {f.label[:40]!r}: no referrer on file for this company; asking the candidate")
+            answers[f.id] = a.model_copy(update={"value": "", "ask_human": True, "source": "none",
+                                                 "flag": "were you referred? reply with the employee's name, or "
+                                                         "'website'; or add them to data/targets.csv"})
         elif HEARD.search(f.label) and not f.options and f.kind in forms.TEXT_KINDS and \
-                ctx.get("REFERRAL", "none").startswith("none") and (not a.value or REFERRAL_OPTION.search(a.value)):
-            site = f"{ctx.get('_jd', {}).get('company', 'The company')} careers website"
-            answers[f.id] = a.model_copy(update={"value": site, "ask_human": False, "source": "applicant"})
+                not ctx.get("REFERRAL", "none").startswith("none"):
+            answers[f.id] = a.model_copy(update={"value": f"Referred by {ctx['REFERRAL'].split(' (')[0]}",
+                                                 "ask_human": False, "source": "applicant"})
         elif REFERRAL_OPTION.search(a.value) and ctx.get("REFERRAL", "none").startswith("none"):
             log(f"  [{f.id}] {f.label[:40]!r}: {a.value[:40]!r} claims a referral; no consenting contact on file")
             answers[f.id] = a.model_copy(update={"value": "", "ask_human": True,
@@ -583,7 +584,7 @@ def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict,
     # ask only what matters: a required field, or a question (choice field) the planner says only the candidate
     # can answer; an optional text box with no data (Address Line 2) stays empty
     flagged = [f for f in unanswered if answers.get(f.id) and answers[f.id].ask_human
-               and (f.required or f.kind not in forms.TEXT_KINDS)]
+               and (f.required or f.kind not in forms.TEXT_KINDS or HEARD.search(f.label))]
     # a required field the planner left empty without asking may vanish once the page is filled (the To date of a
     # job marked "I currently work here"): asked after filling, if it's still there
     later = [f for f in unanswered if f.required and f not in flagged and not is_address(f.label)]
