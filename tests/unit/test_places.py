@@ -25,3 +25,22 @@ def test_jargon_resolves_to_the_profiles_headquarters_or_named_site(tmp_path, mo
     assert (got[0]["city"], got[0]["state"]) == ("Golden Valley", "Minnesota")
     assert got[1]["city"] == "Boise" and got[2]["city"] == "Austin"
     assert jd["locations_resolved"] == got
+
+
+def test_a_cached_posting_gets_its_folder_back(tmp_path, monkeypatch):
+    from jobagent import db
+    from jobagent.tools import scrape as S
+    settings = type("S", (), {"outputs_dir": tmp_path / "outputs", "state_dir": tmp_path, "chrome_channel": "",
+                              "headless": True})()
+    monkeypatch.setattr(S, "get_settings", lambda: settings)
+    monkeypatch.setattr("jobagent.config.get_settings", lambda: settings)
+    real = db.connect
+    monkeypatch.setattr(db, "connect", lambda path=None: real(tmp_path / "jobs.sqlite"))  # one per thread
+    jd = S.JobDescription(title="Sr Data Scientist", company="General Mills", locations=["Corporate Headquarters"])
+    url = "https://genmills.wd1.myworkdayjobs.com/x/job/Sr-Data-Scientist_10129073"
+    S.save(jd, url, "posting text")
+    import shutil
+    shutil.rmtree(tmp_path / "outputs")
+    items = S.scrape_many([url], hitl=None, workers=1, log=lambda m: None)
+    folder = tmp_path / "outputs" / "general-mills" / "10129073"
+    assert items[0].cached and (folder / "jd.json").exists() and (folder / "jd.txt").read_text() == "posting text"

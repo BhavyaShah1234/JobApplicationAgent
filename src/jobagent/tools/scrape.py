@@ -437,6 +437,12 @@ def scrape_many(urls: list[str], hitl: Hitl, workers: int = 5, refresh: bool = F
         try:
             if not refresh and (cached := already_scraped(url)):
                 item.cached = cached
+                folder = s.outputs_dir / _slug(cached.company) / job_id_for(url, cached)
+                if not (folder / "jd.json").exists():
+                    # read before, but its job folder is gone (deleted or moved): write it again from the jobs table
+                    row = db.connect().execute("SELECT jd_text FROM jobs WHERE url = ?", (url,)).fetchone()
+                    save(cached, url, (row[0] if row else "") or "")
+                    log(f"scrape: {url}: already read; its folder was missing, written again to {folder}")
             else:
                 with sync_playwright() as pw:
                     browser = pw.chromium.launch(channel=s.chrome_channel or None, headless=s.headless,
