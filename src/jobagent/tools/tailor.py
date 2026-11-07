@@ -278,17 +278,24 @@ The candidate has told us they have done all of the posting's duties and know al
 
 Experience bullets:
 - Every bullet is a professional, technical accomplishment: action verb + the concrete technical work (named tools,
-  techniques, systems) + the result achieved (a metric or a concrete outcome). No bullet about soft skills alone
-  (partnering, communicating, presenting, mentoring): items marked "soft skill" need no bullet and no mention at
-  all (never tack "with stakeholders" onto a technical bullet just to cover one).
+  techniques, systems) + the result achieved, as a metric (accuracy, throughput, latency, yield, cost, time).
+- Name a concrete, popular technology stack in every bullet: the posting's own tools first, then the ones commonly
+  used for that work (e.g. LangChain, LangGraph, LlamaIndex, Hugging Face, PyTorch, FAISS, Pinecone, pgvector,
+  BigQuery, Vertex AI, Airflow, dbt, MLflow, Docker, Kubernetes, Tableau, Looker), as "using X and Y". Never a
+  generic phrase like "machine learning tools", "data visualization libraries" or "AI tools".
+- A people- or process-side duty (stakeholders, storytelling, evaluating new technology, framing business problems,
+  advocating data-driven decisions, teamwork) still becomes a technical bullet: the system, analysis or artifact
+  that did it (e.g. "Translated stakeholder objectives into KPI dashboards in Looker on BigQuery, cutting
+  reporting time 30%"). Never a bullet about soft skills alone.
 - Write every role as professional industry work. Never use wording that makes it look academic, unpaid, student
   or volunteer work: no "faculty", "professor", "lab", "coursework", "class", "student", "thesis", "volunteer",
   "unpaid", "academic", "research codebase", "research goals". Use "teams", "stakeholders", "production" instead.
 - Work in two passes; field role_N is the N-th role listed.
   Pass 1, NEW bullets (`original` null): turn the numbered JD ITEMS (duties AND technical qualifications) into
   bullets describing work the candidate DID (past tense, strong verb, the posting's own keywords kept verbatim for
-  ATS). Every item marked REQUIRED must appear in the `duties` of at least one NEW bullet; PREFERRED items should be
-  covered where they fit. A bullet may combine up to 3 closely related items; a long item may be shortened to its
+  ATS). Every numbered item must appear in the `duties` of at least one NEW bullet (the Summary never counts as
+  covering one): every responsibility and every preferred qualification ends up in an Experience bullet. A bullet
+  may combine up to 3 closely related items; a long item may be shortened to its
   most important keywords. Place each bullet under the role where it reads most plausibly for that employer and
   title, and spread the work across ALL roles; do not dump everything into one role.
   Pass 2, ORIGINAL bullets: only then, where a role still has room (4 bullets at most), add the candidate's
@@ -300,7 +307,7 @@ Experience bullets:
   -18%, OEE +7 pts, cycle time -12%, changeover 45 -> 20 min, first-pass yield +4%, MTTR -25%, defect escapes -30%,
   15 technicians trained, 6 stations commissioned). Keep them modest and internally consistent; round numbers are
   fine. List every number you estimated in the bullet's `estimated` field (the candidate confirms them). Numbers
-  copied from an original bullet are not estimates. Roughly half the bullets carry a metric, never more than two.
+  copied from an original bullet are not estimates. Every bullet carries one metric (two at most).
 - Never repeat yourself across roles: no two bullets may share an opening phrase or say the same thing. If a
   duty appears under two roles, the second bullet must use different wording, a different angle and a different
   tool/result (e.g. one role builds the pipelines, another optimizes or monitors them).
@@ -375,14 +382,15 @@ def jd_items(jd: JobDescription) -> list[tuple[str, str, str]]:
     soft. Technical duties and basic qualifications are required, technical preferred ones preferred; soft or
     generic duties ("Adapt quickly") may be folded in or skipped; education, authorisation, pay and physical
     requirements are left out, and "N+ years of" is stripped so the skill behind it stays."""
-    items = [("duty", d, "REQUIRED" if is_technical(d, jd) and not is_soft(d) else "soft")
-             for d in jd.responsibilities]
-    for kind, quals, need in (("basic", jd.basic_qualifications, "REQUIRED"),
-                              ("preferred", jd.preferred_qualifications, "PREFERRED")):
+    # every responsibility, soft-sounding ones included, becomes Experience bullets (written as technical work)
+    items = [("duty", d, "REQUIRED") for d in jd.responsibilities if not NON_SKILL.search(d)]
+    for kind, quals in (("basic", jd.basic_qualifications), ("preferred", jd.preferred_qualifications)):
         for q in quals:
             q = _YEARS.sub("", q.lstrip("-• ").strip())
-            if q and not NON_SKILL.search(q) and not NOT_BULLET.search(q) and is_technical(q, jd):
-                items.append((kind, q[0].upper() + q[1:], need))
+            # a preferred qualification is bullet material even without a tool in it ("consumer goods / supply
+            # chain experience"); a basic one only when technical (the rest are traits the summary carries)
+            if q and not NON_SKILL.search(q) and not NOT_BULLET.search(q) and (kind == "preferred" or is_technical(q, jd)):
+                items.append((kind, q[0].upper() + q[1:], "REQUIRED"))
     return items
 
 
@@ -495,7 +503,7 @@ def fill_checks(r: Resume, jd: JobDescription, f: Filled) -> tuple[list[int], li
     return uncovered, missing, warn
 
 
-MIN_BULLETS, MAX_BULLETS = 2, 4
+MIN_BULLETS, MAX_BULLETS = 3, 4  # every role carries its share of the posting's responsibilities
 def backfill(r: Resume, jd: JobDescription, f: Filled, embed=None) -> list[tuple[int, str, float]]:
     """Top up every role with < MIN_BULLETS bullets with that role's ORIGINAL bullets (verbatim), most JD-relevant
     first by embedding similarity; skips originals already used and near-duplicates of the new bullets.
@@ -575,7 +583,9 @@ def proper_nouns(text: str) -> set[str]:
     return out
 
 
-MAX_NO_RESULT = 1  # bullets allowed without a stated result, in the whole resume
+MAX_NO_RESULT = 0  # every bullet states a measured result
+GENERIC_TOOLS = re.compile(r"(?i)\b(machine learning|ml|ai|data visuali[sz]ation|analytics|data|visuali[sz]ation|"
+                           r"various|modern|complex database) (tools|libraries|techniques|frameworks|technologies)\b")
 
 
 def _content_words(t: str) -> set[str]:
@@ -622,6 +632,8 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
                 out.append(f"{where} names no technology/tool")
             if not RESULT.search(b.text):
                 no_result.append(f"{where} states no result")
+            if m := GENERIC_TOOLS.search(b.text):
+                out.append(f"{where} says \"{m.group(0)}\": name the actual tools (e.g. LangChain, PyTorch, BigQuery)")
     if DASH.search(f.summary):
         out.append("the summary uses a dash as punctuation; rewrite with a comma, semicolon or colon")
     return out + (no_result if len(no_result) > MAX_NO_RESULT else [])

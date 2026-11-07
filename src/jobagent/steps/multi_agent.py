@@ -185,7 +185,7 @@ def _context(ctx: dict, f: T.Filled | None, project_state: str | None) -> str:
 
 def _section_messages(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last: str) -> list:
     """The step 9 prompt (all rules and the posting) with the agent's role, the current resume and its tasks."""
-    base = T.build_fill_prompt(ctx["r"], ctx["jd"], ctx["company"], 14)
+    base = T.build_fill_prompt(ctx["r"], ctx["jd"], ctx["company"], 16)
     system = SystemMessage(ROLE_PROMPTS[agent] + "\n\n" + base[0].content)
     proj = (ctx["job_dir"] / "projects.json")
     extra = _context(ctx, f, proj.read_text() if proj.exists() else None)

@@ -86,13 +86,16 @@ def test_quality_flags_academic_wording_and_missing_tech():
     assert not any("bullet 2" in i for i in issues)
 
 
-def test_one_bullet_without_result_is_allowed_but_not_two():
+def test_every_bullet_states_a_result_and_names_real_tools():
+    ok = _filled("Migrated storage to Azure Blob Storage, cutting costs 20%.",
+                 "Built Azure Data Factory pipelines, cutting failed runs 30%.")
     one = _filled("Migrated storage to Azure Blob Storage with metadata in Azure SQL.",
                   "Built Azure Data Factory pipelines, cutting failed runs 30%.")
-    two = _filled("Migrated storage to Azure Blob Storage with metadata in Azure SQL.",
-                  "Wrote Python modules for Azure Data Factory.")
-    assert not [i for i in T.quality(T.parse(TEX), jd(), one) if "no result" in i]
-    assert len([i for i in T.quality(T.parse(TEX), jd(), two) if "no result" in i]) == 2
+    generic = _filled("Built dashboards with data visualization tools, cutting reporting time 30%.",
+                      "Built Azure Data Factory pipelines, cutting failed runs 30%.")
+    assert not [i for i in T.quality(T.parse(TEX), jd(), ok) if "no result" in i]
+    assert len([i for i in T.quality(T.parse(TEX), jd(), one) if "no result" in i]) == 1
+    assert [i for i in T.quality(T.parse(TEX), jd(), generic) if "name the actual tools" in i]
 
 
 def test_skill_line_renders_tools_once():
@@ -164,15 +167,16 @@ def test_capitalized_tool_names_count_as_technology():
     assert not [i for i in T.quality(T.parse(TEX), jd(), f) if "names no technology" in i]
 
 
-def test_jd_items_include_technical_qualifications_but_not_degrees_or_soft_duties():
+def test_every_duty_and_preferred_qualification_becomes_bullet_material_but_not_degrees():
     j = jd(responsibilities=["Build pipelines in Azure Data Factory.", "Partner with stakeholders on requirements."],
            basic_qualifications=["Bachelor's degree in Computer Science.", "3+ years of experience.",
                                  "Strong SQL and Python for data transformation.", "Excellent attitude."],
-           preferred_qualifications=["Experience with Databricks."])
+           preferred_qualifications=["Experience with Databricks.", "Applied experience in consumer goods/supply chain",
+                                     "Master's degree in Computer Science preferred."])
     items = T.jd_items(j)
-    assert [(k, n) for k, _, n in items] == [("duty", "REQUIRED"), ("duty", "soft"), ("basic", "REQUIRED"),
-                                             ("preferred", "PREFERRED")]
-    assert items[2][1].startswith("Strong SQL")
+    assert [(k, n) for k, _, n in items] == [("duty", "REQUIRED"), ("duty", "REQUIRED"), ("basic", "REQUIRED"),
+                                             ("preferred", "REQUIRED"), ("preferred", "REQUIRED")]
+    assert items[2][1].startswith("Strong SQL") and "supply chain" in items[4][1]
 
 
 def test_only_new_bullets_cover_jd_items():
