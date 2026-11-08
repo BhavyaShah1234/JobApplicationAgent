@@ -935,7 +935,12 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
                 raise availability.Unavailable(
                     "blocked", f"the site's {block.kind} check came back after it was solved: it rejects the agent's "
                     "browser; apply by hand in your own browser", page.url)
-            challenge.wait_for_user(page, block, hitl, log, timeout_s=600)
+            from jobagent.tools.hitl import HitlTimeout
+            try:
+                challenge.wait_for_user(page, block, hitl, log, timeout_s=600)
+            except HitlTimeout:
+                raise RuntimeError(f"nobody solved the {block.kind} check on {page.url} within 10 min; run again "
+                                   "when you can watch noVNC (http://localhost:6080)") from None
             solved += 1
             empty = 0
             page.wait_for_timeout(5000)  # the page reloads after a passed check
