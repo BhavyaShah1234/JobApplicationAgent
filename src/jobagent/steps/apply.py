@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field as PField
 from jobagent import llm
 from jobagent.clock import now
 from jobagent.tools import applicant, availability, forms, learned
+from jobagent.tools import challenge
 from jobagent.tools.browser import screenshot
 
 DATA = Path("/app/data")
@@ -912,7 +913,7 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
     return view, done
 
 
-def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = None) -> forms.PageView:
+def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = None, hitl=None) -> forms.PageView:
     """Open the posting and get to the application form: click Apply / Apply Manually, sign in when asked.
 
     A page saying the job is closed, expired, gone or already applied to raises `availability.Unavailable`. When
@@ -923,6 +924,14 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
     for _ in range(18):
         page.wait_for_timeout(4000)
         view = forms.read_page(page)
+        if len([f for f in view.fields if f.kind != "file"]) < 3 and (block := challenge.detect(page)):
+            # a bot check (Cloudflare "Verify you are human", a CAPTCHA) is the candidate's to solve in noVNC
+            if hitl is None:
+                raise RuntimeError(f"a {block.kind} check blocks {page.url}: solve it in noVNC "
+                                   "(http://localhost:6080) and run again")
+            challenge.wait_for_user(page, block, hitl, log)
+            empty = 0
+            continue
         if len([f for f in view.fields if f.kind != "file"]) < 3 and (
                 gone := availability.check_page(page, response)):
             if fallback and fallback != url:
@@ -969,7 +978,8 @@ def run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, lo
     out_dir.mkdir(exist_ok=True)
     record: list[dict] = []
     result = {"url": url, "started": datetime.now().isoformat(timespec="seconds"), "pages": [], "state": "failed"}
-    view = _start(page, url, ensure_signed_in or (lambda u: None), log, fallback=ctx["_jd"].get("source_url"))
+    view = _start(page, url, ensure_signed_in or (lambda u: None), log, fallback=ctx["_jd"].get("source_url"),
+                  hitl=hitl)
     same = 0
     env = {"hitl": hitl, "company": company, "host": urlparse(url).netloc, "ask_s": ask_s}
     known, errors, page_no, start = None, [], 0, 0

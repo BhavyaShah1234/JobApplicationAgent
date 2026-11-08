@@ -21,7 +21,7 @@ from jobagent.tools.hitl import Hitl
 # (name, text pattern on the page / title)
 _TEXT_SIGNS = [
     ("cloudflare", re.compile(r"(?i)just a moment\.\.\.|checking (if the site connection is secure|your browser)|"
-                              r"verify(ing)? you are (a )?human|cf-chl|ray id:.*cloudflare|performance & security by cloudflare")),
+                              r"verify(ing)? you are (a )?human|performing security verification|cf-chl|ray id:.*cloudflare|performance & security by cloudflare")),
     ("google-unusual-traffic", re.compile(r"(?i)our systems have detected unusual traffic|/sorry/index")),
     ("perimeterx", re.compile(r"(?i)press (&|and) hold|px-captcha|please verify you are a human")),
     ("datadome", re.compile(r"(?i)datadome|captcha-delivery\.com")),
