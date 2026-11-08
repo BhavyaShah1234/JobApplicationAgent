@@ -322,3 +322,16 @@ def test_a_reply_that_is_one_of_the_options_is_never_questioned(monkeypatch):
     from jobagent.tools.forms import Field
     monkeypatch.setattr(llm, "structured", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no model call")))
     assert A.misfit(Field(id=1, kind="select", label="Sponsorship?", options=["Yes", "No"]), "no") == ""
+
+
+def test_the_candidates_answer_sheet_for_a_job_wins_and_is_pinned_to_its_field():
+    from jobagent.steps.apply import sheet_hints, sheet_rows
+    from jobagent.tools.forms import Field
+    text = ("| # | Question | Answer |\n|---|---|---|\n| 8 | Portfolio or professional website link | https://github.com/x |\n"
+            "| 14 | ⚠ Desired compensation range | **$100,000 - $125,000** (no range posted) |\n")
+    assert sheet_rows(text)[0] == ("Portfolio or professional website link", "https://github.com/x")
+    fields = [Field(id=1, kind="text", label='Portfolio or professional website link ("N/A" if not applicable)*'),
+              Field(id=2, kind="text", label="What is your desired compensation range for this position?*"),
+              Field(id=3, kind="text", label="First Name*")]
+    got = sheet_hints(fields, text)
+    assert "https://github.com/x" in got[1] and "$100,000 - $125,000" in got[2] and 3 not in got

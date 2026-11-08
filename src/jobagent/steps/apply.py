@@ -83,6 +83,10 @@ MATCHES is the APPLICANT entry for that question: use its answer, following its 
 RELATED lists APPLICANT entries close in meaning: use one when it asks the same thing in other words, ignore it when
 it doesn't.
 
+ANSWERS_FOR_THIS_APPLICATION, when given, is the candidate's own answer sheet for this job (they may have edited
+it): its answer for a question wins over APPLICANT and everything else (source applicant). Where it leaves a choice
+to the candidate or marks something to check, follow what it says; when it doesn't decide, use APPLICANT.
+
 Think like the candidate filling in their own form, with common sense:
 - Every portal rewords its questions. Match a field to the APPLICANT entry that asks the same thing in MEANING, not
   wording: "What is your desired compensation range?" is "Desired salary"; "Are you able to work 5 days on-site in
@@ -169,6 +173,9 @@ def context(job_dir: Path, company: str) -> dict:
         "JD": ((job_dir / "jd.md").read_text() if (job_dir / "jd.md").exists() else "")[:5000],
         "COMPANY": (comp.read_text() if comp.exists() else "")[:3000],
         "COVER_LETTER": cover_letter_text(job_dir),
+        # the candidate's own answers for THIS application (application/answers.md, written or edited by them)
+        "ANSWERS_FOR_THIS_APPLICATION": (job_dir / "application" / "answers.md").read_text()[:6000]
+        if (job_dir / "application" / "answers.md").exists() else "(none)",
         "REFERRAL": referral(jd.get("company") or company),
         "JOB_LOCATION": "; ".join(f"{x['as_written']} = " + (", ".join(y for y in (x["city"], x["state"], x["country"])
                                                                         if y) or "unresolved")
@@ -299,6 +306,27 @@ def related_entries(fields: list[forms.Field], data: dict | None, skip: set[int]
     return out
 
 
+def sheet_rows(text: str) -> list[tuple[str, str]]:
+    """(question, answer) rows of an answers.md table: | # | Question | Answer |."""
+    rows = []
+    for line in (text or "").splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) >= 3 and cells[0].isdigit() and cells[1] and cells[2]:
+            rows.append((re.sub(r"[⚠*]", "", cells[1]).strip(), cells[2]))
+    return rows
+
+
+def sheet_hints(fields: list[forms.Field], text: str) -> dict[int, str]:
+    """Each field's row in the candidate's answer sheet for this job (wording match on the question)."""
+    rows, out = sheet_rows(text), {}
+    for f in fields:
+        label = re.sub(r"[*✱]", "", f.label).strip()
+        best = max(((fuzz.token_set_ratio(label.lower(), q.lower()), q, a) for q, a in rows), default=(0, "", ""))
+        if best[0] >= 80:
+            out[f.id] = f"YOUR SHEET (wins over APPLICANT) {best[1]!r}: {best[2]}"
+    return out
+
+
 def hints(fields: list[forms.Field], company: str = "", data: dict | None = None, log=None,
           related: bool = True) -> dict[int, str]:
     """The APPLICANT entry of each field, as the planner sees it next to the field: MATCHES (same wording) or
@@ -381,6 +409,8 @@ def plan(fields: list[forms.Field], ctx: dict, model, log=print, feedback: str =
          filled: list[forms.Field] = ()) -> tuple[dict[int, Answer], list[int]]:
     files = "\n\n".join(f"== {k} ==\n{v}" for k, v in ctx.items() if not k.startswith("_"))
     h = hints(fields, ctx.get("_jd", {}).get("company", ""), ctx.get("_applicant"), log)
+    for fid, s in sheet_hints(fields, ctx.get("ANSWERS_FOR_THIS_APPLICATION", "")).items():
+        h[fid] = s + ("\n    " + h[fid] if fid in h else "")
     msgs = [SystemMessage(PROMPT),
             HumanMessage(f"{files}\n\n"
                          + ("== ALREADY ON THIS PAGE (planned earlier) ==\n" + "\n".join(f.brief() for f in filled)
@@ -461,7 +491,9 @@ def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, mode
         if a is None or c.supported:
             continue
         f = next((x for x in fields if x.id == c.id), None)
-        if a.source == "applicant" and (in_applicant(a.value, data) or "instructions=" in h.get(c.id, "")):
+        sheet = ctx.get("ANSWERS_FOR_THIS_APPLICATION", "")
+        if a.source == "applicant" and (in_applicant(a.value, data) or "instructions=" in h.get(c.id, "")
+                                        or (len(a.value) > 1 and a.value.lower() in sheet.lower())):
             continue  # the file does say it (one of an answer's variants), or its instructions give it
         if a.source == "applicant":
             # credited to the candidate's own file but not in it (or in conflict with the resume): theirs to say
