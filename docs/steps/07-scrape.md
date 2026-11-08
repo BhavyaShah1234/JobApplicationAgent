@@ -36,6 +36,35 @@ are/what we value → values; benefits/you'll enjoy; technologies we use → ski
 prose-only sections go to the fast model (temperature 0). List fields are filled with section items verbatim.
 Folder ids come from the URL (gh_jid, jobId, opportunityId, Workday JR…, /jobs/N, UUIDs).
 
+## Postings that can't be applied to
+
+`tools/availability.py` checks every posting before any model call, cheapest signal first:
+
+| Signal | Kind |
+|---|---|
+| The page answers HTTP 404 / 410 | `not_found` |
+| schema.org JobPosting `validThrough` is in the past | `expired` |
+| The page says so: "no longer accepting applications", "this job has expired", "position has been filled", "the job you are looking for…" | `closed` / `expired` / `not_found` |
+| "You have already applied" | `already_applied` |
+
+A page that still offers an Apply action only counts as closed when the sentence is near the top, so a footer
+mentioning filled positions doesn't close an open posting.
+
+What happens:
+
+- `jobagent scrape` skips the posting, records it in `jobs` (`status` closed / already_applied, `notes` = the
+  page's own sentence), prints the reason, and moves on to the other URLs. When **no** posting is left it exits with
+  code **3**, so `scrape && research && tailor && submit` stops there. A posting recorded as unavailable isn't
+  opened again (use `--refresh` to re-check it).
+- `jobagent tailor`, `apply` and `submit` exit with code 3 before doing anything when the job's posting is recorded
+  as unavailable (no 45-minute tailor for a closed job).
+- While applying (step 12), a closed page reached through the scraped apply link sends the agent back to the posting
+  and its own Apply button first: GoDaddy's saved apply link was a stale requisition page (HTTP 404, "no longer
+  accepting applications") while the posting itself was open (`validThrough` 2027-02-04) with the application form
+  on the page. Only when the posting itself is closed does the run stop; the job and the application are recorded
+  as `closed` and nothing is filled or sent.
+- A run over many postings (step 16) catches `availability.Unavailable` per job and continues with the next one.
+
 ## Pipeline
 
 1. Navigate in a throwaway Chrome session (public postings don't need the signed-in profile), with backoff and the

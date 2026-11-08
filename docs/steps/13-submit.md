@@ -45,6 +45,7 @@ flowchart TD
 | A thank-you only counts when it appears after the click; it is screenshotted then, the settled page again 5 s later | `submit.submitted_page` |
 | The confirmation mail: sender domain of the company or its ATS family, sent after the submission, naming the company or the title | `submit.wait_for_confirmation` |
 | Every state change is kept: filled, approved, submitted, confirmed, skipped, failed (with notes) | `applications` table |
+| A posting found closed, expired, removed or already applied to stops the run before filling (exit code 3); the application is recorded `closed` / `already_applied` with the page's sentence | `tools/availability`, `main._stopped` |
 
 ## Results
 

@@ -6,6 +6,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from jobagent.tools.availability import EXIT_UNAVAILABLE
+
 app = typer.Typer(no_args_is_help=True, help="Job application agent + harness.")
 step_app = typer.Typer(no_args_is_help=True, help="Run a single workflow step on its own.")
 vault_app = typer.Typer(no_args_is_help=True, help="Inspect the encrypted credential vault.")
@@ -172,6 +174,9 @@ def _scrape_table(items, title: str) -> tuple[Table, bool]:
             failed = True
             table.add_row("?", f"[red]{it.error[:70]}[/]", *[""] * 8, f"{it.seconds:.0f}s")
             continue
+        if it.unavailable:  # closed / expired / removed / already applied: skipped, not a failure
+            table.add_row("?", f"[yellow]skipped ({it.unavailable.split(':')[0]})[/]", *[""] * 8, f"{it.seconds:.0f}s")
+            continue
         jd = it.result.jd if it.result else it.cached
         missing = jd.missing_core()
         failed |= bool(missing)
@@ -215,8 +220,48 @@ def scrape_cmd(
     items = scrape_many(targets, open_hitl(log), workers=workers, refresh=refresh, log=log)
     table, failed = _scrape_table(items, f"{len(items)} posting(s) in {time.monotonic() - t0:.0f}s ({workers} workers)")
     console.print(table)
+    for it in items:
+        if it.unavailable:
+            console.print(f"[yellow]skipped {it.url}: {it.unavailable}[/]", highlight=False)
     if failed:
         raise typer.Exit(1)
+    if all(it.unavailable for it in items):  # nothing left to tailor or apply to: stop a `&&` chain here
+        console.print("[yellow]scrape: no posting can be applied to; stopping[/]")
+        raise typer.Exit(EXIT_UNAVAILABLE)
+
+
+def _stop_if_unavailable(job_dir, step: str) -> None:
+    """Exit (code 3) before a step when the job was already found closed / already applied to."""
+    from pathlib import Path
+
+    from jobagent.tools import availability
+
+    p = Path(job_dir) / "jd.json"
+    jd = json.loads(p.read_text()) if p.exists() else {}
+    # the posting itself decides: a stale apply link can be closed while the posting's own Apply button works
+    if (url := jd.get("source_url") or jd.get("apply_url")) and (gone := availability.known(url)):
+        console.print(f"[yellow]{step}: skipped, {jd.get('title', '')} @ {jd.get('company', '')} can't be applied "
+                      f"to ({gone.kind}: {gone.reason})[/]", highlight=False)
+        raise typer.Exit(EXIT_UNAVAILABLE)
+
+
+def _stopped(job_dir, gone, step: str) -> None:
+    """A posting found unavailable while applying: record it on the job and the application, exit with code 3."""
+    from pathlib import Path
+
+    from jobagent import db
+    from jobagent.steps.submit import record
+    from jobagent.tools import availability
+
+    p = Path(job_dir) / "jd.json"
+    jd = json.loads(p.read_text()) if p.exists() else {}
+    conn = db.connect()
+    # the job is the posting: mark it (the page that said so is in the reason's URL)
+    availability.mark(jd.get("source_url") or gone.url, gone, conn)
+    record(conn, Path(job_dir), jd, state=gone.status, notes=f"{gone.kind}: {gone.reason}")
+    console.print(f"[yellow]{step}: stopped, {jd.get('title', '')} @ {jd.get('company', '')} can't be applied to "
+                  f"({gone.kind}: {gone.reason}); nothing was filled or sent[/]", highlight=False)
+    raise typer.Exit(EXIT_UNAVAILABLE)
 
 
 @step_app.command("scrape-check")
@@ -282,6 +327,7 @@ def tailor_cmd(
     from jobagent.config import get_settings
     from jobagent.steps.tailor import cover_letter, main
 
+    _stop_if_unavailable(job_dir, "tailor")
     log = lambda m: console.print(m, highlight=False)
     if single:
         main(job_dir, company, ats=not no_ats)
@@ -446,16 +492,22 @@ def apply_cmd(
     from jobagent.tools.portal_auth import ensure_account
     from jobagent.tools.vault import open_vault
 
+    from jobagent.tools.availability import Unavailable
+
     if not no_submit:
         raise typer.BadParameter("submitting comes with the human review (step 13)")
+    _stop_if_unavailable(job_dir, "apply")
     log = lambda m: console.print(m, highlight=False)
     vault = open_vault()
     email = (vault.get("gmail") or {})["email"]
-    with open_inbox() as inbox, persistent_context() as ctx:
-        page = ctx.pages[0]
-        sign_in = lambda url: log(f"portal: {ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log)}")
-        res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
-                  ask_s=ask_minutes * 60, model_name=model)
+    try:
+        with open_inbox() as inbox, persistent_context() as ctx:
+            page = ctx.pages[0]
+            sign_in = lambda url: log(f"portal: {ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log)}")
+            res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
+                      ask_s=ask_minutes * 60, model_name=model)
+    except Unavailable as gone:
+        _stopped(job_dir, gone, "apply")
     console.print(f"apply: {res['state']}; {res['verified']}/{len(res['fields'])} fields verified; "
                   f"{len(res['flags'])} for review -> {job_dir}/application/application.md", highlight=False)
 
@@ -481,18 +533,24 @@ def submit_cmd(
     from jobagent.tools.portal_auth import ensure_account
     from jobagent.tools.vault import open_vault
 
+    from jobagent.tools.availability import Unavailable
+
+    _stop_if_unavailable(job_dir, "submit")
     log = lambda m: console.print(m, highlight=False)  # noqa: E731
     vault = open_vault()
     email = (vault.get("gmail") or {})["email"]
     jd = json.loads((Path(job_dir) / "jd.json").read_text())
     conn = db.connect()
-    with open_inbox() as inbox, persistent_context() as ctx:
-        page = ctx.pages[0]
-        sign_in = lambda url: log(f"portal: {ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log)}")  # noqa: E731
-        hook = make_at_review(Path(job_dir), jd, open_hitl(log), inbox, conn, log, ask_s=review_minutes * 60,
-                              mail_s=mail_minutes * 60)
-        res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
-                  ask_s=ask_minutes * 60, at_review=hook)
+    try:
+        with open_inbox() as inbox, persistent_context() as ctx:
+            page = ctx.pages[0]
+            sign_in = lambda url: log(f"portal: {ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log)}")  # noqa: E731
+            hook = make_at_review(Path(job_dir), jd, open_hitl(log), inbox, conn, log, ask_s=review_minutes * 60,
+                                  mail_s=mail_minutes * 60)
+            res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
+                      ask_s=ask_minutes * 60, at_review=hook)
+    except Unavailable as gone:
+        _stopped(job_dir, gone, "submit")
     sub = res.get("submission") or {"state": f"not submitted: the form ended '{res['state']}'"}
     console.print(f"submit: {sub.get('state')}; {res['verified']}/{len(res['fields'])} fields verified -> "
                   f"{job_dir}/application/review.md", highlight=False)

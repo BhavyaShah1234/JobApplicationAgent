@@ -21,7 +21,7 @@ from jobagent.clock import with_today
 from jobagent import db, llm
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
-from jobagent.tools import challenge, jdtext
+from jobagent.tools import availability, challenge, jdtext
 from jobagent.tools.hitl import Hitl
 from jobagent.tools.memory import PortalMemory, portal_key
 
@@ -337,13 +337,17 @@ def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
     if used_memory:
         log(f"scrape: {portal}: using notes (selector {memory.data['content_selector']!r}, "
             f"JSON-LD {memory.data['has_jsonld']}, settle {memory.data['settle_ms']} ms)")
-    challenge.goto(page, url, hitl, log, wait_until="domcontentloaded")
+    response = challenge.goto(page, url, hitl, log, wait_until="domcontentloaded")
     try:
         page.wait_for_load_state("networkidle", timeout=15_000)
     except Exception:
         pass
     page.wait_for_timeout(memory.data["settle_ms"])
     posting = _jsonld_jobposting(page)
+    # a closed / expired / removed posting stops here, before any model call (the caller records it)
+    if gone := availability.check_page(page, response if hasattr(response, "status") else None, posting):
+        gone.url = url
+        raise gone
     selector, text = _best_text(page, memory.data["content_selector"])
     via_vision = False
     # jd.txt: the posting's description exactly as written (no model). The JSON-LD description is the cleanest
@@ -415,6 +419,7 @@ class BatchItem:
     result: ScrapeResult | None = None
     cached: JobDescription | None = None
     error: str | None = None
+    unavailable: str | None = None   # closed / expired / removed / already applied: skipped, not failed
     seconds: float = 0.0
 
 
@@ -435,7 +440,10 @@ def scrape_many(urls: list[str], hitl: Hitl, workers: int = 5, refresh: bool = F
         # Browser opened and closed in this thread: Playwright's sync objects are bound to their thread.
         item, t0 = BatchItem(url), time.monotonic()
         try:
-            if not refresh and (cached := already_scraped(url)):
+            if not refresh and (gone := availability.known(url)):
+                item.unavailable = f"{gone.kind}: {gone.reason}"
+                log(f"scrape: {url}: skipped, found unavailable before ({item.unavailable})")
+            elif not refresh and (cached := already_scraped(url)):
                 item.cached = cached
                 folder = s.outputs_dir / _slug(cached.company) / job_id_for(url, cached)
                 if not (folder / "jd.json").exists():
@@ -452,6 +460,10 @@ def scrape_many(urls: list[str], hitl: Hitl, workers: int = 5, refresh: bool = F
                         item.result = scrape(page, url, hitl, log)
                     finally:
                         browser.close()
+        except availability.Unavailable as gone:
+            availability.mark(url, gone)
+            item.unavailable = f"{gone.kind}: {gone.reason}"
+            log(f"scrape: {url}: skipped, the posting can't be applied to ({item.unavailable})")
         except Exception as e:
             item.error = f"{type(e).__name__}: {str(e)[:200]}"
             log(f"scrape: {url} failed: {item.error}")

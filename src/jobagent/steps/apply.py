@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field as PField
 
 from jobagent import llm
 from jobagent.clock import now
-from jobagent.tools import applicant, forms, learned
+from jobagent.tools import applicant, availability, forms, learned
 from jobagent.tools.browser import screenshot
 
 DATA = Path("/app/data")
@@ -813,19 +813,32 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
     return view, done
 
 
-def _start(page: Page, url: str, ensure_signed_in, log) -> forms.PageView:
-    """Open the posting and get to the application form: click Apply / Apply Manually, sign in when asked."""
-    page.goto(url, wait_until="domcontentloaded")
+def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = None) -> forms.PageView:
+    """Open the posting and get to the application form: click Apply / Apply Manually, sign in when asked.
+
+    A page saying the job is closed, expired, gone or already applied to raises `availability.Unavailable`. When
+    that page is the scraped apply link, the posting itself (`fallback`) is tried first: an apply link can be stale
+    while the posting's own Apply button still works (GoDaddy, 2026-11-07)."""
+    response = page.goto(url, wait_until="domcontentloaded")
     signed, empty = False, 0
     for _ in range(18):
         page.wait_for_timeout(4000)
         view = forms.read_page(page)
+        if len([f for f in view.fields if f.kind != "file"]) < 3 and (
+                gone := availability.check_page(page, response)):
+            if fallback and fallback != url:
+                log(f"apply: {page.url} says '{gone.reason}'; trying the posting's own Apply button at {fallback}")
+                url, fallback, empty = fallback, None, 0
+                response = page.goto(url, wait_until="domcontentloaded")
+                continue
+            raise gone
+        response = None  # the status only describes the first load of a URL
         pw = any(f.kind == "password" for f in view.fields)
         if pw and not signed:
             log("apply: the portal asks to sign in")
             ensure_signed_in(page.url)
             signed = True
-            page.goto(url, wait_until="domcontentloaded")  # back to the posting, signed in
+            response = page.goto(url, wait_until="domcontentloaded")  # back to the posting, signed in
             continue
         if len([f for f in view.fields if f.kind != "file"]) >= 3 and not pw:
             return view
@@ -857,7 +870,7 @@ def run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, lo
     out_dir.mkdir(exist_ok=True)
     record: list[dict] = []
     result = {"url": url, "started": datetime.now().isoformat(timespec="seconds"), "pages": [], "state": "failed"}
-    view = _start(page, url, ensure_signed_in or (lambda u: None), log)
+    view = _start(page, url, ensure_signed_in or (lambda u: None), log, fallback=ctx["_jd"].get("source_url"))
     same = 0
     env = {"hitl": hitl, "company": company, "host": urlparse(url).netloc, "ask_s": ask_s}
     known, errors, page_no, start = None, [], 0, 0
