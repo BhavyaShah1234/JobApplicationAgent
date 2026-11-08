@@ -78,7 +78,23 @@ question isn't specific to that company. An answer given
 as a LIST of words (e.g. degree: ["Master of Science", "MS", "Master's degree"]) lists acceptable variants of one
 answer in order of preference: use the first one the form offers (or the closest option to it); "Other" in such a
 list is the last resort. A list of entries (degrees, work history) is one entry per item. A field marked
-MATCHES is the APPLICANT entry for that question: use its answer, following its instructions.
+MATCHES is the APPLICANT entry for that question: use its answer, following its instructions. A field marked
+RELATED lists APPLICANT entries close in meaning: use one when it asks the same thing in other words, ignore it when
+it doesn't.
+
+Think like the candidate filling in their own form, with common sense:
+- Every portal rewords its questions. Match a field to the APPLICANT entry that asks the same thing in MEANING, not
+  wording: "What is your desired compensation range?" is "Desired salary"; "Are you able to work 5 days on-site in
+  Tempe, Arizona?" is "Able to work on site in the job's location?"; "Do you have a portfolio or website?" is yes when
+  APPLICANT has a portfolio URL. Then use that entry's answer or follow its instructions and tools.
+- Read the label together with its options and the job: the options often say what is asked, and a yes/no question
+  follows from the candidate's facts (the candidate lives in the job's city or is willing to relocate -> can work
+  on site there; holds a GPA of 4.0 -> the '3.8 - 4.0' range; never worked for the company -> 'No, never').
+- An entry's answer true/false means Yes/No (pick the matching option). A question whose answer follows from
+  APPLICANT, RESUME, JOB or COMPANY is never asked: ask_human only when none of them gives or implies it.
+- Questions about preferences or opinions the files don't state (a favourite tool) are answered from what the
+  candidate uses most in the RESUME, as the candidate would, not asked.
+- Each answer must answer ITS question: a person's name is never a salary, a URL is never a yes/no.
 
 Rules:
 - Personal facts (name, contact, address, education, work authorization, sponsorship, citizenship,
@@ -239,14 +255,60 @@ def match_entries(fields: list[forms.Field], company: str = "", data: dict | Non
     return out
 
 
-def hints(fields: list[forms.Field], company: str = "", data: dict | None = None) -> dict[int, str]:
-    """The matched APPLICANT entry of each field, as the planner sees it next to the field."""
+def _entry_text(sec: str, e: dict) -> str:
+    return (f"{sec}: {e['question']!r} answer={e.get('answer')!r}"
+            + (f" instructions={e.get('instructions')!r}" if e.get("instructions") else "")
+            + (f" tools={e.get('tools')}" if e.get("tools") else "")
+            + (f" company={e.get('company')}" if e.get("company") else ""))
+
+
+RELATED_MIN, RELATED_K = 0.70, 2
+
+
+def related_entries(fields: list[forms.Field], data: dict | None, skip: set[int] = frozenset(),
+                    log=None) -> dict[int, list[tuple[float, str, dict]]]:
+    """APPLICANT entries close in MEANING to each field's question (embeddings of the entry's question and seen
+    wordings): "What is your desired compensation range?" -> "Desired salary" (0.85). Portals reword every question,
+    so wording alone misses these. Only hints for the planner (it decides whether the entry asks the same thing):
+    code never fills a value from a match this loose."""
+    todo = [f for f in fields if f.id not in skip and f.kind != "file" and len(f.label.split()) >= 3]
+    if not todo:
+        return {}
+    pairs = applicant.entries(data)
+    bank = [(sec, e, t) for sec, e in pairs for t in [e["question"], *(e.get("seen") or [])]]
+    try:
+        vecs = learned._vectors([learned._clean(f.label) for f in todo] + [learned._clean(t) for _, _, t in bank])
+    except Exception as ex:
+        if log:
+            log(f"apply: related-entry lookup failed ({type(ex).__name__})")
+        return {}
+    if not vecs:
+        return {}
+    qv, bv = vecs[:len(todo)], vecs[len(todo):]
     out = {}
-    for fid, (sec, e) in match_entries(fields, company, data).items():
-        out[fid] = (f"{sec}: {e['question']!r} answer={e.get('answer')!r}"
-                    + (f" instructions={e.get('instructions')!r}" if e.get("instructions") else "")
-                    + (f" tools={e.get('tools')}" if e.get("tools") else "")
-                    + (f" company={e.get('company')}" if e.get("company") else ""))
+    for f, v in zip(todo, qv):
+        best: dict[str, tuple[float, str, dict]] = {}
+        for (sec, e, _), w in zip(bank, bv):
+            s = learned._cos(v, w)
+            if s > best.get(e["question"], (0,))[0]:
+                best[e["question"]] = (s, sec, e)
+        top = sorted((x for x in best.values() if x[0] >= RELATED_MIN), key=lambda x: -x[0])[:RELATED_K]
+        if top:
+            out[f.id] = top
+    return out
+
+
+def hints(fields: list[forms.Field], company: str = "", data: dict | None = None, log=None,
+          related: bool = True) -> dict[int, str]:
+    """The APPLICANT entry of each field, as the planner sees it next to the field: MATCHES (same wording) or
+    RELATED (close in meaning, the planner judges; left out with related=False)."""
+    out = {}
+    matched = match_entries(fields, company, data)
+    for fid, (sec, e) in matched.items():
+        out[fid] = "MATCHES " + _entry_text(sec, e)
+    for fid, top in (related_entries(fields, data, set(matched), log) if related else {}).items():
+        out[fid] = "\n    ".join(f"RELATED ({s:.2f}, by meaning; may not be the same question) {_entry_text(sec, e)}"
+                                  for s, sec, e in top)
     return out
 
 
@@ -317,12 +379,12 @@ def date_facts(degrees: list[dict]) -> str:
 def plan(fields: list[forms.Field], ctx: dict, model, log=print, feedback: str = "", adds: list[dict] = (),
          filled: list[forms.Field] = ()) -> tuple[dict[int, Answer], list[int]]:
     files = "\n\n".join(f"== {k} ==\n{v}" for k, v in ctx.items() if not k.startswith("_"))
-    h = hints(fields, ctx.get("_jd", {}).get("company", ""), ctx.get("_applicant"))
+    h = hints(fields, ctx.get("_jd", {}).get("company", ""), ctx.get("_applicant"), log)
     msgs = [SystemMessage(PROMPT),
             HumanMessage(f"{files}\n\n"
                          + ("== ALREADY ON THIS PAGE (planned earlier) ==\n" + "\n".join(f.brief() for f in filled)
                             + "\n\n" if filled else "")
-                         + "== FORM FIELDS ==\n" + "\n".join(f.brief() + (f"\n    MATCHES {h[f.id]}" if f.id in h else "")
+                         + "== FORM FIELDS ==\n" + "\n".join(f.brief() + (f"\n    {h[f.id]}" if f.id in h else "")
                                                              for f in fields)
                          + ("\n\n== ADD BUTTONS ==\n" + "\n".join(f"[{a['id']}] {a['text']} (section: {a['section']})"
                                                                 for a in adds) if adds else "")
@@ -392,7 +454,7 @@ def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, mode
         log(f"apply: plan check failed ({type(e).__name__}); keeping the plan")
         return
     data = ctx.get("_applicant") or {}
-    h = hints(fields, ctx.get("_jd", {}).get("company", ""), data)
+    h = hints(fields, ctx.get("_jd", {}).get("company", ""), data, related=False)  # the file must really say it
     for c in out.checks:
         a = answers.get(c.id)
         if a is None or c.supported:
@@ -529,8 +591,45 @@ def ask_human(hitl, f: forms.Field, company: str, host: str, log, timeout_s: flo
         learned.add(f.label, f.options, "", company, host, rule=rule)
         log(f"apply: learned a rule for \"{f.label[:60]}\": {rule[:100]}")
         return "rule", rule
+    why = misfit(f, ans)
+    if why:  # e.g. a referrer's name typed into the compensation prompt: ask once more before using or saving it
+        log(f"apply: the reply to \"{f.label[:60]}\" looks like it answers another question ({why}); asking again")
+        try:
+            again = hitl.ask(f"Your reply {ans[:80]!r} to \"{f.label[:200]}\" looks like the answer to a different "
+                             f"question ({why}). Reply again with the answer to THIS question, 'keep' to use your reply "
+                             "as it is, or 'skip'.", timeout_s=timeout_s).strip()
+        except HitlTimeout:
+            log("apply: no second reply; the field is left for review")
+            return "answer", ""
+        if not again or again.lower() == "skip":
+            return "answer", ""
+        if again.lower() != "keep":
+            if RULE.match(again):
+                rule = RULE.sub("", again).strip()
+                learned.add(f.label, f.options, "", company, host, rule=rule)
+                return "rule", rule
+            ans = again
     learned.add(f.label, f.options, ans, company, host)
     return "answer", ans
+
+
+class Fit(BaseModel):
+    fits: bool = PField(description="The reply is a plausible answer to this question (any value, right or wrong)")
+    why: str = PField("", description="When it doesn't fit: what the reply looks like instead, in a few words")
+
+
+def misfit(f: forms.Field, ans: str) -> str:
+    """Why a reply plainly doesn't answer the field's question ('' when it does, or when unsure): the fast model."""
+    if f.options and any(forms._norm(ans) == forms._norm(o) for o in f.options):
+        return ""
+    try:
+        out = llm.structured(Fit, "fast", timeout=60).invoke([HumanMessage(
+            f"Form question: {f.label[:300]!r}" + (f" Options: {' | '.join(f.options[:20])}." if f.options else "")
+            + f"\nThe candidate replied: {ans[:300]!r}\nIs this a plausible answer to this question? Only a reply that "
+              "plainly answers something else (a person's name for a salary, a date for a yes/no) does not fit.")])
+    except Exception:
+        return ""
+    return "" if out.fits else (out.why or "it doesn't match the question")
 
 
 def consult_learned(todo: list[forms.Field], answers: dict, ctx: dict, model, log) -> None:

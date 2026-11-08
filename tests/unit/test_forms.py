@@ -1,3 +1,5 @@
+import re
+
 import yaml
 
 from jobagent.tools.forms import SUBMIT, NEXT, match_option, same_value
@@ -250,3 +252,73 @@ def test_a_field_is_left_alone_only_when_it_really_shows_the_answer():
     assert already_shows("United States", "United States of America", "combobox")
     assert already_shows("6233329509", "(623) 332-9509", "tel")
     assert not already_shows("Vellore Institute of Technology | Other", "Other", "combobox")
+
+
+CARVANA_HTML = """<div id="apply-form">
+<div class="captionContainer"><label for="Are you able to work 5 days on-site in Tempe, Arizona?"><div>Are you able to
+ work 5 days on-site in Tempe, Arizona?</div><div>*</div></label><div class="select"><button aria-haspopup="listbox"
+ aria-labelledby="Are you able to work 5 days on-site in Tempe, Arizona?_select_label Are you able?_select_selected"
+ id="Are you able to work 5 days on-site in Tempe, Arizona?_select" type="button"><div><div
+ id="Are you able to work 5 days on-site in Tempe, Arizona?_select_label" style="text-transform:uppercase">Select answer</div>
+ <span class="select__inputValue">No</span></div></button></div></div>
+<div class="question"><div class="vstack"><div class="captionContainer"><label for="What's a problem you've solved?">
+ <div>What's a problem you've solved?</div><div>*</div></label><textarea id="input_What's a problem you've solved?"></textarea>
+ <div>Remaining: 500</div></div></div></div>
+<div><label for="first">First Name</label><input id="first"></div>
+</div>"""
+
+
+def test_custom_widgets_take_the_question_above_them_not_their_caption():
+    import pytest
+    from playwright.sync_api import sync_playwright
+
+    from jobagent.tools.forms import read_page
+    with sync_playwright() as pw:
+        try:
+            b = pw.chromium.launch(channel="chrome", headless=True)
+        except Exception:
+            pytest.skip("no Chrome here")
+        p = b.new_page()
+        p.set_content(CARVANA_HTML)
+        got = {f.id: (f.kind, re.sub(r"\s+\*", "*", f.label), f.value) for f in read_page(p).fields}
+        b.close()
+    labels = [x[1] for x in got.values()]
+    assert ("combobox", "Are you able to work 5 days on-site in Tempe, Arizona?*", "No") in got.values()
+    assert "What's a problem you've solved?*" in labels  # the label, without "Remaining: 500"
+    assert "First Name" in labels
+    assert not any(re.search(r"(?i)^select", lab) for lab in labels)
+
+
+def test_character_counters_are_not_part_of_the_question():
+    from jobagent.tools.forms import clean_label
+    assert clean_label("What's a problem you've solved using AI?* Remaining: 500") == "What's a problem you've solved using AI?*"
+    assert clean_label("Tell us about yourself 0/1000") == "Tell us about yourself"
+    assert clean_label("Why us? 250 characters left") == "Why us?"
+    assert clean_label("Question 1/5") == "Question 1/5"
+
+
+def test_entries_close_in_meaning_are_shown_as_related_hints_only(tmp_path, monkeypatch):
+    from jobagent.steps import apply as A
+    from jobagent.tools import applicant, learned
+    from jobagent.tools.forms import Field
+    f = tmp_path / "applicant.yaml"
+    f.write_text(open("data/applicant.example.yaml").read())
+    monkeypatch.setattr(applicant, "path", lambda: f)
+    salary = {"desired salary", "salary expectations", "expected compensation"}
+    # fake embeddings: the compensation question is close to the salary entry's wordings only
+    monkeypatch.setattr(learned, "_vectors", lambda texts: [
+        [1.0, 0.0] if ("compensation range" in t or t in salary) else [0.0, 1.0] if "favourite colour" in t
+        else [0.6, 0.8] for t in texts])
+    fields = [Field(id=1, kind="text", label="What is your desired compensation range for this position?*")]
+    h = A.hints(fields)
+    assert h[1].startswith("RELATED (1.00") and "'Desired salary'" in h[1]
+    assert 1 not in A.match_entries(fields)  # never a code-applied match
+    assert A.hints(fields, related=False) == {}  # the plan checker doesn't count it as the file saying so
+
+
+def test_a_reply_that_is_one_of_the_options_is_never_questioned(monkeypatch):
+    from jobagent import llm
+    from jobagent.steps import apply as A
+    from jobagent.tools.forms import Field
+    monkeypatch.setattr(llm, "structured", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no model call")))
+    assert A.misfit(Field(id=1, kind="select", label="Sponsorship?", options=["Yes", "No"]), "no") == ""

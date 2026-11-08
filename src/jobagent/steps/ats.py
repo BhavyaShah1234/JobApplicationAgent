@@ -21,7 +21,7 @@ from jobagent.tools import ats_sites, layout
 from jobagent.tools import projects as P
 from jobagent.tools import tailor as T
 
-TARGET, MAX_ROUNDS, MAX_KEYWORDS = 90.0, 5, 10
+TARGET, MAX_ROUNDS, MAX_KEYWORDS = 90.0, 3, 10
 # Run-to-run spread of the averaged unlimited-site score on an unchanged resume; a change that adds several of the
 # budget sites' keywords is kept unless the average falls by more than this
 NOISE = 2.0

@@ -32,6 +32,24 @@ FIELDS_JS = r"""(start) => {
   const byIds = ids => clean((ids || '').split(/\s+/).map(i => document.getElementById(i))
       .filter(Boolean).map(x => x.innerText || x.textContent).join(' '));
   const ownText = e => { const l = e.closest('label'); return l ? clean(l.innerText) : ''; };
+  // a widget's own caption, never the question (Carvana's "SELECT ANSWER" / "SELECT ALL THAT APPLY" boxes)
+  const GENERIC = /^(select( an?)?( answer| option| one| all that apply)?|choose( one| an option)?|please (select|choose)( one)?|-+ ?select ?-+|-+)$/i;
+  const CONTROLS = 'input:not([type=hidden]), select, textarea, [role=combobox], [aria-haspopup=listbox]';
+  const before = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const nearLabel = e => {
+    // the closest label / legend above the control, in its own block: no other control between the two, and not a
+    // label[for] of another existing control (custom widgets whose label[for] names no element, e.g. Carvana)
+    for (let a = e.parentElement, k = 0; a && k < 5; a = a.parentElement, k++) {
+      const ls = [...a.querySelectorAll('label, legend')].filter(l => !l.contains(e) && before(l, e) && clean(l.innerText)
+          && !GENERIC.test(clean(l.innerText)));
+      if (!ls.length) continue;
+      const l = ls[ls.length - 1];
+      const f = l.getAttribute('for'); const tgt = f && document.getElementById(f);
+      if (tgt && tgt !== e && !tgt.contains(e) && !e.contains(tgt)) return '';
+      const between = [...a.querySelectorAll(CONTROLS)].some(c => c !== e && !c.contains(e) && !e.contains(c)
+          && before(l, c) && before(c, e) && vis(c));
+      return between ? '' : clean(l.innerText); }
+    return ''; };
   const question = e => {
     // the question a control belongs to: aria, label[for], wrapping label, legend, or the nearest container text
     // Workday: the form field's own label (a list button's aria-label holds its value: "Select One Required")
@@ -48,8 +66,9 @@ FIELDS_JS = r"""(start) => {
       const l = fc && [...fc.querySelectorAll('label, legend')].find(x => !x.contains(e) && clean(x.innerText));
       if (l) t = clean(l.innerText); }
     if (!t) { const fs = e.closest('fieldset'); const lg = fs && fs.querySelector('legend'); if (lg) t = clean(lg.innerText); }
-    if (!t) t = clean(e.placeholder || e.getAttribute('title') || '');
-    if (!t) t = around(e, ownOf(e));
+    if (!t || GENERIC.test(t)) t = nearLabel(e) || (GENERIC.test(t) ? '' : t);
+    if (!t) { const p = clean(e.placeholder || e.getAttribute('title') || ''); if (!GENERIC.test(p)) t = p; }
+    if (!t) t = around(e, ownOf(e)).replace(/^(select all that apply|select( an?)?( answer| option| one)?)\b\s*/i, '');
     return t.slice(0, 300); };
   const ownOf = e => e.tagName === 'SELECT' ? [...e.options].map(o => clean(o.text)) : [clean(e.value)];
   const around = (e, own) => {
@@ -185,7 +204,7 @@ FIELDS_JS = r"""(start) => {
               value: e.selectedIndex >= 0 && e.value ? clean(e.options[e.selectedIndex].text) : ''}); continue; }
     if (role === 'combobox' || e.getAttribute('aria-haspopup') === 'listbox' || e.getAttribute('aria-autocomplete')) {
       const box = e.closest('[class*=control i]') || (e.parentElement && e.parentElement.closest('[data-automation-id]')) || e.parentElement;
-      const shownValue = e.tagName === 'BUTTON' ? clean(e.innerText) :
+      const shownValue = e.tagName === 'BUTTON' ? clean(e.innerText).replace(/^(select all that apply|select( an?)?( answer| option| one)?)\b\s*/i, '') :
           clean((box && box.querySelector('[class*=singleValue i], [class*=single-value i], [class*=multiValue i], [data-automation-id=selectedItem]') || {}).innerText || e.value || '');
       add(e, {kind: 'combobox', label: q, required: required(e, q), value: /^select one$|^select\.\.\.$/i.test(shownValue) ? '' : shownValue}); continue; }
     if (role === 'spinbutton' || e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') {
@@ -254,6 +273,16 @@ def frames_of(page: Page) -> list[Frame]:
                                 and not CAPTCHA_FRAME.search(f.url)]
 
 
+# a text box's character counter is not part of its question, and it changes as the box fills
+COUNTER = re.compile(r"(?i)\s*(\b(remaining|characters? (left|remaining)|chars? left)\s*:?\s*\d+|\d+\s*/\s*\d{2,}\s*"
+                     r"(characters?|chars?)?|\d+\s*(characters?|chars?) (left|remaining))\s*$")
+
+
+def clean_label(label: str) -> str:
+    """The question as the form asks it, without a live character counter ("... Remaining: 500")."""
+    return COUNTER.sub("", label or "").strip()
+
+
 def read_page(page: Page) -> PageView:
     """Every visible field on the page and in its iframes, numbered across frames."""
     fields, buttons, errors, headings, frames, n, adds = [], [], [], [], {}, 0, []
@@ -267,7 +296,7 @@ def read_page(page: Page) -> PageView:
         frames[k] = f
         n = snap["next"]
         for x in snap["fields"]:
-            fields.append(Field(id=x["id"], kind=x["kind"], label=x["label"], required=bool(x.get("required")),
+            fields.append(Field(id=x["id"], kind=x["kind"], label=clean_label(x["label"]), required=bool(x.get("required")),
                                 value=x.get("value") or "", options=x.get("options") or [], section=x.get("section", ""),
                                 frame=k, multiple=bool(x.get("multiple")), accept=x.get("accept", ""),
                                 maxlength=x.get("maxlength"), format=x.get("format", "")))

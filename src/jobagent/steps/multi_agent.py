@@ -13,7 +13,7 @@ Validators:
   review; each finding goes to the agent whose section it is about;
 - ats: the online checkers; a router model splits missing keywords and advice into tasks per agent.
 Loop: write -> fix layout (<= 3 passes) -> score -> route -> agents edit -> fix layout -> rescore; a round is kept if the
-average rises (or holds within the noise while the page improves), else undone and reported back; <= 5 ATS rounds.
+average rises (or holds within the noise while the page improves), else undone and reported back; <= 3 ATS rounds.
 """
 
 import json
@@ -47,7 +47,8 @@ AGENTS = ("experience", "projects", "skills", "summary")
 DEFAULT_MODELS = {"experience": "devstral2-123b", "projects": "gpt-oss-120b", "skills": "glm-5-3-flash",
                   "summary": "devstral2-123b", "router": "glm-5-3"}
 SITES = tuple(x for x in ats_sites.DEFAULT_SITES if x not in ats_sites.BUDGET_SITES)
-LAYOUT_PASSES, ATS_ROUNDS, TARGET = 5, 5, 90.0
+# 3 validator fix passes and 3 ATS rounds after the first score (5 and 5 until 2026-11-08: the user asked for 3)
+LAYOUT_PASSES, ATS_ROUNDS, TARGET = 3, 3, 90.0
 BLANK_HARD_PT = 24  # more free height than this (about 2 lines) at the bottom disqualifies a version
 # Tasks that need the whole Experience section rewritten (coverage, length); anything else is a targeted bullet edit
 FULL_REWRITE = __import__("re").compile(r"(?i)not covered|pages?; it must be one|overflows|failed to compile|"
