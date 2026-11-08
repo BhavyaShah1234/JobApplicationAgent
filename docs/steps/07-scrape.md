@@ -11,6 +11,10 @@ docker compose exec agent jobagent step scrape-check --urls-file /app/tests/e2e/
 Output per posting: `outputs/<company>/<job-id>/jd.json` + `jd.md`, a row in `jobs` (state/jobs.sqlite), and portal
 notes in `state/portals/<portal>.json/.md`.
 
+A posting already in `jobs` is not read again (unless `--refresh`); if its job folder is gone (deleted or moved), the
+folder is written again from the stored copy (`jd.json`, `jd.txt`, `jd.md`) and the log says so. To start a job from
+scratch, delete its `jobs` row (and its `ats_runs` / `applications` rows) as well as the folder.
+
 Gate (automated part) passed 2026-10-22: Greenhouse (Stripe), Lever (Palantir), Ashby (OpenAI), Workday (NVIDIA),
 amazon.jobs, plus the `data/test.csv` companies — General Mills (Workday), KPMG (own site), DOWL (UKG UltiPro), Intel
 (Workday), Cafe Valley (own site). All complete, second pass reused the portal notes; 5 postings in 31–45 s.
@@ -53,3 +57,5 @@ Folder ids come from the URL (gh_jid, jobId, opportunityId, Workday JR…, /jobs
 - Lever's location sits outside the description block: fill it from JSON-LD instead of escalating models.
 - The single signed-in Chrome profile must be used one run at a time: `state/browser.lock` queues runs.
 - Cafe Valley's job site has a `?blackhole=` honeypot link: discovery (step 14) must never crawl every link.
+- A deleted job folder whose posting was still in `jobs` was skipped as "already read", so `tailor` found no
+  `jd.json` (2026-11-07, General Mills): a missing folder is now written again from the jobs table.

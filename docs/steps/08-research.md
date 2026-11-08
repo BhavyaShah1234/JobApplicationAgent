@@ -25,6 +25,32 @@ from cache in 0 s; ~25–60 s per company (10 in parallel ≈ 90 s).
    ids (minItems 1), lists are capped (maxItems), sentences capped (maxLength). Items citing unknown sources are dropped;
    news must cite a news source.
 
+## Locations (added 2026-11-07)
+
+Each profile also records the company's **headquarters** (city, state, country) and its **named sites** ("Innovation
+Center", "Main Campus"), each with the sources that state it ("## Locations" in the `.md`).
+
+A posting's location written as company jargon ("Corporate Headquarters", "HQ", "Head Office", "Main Campus",
+"World Headquarters") is resolved to the place it means (`tools/places.py`):
+
+| Location as written | Resolved from |
+|---|---|
+| names a US city / state ("Austin, TX", "Remote - US") | the posting itself |
+| a named site ("Innovation Center") | the profile's matching site |
+| HQ jargon | the profile's headquarters; a profile without one gets it from a web search (kept in the profile with its sources) |
+| nothing resolves it | kept as written, marked `unresolved` (never guessed) |
+
+The result is stored in the job's `jd.json` as `locations_resolved` (and a line in `jd.md`), once per job when it is
+applied for, or on demand:
+
+```bash
+jobagent locate outputs/<company>/<job-id> <company-slug>
+```
+
+General Mills, "Corporate Headquarters, United States of America" -> Golden Valley, Minnesota (the headquarters'
+address; the refreshed profile says Minneapolis). Step 12 shows it to the form planner as the job's location, never as
+the candidate's own address.
+
 ## Learned while building
 
 - Free-form tool calls made the fast model loop (repeating sentences to the token cap) — prompts and frequency penalty

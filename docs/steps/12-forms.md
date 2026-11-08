@@ -61,7 +61,10 @@ grow with what the agent learns.
 |---|---|
 | Submit / Send / Finish / a bare "Apply" on a form page is never clicked | `forms.SUBMIT`, `forms.click_button` |
 | Personal facts only from applicant.yaml; address fields only from its "Current address" entry (empty: asked, never looked up or made up) | `apply.PROMPT`, `apply.enforce` |
-| A referral option only for a consenting `targets.csv` contact; otherwise the company's own site option | `apply.enforce`, `apply.own_site_option` |
+| "How did you hear": a referral (the Referral option, or "Referred by <name>" in a text box) only for a `data/targets.csv` contact at that company with `referral_consent: yes`; otherwise the candidate is asked on the spot (their answer is kept for that company) | `apply.referral`, `apply.enforce` |
+| The job's own location (`locations_resolved`, step 8: "Corporate Headquarters" -> its city) is shown to the planner as JOB_LOCATION for "which location are you applying for"; never used as the candidate's address | `apply.context`, `tools/places.py` |
+| A "Cover letter" text box gets the job's cover letter text | `apply.cover_letter_text` |
+| Choice buttons (Ashby's Yes / No, `aria-pressed`) are one choice field; the matching button is pressed | `forms.FIELDS_JS`, `forms.fill_field` |
 | A list answer is tried in the candidate's order; the closest option only when none is offered; a field holding a later variant ("Other") is improved | `apply.apply_variants`, `forms.close_option`, `forms.lower_variant` |
 | A field is left alone only when it really shows the answer (never "United States Minor Outlying Islands" for "United States") | `forms.already_shows`, `forms.match_option` |
 | Dates worked out by code (graduated or not, today, the coming Monday); date fields get dates | `apply.date_facts` |
@@ -80,6 +83,16 @@ grow with what the agent learns.
 | Greenhouse | DoorDash, Software Engineer I | 1 | 28 / 29 | internships (the form offers 1 or 2+, the resume shows 0) |
 | Lever | Palantir, Backend Software Engineer | 1 | 24 / 24 | none |
 | Ashby | Mercor, AI Infrastructure Engineer | 1 | 8 / 8 | none (office question answered from a learned rule) |
+
+## Changed after the step was closed (2026-11-05 to 2026-11-07)
+
+- Ashby yes/no button questions were invisible to the extractor (Mercor showed "8/8" with 4 questions unanswered);
+  now found and answered (12/12).
+- A form ending in a human check ("I'm a human") or a hidden submit input reaches the review screen (step 13).
+- "How did you hear" no longer defaults to the company's website: without a referrer on file the candidate is asked.
+- `data/applicant.yaml` gained a `volunteering` entry (church / non-profit experience: yes, with `details` in the
+  candidate's words used for written answers).
+- Job locations given as company jargon are resolved to cities (step 8) and shown to the planner.
 
 ## Learned while building
 
