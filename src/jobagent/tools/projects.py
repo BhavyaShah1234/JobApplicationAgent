@@ -47,7 +47,8 @@ the agent wrote by reading each GitHub repository's code.
   what the Experience section already shows. A shared repo (someone else owns it) counts as the candidate's project:
   describe the whole project, not only the candidate's part.
 - title: short project name (<= 45 characters). If a KNOWN TITLE is given, use it exactly.
-- stack: up to 5 technologies from the card's tech stack, most relevant to the posting first.
+- stack: up to 5 technologies from the card's tech stack, most relevant to the posting first. Write "Python", never
+  a version ("Python 3.12" -> "Python").
 - paragraph: ONE unbulleted paragraph of exactly 3 sentences, 300-420 characters (it fills 3 lines on the page;
   a one-line description wastes the space):
   1. the problem: who had it and why it mattered;
@@ -127,6 +128,16 @@ def month_year(iso: str) -> str:
     return f"{d:%B %Y}"
 
 
+PY_VERSION = re.compile(r"(?i)^python\s*v?\d+(\.\d+)*(\+|\.x)?$")
+
+
+def heading_stack(stack: list[str]) -> list[str]:
+    """The stack as the heading shows it: plain "Python", never "Python 3.12" / "Python 3.14" (the user's rule,
+    2026-11-08); a repeat left by that is dropped."""
+    out = ["Python" if PY_VERSION.match(s.strip()) else s.strip() for s in stack]
+    return list(dict.fromkeys(x for x in out if x))
+
+
 def render(entries: list[ProjectEntry], cards: dict[str, dict], years: dict[str, str], macro: bool = False,
            short: frozenset[str] = frozenset()) -> str:
     """macro: the template defines \\resumeProjectText (paragraph aligned with the heading); else an item list."""
@@ -136,7 +147,7 @@ def render(entries: list[ProjectEntry], cards: dict[str, dict], years: dict[str,
         text = e.short if e.repo in short and e.short else e.paragraph
         out += ["    \\resumeProjectHeading",
                 f"      {{\\textbf{{\\href{{{c['url']}}}{{{to_latex(e.title)}}}}} $|$ "
-                f"\\emph{{{to_latex(', '.join(e.stack))}}}}}{{{years.get(c['full_name'], '')}}}",
+                f"\\emph{{{to_latex(', '.join(heading_stack(e.stack)))}}}}}{{{years.get(c['full_name'], '')}}}",
                 *([f"      \\resumeProjectText{{{to_latex(text)}}}"] if macro else
                   ["      \\resumeItemListStart",  # the template's own list spacing, with an empty label: no bullet
                    f"        \\item[]\\small{{{to_latex(text)} \\vspace{{-2pt}}}}",
