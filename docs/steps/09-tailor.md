@@ -115,7 +115,7 @@ Notes on the diagrams:
 |---|---|
 | Preamble, header, section names, role subheadings, Education | Copied byte-for-byte from your template |
 | Summary | Written fresh per job and company: the posting's title wording, the requirements you meet, one clause about the company; years of experience up to your declared total (`claims.years_experience` in `data/master_profile.yaml`, 5), degrees only as on the resume |
-| Experience | New bullets from the posting's technical duties and qualifications first; your `% backfill` bullets added where a role has room; 2-4 bullets per role |
+| Experience | New bullets from every one of the posting's responsibilities and preferred qualifications (and its technical basic ones), each with a named stack and a metric, spread over all roles; your `% backfill` bullets added where a role has room; 3-4 bullets per role |
 | Projects | 2-4 GitHub projects: heading (linked name, stack, month and year) + one unbulleted paragraph of 3 sentences, 300-420 characters (problem, system, wow factor); your template's titles kept when a repo is already there, and your template's projects are always candidates |
 | Technical Skills | Rebuilt from the posting's tech stack and qualifications; abstract terms carry concrete tools ("Machine Vision (OpenCV, YOLOv8)"), your own tools preferred |
 
@@ -125,10 +125,10 @@ Each rule is checked after the model writes; a broken rule goes back to the mode
 
 | Rule | Checked by |
 |---|---|
-| Every REQUIRED JD item is covered by a NEW bullet (your reused bullets don't count) | `tailor.fill_checks` |
+| Every JD item is covered by a NEW Experience bullet: all responsibilities (people- and process-side ones written as technical work), all preferred qualifications except degree / authorization / pay lines, and the technical basic ones; the Summary and your reused bullets don't count | `tailor.jd_items`, `tailor.fill_checks` |
 | No two bullets repeat each other (shared 4-word phrase or more than 50% same words) | `tailor.duplicates` |
 | Professional wording: no faculty, lab, student, thesis, volunteer, unpaid, … | `tailor.quality` |
-| Every bullet names a technology; at most one bullet in the resume lacks a result | `tailor.quality` |
+| Every bullet names a concrete technology ("AI", "ML", "LLM", "machine learning" alone don't count; "machine learning tools" / "data visualization libraries" are flagged) and states a measured result | `tailor.quality` |
 | A bullet from one employer never appears under another | `tailor.moved_from` |
 | No dash as punctuation (em dash, spaced en dash, `--`); ranges like 2025–2026 are fine | checks + `to_latex` turns leftovers into commas |
 | A change by a percentage takes "by" ("cutting failed runs by 45%") | prompts + `to_latex` inserts it |
@@ -193,4 +193,7 @@ All found while working on step 10 (details there); the gate results above are f
 | 2026-11-01 | Template's own projects always candidates; empty skills lines dropped | SolBot lost to InternshipChatbot; an empty "Databases:" line |
 | 2026-11-02 | Short project form is 2 sentences, 180-230 characters (two full lines) | 130-200 characters printed as one line |
 | 2026-11-02 | `jobagent tailor` runs the multi-agent team (devstral2-123b); `--single` for this pipeline | User's choice after the multi-agent runs |
+| 2026-11-07 | Every responsibility and preferred qualification becomes an Experience bullet (none left to the Summary), each naming a popular stack (the posting's tools first, then e.g. LangChain, LangGraph, FAISS, BigQuery, Vertex AI, MLflow) and ending with a metric; 3-4 bullets per role (up to 16) | General Mills: 4 of 12 Key Responsibilities were treated as "soft" and dropped, preferred qualifications were optional, 8 bullets with "machine learning tools"; now 12-13 bullets covering all of them |
+| 2026-11-07 | Template spacing (`data/templates/resume.tex`): `\textheight` +1.6in, `\titlespacing*{\section}{0pt}{7pt}{10pt}`, `\vspace{6pt}` after Education | About 0.4in unused at the page bottom and wide gaps around section headings; ~2 more lines per page |
+| 2026-11-07 | Model trial: `laguna-s-2-1` (2.4 s on a short structured answer vs 3.9 s for devstral) as the whole team | Slower end to end on the resume's large outputs: long bullets pushed the page to 3, the projects agent failed in every output mode; stopped after an hour. `inkling-small` was slower still (18 s). devstral2-123b stays the builder |
 

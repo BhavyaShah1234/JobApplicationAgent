@@ -321,3 +321,12 @@ def test_project_layouts_keep_full_paragraphs_before_short_ones():
     # (kept, n_short): a short form only adds an extra project; it never replaces a full paragraph
     assert projects.layouts(4) == [(4, 0), (4, 1), (3, 0), (3, 1), (2, 0), (2, 1), (2, 2)]
     assert projects.layouts(2) == [(2, 0), (2, 1), (2, 2)]
+
+
+def test_a_field_name_is_not_a_named_tool():
+    vague = _filled("Collaborated with teams to refine AI models, improving accuracy by 15%.",
+                    "Built Azure Data Factory pipelines, cutting failed runs 30%.")
+    named = _filled("Refined LangChain agents on Vertex AI, improving accuracy by 15%.",
+                    "Built Azure Data Factory pipelines, cutting failed runs 30%.")
+    assert [i for i in T.quality(T.parse(TEX), jd(), vague) if "names no technology" in i]
+    assert not [i for i in T.quality(T.parse(TEX), jd(), named) if "names no technology" in i]

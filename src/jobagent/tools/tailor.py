@@ -584,6 +584,10 @@ def proper_nouns(text: str) -> set[str]:
 
 
 MAX_NO_RESULT = 0  # every bullet states a measured result
+GENERIC_NAMES = {"ai", "ml", "genai", "llm", "llms", "api", "apis", "kpi", "kpis", "roi", "us", "usa", "it",
+                 "machine learning", "deep learning", "generative ai", "data science", "analytics", "cloud",
+                 "neural network", "transformer", "etl", "rest", "microservices", "reinforcement learning",
+                 "computer vision", "gpu", "gpus"}
 GENERIC_TOOLS = re.compile(r"(?i)\b(machine learning|ml|ai|data visuali[sz]ation|analytics|data|visuali[sz]ation|"
                            r"various|modern|complex database) (tools|libraries|techniques|frameworks|technologies)\b")
 
@@ -627,9 +631,11 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
             if m := ACADEMIC.search(b.text):
                 out.append(f"{where} uses academic/unpaid wording \"{m.group(0)}\"")
             low = b.text.lower()
-            if not TOOLISH.search(b.text) and not proper_nouns(b.text) and not any(re.search(r"(?<![a-z])" + re.escape(t) + r"(?![a-z])", low)
-                                                      for t in tech if t):
-                out.append(f"{where} names no technology/tool")
+            # "AI", "ML", "LLM" or "machine learning" name a field, not a tool: they don't count
+            named = {w for w in set(TOOLISH.findall(b.text)) | proper_nouns(b.text) if w.lower() not in GENERIC_NAMES}
+            if not named and not any(re.search(r"(?<![a-z])" + re.escape(t) + r"(?![a-z])", low)
+                                     for t in tech if t and t not in GENERIC_NAMES):
+                out.append(f"{where} names no technology/tool (AI / ML / LLM alone don't count): name the stack")
             if not RESULT.search(b.text):
                 no_result.append(f"{where} states no result")
             if m := GENERIC_TOOLS.search(b.text):
