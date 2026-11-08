@@ -259,8 +259,9 @@ def _stopped(job_dir, gone, step: str) -> None:
     # the job is the posting: mark it (the page that said so is in the reason's URL)
     availability.mark(jd.get("source_url") or gone.url, gone, conn)
     record(conn, Path(job_dir), jd, state=gone.status, notes=f"{gone.kind}: {gone.reason}")
-    console.print(f"[yellow]{step}: stopped, {jd.get('title', '')} @ {jd.get('company', '')} can't be applied to "
-                  f"({gone.kind}: {gone.reason}); nothing was filled or sent[/]", highlight=False)
+    what = "the agent can't apply here" if gone.kind == "blocked" else "can't be applied to"
+    console.print(f"[yellow]{step}: stopped, {jd.get('title', '')} @ {jd.get('company', '')}: {what} "
+                  f"({gone.kind}: {gone.reason}); nothing was sent[/]", highlight=False)
     raise typer.Exit(EXIT_UNAVAILABLE)
 
 
@@ -375,7 +376,7 @@ def ats_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> 
 @app.command("ats-record")
 def ats_record_cmd(
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> whose resume.pdf you scanned."),
-    site: str = typer.Argument(..., help="skillsfirst | jobscan | skillsyncer | atsalign | applycove"),
+    site: str = typer.Argument(..., help="jobscan | skillsyncer | atsalign | applycove"),
     score: float = typer.Argument(..., help="The score the site gave (0-100)."),
 ) -> None:
     """Record a score you got by hand on a site the agent doesn't automate; it joins the ATS average."""

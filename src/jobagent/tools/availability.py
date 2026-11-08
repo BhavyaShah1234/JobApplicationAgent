@@ -38,7 +38,9 @@ APPLY_ACTION = re.compile(r"(?i)^\s*(apply( now| for this (job|position|role))?|
 
 
 class Unavailable(Exception):
-    """The posting can't be applied to. `kind`: closed | expired | not_found | already_applied."""
+    """The posting can't be applied to by the agent. `kind`: closed | expired | not_found | already_applied |
+    blocked (the site's bot protection keeps rejecting the agent's browser even after the candidate solved its check:
+    the candidate applies by hand; the agent never works around such a check)."""
 
     def __init__(self, kind: str, reason: str, url: str = ""):
         super().__init__(f"{kind}: {reason}" + (f" ({url})" if url else ""))
@@ -47,7 +49,7 @@ class Unavailable(Exception):
     @property
     def status(self) -> str:
         """The `jobs` / `applications` status it maps to."""
-        return "already_applied" if self.kind == "already_applied" else "closed"
+        return {"already_applied": "already_applied", "blocked": "blocked"}.get(self.kind, "closed")
 
 
 def sentence(text: str, m: re.Match) -> str:

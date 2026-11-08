@@ -57,3 +57,11 @@ def test_mark_and_known_round_trip(tmp_path, monkeypatch):
     assert got.kind == "closed" and "no longer accepting" in got.reason
     row = conn.execute("SELECT status, notes FROM jobs WHERE url = 'https://x/1'").fetchone()
     assert row["status"] == "closed" and row["notes"].startswith("closed: ")
+
+
+def test_a_bot_check_that_keeps_coming_back_marks_the_job_blocked_not_closed(tmp_path):
+    conn = db.connect(tmp_path / "jobs.sqlite")
+    gone = A.Unavailable("blocked", "the site's cloudflare check came back after it was solved", "https://x/2")
+    assert gone.status == "blocked"
+    A.mark("https://x/2", gone, conn)
+    assert A.known("https://x/2", conn) is None  # a later run may try again (the site may let it through)

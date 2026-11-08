@@ -920,7 +920,7 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
     that page is the scraped apply link, the posting itself (`fallback`) is tried first: an apply link can be stale
     while the posting's own Apply button still works (GoDaddy, 2026-11-07)."""
     response = page.goto(url, wait_until="domcontentloaded")
-    signed, empty = False, 0
+    signed, empty, solved = False, 0, 0
     for _ in range(18):
         page.wait_for_timeout(4000)
         view = forms.read_page(page)
@@ -929,8 +929,16 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
             if hitl is None:
                 raise RuntimeError(f"a {block.kind} check blocks {page.url}: solve it in noVNC "
                                    "(http://localhost:6080) and run again")
-            challenge.wait_for_user(page, block, hitl, log)
+            if solved >= 1:
+                # solved once and shown again: the site rejects this (automated) browser itself. The agent doesn't
+                # work around bot protection; the candidate applies by hand.
+                raise availability.Unavailable(
+                    "blocked", f"the site's {block.kind} check came back after it was solved: it rejects the agent's "
+                    "browser; apply by hand in your own browser", page.url)
+            challenge.wait_for_user(page, block, hitl, log, timeout_s=600)
+            solved += 1
             empty = 0
+            page.wait_for_timeout(5000)  # the page reloads after a passed check
             continue
         if len([f for f in view.fields if f.kind != "file"]) < 3 and (
                 gone := availability.check_page(page, response)):
