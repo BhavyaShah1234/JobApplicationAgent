@@ -1,0 +1,199 @@
+"""Read a company's open listings from the careers board that `careers.resolve` found (step 14c).
+
+Per ATS family, the board's public listing endpoint (what the board's own page loads, no login, one small request per
+page): Greenhouse job-board API, Lever postings API, Ashby posting API, SmartRecruiters postings API, and Workday's
+`/wday/cxs/<tenant>/<site>/jobs` call (searched once per target role, a few pages each). Any other site: the job links
+on the careers page itself (best effort; location unknown, so those listings go to review). Listings carry title,
+locations, URL, posted date, requisition id and a snippet. A bot check or refusal ends that company's collection with
+`blocked`: it is reported to the candidate, never worked around.
+"""
+
+import re
+import time
+from datetime import UTC, datetime
+from urllib.parse import urljoin, urlparse
+
+import httpx
+from lxml import html as lh
+
+from jobagent.tools.careers import UA, board_of
+from jobagent.tools.jobqueue import Listing, slug
+
+PAUSE_S = 0.4          # between requests to one board
+WORKDAY_PAGES = 5      # x 20 results per search
+JOB_HREF = re.compile(r"(?i)/(jobs?|positions?|openings?|requisitions?|vacanc\w+)/[^/?#]+|/careers?/[^/?#]+/[^/?#]+|"
+                      r"[?&](job_?id|jid|gh_jid|req(uisition)?_?id|id)=\w+|/jobdetail|/job-details?|/[^/?#]+-\d{4,}/?$")
+TITLE_PLACE = re.compile(r"[–—-]\s*([A-Z][\w .'’-]+,\s*[A-Z]{2})\s*$")  # "Sanitation Manager Job – Marion, IN"
+
+
+class Blocked(RuntimeError):
+    """The board refused (a bot check or a 403): reported to the candidate, never worked around."""
+
+
+def _json(url: str, method: str = "GET", body: dict | None = None, timeout: int = 25):
+    r = httpx.request(method, url, headers={**UA, "Accept": "application/json"}, json=body, timeout=timeout,
+                      follow_redirects=True)
+    if r.status_code in (401, 403, 429) or (r.status_code == 503 and "cf-chl" in r.text[:3000].lower()):
+        raise Blocked(f"{urlparse(url).netloc} answered {r.status_code}")
+    if r.status_code >= 400:
+        return None
+    try:
+        return r.json()
+    except ValueError:
+        return None
+
+
+def _iso(ms_or_text) -> str:
+    if isinstance(ms_or_text, (int, float)) and ms_or_text > 10_000_000_000:
+        return datetime.fromtimestamp(ms_or_text / 1000, UTC).date().isoformat()
+    return str(ms_or_text or "")[:10]
+
+
+def _text(markup: str, n: int = 600) -> str:
+    try:
+        return " ".join(lh.fromstring(f"<div>{markup}</div>").text_content().split())[:n]
+    except Exception:
+        return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", markup or ""))[:n]
+
+
+# --- one parser per board (pure: they take the decoded JSON) ----------------------------------------------------
+
+def parse_greenhouse(data: dict, company: str) -> list[Listing]:
+    out = []
+    for j in (data or {}).get("jobs", []):
+        loc = (j.get("location") or {}).get("name", "")
+        out.append(Listing(company, j.get("title", ""), j.get("absolute_url", ""), [loc] if loc else [],
+                           _iso(j.get("first_published") or j.get("updated_at")),
+                           # `id` is unique; `requisition_id` is often a placeholder ("See Opening ID" on every Stripe job)
+                           str(j.get("id") or ""), "", "greenhouse"))
+    return out
+
+
+def parse_lever(data: list, company: str) -> list[Listing]:
+    out = []
+    for j in data or []:
+        cats = j.get("categories") or {}
+        locs = [x for x in [cats.get("location"), *(cats.get("allLocations") or [])] if x]
+        out.append(Listing(company, j.get("text", ""), j.get("hostedUrl", ""), list(dict.fromkeys(locs)),
+                           _iso(j.get("createdAt")), str(j.get("id", "")), (j.get("descriptionPlain") or "")[:600], "lever"))
+    return out
+
+
+def parse_ashby(data: dict, company: str) -> list[Listing]:
+    out = []
+    for j in (data or {}).get("jobs", []):
+        if j.get("isListed") is False:
+            continue
+        locs = [j.get("location", "")] + [x.get("location", "") for x in j.get("secondaryLocations") or []]
+        out.append(Listing(company, j.get("title", ""), j.get("jobUrl", ""), [x for x in locs if x],
+                           _iso(j.get("publishedAt")), str(j.get("id", "")), (j.get("descriptionPlain") or "")[:600], "ashby"))
+    return out
+
+
+def parse_smartrecruiters(data: dict, company: str, token: str) -> list[Listing]:
+    out = []
+    for j in (data or {}).get("content", []):
+        loc = j.get("location") or {}
+        place = ", ".join(x for x in [loc.get("city"), loc.get("region"), (loc.get("country") or "").upper()] if x)
+        out.append(Listing(company, j.get("name", ""), f"https://jobs.smartrecruiters.com/{token}/{j.get('id', '')}",
+                           [place] if place else [], _iso(j.get("releasedDate")), str(j.get("refNumber") or j.get("id", "")),
+                           "", "smartrecruiters"))
+    return out
+
+
+def parse_workday(data: dict, company: str, host: str, site: str) -> list[Listing]:
+    out = []
+    for j in (data or {}).get("jobPostings", []):
+        path = j.get("externalPath", "")
+        bullets = j.get("bulletFields") or []
+        out.append(Listing(company, j.get("title", ""), f"https://{host}/en-US/{site}{path}",
+                           [j["locationsText"]] if j.get("locationsText") else [], j.get("postedOn", ""),
+                           str(bullets[0]) if bullets else path.rsplit("_", 1)[-1], "", "workday"))
+    return out
+
+
+def parse_dom(markup: str, base: str, company: str) -> list[Listing]:
+    """Job links on a careers page: best effort, location unknown."""
+    try:
+        doc = lh.fromstring(markup)
+    except Exception:
+        return []
+    out, seen = [], set()
+    for a in doc.xpath("//a[@href]"):
+        href = urljoin(base, a.get("href"))
+        title = " ".join(a.text_content().split())
+        if href in seen or not href.startswith("http") or len(title.split()) < 2 or len(title) > 140:
+            continue
+        if JOB_HREF.search(href) and not re.search(r"(?i)(privacy|cookie|terms|sign.?in|log.?in|search all|view all|"
+                                                   r"apply now|learn more)", title):
+            seen.add(href)
+            place = TITLE_PLACE.search(title)
+            out.append(Listing(company, title, href, [place.group(1)] if place else [], "",
+                               (re.search(r"-(\d{4,})/?$", urlparse(href).path) or [None, ""])[1], "", "dom"))
+    return out
+
+
+# --- collection ---------------------------------------------------------------------------------------------------
+
+def collect(careers: dict, company: str, queries: list[str] | None = None, log=print, get_json=_json,
+            get_html=None) -> list[Listing]:
+    """All open listings of the company's board. `queries`: target role titles (Workday searches by them)."""
+    board = careers.get("board") or board_of(careers.get("url") or "")
+    if not board:
+        if not careers.get("url"):
+            return []
+        markup = (get_html or _html)(careers["url"])
+        found = parse_dom(markup, careers["url"], company)
+        log(f"listings: {company}: no ATS board; {len(found)} job links on the careers page (location unknown)")
+        return found
+    fam, token = board["family"], board["token"]
+    if fam == "greenhouse":
+        data = get_json(f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs")
+        return parse_greenhouse(data, company)
+    if fam == "lever":
+        return parse_lever(get_json(f"https://api.lever.co/v0/postings/{token}?mode=json"), company)
+    if fam == "ashby":
+        return parse_ashby(get_json(f"https://api.ashbyhq.com/posting-api/job-board/{token}"), company)
+    if fam == "smartrecruiters":
+        return parse_smartrecruiters(get_json(f"https://api.smartrecruiters.com/v1/companies/{token}/postings?limit=100"),
+                                     company, token)
+    if fam == "workday":
+        tenant, wd, site = token.split("/")
+        host = f"{tenant}.{wd}.myworkdayjobs.com"
+        found, seen = [], set()
+        for q in queries or [""]:
+            for page in range(WORKDAY_PAGES):
+                data = get_json(f"https://{host}/wday/cxs/{tenant}/{site}/jobs", "POST",
+                                {"appliedFacets": {}, "limit": 20, "offset": page * 20, "searchText": q})
+                rows = parse_workday(data, company, host, site)
+                for r in rows:
+                    if r.url not in seen:
+                        seen.add(r.url)
+                        found.append(r)
+                if len(rows) < 20:
+                    break
+                time.sleep(PAUSE_S)
+        return found
+    log(f"listings: {company}: {fam} boards are not read yet; open {careers.get('url')} yourself")
+    return []
+
+
+def _html(url: str) -> str:
+    try:
+        r = httpx.get(url, headers=UA, follow_redirects=True, timeout=25)
+        if r.status_code in (401, 403, 429):
+            raise Blocked(f"{urlparse(url).netloc} answered {r.status_code}")
+        return r.text if r.status_code < 400 else ""
+    except Blocked:
+        raise
+    except Exception:
+        return ""
+
+
+def target_queries(config: dict) -> list[str]:
+    """Search words for boards that search server-side: each target role's title."""
+    return list(dict.fromkeys(r.get("title", "") for r in config.get("roles", []) if r.get("title")))
+
+
+def company_slug(company: str) -> str:
+    return slug(company)

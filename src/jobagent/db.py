@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     jd_json      TEXT,
     jd_text      TEXT,                              -- the posting text as written (jd.txt)
     status       TEXT NOT NULL DEFAULT 'queued',   -- queued | scraped | applied | failed | skipped | needs_review
-                                                    -- | closed | already_applied (tools/availability.py)
+                                                    -- | closed | already_applied | blocked (tools/availability.py)
+                                                    -- | running (the queue runner is on it) (tools/jobqueue.py)
     notes        TEXT,                              -- why: e.g. 'closed: no longer accepting applications'
     discovered_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
@@ -71,7 +72,11 @@ CREATE TABLE IF NOT EXISTS agent_domains (
 );
 """
 
-MIGRATIONS = [("jobs", "jd_text", "TEXT"), ("jobs", "notes", "TEXT")]
+MIGRATIONS = [("jobs", "jd_text", "TEXT"), ("jobs", "notes", "TEXT"),
+              # step 14 (discovery): what the listing was and why it was queued, skipped or sent to review
+              ("jobs", "company_slug", "TEXT"), ("jobs", "req_id", "TEXT"), ("jobs", "posted_at", "TEXT"),
+              ("jobs", "role_id", "TEXT"), ("jobs", "match_stage", "TEXT"), ("jobs", "match_score", "REAL"),
+              ("jobs", "source", "TEXT")]
 
 # Registrable domains under multi-label public suffixes we are likely to meet.
 _TWO_LABEL_SUFFIXES = {"co.uk", "co.in", "com.au", "co.jp", "com.br", "co.nz", "com.sg", "ac.uk", "org.uk"}

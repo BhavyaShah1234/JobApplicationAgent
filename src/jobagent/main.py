@@ -16,6 +16,10 @@ app.add_typer(vault_app, name="vault")
 
 console = Console()
 
+from jobagent import cli_discovery  # noqa: E402
+
+cli_discovery.register(app, console)  # step 14: discover, queue
+
 
 @step_app.command("harness")
 def step_harness(
