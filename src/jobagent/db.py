@@ -70,13 +70,59 @@ CREATE TABLE IF NOT EXISTS agent_domains (
     first_seen  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     last_seen   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+-- Step 15: what came back for each submitted application. One row per message (Message-ID unique), one application
+-- can have several over weeks. The mail's own Date is the event time; only a short excerpt is kept, never a body.
+CREATE TABLE IF NOT EXISTS outcome_events (
+    id             INTEGER PRIMARY KEY,
+    application_id INTEGER NOT NULL REFERENCES applications(id),
+    stage          TEXT NOT NULL,     -- confirmation | assessment | recruiter_screen | interview | offer | rejection | withdrawn
+    message_id     TEXT NOT NULL UNIQUE,
+    thread_id      TEXT,
+    sender         TEXT,
+    subject        TEXT,
+    excerpt        TEXT,              -- at most 200 characters
+    received_at    TEXT NOT NULL,     -- UTC, the mail's Date
+    classifier     TEXT NOT NULL,     -- rule | model | human
+    confidence     REAL,
+    needs_review   INTEGER NOT NULL DEFAULT 0,   -- 1: not counted until the candidate approves it
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS outcome_events_app ON outcome_events(application_id, received_at);
+-- What the history says (jobagent reflect): advisory text with the applications it rests on. A lesson the data stops
+-- supporting is retired, not deleted.
+CREATE TABLE IF NOT EXISTS lessons (
+    id          INTEGER PRIMARY KEY,
+    key         TEXT NOT NULL,         -- what it is about: 'site:hireflow', 'keyword:langgraph@swe'
+    scope       TEXT NOT NULL,         -- global | role family id
+    text        TEXT NOT NULL,
+    evidence    TEXT NOT NULL,         -- JSON: application ids, counts, the statistic
+    snapshot    TEXT NOT NULL,         -- hash of the labelled data it was computed from
+    status      TEXT NOT NULL DEFAULT 'active',   -- active | retired
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    retired_at  TEXT
+);
+CREATE VIEW IF NOT EXISTS application_status AS
+SELECT a.id AS application_id, a.company, a.title, a.state, a.submitted_at, COUNT(e.id) AS events,
+       MAX(e.received_at) AS last_event_at,
+       (SELECT x.stage FROM outcome_events x WHERE x.application_id = a.id AND x.needs_review = 0
+         ORDER BY x.received_at DESC, x.id DESC LIMIT 1) AS current_stage,
+       (SELECT x.stage FROM outcome_events x WHERE x.application_id = a.id AND x.needs_review = 0
+         ORDER BY CASE x.stage WHEN 'offer' THEN 6 WHEN 'interview' THEN 5 WHEN 'recruiter_screen' THEN 4
+                  WHEN 'assessment' THEN 3 WHEN 'confirmation' THEN 2 WHEN 'withdrawn' THEN 1 ELSE 0 END DESC,
+                  x.received_at LIMIT 1) AS furthest_stage
+FROM applications a LEFT JOIN outcome_events e ON e.application_id = a.id AND e.needs_review = 0
+GROUP BY a.id;
 """
 
 MIGRATIONS = [("jobs", "jd_text", "TEXT"), ("jobs", "notes", "TEXT"),
               # step 14 (discovery): what the listing was and why it was queued, skipped or sent to review
               ("jobs", "company_slug", "TEXT"), ("jobs", "req_id", "TEXT"), ("jobs", "posted_at", "TEXT"),
               ("jobs", "role_id", "TEXT"), ("jobs", "match_stage", "TEXT"), ("jobs", "match_score", "REAL"),
-              ("jobs", "source", "TEXT")]
+              ("jobs", "source", "TEXT"),
+              # step 15: what the submitted resume was (frozen at submission): hash, checker scores, role family, skills
+              ("applications", "resume_sha", "TEXT"), ("applications", "ats_average", "REAL"),
+              ("applications", "ats_scores", "TEXT"), ("applications", "role_id", "TEXT"),
+              ("applications", "keywords", "TEXT")]
 
 # Registrable domains under multi-label public suffixes we are likely to meet.
 _TWO_LABEL_SUFFIXES = {"co.uk", "co.in", "com.au", "co.jp", "com.br", "co.nz", "com.sg", "ac.uk", "org.uk"}

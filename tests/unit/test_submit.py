@@ -53,3 +53,15 @@ def test_thank_you_pages_are_recognised():
     assert S.CONFIRMED_PAGE.search("Thank you for applying! We've received your application.")
     assert S.CONFIRMED_PAGE.search("Your application has been submitted")
     assert not S.CONFIRMED_PAGE.search("Review your application before you submit")
+
+
+def test_another_companys_mail_on_a_shared_ats_sender_never_matches_by_a_title_word():
+    from jobagent.steps.submit import ApplicationMatch
+    m = ApplicationMatch({"greenhouse-mail.io", "greenhouse.io", "stripe.com"}, "stripe", ["stripe", "backend", "engineer"],
+                         frozenset({"stripe.com"}))
+    mk = lambda sender, subject, text="": Mail("1", "<m>", sender, subject, None, text)  # noqa: E731
+    assert not m(mk("Palantir <no-reply@us.greenhouse-mail.io>", "Thank you for applying", "to Software Engineer at Palantir"))
+    assert m(mk("Stripe <no-reply@us.greenhouse-mail.io>", "Thank you for applying", "to Backend Engineer"))   # display name
+    assert m(mk("no-reply@us.greenhouse-mail.io", "Update on your application to Stripe"))                       # subject
+    assert m(mk("Recruiter <jane@stripe.com>", "Next steps", "about the Backend role"))                           # their own domain
+    assert not m(mk("jane@gmail.com", "Stripe interview"))                                                         # not from them

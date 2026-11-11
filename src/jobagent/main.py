@@ -20,6 +20,10 @@ from jobagent import cli_discovery  # noqa: E402
 
 cli_discovery.register(app, console)  # step 14: discover, queue
 
+from jobagent import cli_outcomes  # noqa: E402
+
+cli_outcomes.register(app, console)  # step 15: sync-inbox, outcomes
+
 
 @step_app.command("harness")
 def step_harness(

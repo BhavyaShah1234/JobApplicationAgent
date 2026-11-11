@@ -412,7 +412,25 @@ def build_fill_prompt(r: Resume, jd: JobDescription, company_md: str, max_bullet
     if feedback:
         text += f"\n\nREVISION REQUEST:\n{feedback}"
     return [SystemMessage(with_today(FILL_PROMPT.format(max_bullets=max_bullets))),
-            HumanMessage(text + "\n\n" + facts_block())]
+            HumanMessage(text + learning_hint(jd) + "\n\n" + facts_block())]
+
+
+def learning_hint(jd) -> str:
+    """What past applications showed for this role family (step 15c), only when the candidate switched
+    `learning_use_tailoring_hints` or `learning_use_lessons` on; '' otherwise, without touching the database."""
+    try:
+        from jobagent import db
+        from jobagent.config import get_settings
+        from jobagent.tools import learning
+
+        s = get_settings()
+        if not (s.learning_use_tailoring_hints or s.learning_use_lessons):
+            return ""
+        conn = db.connect()
+        row = conn.execute("SELECT role_id FROM jobs WHERE url = ?", (getattr(jd, "source_url", "") or "",)).fetchone()
+        return learning.prompt_hints(conn, (row["role_id"] if row and row["role_id"] else ""), s)
+    except Exception:
+        return ""
 
 
 def declared_claims() -> dict:

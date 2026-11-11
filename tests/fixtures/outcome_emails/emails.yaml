@@ -1,0 +1,347 @@
+# Synthetic but realistic outcome mail, in the wording of real ATS and recruiter templates (written by the assistant, so
+# accuracy on it overstates the real world: add real messages with `jobagent outcomes label` as they arrive).
+# expect: the stage, or none for anything that is not an outcome. model: true = the rules can't decide, the model must.
+
+# ---- confirmations --------------------------------------------------------------------------------------------------
+- id: gh-confirm
+  from: "Palantir Technologies <no-reply@us.greenhouse-mail.io>"
+  subject: "Thank you for applying to Palantir Technologies"
+  body: "Hi Bhavya,\n\nThank you for applying to Forward Deployed Software Engineer at Palantir Technologies. We have received your application and our team will review it carefully.\n\nIf your qualifications match our needs, we will be in touch."
+  expect: confirmation
+- id: lever-confirm
+  from: "Mercor <no-reply@hire.lever.co>"
+  subject: "Thanks for applying to Mercor"
+  body: "Hi Bhavya Shah, thanks for applying to the Software Engineer position at Mercor! We received your application and will be in touch if there is a fit."
+  expect: confirmation
+- id: workday-confirm
+  from: "Intel Recruiting <donotreply@intel.wd1.myworkdayjobs.com>"
+  subject: "Thank you for applying to Intel"
+  body: "Thank you for your interest in Intel Corporation. Your application for JR0287686 Software Engineer has been received. You can check the status of your application by signing in to your candidate home."
+  expect: confirmation
+- id: ashby-confirm
+  from: "Mercor <no-reply@ashbyhq.com>"
+  subject: "Application received: Software Engineer, Agents at Mercor"
+  body: "We've received your application for Software Engineer, Agents. Our recruiting team reviews every application and will reach out if your background is a match."
+  expect: confirmation
+- id: icims-confirm
+  from: "Cafe Valley <do-not-reply@icims.com>"
+  subject: "Application Confirmation - Project Engineer"
+  body: "This email is to confirm your application for the Project Engineer position was successfully submitted. Thank you for your interest in Cafe Valley."
+  expect: confirmation
+- id: custom-confirm
+  from: "Triumph Tech Careers <careers@triumph.tech>"
+  subject: "We received your application"
+  body: "Hello, we have received your application for QA & Dev Ops Engineer at Triumph Tech. A member of our team will review it shortly."
+  expect: confirmation
+- id: gh-confirm-with-unfortunately
+  from: "Stripe <no-reply@us.greenhouse-mail.io>"
+  subject: "Thank you for applying to Stripe"
+  body: "Hi Bhavya, thank you for applying to Backend Engineer at Stripe. Unfortunately, we are unable to respond individually to every applicant, so you will only hear from us if we would like to move ahead.\n\nSimilar jobs you might like: view all open roles."
+  expect: confirmation
+- id: sr-confirm
+  from: "Stripe Recruiting <no-reply@smartrecruiters.com>"
+  subject: "Thank you for your interest in Stripe"
+  body: "Thank you for your application to the Software Engineer position. We have received it and will contact you if you are selected for the next stage."
+  expect: confirmation
+
+# ---- rejections -----------------------------------------------------------------------------------------------------
+- id: reject-other-candidates
+  from: "Stripe Recruiting <no-reply@us.greenhouse-mail.io>"
+  subject: "Update on your application to Stripe"
+  body: "Hi Bhavya,\n\nThank you for your interest in Stripe and for the time you put into your application. After careful consideration, we have decided to move forward with other candidates whose experience more closely matches the needs of this role.\n\nWe wish you the best."
+  expect: rejection
+- id: reject-unfortunately
+  from: "Intel Recruiting <donotreply@intel.wd1.myworkdayjobs.com>"
+  subject: "Your application to Intel"
+  body: "Dear Bhavya, Unfortunately, we will not be moving forward with your application at this time. We appreciate your interest in Intel."
+  expect: rejection
+- id: reject-regret
+  from: "Mercor <no-reply@ashbyhq.com>"
+  subject: "Regarding your application"
+  body: "We regret to inform you that the position of Software Engineer, Agents has been filled. Thank you for applying to Mercor."
+  expect: rejection
+- id: reject-wont-proceed
+  from: "Palantir Technologies <no-reply@hire.lever.co>"
+  subject: "An update on your Palantir application"
+  body: "Thank you for your interest in Palantir. We won't be proceeding with your candidacy for the Forward Deployed Software Engineer role. We encourage you to apply again in the future."
+  expect: rejection
+- id: reject-not-able
+  from: "Carvana Talent <noreply@carvana.com>"
+  subject: "Carvana application update"
+  body: "Thank you for applying to Data Product Engineer at Carvana. After reviewing your qualifications we are not able to move forward with your application."
+  expect: rejection
+- id: reject-not-selected
+  from: "KPMG Careers <careers@kpmguscareers.com>"
+  subject: "Application status update"
+  body: "Your application for Associate has not been selected for further consideration at this time. Thank you for your interest in KPMG."
+  expect: rejection
+- id: reject-keep-on-file
+  from: "General Mills <noreply@generalmills.com>"
+  subject: "Your General Mills application"
+  body: "We appreciate your interest in the Data Scientist role. We will not be moving forward with your application, but we will keep your resume on file for future interview opportunities and encourage you to apply again."
+  expect: rejection
+
+# ---- interviews and recruiter screens -------------------------------------------------------------------------------
+- id: interview-invite
+  from: "Palantir Recruiting <recruiting@palantir.com>"
+  subject: "Interview invitation - Forward Deployed Software Engineer"
+  body: "Hi Bhavya, we'd like to invite you to a technical interview with our team. Please pick a slot here: https://calendly.com/palantir-recruiting/fdse-tech"
+  expect: interview
+- id: interview-select-time
+  from: "Stripe <no-reply@us.greenhouse-mail.io>"
+  subject: "Next steps: schedule your interview"
+  body: "Thanks for your patience. Please select a time for your interview using the link below. The interview will take 60 minutes."
+  expect: interview
+- id: interview-confirmed
+  from: "Carvana Talent <noreply@carvana.com>"
+  subject: "Your interview with Carvana is confirmed"
+  body: "This is your interview confirmation. Your video interview is scheduled for Tuesday at 10:00 AM MST. We look forward to speaking with you."
+  expect: interview
+- id: interview-availability
+  from: "Intel Recruiting <donotreply@intel.wd1.myworkdayjobs.com>"
+  subject: "Onsite interview availability"
+  body: "Congratulations on advancing. Please share your interview availability for next week so we can schedule an onsite interview."
+  expect: interview
+- id: interview-we-would-like
+  from: "Mercor <recruiting@mercor.com>"
+  subject: "Mercor - Software Engineer"
+  body: "Hi Bhavya, we would like to interview you for the Software Engineer, Agents role. Are you free this week?"
+  expect: interview
+- id: screen-quick-call
+  from: "Jamie Lee <jamie.lee@palantir.com>"
+  subject: "Quick chat about the Palantir role?"
+  body: "Hi Bhavya, I'm a recruiter at Palantir. I'd love to set up a quick call to learn more about your background and tell you about the team."
+  expect: recruiter_screen
+- id: screen-phone
+  from: "Intel Recruiting <donotreply@intel.wd1.myworkdayjobs.com>"
+  subject: "Phone screen - Software Engineer"
+  body: "We reviewed your application and would like to schedule a phone screen with a member of our talent team. Please reply with your availability."
+  expect: recruiter_screen
+- id: screen-intro
+  from: "Sam Ortiz <sam@mercor.com>"
+  subject: "Intro call"
+  body: "Hello Bhavya - could we schedule an introductory call this week? I'll walk you through the role."
+  expect: recruiter_screen
+
+# ---- assessments ----------------------------------------------------------------------------------------------------
+- id: assess-hackerrank
+  from: "Stripe via HackerRank <support@hackerrank.com>"
+  subject: "Online assessment for Software Engineer at Stripe"
+  body: "You have been invited to take an online assessment. Start here: https://www.hackerrank.com/test/abc123. The test must be completed within 7 days."
+  expect: assessment
+- id: assess-codesignal
+  from: "Palantir <no-reply@codesignal.com>"
+  subject: "Complete your coding challenge"
+  body: "Palantir has invited you to complete a coding assessment on CodeSignal: https://app.codesignal.com/invite/xyz"
+  expect: assessment
+- id: assess-codility
+  from: "Intel Talent <no-reply@codility.com>"
+  subject: "Your Codility test for Intel"
+  body: "Please take the technical test within 5 days: https://app.codility.com/c/run/abc"
+  expect: assessment
+- id: assess-takehome
+  from: "Mercor <recruiting@mercor.com>"
+  subject: "Next step: take-home exercise"
+  body: "As the next step, please complete the attached take-home exercise and send it back within 72 hours."
+  expect: assessment
+- id: assess-hirevue
+  from: "Carvana Talent <noreply@hirevue.com>"
+  subject: "Carvana: your HireVue is ready"
+  body: "Carvana has invited you to a HireVue assessment for Data Product Engineer. Please complete the one-way video questions in the next 5 days."
+  expect: assessment
+
+# ---- offers and withdrawals -----------------------------------------------------------------------------------------
+- id: offer-pleased
+  from: "Mercor <recruiting@mercor.com>"
+  subject: "Offer of employment - Software Engineer"
+  body: "Dear Bhavya, we are pleased to offer you the position of Software Engineer at Mercor. Your formal offer is attached."
+  expect: offer
+- id: offer-letter
+  from: "Intel Recruiting <donotreply@intel.wd1.myworkdayjobs.com>"
+  subject: "Your offer letter"
+  body: "Attached is your offer letter. Please review the offer details and sign by Friday."
+  expect: offer
+- id: offer-extend
+  from: "Palantir Recruiting <recruiting@palantir.com>"
+  subject: "Great news from Palantir"
+  body: "We are excited to extend an offer for the Forward Deployed Software Engineer role."
+  expect: offer
+- id: withdrawn
+  from: "Stripe <no-reply@us.greenhouse-mail.io>"
+  subject: "Your application has been withdrawn"
+  body: "As requested, your application for Backend Engineer at Stripe has been withdrawn. You can apply again at any time."
+  expect: withdrawn
+
+# ---- not outcomes ---------------------------------------------------------------------------------------------------
+- id: none-job-alert
+  from: "Palantir Careers <alerts@palantir.com>"
+  subject: "New jobs for you at Palantir"
+  body: "Five new roles match your preferences. View all open jobs: https://www.palantir.com/careers"
+  expect: none
+- id: none-newsletter
+  from: "Stripe Careers <careers@stripe.com>"
+  subject: "Stripe Careers newsletter - November"
+  body: "This month: engineering stories, upcoming events and our latest open roles. Unsubscribe at any time."
+  expect: none
+- id: none-otp
+  from: "Greenhouse <no-reply@us.greenhouse-mail.io>"
+  subject: "Security code for your Stripe application"
+  body: "Copy and paste this code into the application form: 483920. It expires in 10 minutes."
+  expect: none
+- id: none-reset
+  from: "Intel <donotreply@intel.wd1.myworkdayjobs.com>"
+  subject: "Reset your password"
+  body: "Click the link to reset your password: https://intel.wd1.myworkdayjobs.com/reset?token=abc123"
+  expect: none
+- id: none-finish
+  from: "Carvana Talent <noreply@carvana.com>"
+  subject: "Finish your application"
+  body: "You started an application for Data Product Engineer. Come back and finish it before the role closes."
+  expect: none
+- id: none-career-fair
+  from: "Mercor <events@mercor.com>"
+  subject: "Join our virtual career fair"
+  body: "Meet our engineering team at our upcoming webinar on December 3rd. Register now."
+  expect: none
+- id: none-similar
+  from: "Palantir Careers <alerts@palantir.com>"
+  subject: "Similar jobs you might like"
+  body: "Recommended roles based on your recent application: Software Engineer, Infrastructure; Backend Engineer."
+  expect: none
+- id: none-survey
+  from: "Carvana Talent <survey@carvana.com>"
+  subject: "How was your application experience?"
+  body: "Tell us about your experience applying to Carvana. It takes two minutes."
+  expect: none
+- id: none-welcome
+  from: "Stripe <no-reply@us.greenhouse-mail.io>"
+  subject: "Welcome to the Stripe candidate portal"
+  body: "Your candidate account has been created. Sign in to manage your profile."
+  expect: none
+- id: none-interview-tips
+  from: "Palantir Careers <careers@palantir.com>"
+  subject: "Top 5 tips to ace your interview"
+  body: "Preparing for an interview? Practise out loud, research the team and bring questions. Read our guide on the careers blog."
+  expect: none
+- id: none-incomplete
+  from: "Intel <donotreply@intel.wd1.myworkdayjobs.com>"
+  subject: "Your application is incomplete"
+  body: "Some required fields are missing from your application. Sign in to complete it."
+  expect: none
+- id: none-product
+  from: "Mercor <news@mercor.com>"
+  subject: "Introducing Mercor Pro"
+  body: "We just launched a new product for teams. Learn more on our website."
+  expect: none
+- id: none-alert-assessment
+  from: "Carvana Talent <alerts@carvana.com>"
+  subject: "New jobs matching: Data Assessment Analyst"
+  body: "A new Data Assessment Analyst role was posted. Apply now."
+  expect: none
+- id: none-digest
+  from: "Stripe Careers <careers@stripe.com>"
+  subject: "Your weekly digest"
+  body: "Jobs you may like and engineering news from Stripe."
+  expect: none
+
+# ---- the rules can't decide: the model reads these ------------------------------------------------------------------
+- id: model-soft-rejection
+  from: "Palantir Recruiting <recruiting@palantir.com>"
+  subject: "Your Palantir application"
+  body: "We've reviewed your background and, while it is impressive, our team has chosen a different direction for this role. We hope you'll stay in touch."
+  expect: rejection
+  model: true
+- id: model-soft-interview
+  from: "Jamie Lee <jamie.lee@palantir.com>"
+  subject: "Re: Forward Deployed Software Engineer"
+  body: "Would Thursday at 2pm PT work for a conversation with the hiring manager? Happy to find another time."
+  expect: interview
+  model: true
+- id: model-congrats-offer
+  from: "Mercor <recruiting@mercor.com>"
+  subject: "Congratulations!"
+  body: "We'd love to have you join the team. Compensation details and a start date proposal are attached - let us know what you think."
+  expect: offer
+  model: true
+- id: model-hold
+  from: "Stripe Recruiting <no-reply@us.greenhouse-mail.io>"
+  subject: "Your application status"
+  body: "A quick note to say we are still reviewing applications for this team. There is nothing you need to do right now."
+  expect: none
+  model: true
+
+# ---- written by another model (devstral2-123b) as a held-out set; these are the ones the first classifier missed ----
+- id: held-confirmation-1
+  from: Workday <noreply@workday.com>
+  subject: 'Application Received: Northwind Logistics'
+  body: 'Dear Applicant,
+
+
+    Thank you for applying to Northwind Logistics. Your application has been successfully received and is currently under review. We appreciate the time and effort you’ve put into your submission.
+
+
+    If your qualifications match our requirements, we’ll reach out to schedule an interview. Otherwise, we’ll keep your details on file for future opportunities.
+
+
+    Best regards,
+
+    Northwind Logistics'
+  expect: confirmation
+- id: held-confirmation-2
+  from: iCIMS <careers@northwindlogistics.com>
+  subject: Your Application Has Been Received
+  body: 'Hi there,
+
+
+    We’ve received your application for the position at Northwind Logistics. Our team is excited to review your qualifications and will get back to you as soon as possible.
+
+
+    If you have any questions in the meantime, feel free to reach out.
+
+
+    Thanks,
+
+    Northwind Logistics'
+  expect: confirmation
+- id: held-confirmation-3
+  from: Helix Biotech Talent Acquisition <talent@helixbiotech.com>
+  subject: Your Application Has Been Received
+  body: 'Dear Candidate,
+
+
+    We have received your application for the role at Helix Biotech. Our recruitment team will carefully review your submission and will reach out if we’d like to schedule an interview.
+
+
+    Thank you for considering Helix Biotech as your next career destination. We look forward to the possibility of working together.
+
+
+    Warm regards,
+
+    Helix Biotech Talent Acquisition'
+  expect: confirmation
+- id: held-rejection-4
+  from: Northwind Logistics <jobs@northwindlogistics.com>
+  subject: Thank You for Applying
+  body: Thank you for applying to Northwind Logistics. While we won’t be proceeding with your application for this role, we were impressed by your qualifications and will retain your resume for future opportunities.
+    We appreciate your interest in our company.
+  expect: rejection
+- id: held-offer-5
+  from: Northwind Logistics <noreply@northwindlogistics.com>
+  subject: Your Journey with Northwind Logistics Starts Here!
+  body: Hello [Applicant's Name], we are pleased to inform you that we would like to offer you the position at Northwind Logistics. Your application and interview performance were outstanding, and we are
+    confident you will thrive here. Please reply with your availability to discuss the offer further. Welcome to the team!
+  expect: offer
+
+# ---- second held-out batch (devstral2-123b, other companies): the two the classifier missed ----
+- id: held2-rejection-1
+  from: Larkspur Health Recruitment <recruitment@larkspurhealth.com>
+  subject: Regarding Your Application
+  body: Thank you for applying to Larkspur Health. After reviewing your application, we have decided to proceed with other candidates. We appreciate your interest in our company and will retain your resume
+    for future consideration.
+  expect: rejection
+- id: held2-interview-2
+  from: Larkspur Health <noreply@larkspurhealth.com>
+  subject: 'Next Steps: Interview for [Job Title]'
+  body: 'Hello [Applicant''s Name], we’re excited to move forward with your application for the [Job Title] position. Please join us for a video interview by selecting a time here: [Scheduling Link]. We
+    look forward to learning more about you. Thank you for your interest in Larkspur Health!'
+  expect: interview

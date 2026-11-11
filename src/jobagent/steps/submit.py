@@ -12,6 +12,7 @@ step is recorded in the `applications` table; `jobagent confirm <job_dir>` check
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -44,6 +45,12 @@ def record(conn, job_dir: Path, jd: dict, **fields) -> None:
         if fields:
             cols = ", ".join(f"{k} = ?" for k in fields)
             conn.execute(f"UPDATE applications SET {cols} WHERE job_dir = ?", (*fields.values(), key))
+    if fields.get("state") == "submitted":  # step 15: freeze what was sent (resume hash, scores, role family, skills)
+        try:
+            from jobagent.tools import outcome_stats
+            outcome_stats.snapshot(conn, job_dir)
+        except Exception:
+            pass
 
 
 def ats_line(conn, job_dir: Path) -> str:
@@ -120,24 +127,52 @@ def submitted_page(page: Page, before: str, shot: Path, timeout_s: float = 60) -
     return False, "", errors
 
 
-def wait_for_confirmation(inbox, conn, jd: dict, since: datetime, timeout_s: float = 900):
-    """The confirmation mail: from the company's or its ATS's domain, sent after the submission, about this
-    application (names the company or the role). None when it hasn't come within the timeout."""
+@dataclass
+class ApplicationMatch:
+    """'This mail is about this application': sent from the company's or its ATS's domain and naming the company or
+    the role. No date or stage test. One definition shared by the confirmation wait and the outcome sync (step 15)."""
+    allowed: set[str]      # sender domains: the portal / ATS family of the apply URL, the company's own .com
+    company: str           # lower-cased
+    words: list[str]       # the company and the first words of the title
+    own: frozenset = frozenset()   # the company's own sender domains (not the shared ATS ones)
+
+    def __call__(self, mail) -> bool:
+        import email.utils
+
+        from jobagent.tools.inbox import sender_domain
+        # the sender's display name counts too: ATS mail shares its sender address and names the company there
+        about = f"{email.utils.parseaddr(mail.sender)[0]} {mail.subject} {mail.text[:3000]}".lower()
+        first = self.company.split()[0] if self.company else ""
+        from_own = bool(self.own and sender_domain(mail) in self.own) or bool(first and first in mail.sender.lower())
+        if from_own:
+            return any(w in about for w in self.words)
+        if sender_domain(mail) in self.allowed:
+            # a shared ATS sender (Greenhouse, Lever, Workday...) writes for many companies: the company must be named;
+            # a title word like "engineer" alone would link another company's mail to this application
+            return bool(self.company and (self.company in about or (len(first) >= 3 and first in about)))
+        return False
+
+
+def application_match(conn, jd: dict) -> ApplicationMatch:
     url = jd.get("apply_url") or jd.get("source_url") or ""
     allowed = db.record_agent_domain(conn, url, "portal")
     company = (jd.get("company") or "").lower()
-    if company:
-        allowed |= {company.replace(" ", "") + ".com"}
+    own = {company.replace(" ", "") + ".com"} if company else set()
+    allowed |= own
     words = [w for w in [company, *(jd.get("title") or "").lower().split()[:3]] if len(w) > 3]
+    return ApplicationMatch(allowed, company, words, frozenset(own))
+
+
+def wait_for_confirmation(inbox, conn, jd: dict, since: datetime, timeout_s: float = 900):
+    """The confirmation mail: from the company's or its ATS's domain, sent after the submission, about this
+    application (names the company or the role). None when it hasn't come within the timeout."""
+    about_it = application_match(conn, jd)
     criteria = f'SINCE "{(since - timedelta(days=1)).strftime("%d-%b-%Y")}"'
 
     def match(m) -> bool:
         if m.date is None or m.date < since - timedelta(minutes=2):
             return False
-        from jobagent.tools.inbox import sender_domain
-        about = f"{m.subject} {m.text[:3000]}".lower()
-        from_them = sender_domain(m) in allowed or (company and company.split()[0] in m.sender.lower())
-        return bool(from_them and CONFIRMATION_MAIL.search(about) and any(w in about for w in words))
+        return bool(about_it(m) and CONFIRMATION_MAIL.search(f"{m.subject} {m.text[:3000]}".lower()))
 
     try:
         return inbox.wait_for(match, criteria, timeout_s=timeout_s, poll_s=20)

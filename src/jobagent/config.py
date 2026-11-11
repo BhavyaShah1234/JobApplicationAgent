@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # devstral2-123b (the user's "fast model for now", 2026-11-08): glm-5-3 was tried that day as a larger model and
     # wrote more specific bullets, but scored 73.3 vs 76.7 on General Mills and took ~140 min vs 44.
     model_writer: str = "devstral2-123b"
+    # Step 15 learning is advisory: each lever stays off until the candidate switches it on (LEARNING_USE_SITE_MIX=true ...)
+    learning_use_site_mix: bool = False          # drop checker sites whose scores have been shown to carry no signal
+    learning_use_tailoring_hints: bool = False   # tell the tailor which skills went with replies in this role family
+    learning_use_lessons: bool = False           # put the active lessons for this role family in the tailor's prompt
     fallback_planner: str = "qwen3:4b"
     fallback_vision: str = "qwen2.5vl:3b"
     fallback_fast: str = "qwen3:4b"
