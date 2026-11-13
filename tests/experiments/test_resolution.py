@@ -37,3 +37,20 @@ def test_numeric_range_equivalence_and_explicit_absence_fallback():
     data={'preferences':[{'question':'Willing to travel?','answer':'','instructions':'Use JD percentage; otherwise choose 100%.'}]}
     assert resolve(f,compile_facts(data,'Some travel, up to 30%, will be required.')).value=='Travel - 30% or less'
     assert resolve(f,compile_facts(data,'A posting with no such requirement.')).value=='Travel - 50% or more'
+
+
+def test_real_address_keys_and_unambiguous_polarity_options():
+    data={'contact':[{'question':'Current address','answer':{'line1':'123 Example Street','postal_code':'99999'}}]}
+    facts=compile_facts(data,'')
+    assert resolve(Field(0,'text','Address Line 1'),facts).value=='123 Example Street'
+    assert resolve(Field(0,'text','Postal Code'),facts).value=='99999'
+    d=resolve(Field(0,'select','Authorized?',options=['Yes, I am authorized','No, I am not authorized']),[Fact('auth',['Authorized?'],'Yes','applicant')])
+    assert d.value=='Yes, I am authorized'
+
+
+def test_symbolic_and_hyphenated_ranges_do_not_cross_bounds():
+    from jobagent.experiments.resolution import percent_range
+    assert percent_range('Travel <30%')==(0,30)
+    assert percent_range('Travel 0-30%')==(0,30)
+    f=Field(0,'select','Travel',options=['30-50%','50% or more'])
+    assert resolve(f,[Fact('travel',['Travel'],'Travel <30%','jd.txt')]).value is None

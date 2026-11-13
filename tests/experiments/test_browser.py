@@ -95,3 +95,31 @@ def test_future_schema_delivered_after_a_known_answer(page):
     page.set_content('<label for=c>Country</label><select id=c onchange="fetch(\'https://fixture.example/questions\').then(r=>r.json()).then(d=>document.getElementById(\'new\').innerHTML=\'<label for=s>State</label><input id=s required>\')"><option>Choose</option><option>United States</option></select><div id=new></div><button type=button>Apply</button>')
     r=Candidate([Fact('country',['Country'],'United States','fixture'),Fact('state',['State'],'Texas','fixture')],lambda q:pytest.fail(str(q))).fill(page)
     assert r['ready'] and page.locator('#s').input_value()=='Texas'
+
+
+def test_human_school_answer_is_not_reused_for_a_different_wizard_entity(page):
+    page.set_content('<span id=marker aria-current=step>School 1</span><label for=s>Institution</label><input id=s required><button type=button onclick="document.getElementById(\'marker\').innerText=\'School 2\';document.getElementById(\'s\').value=\'\';this.remove()">Next</button><button type=button>Apply</button>')
+    calls=[]
+    def ask(q):
+        calls.append(q)
+        return {str(q[0]['id']):'ASU' if len(calls)==1 else 'VIT'}
+    r=Candidate([],ask).fill(page)
+    assert r['ready'] and len(calls)==2 and page.locator('#s').input_value()=='VIT'
+
+
+def test_unrelated_yes_fact_cannot_establish_a_personal_qualification(page):
+    from jobagent.experiments.engine import Mappings,Supported
+    class Fake:
+        model_name='fake'
+        def with_structured_output(self,schema,**kwargs):
+            from types import SimpleNamespace
+            return SimpleNamespace(invoke=lambda _:Mappings(mappings=[{'field_id':0,'fact_id':'relocate'}]) if schema is Mappings else Supported(supported_ids=[]))
+    page.set_content('<label for=c>Do you hold a clearance?</label><select id=c required><option>Choose</option><option>Yes</option><option>No</option></select><button type=button>Apply</button>')
+    r=Candidate([Fact('relocate',['Willing to relocate?'],'Yes','applicant')],lambda q:{},Fake()).fill(page)
+    assert not r['ready'] and page.locator('#c').input_value()=='Choose'
+
+
+def test_existing_referral_policy_is_retained_without_model_or_human_help(page):
+    page.set_content('<label for=s>How did you hear about us?</label><select id=s><option>Choose</option><option>Company Website</option><option>Employee Referral</option></select><button type=button>Apply</button>')
+    r=Candidate([],lambda q:pytest.fail(str(q)),referral_context={'company':'Fixture','contact':{}}).fill(page)
+    assert r['ready'] and page.locator('#s').input_value()=='Employee Referral'

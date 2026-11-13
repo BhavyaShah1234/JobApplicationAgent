@@ -15,6 +15,8 @@ from .discovery import Discovery
 
 
 def read_view(page):
+    policy=getattr(page.context,'jobagent_policy',None)
+    if policy:policy(page)
     view=forms.read_page(page)
     for f in view.fields:
         loc=forms.locate(view,f)
@@ -52,15 +54,20 @@ class Supported(BaseModel):
 
 
 class Candidate:
-    def __init__(self, facts, ask, model=None, narrative_sources=None):
+    def __init__(self, facts, ask, model=None, narrative_sources=None, referral_context=None):
+        self.referral_context=referral_context
         self.narrative_sources=narrative_sources or {}
         self.facts=facts;self.ask=ask;self.model=model;self.cache={};self.events=[];self.model_calls=0
-        self.human_wait_s=0.;self.questions=0;self.batches=0;self.failures={}
+        self.human_wait_s=0.;self.questions=0;self.batches=0;self.failures={};self.step=0;self.human_answers={}
 
     def plan(self, fields):
         answers={};missing=[]
         for f in fields:
-            d=self.cache.get(key(f)) or resolve(f,self.facts)
+            d=self.human_answers.get((self.step,key(f))) or self.cache.get(key(f)) or resolve(f,self.facts)
+            if self.referral_context is not None and d.source!='human':
+                from jobagent.tools import referrals
+                policy=referrals.answer_for(f,self.referral_context.get('contact',{}),self.referral_context.get('company',''))
+                if policy is not None:d=Decision(policy.get('value') or None,'saved referral policy',reason=policy.get('flag',''))
             answers[f.id]=d
             if d.value is None:missing.append(f)
         if missing and self.model:
@@ -72,10 +79,20 @@ class Candidate:
                 HumanMessage(json.dumps({'fields':[asdict(f) for f in missing],
                                          'facts':[asdict(x) for x in self.facts]}))])
             facts={x.id:x for x in self.facts}
+            proposals=[]
             for m in mapped.mappings:
                 f=next((f for f in missing if f.id==m.field_id),None);fact=facts.get(m.fact_id)
                 if f and fact and (not fact.section or norm(fact.section)==norm(f.section)):
-                    answers[f.id]=from_fact(f,fact)
+                    proposals.append((f,fact))
+            if proposals:
+                self.model_calls+=1
+                checked=llm.structured_invoke(self.model,Supported,[SystemMessage(
+                    'Independently validate question-to-fact mappings. Accept a field ID ONLY if that source fact answers '
+                    'that question for the correct entity. A Yes/No for a different question is NOT evidence. '
+                    'Reject unknown qualifications, conflicts, and ambiguous mappings.'),
+                    HumanMessage(json.dumps([{'field':asdict(f),'fact':asdict(fact)} for f,fact in proposals]))])
+                for f,fact in proposals:
+                    if f.id in checked.supported_ids:answers[f.id]=from_fact(f,fact)
         essays=[f for f in missing if answers[f.id].value is None and f.kind=='textarea'
                 and re.search(r'(?i)why|describe|tell us',f.label)
                 and not re.search(r'(?i)convict|criminal|citizen|felony|misdemeanor|clearance|sponsor|dismiss|disab|medical|salary',f.label)]
@@ -99,6 +116,7 @@ class Candidate:
                         answers[d.field_id]=Decision(d.value,'written:'+d.source+' quote:'+d.quote)
         unresolved=[f for f in missing if answers[f.id].value is None]
         if unresolved:
+            self.events.append({'event':'human_questions','fields':[{'label':f.label,'section':f.section} for f in unresolved],'classification':'unclassified'})
             self.batches+=1;self.questions+=len(unresolved);started=time.monotonic()
             supplied=self.ask([{'id':f.id,'label':f.label,'section':f.section,'required':f.required,
                                 'options':f.options,'format':f.format,'help':f.help} for f in unresolved])
@@ -107,7 +125,7 @@ class Candidate:
                 value=supplied.get(str(f.id))
                 if value is not None:
                     answers[f.id]=Decision(str(value),'human')
-                    self.facts.append(Fact('human:'+str(key(f)),[f.label],str(value),'human',f.section))
+                    self.human_answers[(self.step,key(f))]=answers[f.id]
         return answers
 
     def fill(self,page,files=None,max_rounds=12):
@@ -158,6 +176,7 @@ class Candidate:
                             continue
                         try:
                             value=d.value
+                            held_sha=None
                             if f.kind=='file':
                                 if value not in files:raise ValueError('no role-specific file provided')
                             chosen=forms.fill_field(page,fresh,f,value,files,strict=f.kind in ('select','combobox'))
@@ -170,11 +189,12 @@ class Candidate:
                                     'e=>e.getAttribute("aria-invalid")==="true" || (e.validity && !e.validity.valid)')
                             if valid and f.kind=='file':
                                 encoded=forms.locate(after,actual).evaluate('''async e=>{const f=e.files?.[0];if(!f||f.size>5000000)return null;const b=new Uint8Array(await f.arrayBuffer());let s='';for(let i=0;i<b.length;i+=8192)s+=String.fromCharCode(...b.subarray(i,i+8192));return btoa(s)}''')
-                                valid=bool(encoded) and hashlib.sha256(base64.b64decode(encoded)).digest()==hashlib.sha256(Path(files[value]).read_bytes()).digest()
+                                held_sha=hashlib.sha256(base64.b64decode(encoded)).hexdigest() if encoded else None
+                                valid=bool(held_sha) and held_sha==hashlib.sha256(Path(files[value]).read_bytes()).hexdigest()
                             if not valid:raise ValueError('control not accepted or exact readback unavailable')
                             self.cache[key(f)]=d;changed=True
                             records.append({'label':f.label,'section':f.section,'answer':value,'readback':actual.value,
-                                            'source':d.source,'fact_id':d.fact_id,'outcome':'verified'})
+                                            'source':d.source,'fact_id':d.fact_id,'outcome':'verified','held_file_sha256':held_sha})
                         except Exception as e:
                             records.append({'label':f.label,'section':f.section,'outcome':'failed','error':str(e)[:200]})
                             self.failures[key(f)]=self.failures.get(key(f),0)+1
@@ -195,7 +215,7 @@ class Candidate:
                 if forms.click_button(page,view,forms.NEXT):
                     progressed,_,_,why=wizard.wait_for_progress(page,before)
                     if progressed!='advanced':return self.result('blocked',records,started,['Next refused: '+str(why)])
-                    self.cache={};continue
+                    self.cache={};self.step+=1;continue
                 if not any(forms.SUBMIT.search(b) for b in view.buttons):
                     return self.result('blocked',records,started,['no review/final application control discovered'])
                 return self.result('review',records,started,[])

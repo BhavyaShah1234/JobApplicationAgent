@@ -102,3 +102,42 @@ uses absolute differences. Review the report before any production merge.
 - CAPTCHA/authentication are outside the filling engine. Human challenges stop the candidate arm.
 - CLI runs emit metrics and evidence, but real-world assistance classification and answer grading require an
   independent reviewer. The harness cannot declare its own production adoption.
+
+## Implementation checkpoint
+
+Prototype commit: `c60db6d`; baseline snapshot: `011116f`. Experimental modules are standalone and are not
+imported by `jobagent apply`, `submit`, `run`, or queue processing. No runtime production files were deployed.
+Focused tests: 16 passed (13 dependency deprecation warnings), including exact identity refusal, original-JD travel,
+scoped entity facts, missing-day refusal, native upload-role byte checks, conditional/API question discovery,
+unknown-fact batching, authentication refusal, and no final Apply click. Local replay trials use synthetic identities
+and synthetic document payloads. Formal provider and live comparisons remain pending the shared Claude checkpoint.
+
+### Concurrent development status
+
+The original branch still has no committed Claude-fix checkpoint beyond `5789c36` at the start of the experiment.
+Consequently the paired replay is testing the captured implementation, not announcing formal adoption readiness.
+A repeat on a reconciled checkpoint and provider-backed plus live-draft validation are required before deciding
+whether the experimental approach actually meets the chosen time/assistance targets.
+
+### Follow-up hardening
+
+After the frozen replay, the draft CLI was hardened to snapshot all job inputs, use the actual existing context
+builder for the baseline, share explicit facts with both arms without duplicating them, preserve the saved referral
+policy, and accept an optional private `--contacts /path/to/asu_contacts.csv` snapshot for both arms. Browser scope
+checks reuse the existing Scope guard. Human answers are scoped to a wizard step/entity rather than globally
+reused for unrelated questions. Ambiguous model mappings receive an independent source check. Live result metrics
+count actual model starts and provider-reported tokens; missing token usage remains unknown rather than zero.
+These changes are verified separately and are not silently attributed to the earlier replay version.
+
+The recorded replay is in `results/c60db6d-replay/REPORT.md`. It is explicitly not a provider-backed speed result.
+
+### Verification of follow-up changes
+
+- Full focused experiment suite after scoping/CLI/policy hardening: **21 passed**, 13 dependency warnings, 69.44 s.
+- Subsequent percentage-symbol/hyphen boundary checks: **8 passed**, 0.25 s (includes existing resolver cases;
+  this is not 8 additional unique tests). The suite now contains 22 unique test functions.
+- CLI integration checks use a real isolated headless Chrome, explicit facts and a private input snapshot; assert
+  that original inputs are byte-identical after filling. No live posting or provider request is involved.
+- Scope is established from the initial navigation before the manual authentication/navigation pause and checked
+  again afterwards, so unrelated setup navigation is not silently trusted as a fresh redirect.
+- `git diff --check` passes. Production source and the original checkout were not edited by this experiment.

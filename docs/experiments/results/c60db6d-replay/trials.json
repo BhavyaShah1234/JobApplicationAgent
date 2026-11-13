@@ -1,0 +1,4394 @@
+[
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 1.506094333017245,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "text",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.5783078819513321,
+    "human_wait_s": 0.0,
+    "active_s": 0.5783089719479904,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "text",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Willingness to travel",
+        "kind": "select",
+        "required": true,
+        "options": [
+          "Choose",
+          "Travel - 30% or less",
+          "Travel - 50% or more"
+        ],
+        "before": "Choose",
+        "answer": "Travel - 30% or less",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "Travel - 30% or less",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "Travel - 30% or less",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 1.4356737449998036,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "travel",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#t": "Travel - 30% or less"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Willingness to travel",
+        "section": "",
+        "answer": "Travel - 30% or less",
+        "readback": "Travel - 30% or less",
+        "source": "fixture source",
+        "fact_id": "Willingness to travel",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 1.0793341239914298,
+    "human_wait_s": 0.0,
+    "active_s": 1.079336398979649,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Willingness to travel",
+            "type": "select-one",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Willingness to travel",
+            "type": "select-one",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "travel",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#t": "Travel - 30% or less"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "School",
+        "kind": "combobox",
+        "required": false,
+        "options": [
+          "Adams State University"
+        ],
+        "before": "",
+        "answer": "Arizona State University",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "Adams State University",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "Adams State University",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 4.886146928998642,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "identity",
+    "heldout": false,
+    "graded_correct": false,
+    "submitted": false,
+    "actual": {
+      "#s": "Adams State University"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "School",
+        "section": "",
+        "answer": "Arizona State University",
+        "readback": "Arizona State University",
+        "source": "fixture source",
+        "fact_id": "School",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 7.229434057022445,
+    "human_wait_s": 0.0,
+    "active_s": 7.229435642017052,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "School",
+            "type": "text",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "School",
+            "type": "text",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "identity",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#s": "Arizona State University"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Start",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "08/01/2024",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "08/01/2024",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "08/01/2024",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 2.1992201930843294,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "date",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#d": "08/01/2024"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Start",
+        "section": "",
+        "answer": "08/01/2024",
+        "readback": "08/01/2024",
+        "source": "fixture source",
+        "fact_id": "Start",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.7414937549037859,
+    "human_wait_s": 0.0,
+    "active_s": 0.7414951319806278,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Start",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "MM/DD/YYYY",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Start",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "MM/DD/YYYY",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "date",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#d": "08/01/2024"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 2.3227342009777203,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "hidden",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.4188285289565101,
+    "human_wait_s": 0.0,
+    "active_s": 0.41882884793449193,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Unrelated branch",
+            "type": "text",
+            "visible": false,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Unrelated branch",
+            "type": "text",
+            "visible": false,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "hidden",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 2.334415483986959,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "schema",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 1.5072323218919337,
+    "human_wait_s": 0.0,
+    "active_s": 1.5072338898899034,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Email",
+            "type": "email",
+            "source": "embedded JSON",
+            "required": true,
+            "visible": false,
+            "condition": null,
+            "potential": true
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Email",
+            "type": "email",
+            "source": "embedded JSON",
+            "required": true,
+            "visible": false,
+            "condition": null,
+            "potential": true
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "schema",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Resume / ResumeCover LetterApply / r",
+        "kind": "file",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "cover_letter",
+        "why": "upload by its caption",
+        "source": "applicant",
+        "flag": "",
+        "filled": "/tmp/form-experiment-c60db6d-replay/0-uploads-current/cover_letter.pdf",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "cover_letter.pdf",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 1,
+        "section": "",
+        "label": "Cover Letter / ResumeCover LetterApply / l",
+        "kind": "file",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "cover_letter",
+        "why": "upload by its caption",
+        "source": "applicant",
+        "flag": "",
+        "filled": "/tmp/form-experiment-c60db6d-replay/0-uploads-current/cover_letter.pdf",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "cover_letter.pdf",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 5.372134188073687,
+    "questions": 0,
+    "model_calls": 1,
+    "fixture": "uploads",
+    "heldout": false,
+    "graded_correct": false,
+    "submitted": false,
+    "actual": {
+      "file:#r": "cover_letter.pdf",
+      "file:#l": "cover_letter.pdf"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Resume",
+        "section": "",
+        "answer": "resume",
+        "readback": "resume.pdf",
+        "source": "document role",
+        "fact_id": "",
+        "outcome": "verified"
+      },
+      {
+        "label": "Cover Letter",
+        "section": "",
+        "answer": "cover_letter",
+        "readback": "cover_letter.pdf",
+        "source": "document role",
+        "fact_id": "",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 4.985240199952386,
+    "human_wait_s": 0.0,
+    "active_s": 4.985240662004799,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Resume",
+            "type": "file",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Cover Letter",
+            "type": "file",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Resume",
+            "type": "file",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Cover Letter",
+            "type": "file",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "uploads",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "file:#r": "resume.pdf",
+      "file:#l": "cover_letter.pdf"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": false,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Country",
+        "kind": "select",
+        "required": false,
+        "options": [
+          "Choose",
+          "United States"
+        ],
+        "before": "Choose",
+        "answer": "United States",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "United States",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "United States",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 1,
+        "section": "",
+        "label": "State",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "",
+        "why": "",
+        "source": "none",
+        "flag": "address data is unavailable",
+        "filled": "",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "",
+        "verified": false,
+        "outcome": "unanswered (required)"
+      }
+    ],
+    "blockers": [
+      "State (page 1): required, left empty"
+    ],
+    "active_s": 3.3854612429859117,
+    "questions": 1,
+    "model_calls": 3,
+    "fixture": "conditional",
+    "heldout": false,
+    "graded_correct": false,
+    "submitted": false,
+    "actual": {
+      "#c": "United States",
+      "#st": ""
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Country",
+        "section": "",
+        "answer": "United States",
+        "readback": "United States",
+        "source": "fixture source",
+        "fact_id": "Country",
+        "outcome": "verified"
+      },
+      {
+        "label": "State",
+        "section": "",
+        "answer": "Texas",
+        "readback": "Texas",
+        "source": "fixture source",
+        "fact_id": "State",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 1.1774364509619772,
+    "human_wait_s": 0.0,
+    "active_s": 1.1774374858941883,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Country",
+            "type": "select-one",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Country",
+            "type": "select-one",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "State",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 2,
+        "fields": [
+          {
+            "label": "Country",
+            "type": "select-one",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "State",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "conditional",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#c": "United States",
+      "#st": "Texas"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "Education 1",
+        "label": "School",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "ASU",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "ASU",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "ASU",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 1,
+        "section": "Education 2",
+        "label": "School",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "VIT",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "VIT",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "VIT",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 2.353814803995192,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "repeating",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#s1": "ASU",
+      "#s2": "VIT"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "School",
+        "section": "Education 1",
+        "answer": "ASU",
+        "readback": "ASU",
+        "source": "fixture source",
+        "fact_id": "SchoolEducation 1",
+        "outcome": "verified"
+      },
+      {
+        "label": "School",
+        "section": "Education 2",
+        "answer": "VIT",
+        "readback": "VIT",
+        "source": "fixture source",
+        "fact_id": "SchoolEducation 2",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.8678648920031264,
+    "human_wait_s": 0.0,
+    "active_s": 0.8678657349664718,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "School",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "School",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "repeating",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#s1": "ASU",
+      "#s2": "VIT"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 2.1013181121088564,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "closed-shadow",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "closed:#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.46748516289517283,
+    "human_wait_s": 0.0,
+    "active_s": 0.4674856779165566,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "closed-shadow",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "closed:#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 1,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 1.78708620602265,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "iframe",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "frame:#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 1.2875083179678768,
+    "human_wait_s": 0.0,
+    "active_s": 1.2875098829390481,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "iframe",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "frame:#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 2,
+        "section": "",
+        "label": "Name",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "Example Person",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "Example Person",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "Example Person",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 7.675808700034395,
+    "questions": 0,
+    "model_calls": 4,
+    "fixture": "wizard",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#n": "Example Person"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      },
+      {
+        "label": "Name",
+        "section": "",
+        "answer": "Example Person",
+        "readback": "Example Person",
+        "source": "fixture source",
+        "fact_id": "Name",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 5.999946899013594,
+    "human_wait_s": 0.0,
+    "active_s": 5.999947419972159,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 2,
+        "fields": [
+          {
+            "label": "Name",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 3,
+        "fields": [
+          {
+            "label": "Name",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "wizard",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#n": "Example Person"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.3196928199613467,
+    "human_wait_s": 0.0,
+    "active_s": 0.31969311996363103,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "text",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 1.593575248029083,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "text",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Willingness to travel",
+        "section": "",
+        "answer": "Travel - 30% or less",
+        "readback": "Travel - 30% or less",
+        "source": "fixture source",
+        "fact_id": "Willingness to travel",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.5020546399755403,
+    "human_wait_s": 0.0,
+    "active_s": 0.5020554589573294,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Willingness to travel",
+            "type": "select-one",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Willingness to travel",
+            "type": "select-one",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "travel",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#t": "Travel - 30% or less"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Willingness to travel",
+        "kind": "select",
+        "required": true,
+        "options": [
+          "Choose",
+          "Travel - 30% or less",
+          "Travel - 50% or more"
+        ],
+        "before": "Choose",
+        "answer": "Travel - 30% or less",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "Travel - 30% or less",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "Travel - 30% or less",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 1.5084983410779387,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "travel",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#t": "Travel - 30% or less"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "School",
+        "section": "",
+        "answer": "Arizona State University",
+        "readback": "Arizona State University",
+        "source": "fixture source",
+        "fact_id": "School",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 6.649450770928524,
+    "human_wait_s": 0.0,
+    "active_s": 6.649452000972815,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "School",
+            "type": "text",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "School",
+            "type": "text",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "identity",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#s": "Arizona State University"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "School",
+        "kind": "combobox",
+        "required": false,
+        "options": [
+          "Adams State University"
+        ],
+        "before": "",
+        "answer": "Arizona State University",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "Adams State University",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "Adams State University",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 4.536058685975149,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "identity",
+    "heldout": false,
+    "graded_correct": false,
+    "submitted": false,
+    "actual": {
+      "#s": "Adams State University"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Start",
+        "section": "",
+        "answer": "08/01/2024",
+        "readback": "08/01/2024",
+        "source": "fixture source",
+        "fact_id": "Start",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.6288178310496733,
+    "human_wait_s": 0.0,
+    "active_s": 0.628818724071607,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Start",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "MM/DD/YYYY",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Start",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "MM/DD/YYYY",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "date",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#d": "08/01/2024"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Start",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "08/01/2024",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "08/01/2024",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "08/01/2024",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 1.496011828072369,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "date",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#d": "08/01/2024"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.6199532289756462,
+    "human_wait_s": 0.0,
+    "active_s": 0.6199538649525493,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Unrelated branch",
+            "type": "text",
+            "visible": false,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Unrelated branch",
+            "type": "text",
+            "visible": false,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "hidden",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 1.6321027650265023,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "hidden",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.4908951789839193,
+    "human_wait_s": 0.0,
+    "active_s": 0.49089567305054516,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Email",
+            "type": "email",
+            "source": "embedded JSON",
+            "required": true,
+            "visible": false,
+            "condition": null,
+            "potential": true
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Email",
+            "type": "email",
+            "source": "embedded JSON",
+            "required": true,
+            "visible": false,
+            "condition": null,
+            "potential": true
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "schema",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 2.0973964859731495,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "schema",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Resume",
+        "section": "",
+        "answer": "resume",
+        "readback": "resume.pdf",
+        "source": "document role",
+        "fact_id": "",
+        "outcome": "verified"
+      },
+      {
+        "label": "Cover Letter",
+        "section": "",
+        "answer": "cover_letter",
+        "readback": "cover_letter.pdf",
+        "source": "document role",
+        "fact_id": "",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 4.64684895798564,
+    "human_wait_s": 0.0,
+    "active_s": 4.646849540062249,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Resume",
+            "type": "file",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Cover Letter",
+            "type": "file",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Resume",
+            "type": "file",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Cover Letter",
+            "type": "file",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "uploads",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "file:#r": "resume.pdf",
+      "file:#l": "cover_letter.pdf"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Resume / ResumeCover LetterApply / r",
+        "kind": "file",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "cover_letter",
+        "why": "upload by its caption",
+        "source": "applicant",
+        "flag": "",
+        "filled": "/tmp/form-experiment-c60db6d-replay/1-uploads-current/cover_letter.pdf",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "cover_letter.pdf",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 1,
+        "section": "",
+        "label": "Cover Letter / ResumeCover LetterApply / l",
+        "kind": "file",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "cover_letter",
+        "why": "upload by its caption",
+        "source": "applicant",
+        "flag": "",
+        "filled": "/tmp/form-experiment-c60db6d-replay/1-uploads-current/cover_letter.pdf",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "cover_letter.pdf",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 5.470732382964343,
+    "questions": 0,
+    "model_calls": 1,
+    "fixture": "uploads",
+    "heldout": false,
+    "graded_correct": false,
+    "submitted": false,
+    "actual": {
+      "file:#r": "cover_letter.pdf",
+      "file:#l": "cover_letter.pdf"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Country",
+        "section": "",
+        "answer": "United States",
+        "readback": "United States",
+        "source": "fixture source",
+        "fact_id": "Country",
+        "outcome": "verified"
+      },
+      {
+        "label": "State",
+        "section": "",
+        "answer": "Texas",
+        "readback": "Texas",
+        "source": "fixture source",
+        "fact_id": "State",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 1.4844696120126173,
+    "human_wait_s": 0.0,
+    "active_s": 1.4844702020054683,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Country",
+            "type": "select-one",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Country",
+            "type": "select-one",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "State",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 2,
+        "fields": [
+          {
+            "label": "Country",
+            "type": "select-one",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "State",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "conditional",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#c": "United States",
+      "#st": "Texas"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": false,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Country",
+        "kind": "select",
+        "required": false,
+        "options": [
+          "Choose",
+          "United States"
+        ],
+        "before": "Choose",
+        "answer": "United States",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "United States",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "United States",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 1,
+        "section": "",
+        "label": "State",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "",
+        "why": "",
+        "source": "none",
+        "flag": "address data is unavailable",
+        "filled": "",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "",
+        "verified": false,
+        "outcome": "unanswered (required)"
+      }
+    ],
+    "blockers": [
+      "State (page 1): required, left empty"
+    ],
+    "active_s": 3.63480908900965,
+    "questions": 1,
+    "model_calls": 3,
+    "fixture": "conditional",
+    "heldout": false,
+    "graded_correct": false,
+    "submitted": false,
+    "actual": {
+      "#c": "United States",
+      "#st": ""
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "School",
+        "section": "Education 1",
+        "answer": "ASU",
+        "readback": "ASU",
+        "source": "fixture source",
+        "fact_id": "SchoolEducation 1",
+        "outcome": "verified"
+      },
+      {
+        "label": "School",
+        "section": "Education 2",
+        "answer": "VIT",
+        "readback": "VIT",
+        "source": "fixture source",
+        "fact_id": "SchoolEducation 2",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 1.24614029598888,
+    "human_wait_s": 0.0,
+    "active_s": 1.2461405290523544,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "School",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "School",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "repeating",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#s1": "ASU",
+      "#s2": "VIT"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "Education 1",
+        "label": "School",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "ASU",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "ASU",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "ASU",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 1,
+        "section": "Education 2",
+        "label": "School",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "VIT",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "VIT",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "VIT",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 2.470736220944673,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "repeating",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#s1": "ASU",
+      "#s2": "VIT"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.6460181470029056,
+    "human_wait_s": 0.0,
+    "active_s": 0.6460184989264235,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "closed-shadow",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "closed:#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 2.28382819192484,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "closed-shadow",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "closed:#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.5817449199967086,
+    "human_wait_s": 0.0,
+    "active_s": 0.5817453749477863,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "iframe",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "frame:#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 1,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 2.191499527893029,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "iframe",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "frame:#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      },
+      {
+        "label": "Name",
+        "section": "",
+        "answer": "Example Person",
+        "readback": "Example Person",
+        "source": "fixture source",
+        "fact_id": "Name",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 6.217067962978035,
+    "human_wait_s": 0.0,
+    "active_s": 6.217068991973065,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 2,
+        "fields": [
+          {
+            "label": "Name",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 3,
+        "fields": [
+          {
+            "label": "Name",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "wizard",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#n": "Example Person"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 2,
+        "section": "",
+        "label": "Name",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "Example Person",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "Example Person",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "Example Person",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 7.492533948970959,
+    "questions": 0,
+    "model_calls": 4,
+    "fixture": "wizard",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#n": "Example Person"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 3.2672553439624608,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "text",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.46601777896285057,
+    "human_wait_s": 0.0,
+    "active_s": 0.4660180970095098,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "text",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Willingness to travel",
+        "kind": "select",
+        "required": true,
+        "options": [
+          "Choose",
+          "Travel - 30% or less",
+          "Travel - 50% or more"
+        ],
+        "before": "Choose",
+        "answer": "Travel - 30% or less",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "Travel - 30% or less",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "Travel - 30% or less",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 1.4687753090402111,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "travel",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#t": "Travel - 30% or less"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Willingness to travel",
+        "section": "",
+        "answer": "Travel - 30% or less",
+        "readback": "Travel - 30% or less",
+        "source": "fixture source",
+        "fact_id": "Willingness to travel",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 1.1594605399295688,
+    "human_wait_s": 0.0,
+    "active_s": 1.1594617730006576,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Willingness to travel",
+            "type": "select-one",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Willingness to travel",
+            "type": "select-one",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "travel",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#t": "Travel - 30% or less"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "School",
+        "kind": "combobox",
+        "required": false,
+        "options": [
+          "Adams State University"
+        ],
+        "before": "",
+        "answer": "Arizona State University",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "Adams State University",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "Adams State University",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 4.5439273850061,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "identity",
+    "heldout": false,
+    "graded_correct": false,
+    "submitted": false,
+    "actual": {
+      "#s": "Adams State University"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "School",
+        "section": "",
+        "answer": "Arizona State University",
+        "readback": "Arizona State University",
+        "source": "fixture source",
+        "fact_id": "School",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 6.9115650210296735,
+    "human_wait_s": 0.0,
+    "active_s": 6.911565377027728,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "School",
+            "type": "text",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "School",
+            "type": "text",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "identity",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#s": "Arizona State University"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Start",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "08/01/2024",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "08/01/2024",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "08/01/2024",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 2.196488357963972,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "date",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#d": "08/01/2024"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Start",
+        "section": "",
+        "answer": "08/01/2024",
+        "readback": "08/01/2024",
+        "source": "fixture source",
+        "fact_id": "Start",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.5439467740943655,
+    "human_wait_s": 0.0,
+    "active_s": 0.5439486860996112,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Start",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "MM/DD/YYYY",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Start",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "MM/DD/YYYY",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "date",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#d": "08/01/2024"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 1.5161066770087928,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "hidden",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 1.0620628240285441,
+    "human_wait_s": 0.0,
+    "active_s": 1.0620634250808507,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Unrelated branch",
+            "type": "text",
+            "visible": false,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Unrelated branch",
+            "type": "text",
+            "visible": false,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "hidden",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 1.9827067139558494,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "schema",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.6965116580249742,
+    "human_wait_s": 0.0,
+    "active_s": 0.6965122020337731,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Email",
+            "type": "email",
+            "source": "embedded JSON",
+            "required": true,
+            "visible": false,
+            "condition": null,
+            "potential": true
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Email",
+            "type": "email",
+            "source": "embedded JSON",
+            "required": true,
+            "visible": false,
+            "condition": null,
+            "potential": true
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "schema",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Resume / ResumeCover LetterApply / r",
+        "kind": "file",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "cover_letter",
+        "why": "upload by its caption",
+        "source": "applicant",
+        "flag": "",
+        "filled": "/tmp/form-experiment-c60db6d-replay/2-uploads-current/cover_letter.pdf",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "cover_letter.pdf",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 1,
+        "section": "",
+        "label": "Cover Letter / ResumeCover LetterApply / l",
+        "kind": "file",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "cover_letter",
+        "why": "upload by its caption",
+        "source": "applicant",
+        "flag": "",
+        "filled": "/tmp/form-experiment-c60db6d-replay/2-uploads-current/cover_letter.pdf",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "cover_letter.pdf",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 5.456893865019083,
+    "questions": 0,
+    "model_calls": 1,
+    "fixture": "uploads",
+    "heldout": false,
+    "graded_correct": false,
+    "submitted": false,
+    "actual": {
+      "file:#r": "cover_letter.pdf",
+      "file:#l": "cover_letter.pdf"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Resume",
+        "section": "",
+        "answer": "resume",
+        "readback": "resume.pdf",
+        "source": "document role",
+        "fact_id": "",
+        "outcome": "verified"
+      },
+      {
+        "label": "Cover Letter",
+        "section": "",
+        "answer": "cover_letter",
+        "readback": "cover_letter.pdf",
+        "source": "document role",
+        "fact_id": "",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 4.711221228935756,
+    "human_wait_s": 0.0,
+    "active_s": 4.711221554898657,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Resume",
+            "type": "file",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Cover Letter",
+            "type": "file",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Resume",
+            "type": "file",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Cover Letter",
+            "type": "file",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "uploads",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "file:#r": "resume.pdf",
+      "file:#l": "cover_letter.pdf"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": false,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Country",
+        "kind": "select",
+        "required": false,
+        "options": [
+          "Choose",
+          "United States"
+        ],
+        "before": "Choose",
+        "answer": "United States",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "United States",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "United States",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 1,
+        "section": "",
+        "label": "State",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "",
+        "why": "",
+        "source": "none",
+        "flag": "address data is unavailable",
+        "filled": "",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "",
+        "verified": false,
+        "outcome": "unanswered (required)"
+      }
+    ],
+    "blockers": [
+      "State (page 1): required, left empty"
+    ],
+    "active_s": 3.3354205270297825,
+    "questions": 1,
+    "model_calls": 3,
+    "fixture": "conditional",
+    "heldout": false,
+    "graded_correct": false,
+    "submitted": false,
+    "actual": {
+      "#c": "United States",
+      "#st": ""
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Country",
+        "section": "",
+        "answer": "United States",
+        "readback": "United States",
+        "source": "fixture source",
+        "fact_id": "Country",
+        "outcome": "verified"
+      },
+      {
+        "label": "State",
+        "section": "",
+        "answer": "Texas",
+        "readback": "Texas",
+        "source": "fixture source",
+        "fact_id": "State",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 1.5449847460258752,
+    "human_wait_s": 0.0,
+    "active_s": 1.5449870569864288,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Country",
+            "type": "select-one",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Country",
+            "type": "select-one",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "State",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 2,
+        "fields": [
+          {
+            "label": "Country",
+            "type": "select-one",
+            "visible": true,
+            "required": false,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "State",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "conditional",
+    "heldout": false,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#c": "United States",
+      "#st": "Texas"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "Education 1",
+        "label": "School",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "ASU",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "ASU",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "ASU",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 1,
+        "section": "Education 2",
+        "label": "School",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "VIT",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "VIT",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "VIT",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 2.24788657494355,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "repeating",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#s1": "ASU",
+      "#s2": "VIT"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "School",
+        "section": "Education 1",
+        "answer": "ASU",
+        "readback": "ASU",
+        "source": "fixture source",
+        "fact_id": "SchoolEducation 1",
+        "outcome": "verified"
+      },
+      {
+        "label": "School",
+        "section": "Education 2",
+        "answer": "VIT",
+        "readback": "VIT",
+        "source": "fixture source",
+        "fact_id": "SchoolEducation 2",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 1.2104239619802684,
+    "human_wait_s": 0.0,
+    "active_s": 1.2104245090158656,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "School",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "School",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "repeating",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#s1": "ASU",
+      "#s2": "VIT"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 2.31793761998415,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "closed-shadow",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "closed:#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 0.5286012040451169,
+    "human_wait_s": 0.0,
+    "active_s": 0.5286015720339492,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "closed-shadow",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "closed:#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 1,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 2.476039560046047,
+    "questions": 0,
+    "model_calls": 2,
+    "fixture": "iframe",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "frame:#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 1.319328960031271,
+    "human_wait_s": 0.0,
+    "active_s": 1.3193303440930322,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "iframe",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "frame:#e": "person@example.test"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Email",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 2,
+        "section": "",
+        "label": "Name",
+        "kind": "text",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "Example Person",
+        "why": "",
+        "source": "applicant",
+        "flag": "",
+        "filled": "Example Person",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "Example Person",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 7.921635137987323,
+    "questions": 0,
+    "model_calls": 4,
+    "fixture": "wizard",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#n": "Example Person"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Email",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified"
+      },
+      {
+        "label": "Name",
+        "section": "",
+        "answer": "Example Person",
+        "readback": "Example Person",
+        "source": "fixture source",
+        "fact_id": "Name",
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 6.260818981099874,
+    "human_wait_s": 0.0,
+    "active_s": 6.260820185067132,
+    "questions": 0,
+    "question_batches": 0,
+    "model_calls": 0,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Email",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 2,
+        "fields": [
+          {
+            "label": "Name",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "inventory",
+        "round": 3,
+        "fields": [
+          {
+            "label": "Name",
+            "type": "text",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "fixture": "wizard",
+    "heldout": true,
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#n": "Example Person"
+    }
+  }
+]

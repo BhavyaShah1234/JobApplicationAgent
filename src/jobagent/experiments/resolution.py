@@ -32,12 +32,14 @@ def key(f):
 
 
 def percent_range(text):
+    span=re.search(r'(\d+(?:\.\d+)?)\s*%?\s*[-–]\s*(\d+(?:\.\d+)?)\s*%',text)
+    if span:return (float(span[1]),float(span[2]))
     nums=[float(x) for x in re.findall(r'(\d+(?:\.\d+)?)\s*%',text)]
     if len(nums)==2:return tuple(nums)
     if len(nums)!=1:return None
     n=nums[0];word=norm(text)
-    if any(x in word for x in ('or less','up to','at most','less than')):return (0,n)
-    if any(x in word for x in ('or more','at least','more than')):return (n,100)
+    if '<' in text or any(x in word for x in ('or less','up to','at most','less than')):return (0,n)
+    if '>' in text or any(x in word for x in ('or more','at least','more than')):return (n,100)
     return (n,n)
 
 
@@ -48,6 +50,15 @@ def choice(f, values):
         hit = forms.strict_option(value, f.options)
         if hit is not None:
             return hit
+    for value in values:
+        if norm(value) in ('yes','no'):
+            hits=[o for o in f.options if re.match(r'^'+norm(value)+r'\b',norm(o))]
+            if len(hits)==1:return hits[0]
+        for canonical,alternates in forms._SYNONYMS.items():
+            group={norm(x) for x in (canonical,*alternates)}
+            if norm(value) in group:
+                hits=[o for o in f.options if norm(o) in group]
+                if len(hits)==1:return hits[0]
     target=percent_range(values[0])
     if target:
         hits=[o for o in f.options if percent_range(o)==target or
@@ -91,7 +102,8 @@ def compile_facts(data, raw_jd):
     facts = []
     component_aliases = {
         'Legal name': {'first': ['First Name', 'Given Name'], 'middle': ['Middle Name'], 'last': ['Last Name', 'Family Name']},
-        'Current address': {'street': ['Address', 'Street Address', 'Address Line 1'], 'city': ['City'],
+        'Current address': {'line1':['Address','Street Address','Address Line 1'],
+                            'postal_code':['Zip Code','ZIP','Postal Code'], 'street': ['Address', 'Street Address', 'Address Line 1'], 'city': ['City'],
                             'state': ['State'], 'zip': ['Zip Code', 'ZIP', 'Postal Code'], 'country': ['Country']},
         'Phone': {'number': ['Phone', 'Primary Phone', 'Phone Number']},
     }
