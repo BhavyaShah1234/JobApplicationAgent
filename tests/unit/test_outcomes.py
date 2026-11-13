@@ -1,3 +1,4 @@
+import pytest
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,8 +15,11 @@ T0 = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)          # the submission
 ISO = lambda dt: dt.strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
 
 
+UIDS = {f["id"]: str(1000 + i) for i, f in enumerate(FIXTURES)}        # numeric mailbox UIDs, as a real server assigns them
+
+
 def mail_of(f, when=None, uid=None, thread=""):
-    return Mail(uid or f["id"], f"<{f['id']}@x>", f["from"], f["subject"], when or T0 + timedelta(days=2), f["body"], thread)
+    return Mail(uid or UIDS[f["id"]], f"<{f['id']}@x>", f["from"], f["subject"], when or T0 + timedelta(days=2), f["body"], thread)
 
 
 # --- the labelled set --------------------------------------------------------------------------------------------
@@ -44,7 +48,7 @@ def test_the_messages_written_for_the_model_are_left_undecided_by_the_rules():
 
 def test_the_model_reads_what_the_rules_leave_and_a_failing_model_drops_the_message():
     f = next(x for x in FIXTURES if x["id"] == "model-soft-rejection")
-    ok = O.classify(mail_of(f), model=lambda msgs: SimpleNamespace(stage="rejection", confidence=0.93, evidence="chosen a different direction"))
+    ok = O.classify(mail_of(f), model=lambda msgs: SimpleNamespace(stage="rejection", confidence=0.93, evidence="our team has chosen a different direction for this role"))
     assert (ok.stage, ok.classifier) == ("rejection", "model")
     assert O.classify(mail_of(f), model=lambda msgs: (_ for _ in ()).throw(RuntimeError("down"))).stage is None
     junk = O.classify(mail_of(f), model=lambda msgs: SimpleNamespace(stage="banana", confidence=0.9, evidence=""))
@@ -59,24 +63,58 @@ def test_a_confirmation_that_says_unfortunately_is_still_a_confirmation():
 # --- sync against a fake mailbox -----------------------------------------------------------------------------------
 
 class FakeInbox:
-    """Honours the server-side filters the sync uses: SINCE, FROM (OR'd) and X-GM-THRID."""
-    def __init__(self, mails):
+    """Honours the server-side filters the sync uses: SINCE, UID n:*, FROM (OR'd) and X-GM-THRID."""
+    def __init__(self, mails, uidvalidity="7"):
         self.mails = {m.uid: m for m in mails}
-        self.searches = []
+        self.searches, self.header_fetches, self.text_fetches = [], [], []
+        self.uv = uidvalidity
+
+    def uidvalidity(self, folder="INBOX"):
+        return self.uv
+
+    transient: dict = None      # uid -> how many more header fetches fail with a transient error
+    gone: set = None            # uids the server says no longer exist
 
     def search(self, criteria, folder="INBOX"):
         self.searches.append(criteria)
+        mid = re.search(r'HEADER Message-ID "(.+?)"', criteria)
+        if mid:
+            return [u for u, m in self.mails.items() if m.message_id == mid.group(1)]
         thr = re.search(r"X-GM-THRID (\d+)", criteria)
         if thr:
             return [u for u, m in self.mails.items() if m.thread_id == thr.group(1)]
-        since = datetime.strptime(re.search(r'SINCE "(.+?)"', criteria).group(1), "%d-%b-%Y").replace(tzinfo=UTC)
         senders = re.findall(r'FROM "(.+?)"', criteria)
-        return [u for u, m in self.mails.items() if m.date >= since and any(s.lower() in m.sender.lower() for s in senders)]
+        uid_from = re.search(r"UID (\d+):\*", criteria)
+        if uid_from:
+            return [u for u, m in self.mails.items() if int(u) >= int(uid_from.group(1)) and any(s.lower() in m.sender.lower() for s in senders)]
+        since = datetime.strptime(re.search(r'SINCE "(.+?)"', criteria).group(1), "%d-%b-%Y").replace(tzinfo=UTC)
+        return [u for u, m in self.mails.items() if (m.delivered or m.date or since) >= since and any(s.lower() in m.sender.lower() for s in senders)]
+
+    def fetch_headers(self, uid, folder="INBOX"):
+        if self.transient and self.transient.get(uid, 0) > 0:
+            self.transient[uid] -= 1
+            raise OSError("connection reset")
+        if uid not in self.mails or (self.gone and uid in self.gone):
+            raise LookupError(uid)
+        import dataclasses
+        self.header_fetches.append(uid)
+        return dataclasses.replace(self.mails[uid], text="", has_text=False, uidvalidity=self.uv)
+
+    def fetch_text(self, head, folder="INBOX"):
+        import dataclasses
+        self.text_fetches.append(head.uid)
+        return dataclasses.replace(self.mails[head.uid], uidvalidity=self.uv)
 
     def fetch(self, uid, folder="INBOX"):
-        if uid not in self.mails:
-            raise LookupError(uid)
-        return self.mails[uid]
+        return self.fetch_text(self.fetch_headers(uid))
+
+
+@pytest.fixture(autouse=True)
+def verified_company_domains(monkeypatch):
+    """Company sender domains come from verified metadata only (F09); these fixtures stand in for the research profile."""
+    from jobagent.steps import submit as S
+    known = {"stripe": {"stripe.com"}, "general mills": {"generalmills.com"}}
+    monkeypatch.setattr(S, "company_domains", lambda company, jd: set(known.get((company or "").lower(), set())))
 
 
 def make_db(tmp_path, apps=(("Stripe", "Backend Engineer", "https://job-boards.greenhouse.io/stripe/jobs/1"),)):
@@ -162,7 +200,7 @@ def test_low_confidence_and_ties_wait_for_the_candidate(tmp_path):
 def test_a_rejected_event_is_never_added_again_and_a_label_overrides_the_classifier(tmp_path):
     conn = make_db(tmp_path)
     low = mail_of({**fx("model-soft-interview"), "from": "Stripe Recruiting <recruiter@stripe.com>"}, T0 + timedelta(days=3), "1")
-    model = lambda msgs: SimpleNamespace(stage="interview", confidence=0.55, evidence="a conversation")  # noqa: E731
+    model = lambda msgs: SimpleNamespace(stage="interview", confidence=0.55, evidence="Would Thursday at 2pm PT work for a conversation with the hiring manager?")  # noqa: E731
     box = FakeInbox([low])
     O.sync(box, conn, as_of=T0 + timedelta(days=4), model=model, log=lambda m: None)
     ev = O.pending_review(conn)[0]

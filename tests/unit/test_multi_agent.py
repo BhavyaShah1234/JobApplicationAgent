@@ -15,3 +15,109 @@ def test_good_summary_passes():
     s = ("Software engineer with 5+ years building Python and Kafka backends for real-time detection. Shipped "
          "LLM tooling with LangGraph and RAG that cut review time by 35%.")
     assert M.summary_issues(s, overflow=False) == []
+
+
+def test_scoring_retries_only_failed_site_and_keeps_written_feedback(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    filled = SimpleNamespace(model_copy=lambda **kwargs: "filled snapshot")
+    monkeypatch.setattr(M, "render", lambda state: (filled, "", [], 1, ""))
+    monkeypatch.setattr(M.layout, "check", lambda path: SimpleNamespace(issues=[]))
+    monkeypatch.setattr(M, "hard_issues", lambda ctx, fields: [])
+    (tmp_path / "resume.tex").write_text("resume fixture")
+    (tmp_path / "resume.pdf").write_bytes(b"resume fixture")
+    calls = []
+
+    def evaluate(job_dir, jd, jd_text, rnd, sites, log):
+        calls.append(tuple(sites))
+        feedback = {
+            "scores": {}, "missing": {}, "advice": [],
+            "template": [], "keep": [], "completed": [],
+        }
+        if len(calls) == 1:
+            feedback["completed"] = ["skillsfirst"]
+            feedback["advice"] = ["Explain existing projects' measurable impact"]
+        else:
+            feedback["completed"] = ["hireflow"]
+            feedback["scores"] = {"hireflow": 81.0}
+        return feedback
+
+    monkeypatch.setattr(M.A, "evaluate", evaluate)
+    state = {"ctx": {
+        "job_dir": tmp_path, "jd": None, "jd_text": "job description",
+        "sites": ("skillsfirst", "hireflow"), "log": lambda message: None,
+    }}
+
+    result = M.score(state)
+
+    assert calls == [("skillsfirst", "hireflow"), ("hireflow",)]
+    assert result["scores"] == {"hireflow": 81.0}
+    assert result["best"]["avg"] == 81.0
+    assert result["best"]["ev"]["advice"] == [
+        "Explain existing projects' measurable impact",
+    ]
+
+
+def test_limited_scorers_run_initially_and_their_feedback_survives_refinement(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    filled = SimpleNamespace(model_copy=lambda **kwargs: "filled snapshot")
+    monkeypatch.setattr(M, "render", lambda state: (filled, "", [], 1, ""))
+    monkeypatch.setattr(M.layout, "check", lambda path: SimpleNamespace(issues=[]))
+    monkeypatch.setattr(M, "hard_issues", lambda ctx, fields: [])
+    (tmp_path / "resume.tex").write_text("resume fixture")
+    (tmp_path / "resume.pdf").write_bytes(b"resume fixture")
+    calls = []
+
+    def evaluate(job_dir, jd, jd_text, rnd, sites, log):
+        calls.append(tuple(sites))
+        feedback = {
+            "scores": {"hireflow": 70.0 + rnd}, "missing": {}, "advice": [],
+            "advice_by_site": {}, "template": [], "keep": [], "completed": list(sites),
+        }
+        if "jobscan" in sites:
+            feedback["scores"]["jobscan"] = 99.0
+            feedback["missing"]["jobscan"] = ["SQL"]
+            feedback["advice"] = ["Explain existing impact"]
+            feedback["advice_by_site"] = {"jobscan": ["Explain existing impact"]}
+        return feedback
+
+    monkeypatch.setattr(M.A, "evaluate", evaluate)
+    ctx = {
+        "job_dir": tmp_path, "jd": None, "jd_text": "job description",
+        "sites": ("hireflow", "jobscan"), "log": lambda message: None,
+    }
+    first = M.score({"ctx": ctx, "ats_round": 0})
+    assert first["best"]["avg"] == 70.0  # never compare a new PDF against a stale budget-site average
+    second = M.score({"ctx": ctx, **first})
+    assert calls == [("hireflow", "jobscan"), ("hireflow",)]
+    assert second["best"]["avg"] == 71.0
+    assert second["best"]["ev"]["missing"]["jobscan"] == ["SQL"]
+    assert "Explain existing impact" in second["best"]["ev"]["advice"]
+
+
+def test_optional_scorer_needing_login_does_not_reject_good_resume(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    filled = SimpleNamespace(model_copy=lambda **kwargs: "filled snapshot")
+    monkeypatch.setattr(M, "render", lambda state: (filled, "", [], 1, ""))
+    monkeypatch.setattr(M.layout, "check", lambda path: SimpleNamespace(issues=[]))
+    monkeypatch.setattr(M, "hard_issues", lambda ctx, fields: [])
+    (tmp_path / "resume.tex").write_text("resume fixture")
+    (tmp_path / "resume.pdf").write_bytes(b"resume fixture")
+    calls = []
+
+    def evaluate(*args):
+        calls.append(args[4])
+        return {
+            "scores": {"hireflow": 70.0}, "missing": {}, "advice": [],
+            "template": [], "keep": [], "completed": ["hireflow"],
+        }
+
+    monkeypatch.setattr(M.A, "evaluate", evaluate)
+    result = M.score({"ctx": {
+        "job_dir": tmp_path, "jd": None, "jd_text": "JD",
+        "sites": ("hireflow", "jobscan"), "log": lambda message: None,
+    }})
+    assert len(calls) == 1
+    assert result["best"]["avg"] == 70.0

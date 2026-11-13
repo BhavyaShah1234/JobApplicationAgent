@@ -43,6 +43,8 @@ class AppEvents:
     ats_average: float | None = None
     ats_scores: dict = field(default_factory=dict)        # site -> score of the submitted resume
     keywords: frozenset = frozenset()                      # the skills the submitted resume listed
+    snapshot_status: str = ""                              # verified | reconstructed | mismatch | unknown ("" for rows before F06)
+    company: str = ""                                      # applications to one company are not independent observations
 
 
 @dataclass
@@ -93,19 +95,52 @@ def percentile(values: list[float], q: float) -> float:
     return xs[lo] + (xs[hi] - xs[lo]) * (k - lo)
 
 
+MIN_AT_RISK_FOR_CUTOFF = 15      # applications still at risk at the estimated deadline before it is believed
+
+
+def visible(apps: list[AppEvents], as_of: datetime) -> list[AppEvents]:
+    """The applications that existed at `as_of`: one submitted after it is not part of that evaluation (and has no age)."""
+    return [a for a in apps if a.submitted_at <= as_of]
+
+
+def _observations(group: list[AppEvents], as_of: datetime) -> list[tuple[float, bool]]:
+    """(days, responded) for every visible, non-withdrawn application: the day of its first real response, or, if it has
+    none yet, its age (it is CENSORED there: still waiting, not a non-response)."""
+    out = []
+    for a in visible(group, as_of):
+        seen = AppEvents(a.id, a.submitted_at, [(s, t) for s, t in a.events if t <= as_of])
+        if any(s == "withdrawn" for s, _ in seen.events):
+            continue
+        fr = first_response(seen)
+        out.append((fr[0], True) if fr else (max(0.0, _days(a.submitted_at, as_of)), False))
+    return out
+
+
+def ghost_cutoff_info(apps: list[AppEvents], as_of: datetime, portal: str | None = None) -> tuple[float, str]:
+    """(days, basis). The deadline after which silence counts as ghosting is a product heuristic unless it can be ESTIMATED:
+    it is the day by which 90% of ALL applications (responders and the still-waiting, the latter censored) had responded -
+    the Kaplan-Meier 90th percentile - and only when enough applications responded, the curve actually reaches 90%, and
+    enough are still at risk there. Otherwise the conservative default is used and the basis says why. A percentile over
+    the responders alone (a few fast replies among many silences) is NOT an unconditional deadline and is never used."""
+    for label, group in ((f"portal {portal}", [a for a in apps if a.portal == portal] if portal else []), ("all applications", apps)):
+        obs = _observations(group, as_of)
+        if sum(r for _, r in obs) < MIN_RESPONSES_FOR_CUTOFF:
+            continue
+        t90 = next((tt for tt, s in km_curve(obs) if s <= 0.10), None)
+        if t90 is not None and at_risk_at(obs, t90) >= MIN_AT_RISK_FOR_CUTOFF:
+            days = min(max(t90, CUTOFF_CLAMP[0]), CUTOFF_CLAMP[1])
+            return days, f"Kaplan-Meier: 90% of {label} had responded by day {t90:.0f}"
+    return DEFAULT_CUTOFF_DAYS, ("default: too few responses, or the response curve does not reach 90% with enough applications "
+                                 "still at risk, so no deadline can be estimated (uncertain)")
+
+
 def ghost_cutoff(apps: list[AppEvents], as_of: datetime, portal: str | None = None) -> float:
-    """Days of silence after which an application counts as ghosted, learned from the responses seen so far."""
-    def times(group):
-        return [fr[0] for a in group if (fr := first_response(AppEvents(a.id, a.submitted_at,
-                                                                     [(s, t) for s, t in a.events if t <= as_of])))]
-    for group in ([a for a in apps if a.portal == portal] if portal else [], apps):
-        got = times(group)
-        if len(got) >= MIN_RESPONSES_FOR_CUTOFF:
-            return min(max(percentile(got, 0.9), CUTOFF_CLAMP[0]), CUTOFF_CLAMP[1])
-    return DEFAULT_CUTOFF_DAYS
+    return ghost_cutoff_info(apps, as_of, portal)[0]
 
 
 def statuses(apps: list[AppEvents], as_of: datetime) -> dict[int, Status]:
+    """Each application's status as of `as_of`. An application submitted after `as_of` did not exist then and is absent."""
+    apps = visible(apps, as_of)
     cutoffs: dict[str, float] = {}      # one per portal, not one per application
     for portal in {a.portal for a in apps}:
         cutoffs[portal] = ghost_cutoff(apps, as_of, portal or None)
@@ -155,8 +190,8 @@ def at_risk_at(obs: list[tuple[float, bool]], t: float) -> int:
 def observations(apps: list[AppEvents], sts: dict[int, Status]) -> list[tuple[float, bool]]:
     out = []
     for a in apps:
-        st = sts[a.id]
-        if st.label == "withdrawn":
+        st = sts.get(a.id)
+        if st is None or st.label == "withdrawn":
             continue
         out.append((st.first_response_days, True) if st.first_response_days is not None else (st.age_days, False))
     return out
@@ -184,13 +219,17 @@ class Group:
     negative: int
     ghosted: int
     pending: int
-    response_rate: float | None      # (positive + negative) / resolved
+    # NOTE on what these are. `response_rate` / `positive_rate` are SHARES OF THE RESOLVED APPLICATIONS (replied, or silent past
+    # the cutoff): fast responders and older applications are over-represented there, so they are NOT the probability that an
+    # application gets a callback. The probability at a fixed horizon is `by_30d` (Kaplan-Meier, censoring-aware).
+    response_rate: float | None      # (positive + negative) / resolved: a share of the resolved cohort
     response_ci: tuple[float, float] | None
     positive_rate: float | None
     positive_ci: tuple[float, float] | None
     median_days: float | None        # KM median days to first response; None unless MIN_GROUP are at risk then
-    by_30d: float | None             # share responded within 30 days (KM); None unless MIN_GROUP are at risk at day 30
+    by_30d: float | None             # P(first response within 30 days), Kaplan-Meier; None unless MIN_GROUP are at risk at day 30
     too_few: bool
+    horizon_days: int = 30
 
 
 def band(score: float | None) -> str:
@@ -202,7 +241,7 @@ def band(score: float | None) -> str:
 def group_by(apps: list[AppEvents], sts: dict[int, Status], key) -> list[Group]:
     groups: dict[str, list[AppEvents]] = {}
     for a in apps:
-        if sts[a.id].label != "withdrawn":
+        if a.id in sts and sts[a.id].label != "withdrawn":        # an application submitted after the evaluation date is absent
             groups.setdefault(str(key(a) or "(none)"), []).append(a)
     out = []
     for k, members in sorted(groups.items()):
@@ -251,48 +290,126 @@ def load(conn) -> list[AppEvents]:
             "SELECT stage, received_at FROM outcome_events WHERE application_id = ? AND needs_review = 0", (a["id"],))]
         out.append(AppEvents(a["id"], sub, [(s, t) for s, t in events if t], a["portal"] or "", a["role_id"] or "",
                              (a["resume_sha"] or "")[:8], a["ats_average"], _json(a["ats_scores"], {}),
-                             frozenset(_json(a["keywords"], []))))
+                             frozenset(_json(a["keywords"], [])), a["snapshot_status"] or "", a["company"] or ""))
     return out
 
 
-def snapshot(conn, job_dir: str | Path) -> dict:
-    """Freeze what the submitted resume was: its hash, the checker scores at the last round, the role family matched at
-    discovery and the skills it listed. Taken at submission (and filled in later for older rows)."""
+def _job_folder(key: str) -> Path | None:
     from jobagent.config import get_settings
+    bases = [Path("/app"), get_settings().outputs_dir.parent, Path.cwd()]
+    for cand in ([Path(key)] if Path(key).is_absolute() else [base / key for base in bases]):
+        if (cand / "resume.pdf").exists():
+            return cand
+    return None
 
-    key = str(job_dir)
-    app = conn.execute("SELECT id, url FROM applications WHERE job_dir = ?", (key,)).fetchone()
+
+def _jd_urls(folder: Path | None) -> list[str]:
+    """The job description's own addresses (apply link and posting), which may differ from the application's recorded URL."""
+    try:
+        jd = json.loads((folder / "jd.json").read_text()) if folder else {}
+    except (OSError, ValueError):
+        return []
+    return [u for u in (jd.get("apply_url"), jd.get("source_url")) if u]
+
+
+def _marks(job_dir) -> tuple[str, tuple[str, ...]]:
+    from jobagent import db
+    al = db.job_key_aliases(job_dir)
+    return ",".join("?" * len(al)), al
+
+
+def _attempt_identity(conn, key: str) -> dict | None:
+    """The submitted artifacts' identities as the frozen attempt recorded them (None for an application with no payload)."""
+    row = conn.execute(f"SELECT payload_path FROM submission_attempts WHERE job_dir IN ({_marks(key)[0]}) AND payload_path IS NOT NULL "
+                       "AND state IN ('submitted', 'confirmed', 'unknown') ORDER BY attempt_no DESC", _marks(key)[1]).fetchone()
+    if row is None:
+        return None
+    try:
+        return json.loads(Path(row["payload_path"]).read_text()).get("identity")
+    except (OSError, ValueError):
+        return None
+
+
+def _persisted(conn, app_id: int) -> dict:
+    r = conn.execute("SELECT resume_sha, resume_pdf_sha256, cover_letter_sha256, jd_fingerprint, ats_average, ats_scores, "
+                     "ats_sites, role_id, keywords, snapshot_status, snapshot_detail FROM applications WHERE id = ?",
+                     (app_id,)).fetchone()
+    return dict(r)
+
+
+def snapshot(conn, job_dir: str | Path) -> dict:
+    """Freeze what was submitted, as ONE coherent unit: the identity of the submitted resume and cover letter, the job's
+    fingerprint, the authoritative ATS result for exactly that version, the role family and the skills.
+
+    The identities come from the frozen attempt (the bytes the browser attached to the resume and cover-letter controls,
+    F04), never from whatever file the folder holds now; the disk hash is kept only as a diagnostic
+    (`snapshot_detail`). `snapshot_status`: `verified` (identity from the attempt's own resume control), `unverifiable`
+    (an attempt exists but the resume control's bytes could not be read, or were ambiguous: no hash, no scores, nothing
+    attributed to a version), `reconstructed` (no attempt payload, older rows: the disk files are assumed), `unknown` (no
+    PDF). A snapshot is never merged cell by cell: once it exists it is returned as persisted, and the only update is the
+    completion of its OWN version's scores (same hash, same job fingerprint) as a whole."""
+    from jobagent.tools import ats_result
+
+    from jobagent import db
+
+    key = db.job_key(job_dir)
+    app = conn.execute(f"SELECT id, url, snapshot_status FROM applications WHERE job_dir IN ({_marks(job_dir)[0]}) ORDER BY (job_dir = ?) DESC",
+                       (*_marks(job_dir)[1], key)).fetchone()
     if not app:
         return {}
-    keys = (key, str(Path("/app") / key) if not Path(key).is_absolute() else key)
-    row = None
-    for k in keys:
-        row = conn.execute("SELECT resume_sha, MAX(round) AS r FROM ats_runs WHERE job_dir = ?", (k,)).fetchone()
-        if row and row["resume_sha"]:
-            break
-    scores: dict[str, float] = {}
-    if row and row["resume_sha"]:
-        for r in conn.execute("SELECT site, score FROM ats_runs WHERE job_dir = ? AND round = ? AND score IS NOT NULL",
-                              (k, row["r"])):
-            scores[r["site"]] = r["score"]
-    role = conn.execute("SELECT role_id FROM jobs WHERE url = ?", (app["url"],)).fetchone()
+    given = Path(str(job_dir))
+    folder = given if (given / "resume.pdf").exists() else _job_folder(key)      # the folder as the caller named it first
+    if app["snapshot_status"] is not None:                       # frozen: refuse to recompute it from the folder's current state
+        have = _persisted(conn, app["id"])
+        if have["ats_average"] is None and have["resume_sha"] and have["jd_fingerprint"]:
+            g = ats_result.gather(folder or Path(key), conn=conn, sha=have["resume_sha"], fingerprint=have["jd_fingerprint"])
+            if g["scores"] and (g["complete"] or json.dumps(g["scores"]) != have["ats_scores"]):
+                with conn:                                       # the same version's own scores, replaced as a whole
+                    conn.execute("UPDATE applications SET ats_scores = ?, ats_average = ?, ats_sites = ? WHERE id = ?",
+                                 (json.dumps(g["scores"]), g["average"] if g["complete"] else None, json.dumps(g["sites"]), app["id"]))
+                have = _persisted(conn, app["id"])
+        return have
+    disk_sha = ats_result.sha256_file(folder / "resume.pdf") if folder else None
+    disk_cover = ats_result.sha256_file(folder / "cover_letter.pdf") if folder else None
+    ident = _attempt_identity(conn, str(job_dir))
+    if ident is not None:
+        resume_sha, cover_sha = ident.get("resume_sha256"), ident.get("cover_letter_sha256")
+        fingerprint = ident.get("job_fingerprint") or (ats_result.identity(folder)[1] if folder else None)
+        status = "verified" if resume_sha else "unverifiable"
+    else:
+        resume_sha, cover_sha = disk_sha, disk_cover
+        fingerprint = ats_result.identity(folder)[1] if folder else None
+        status = "reconstructed" if resume_sha else "unknown"
+    ats = ats_result.gather(folder or Path(key), conn=conn, sha=resume_sha, fingerprint=fingerprint) if resume_sha else None
+    scores = ats["scores"] if ats else {}
+    jd_urls = _jd_urls(folder)
+    role = db.job_for_urls(conn, app["url"], *jd_urls)         # F25: the apply link or the posting's own address, aliases included
     keywords: list[str] = []
-    for base in (Path("/app"), get_settings().outputs_dir.parent, Path.cwd()):
-        p = (Path(key) if Path(key).is_absolute() else base / key) / "filled.json"
-        if p.exists():
-            try:
-                keywords = skill_terms(json.loads(p.read_text()))
-            except ValueError:
-                pass
-            break
-    snap = {"resume_sha": (row["resume_sha"] if row and row["resume_sha"] else None),
-            "ats_average": round(sum(scores.values()) / len(scores), 2) if scores else None,
-            "ats_scores": json.dumps(scores) if scores else None, "role_id": role["role_id"] if role else None,
-            "keywords": json.dumps(keywords) if keywords else None}
+    p = folder / "filled.json" if folder else None
+    disk_keywords: list[str] = []
+    if p is not None and p.exists():
+        try:
+            disk_keywords = skill_terms(json.loads(p.read_text()))
+        except ValueError:
+            pass
+    # the folder's skills describe the SUBMITTED resume only when that is established: its verified identity matches the
+    # disk file, or (explicit legacy policy) there is no attempt payload at all. Otherwise they are kept apart, as a diagnostic.
+    if status == "reconstructed" or (resume_sha is not None and disk_sha == resume_sha):
+        keywords = disk_keywords
+    snap = {"resume_sha": resume_sha, "resume_pdf_sha256": resume_sha, "cover_letter_sha256": cover_sha,
+            "jd_fingerprint": fingerprint, "ats_average": ats["average"] if ats and ats["complete"] else None,
+            "ats_scores": json.dumps(scores) if scores else None, "ats_sites": json.dumps(ats["sites"]) if ats else None,
+            "role_id": role["role_id"] if role else None, "keywords": json.dumps(keywords) if keywords else None,
+            "snapshot_status": status,
+            "snapshot_detail": json.dumps({"disk_resume_sha256": disk_sha, "disk_cover_letter_sha256": disk_cover,
+                                           "disk_matches_submitted": bool(resume_sha) and disk_sha == resume_sha,
+                                           "disk_keywords_withheld": [] if keywords else disk_keywords})}
     with conn:
-        conn.execute("UPDATE applications SET resume_sha = COALESCE(resume_sha, :resume_sha), ats_average = COALESCE("
-                     "ats_average, :ats_average), ats_scores = COALESCE(ats_scores, :ats_scores), role_id = COALESCE("
-                     "role_id, :role_id), keywords = COALESCE(keywords, :keywords) WHERE id = :id", {**snap, "id": app["id"]})
+        conn.execute("UPDATE applications SET resume_sha = :resume_sha, resume_pdf_sha256 = :resume_pdf_sha256, "
+                     "cover_letter_sha256 = :cover_letter_sha256, jd_fingerprint = :jd_fingerprint, ats_average = :ats_average, "
+                     "ats_scores = :ats_scores, ats_sites = :ats_sites, role_id = :role_id, keywords = :keywords, "
+                     "snapshot_status = :snapshot_status, snapshot_detail = :snapshot_detail WHERE id = :id",
+                     {**snap, "id": app["id"]})
     return snap
 
 

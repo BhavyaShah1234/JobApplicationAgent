@@ -1,5 +1,6 @@
 """`jobagent` CLI. Workflow commands (run, bootstrap, queue, …) are added step by step."""
 
+import contextlib
 import json
 
 import typer
@@ -23,6 +24,24 @@ cli_discovery.register(app, console)  # step 14: discover, queue
 from jobagent import cli_outcomes  # noqa: E402
 
 cli_outcomes.register(app, console)  # step 15: sync-inbox, outcomes
+
+
+@app.command("desktop-probe")
+def desktop_probe_cmd(
+    stage: str = typer.Argument(..., help="manual, read, or field; each stage needs separate owner authorization."),
+    authorized_stage: str = typer.Option(..., help="Acknowledge the stage authorized by the account owner."),
+    url: str = typer.Option("https://www.carvana.com/careers/apply?gh_jid=8188615"),
+    field_id: str = typer.Option("", help="Exact input id agreed for a single-field test."),
+    value: str = typer.Option("", help="Value agreed for that one field; never a password."),
+):
+    """Gated desktop feasibility probe; never submits or runs automatically as a fallback."""
+    from pathlib import Path
+    from jobagent.tools import desktop_probe
+    if stage not in {"manual", "read", "field"} or authorized_stage != stage:
+        raise typer.BadParameter("Explicit authorization for this exact stage is required")
+    root = Path.cwd() / 'state' / 'carvana-desktop'
+    result = desktop_probe.launch(root, url) if stage == 'manual' else desktop_probe.probe(root, stage, field_id, value)
+    console.print(json.dumps(result, indent=2), highlight=False)
 
 
 @step_app.command("harness")
@@ -253,6 +272,45 @@ def _stop_if_unavailable(job_dir, step: str) -> None:
         raise typer.Exit(EXIT_UNAVAILABLE)
 
 
+def _lock_job(ctx: typer.Context, job_dir, what: str):
+    """F15/F25: take the job's build lock for the length of this command and open its workflow record. Returns (path, workflow)."""
+    from pathlib import Path
+
+    from jobagent.tools import bundle
+    from jobagent.tools import workflow as W
+
+    d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
+    if not d.exists():
+        d = Path(job_dir)
+    stack = contextlib.ExitStack()
+    try:
+        stack.enter_context(bundle.job_lock(d, what))
+    except bundle.JobBusy as busy:
+        console.print(f"[red]{what}: {busy}[/]", highlight=False)
+        raise typer.Exit(1) from busy
+    ctx.call_on_close(stack.close)
+    return d, W.Workflow(d)
+
+
+def _stop_if_documents_invalid(job_dir, step: str) -> None:
+    """F05: exit 4 (blocked) before a browser opens when the job's resume / cover letter are not a current, valid build."""
+    from pathlib import Path
+
+    from jobagent.config import get_settings
+    from jobagent.tools import documents
+    from jobagent.steps.apply import EXIT_BLOCKED
+
+    d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
+    check = documents.verify(d, get_settings().ats_shortfall)
+    for w in check["warnings"]:
+        console.print(f"[yellow]{step}: {w}[/]", highlight=False)
+    if not check["ok"]:
+        console.print(f"[red]{step}: blocked, the documents are not a valid current build:[/]", highlight=False)
+        for r in check["reasons"]:
+            console.print(f"[red]  - {r}[/]", highlight=False)
+        raise typer.Exit(EXIT_BLOCKED)
+
+
 def _stopped(job_dir, gone, step: str) -> None:
     """A posting found unavailable while applying: record it on the job and the application, exit with code 3."""
     from pathlib import Path
@@ -324,13 +382,16 @@ def _research_table(results, title: str) -> tuple[Table, bool]:
 
 @app.command("tailor")
 def tailor_cmd(
+    ctx: typer.Context,
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> from `jobagent scrape`."),
     company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md)."),
     no_ats: bool = typer.Option(False, "--no-ats", help="Skip the step 10 ATS loop."),
     single: bool = typer.Option(False, "--single", help="The older one-model writer instead of the agent team."),
+    force: bool = typer.Option(False, "--force", help="Rebuild every stage; without it a finished resume or cover letter whose "
+                                                      "inputs and files are unchanged is reused (see `jobagent workflow`)."),
 ) -> None:
     """Tailor the resume to a scraped job (one page) with the agent team and its validator (ATS loop included), then
-    write the matching cover letter."""
+    write the matching cover letter. A stage that already finished is reused after a crash or a second run; `--force` redoes it."""
     from pathlib import Path
 
     from jobagent.config import get_settings
@@ -338,17 +399,140 @@ def tailor_cmd(
 
     _stop_if_unavailable(job_dir, "tailor")
     log = lambda m: console.print(m, highlight=False)
+    from jobagent.tools import documents
+
+    s = get_settings()
+    d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
+    from jobagent.tools import bundle
+    lock = contextlib.ExitStack()
+    try:
+        lock.enter_context(bundle.job_lock(d, "tailor"))        # F25: one build of a job at a time
+    except bundle.JobBusy as busy:
+        console.print(f"[red]tailor: {busy}[/]", highlight=False)
+        raise typer.Exit(1) from busy
+    ctx.call_on_close(lock.close)
+    if bundle.recover(d):
+        log("tailor: completed a resume publish that an earlier run was interrupted in")
+    from jobagent.tools import workflow as W
+    wf = W.Workflow(d)
+    jd_sha, txt_sha = W.sha_file(d / "jd.json"), W.sha_file(d / "jd.txt")
+    template_sha = W.sha_file(s.data_dir / "templates" / "resume.tex")
+    profile_sha = W.sha_file(s.state_dir / "companies" / f"{company}.md")
+    order = ["resume", "cover_letter"]
+    if force:
+        wf.forget_from("resume", order)
     if single:
-        main(job_dir, company, ats=not no_ats)
-        return
-    from jobagent.steps import multi_agent as M
+        documents.begin(d)
+        out = main(job_dir, company, ats=not no_ats)
+        ats = (out.get("ats") or {})
+        found = documents.resume_findings(d)         # the same hard and claims checks as the agent-team writer and every refresh
+        build = [p for p in out.get("problems", []) if "LOCKED" in p] + \
+            ([f"required duties not covered: {out['uncovered']}"] if out.get("uncovered") else []) + \
+            ([] if found["evidence"] else [f"the hard and claims checks could not be run ({found['reason']})"])
+        res = documents.assess(d, resume={"produced": (d / "resume.pdf").exists(), "hard_issues": found["hard"],
+                                          "claims_issues": found["claims"], "build_findings": build,
+                                          "coverage_limited": out.get("coverage_limited", [])},
+                               letter=out.get("letter"),
+                               ats={"average": ats.get("average"), "complete": ats.get("average") is not None,
+                                    "missing": [], "scored": bool(ats)}, policy=s.ats_shortfall, target=s.ats_target)
+    else:
+        from jobagent.steps import multi_agent as M
+
+        model = s.model_writer  # the same model for every agent (chosen 2026-11-02)
+        sites = () if no_ats else M.SITES
+        # F15: each finished stage is kept. A rerun after a crash (or a second `tailor`) reuses the resume if its inputs and files
+        # are unchanged, and redoes only the cover letter; `--force` rebuilds everything.
+        rj, how = wf.run("resume", lambda: M.run_job(d, company, {k: model for k in M.DEFAULT_MODELS}, sites, log=log),
+                         inputs={"jd": jd_sha, "jd_text": txt_sha, "template": template_sha, "profile": profile_sha, "model": model,
+                                 "sites": list(sites)},
+                         outputs=["resume.pdf", "resume.tex", "filled.json"], force=force, log=log,
+                         check=lambda r: None if r.get("produced") else (r.get("failure") or "no valid resume was produced"))
+        log(f"resume ({how}): average {rj['average']} {rj['scores']}, {rj['pages']} page(s), hard issues {rj['hard_issues']}")
+        cl = None
+        if rj["produced"]:           # a letter is only written from a resume that exists; a failed build stops here
+            cl, how = wf.run("cover_letter", lambda: cover_letter(d, company, log=log),
+                             inputs={"resume_tex": W.sha_file(d / "resume.tex"), "profile": profile_sha, "model": model},
+                             outputs=["cover_letter.pdf", "cover_letter.tex"], force=force, log=log)
+            log(f"cover letter ({how}): {cl['words']} words, {len(cl['issues'])} issue(s)")
+        res = documents.assess(d, resume=rj, letter=cl, ats={"average": rj["average"], "complete": rj["average_complete"],
+                                                             "missing": rj["average_missing"], "scored": bool(rj["average_sites"])},
+                               policy=s.ats_shortfall, target=s.ats_target)
+    documents.save(d, res)
+    _print_documents(res)
+    if code := documents.exit_code(res):
+        raise typer.Exit(code)
+
+
+@app.command("run")
+def run_pipeline_cmd(
+    url: str = typer.Argument(..., help="Posting URL to take through the shared in-process workflow."),
+    through: str = typer.Option("apply", help="scrape, tailor, apply or submit; submit still requires review approval."),
+    browser_mode: str = typer.Option("docker", help="docker, desktop, or auto (filling only)."),
+    allow_desktop_submit: bool = typer.Option(False, "--allow-desktop-submit"),
+    force: bool = typer.Option(False, help="Refresh input stages and regenerate documents."),
+    no_ats: bool = typer.Option(False, "--no-ats", help="Skip ATS scans while generating documents; document validity still gates submission."),
+) -> None:
+    from jobagent.tools.pipeline import Pipeline
+    try:
+        result = Pipeline(log=lambda m: console.print(m, highlight=False)).run(
+            url, through=through, browser_mode=browser_mode, allow_desktop_submit=allow_desktop_submit, force=force, no_ats=no_ats)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(f"run: {result.state}; {result.job_dir}; {result.note}", highlight=False)
+    if result.code:
+        raise typer.Exit(result.code)
+
+
+@app.command("workflow")
+def workflow_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id>")) -> None:
+    """The durable stages of a job's workflow: which finished, which were interrupted, and what a rerun will reuse."""
+    from pathlib import Path
+
+    from jobagent.tools import workflow as W
 
     d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
-    model = get_settings().model_writer  # the same model for every agent (chosen 2026-11-02)
-    res = M.run_job(d, company, {k: model for k in M.DEFAULT_MODELS}, () if no_ats else M.SITES, log=log)
-    log(f"resume: average {res['average']} {res['scores']}, {res['pages']} page(s), hard issues {res['hard_issues']}")
-    cl = cover_letter(d, company, log=log)
-    log(f"cover letter: {cl['words']} words, {len(cl['issues'])} issue(s)")
+    wf = W.Workflow(d)
+    rows = wf.summary()
+    if not rows:
+        console.print(f"workflow {wf.id}: no stage has run for this job yet")
+        return
+    console.print(f"workflow {wf.id}", highlight=False)
+    for r in rows:
+        extra = f" - {r['error']}" if r.get("error") else f" - {r['note']}" if r.get("note") else ""
+        console.print(f"  {r['stage']:<13} {r['status']:<12} {r.get('finished_at') or ''}{extra}", highlight=False)
+
+
+def _print_documents(res: dict) -> None:
+    """The result of generating a job's documents, with validity and the ATS target on separate lines."""
+    console.print(f"documents: {'VALID' if res['valid'] else 'INVALID'}; resume {res['resume']['pages']} page(s), cover letter "
+                  f"{res['cover_letter']['pages']} page(s); ATS {res['ats']['status']} (average {res['ats']['average']}, target "
+                  f"{res['ats']['target']}, policy {res['ats']['policy']})", highlight=False)
+    for b in res["blockers"]:
+        console.print(f"[red]  blocker: {b}[/]", highlight=False)
+    for w in res["warnings"]:
+        console.print(f"[yellow]  warning: {w}[/]", highlight=False)
+    if res["estimates"]:
+        console.print(f"  {len(res['estimates'])} estimated figure(s) to confirm at review (changes.md)", highlight=False)
+
+
+@app.command("documents")
+def documents_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> of a tailored job.")) -> None:
+    """Re-validate a job's resume and cover letter on disk (after the ATS loop or a hand edit) and show the result.
+    Exit 0 usable, 1 invalid, 8 valid but below the ATS target while the policy is 'block'."""
+    from pathlib import Path
+
+    from jobagent.config import get_settings
+    from jobagent.tools import documents
+
+    s = get_settings()
+    d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
+    res = documents.refresh(d, s.ats_shortfall, s.ats_target)
+    if res is None:
+        console.print("[red]no documents.json: run `jobagent tailor` first[/]")
+        raise typer.Exit(documents.EXIT_INVALID)
+    _print_documents(res)
+    if code := documents.exit_code(res):
+        raise typer.Exit(code)
 
 
 @app.command("cover-letter")
@@ -359,12 +543,30 @@ def cover_letter_cmd(
     """(Re)write the cover letter from the job's resume.tex — e.g. after editing the resume's numbers."""
     from jobagent.steps.tailor import cover_letter
 
+    from pathlib import Path
+
+    from jobagent.config import get_settings
+    from jobagent.tools import documents
+
+    d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
+    s = get_settings()
+    documents.begin_rewrite(d)           # fail closed BEFORE the old letter is replaced
     cl = cover_letter(job_dir, company, log=lambda m: console.print(m, highlight=False))
     console.print(f"cover letter: {cl['words']} words, {len(cl['issues'])} issue(s)", highlight=False)
+    res = documents.refresh(d, s.ats_shortfall, s.ats_target, letter=cl)
+    if res:
+        _print_documents(res)
+    if not cl.get("valid", not cl["issues"]):
+        raise typer.Exit(documents.EXIT_INVALID)
+    if res and (code := documents.exit_code(res)):
+        raise typer.Exit(code)
 
 
 @app.command("ats")
-def ats_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with resume.pdf and jd.txt.")) -> None:
+def ats_cmd(
+    job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with resume.pdf and jd.txt."),
+    site: list[str] = typer.Option(None, "--site", help="Registered ATS checker; repeat for multiple sites."),
+) -> None:
     """Score the job's resume on the online ATS checkers (recorded in ats_runs)."""
     from pathlib import Path
 
@@ -373,27 +575,41 @@ def ats_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> 
 
     d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
     jd = JobDescription.model_validate_json((d / "jd.json").read_text())
-    for s in ats_sites.score_all(d / "resume.pdf", (d / "jd.txt").read_text(), title=jd.title or "",
-                                 log=lambda m: console.print(m, highlight=False)):
+    selected = tuple(site) if site else ats_sites.DEFAULT_SITES
+    results = ats_sites.score_all(d / "resume.pdf", (d / "jd.txt").read_text(), title=jd.title or "",
+                                 sites=selected, company=jd.company,
+                                 log=lambda m: console.print(m, highlight=False))
+    for s in results:
         ats_sites.record(d, s.site, 0, s.score, s.missing, s.to_dict())
-        console.print(f"{s.site}: {s.score}  missing: {', '.join(s.missing[:12]) or '-'}", highlight=False)
+        status = s.score if s.score is not None else (
+            "written feedback" if s.breakdown.get("feedback_only") else s.breakdown.get("status", "failed")
+        )
+        console.print(f"{s.site}: {status}  missing: {', '.join(s.missing[:12]) or '-'}", highlight=False)
         for tip in s.advice + s.breakdown.get("template", []):
             console.print(f"   advice: {tip}", highlight=False)
+    summary = ats_sites.write_summary(d, {s.site: s.score for s in results}, selected)
+    count, total = len(summary["scores"]), len(summary["sites"])
+    if summary["complete"]:
+        console.print(f"ATS average ({count}/{total} sites): {summary['average']}/100", highlight=False)
+    else:
+        console.print(f"ATS average incomplete ({count}/{total} sites); "
+                      f"missing: {', '.join(summary['missing']) or 'no numeric sites selected'}", highlight=False)
+    console.print(f"Summary: {d / 'ats_summary.json'}", highlight=False)
 
 
 @app.command("ats-record")
 def ats_record_cmd(
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> whose resume.pdf you scanned."),
-    site: str = typer.Argument(..., help="jobscan | skillsyncer | atsalign | applycove"),
+    site: str = typer.Argument(..., help="Any registered numeric ATS scorer, e.g. jobscan."),
     score: float = typer.Argument(..., help="The score the site gave (0-100)."),
 ) -> None:
-    """Record a score you got by hand on a site the agent doesn't automate; it joins the ATS average."""
+    """Record a numeric score obtained by hand on any registered scorer; it joins the ATS average."""
     from pathlib import Path
 
     from jobagent.tools import ats_sites
 
-    if site not in ats_sites.MANUAL_SITES:
-        console.print(f"[red]unknown site {site!r}; use one of {', '.join(ats_sites.MANUAL_SITES)}[/]")
+    if site not in ats_sites.RECORDABLE_SITES:
+        console.print(f"[red]unknown numeric site {site!r}; use one of {', '.join(ats_sites.RECORDABLE_SITES)}[/]")
         raise typer.Exit(1)
     d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
     ats_sites.record(d, site, 0, score, [], {"manual": True})
@@ -411,8 +627,20 @@ def ats_loop_cmd(
     from jobagent.steps.ats import run
     from jobagent.tools import ats_sites
 
+    from pathlib import Path
+
+    from jobagent.config import get_settings
+    from jobagent.tools import documents
+
+    d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
+    s = get_settings()
+    documents.begin_rewrite(d)           # fail closed BEFORE the loop touches the resume; a failed rewrite stays blocked
     run(job_dir, company, target, sites=tuple(site) if site else ats_sites.DEFAULT_SITES,
         log=lambda m: console.print(m, highlight=False))
+    if res := documents.refresh(d, s.ats_shortfall, s.ats_target):    # the loop rewrote the resume: validate what is on disk now
+        _print_documents(res)
+        if code := documents.exit_code(res):                          # an invalid build is a failed command, not just a printout
+            raise typer.Exit(code)
 
 
 @app.command("model-experiment")
@@ -487,15 +715,19 @@ def portal_logout_cmd(url: str = typer.Argument(..., help="A posting or career-s
 
 @app.command("apply")
 def apply_cmd(
+    ctx: typer.Context,
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with jd.json, resume.pdf (and cover_letter.pdf)."),
     company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md)."),
     no_submit: bool = typer.Option(True, "--no-submit/--submit", help="Step 12 always stops at the review screen."),
     ask_minutes: float = typer.Option(30, help="How long to wait for your answer to a question (then it's left for review)."),
     model: str = typer.Option(None, help="Voyager model that plans the answers (default: the writer model)."),
+    browser_mode: str = typer.Option('docker', help="docker, desktop, or auto (Docker then desktop on a challenge block)."),
+    desktop_allow_origin: list[str] = typer.Option(None, "--desktop-allow-origin",
+        help="Additional trusted application/login HTTPS origin; repeat for extra origins."),
 ) -> None:
     """Step 12: fill the job's application up to its review screen and read every field back (never submits)."""
     from jobagent.steps.apply import run
-    from jobagent.tools.browser import persistent_context
+    from jobagent.tools.session import check_mode, open_session
     from jobagent.tools.hitl import open_hitl
     from jobagent.tools.inbox import open_inbox
     from jobagent.tools.portal_auth import ensure_account
@@ -505,38 +737,74 @@ def apply_cmd(
 
     if not no_submit:
         raise typer.BadParameter("submitting comes with the human review (step 13)")
+    try:
+        check_mode(browser_mode, submitting=False)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
     _stop_if_unavailable(job_dir, "apply")
+    _stop_if_documents_invalid(job_dir, "apply")
+    _, wf = _lock_job(ctx, job_dir, "apply")
     log = lambda m: console.print(m, highlight=False)
+    if (wf.stage("apply") or {}).get("status") == "interrupted":
+        log("apply: an earlier run was interrupted; the page is reopened and read again (filling never sends)")
+    wf.mark("apply", "running")
     vault = open_vault()
     email = (vault.get("gmail") or {})["email"]
+    from pathlib import Path
+    jd = json.loads((Path(job_dir) / 'jd.json').read_text())
+    url = jd.get('apply_url') or jd.get('source_url')
     try:
-        with open_inbox() as inbox, persistent_context() as ctx:
-            page = ctx.pages[0]
-            sign_in = lambda url: log(f"portal: {ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log)}")
-            res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
-                      ask_s=ask_minutes * 60, model_name=model)
+        modes = ('docker','desktop') if browser_mode == 'auto' else (browser_mode,)
+        for mode in modes:
+            log(f'apply: browser={mode}; planner=Voyager {model or "configured writer"}')
+            related = [u for u in (jd.get('source_url'), *(desktop_allow_origin or [])) if u]
+            with open_inbox() as inbox, open_session(mode, url, related) as sess:
+                page = sess.page
+                sign_in = lambda url: ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log, already_open=True)
+                res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
+                          ask_s=ask_minutes * 60, model_name=model,
+                          **sess.run_options(observe_s=30, auto_fallback=browser_mode == 'auto'))
+            if not (res.get('state')=='blocked' and res.get('resumable') and mode=='docker' and browser_mode=='auto'):
+                break
     except Unavailable as gone:
+        wf.mark("apply", "failed", error=f"unavailable: {gone.kind}")
         _stopped(job_dir, gone, "apply")
+    wf.mark("apply", "done" if res["state"] == "review" else "failed", result={"state": res["state"], "ready": bool(res.get("ready_to_submit"))})
     console.print(f"apply: {res['state']}; {res['verified']}/{len(res['fields'])} fields verified; "
                   f"{len(res['flags'])} for review -> {job_dir}/application/application.md", highlight=False)
+    from jobagent.steps.apply import exit_code
+    if res["state"] == "blocked":
+        console.print(f"[yellow]apply: blocked ({res.get('blocked_by', '')}): {res.get('reason', '')}[/]", highlight=False)
+    elif not res.get("ready_to_submit"):
+        for b in (res.get("blockers") or [f"the form ended '{res['state']}'"])[:6]:
+            console.print(f"[yellow]apply: not ready: {b}[/]", highlight=False)
+    if code := exit_code(res):  # 4 blocked, 5 on the review screen but not ready, 1 failed or stuck
+        raise typer.Exit(code)
 
 
 @app.command("submit")
 def submit_cmd(
+    ctx: typer.Context,
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with jd.json, resume.pdf (and cover_letter.pdf)."),
     company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md)."),
     ask_minutes: float = typer.Option(30, help="How long a question while filling waits for your answer."),
     review_minutes: float = typer.Option(60, help="How long the filled form waits for your approve / skip."),
     mail_minutes: float = typer.Option(15, help="How long to watch the inbox for the confirmation mail."),
+    browser_mode: str = typer.Option('docker', help="docker (default) or desktop: the browser that holds the application "
+                                     "(`apply --browser-mode auto` is for filling only)."),
+    allow_desktop_submit: bool = typer.Option(False, "--allow-desktop-submit",
+        help="Required with --browser-mode desktop: sending from the desktop browser must be asked for explicitly."),
+    desktop_allow_origin: list[str] = typer.Option(None, "--desktop-allow-origin",
+        help="Additional trusted application/login HTTPS origin; repeat for extra origins."),
 ) -> None:
     """Step 13: fill the application, show it for review, and submit it only when you answer 'approve'; then match
-    the confirmation mail."""
+    the confirmation mail. The same approval is needed in every browser mode."""
     from pathlib import Path
 
     from jobagent import db
     from jobagent.steps.apply import run
     from jobagent.steps.submit import make_at_review
-    from jobagent.tools.browser import persistent_context
+    from jobagent.tools.session import check_mode, open_session
     from jobagent.tools.hitl import open_hitl
     from jobagent.tools.inbox import open_inbox
     from jobagent.tools.portal_auth import ensure_account
@@ -544,31 +812,68 @@ def submit_cmd(
 
     from jobagent.tools.availability import Unavailable
 
+    from jobagent.steps.apply import EXIT_UNCERTAIN
+    from jobagent.steps.submit import guard
+
+    try:
+        check_mode(browser_mode, submitting=True, allow_desktop_submit=allow_desktop_submit)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+    if stop := guard(db.connect(), Path(job_dir)):     # before a browser opens: a sent application is never filled again
+        console.print(f"submit: {stop['message']}", highlight=False)
+        raise typer.Exit(EXIT_UNCERTAIN if stop["state"] == "submission_uncertain" else 0)
     _stop_if_unavailable(job_dir, "submit")
+    _stop_if_documents_invalid(job_dir, "submit")
+    _, wf = _lock_job(ctx, job_dir, "submit")
     log = lambda m: console.print(m, highlight=False)  # noqa: E731
+    if (wf.stage("submit") or {}).get("status") == "interrupted":
+        # not replayed blindly: the submission attempts (guard above) decide what is safe; this only says why a look is worthwhile
+        log("submit: an earlier submit run ended before it finished; its submission attempts were checked above and nothing "
+            "that may have been sent is sent again")
+    wf.mark("submit", "running", side_effect=True)
     vault = open_vault()
     email = (vault.get("gmail") or {})["email"]
     jd = json.loads((Path(job_dir) / "jd.json").read_text())
+    url = jd.get("apply_url") or jd.get("source_url")
     conn = db.connect()
     try:
-        with open_inbox() as inbox, persistent_context() as ctx:
-            page = ctx.pages[0]
-            sign_in = lambda url: log(f"portal: {ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log)}")  # noqa: E731
+        related = [u for u in (jd.get("source_url"), *(desktop_allow_origin or [])) if u]
+        log(f"submit: browser={browser_mode}")
+        with open_inbox() as inbox, open_session(browser_mode, url, related) as sess:
+            page = sess.page
+            sign_in = lambda url: ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log, already_open=True)  # noqa: E731
             hook = make_at_review(Path(job_dir), jd, open_hitl(log), inbox, conn, log, ask_s=review_minutes * 60,
                                   mail_s=mail_minutes * 60)
             res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
-                      ask_s=ask_minutes * 60, at_review=hook)
+                      ask_s=ask_minutes * 60, at_review=hook, **sess.run_options())
     except Unavailable as gone:
+        wf.mark("submit", "failed", error=f"unavailable: {gone.kind}")
         _stopped(job_dir, gone, "submit")
     sub = res.get("submission") or {"state": f"not submitted: the form ended '{res['state']}'"}
+    wf.mark("submit", "done" if sub.get("state") in ("submitted", "confirmed", "already_submitted", "skipped") else "failed",
+            result={"state": sub.get("state")})
     console.print(f"submit: {sub.get('state')}; {res['verified']}/{len(res['fields'])} fields verified -> "
                   f"{job_dir}/application/review.md", highlight=False)
+    from jobagent.steps.apply import EXIT_FAILED, EXIT_NOT_READY, exit_code
+    state = sub.get("state")
+    if state in ("submitted", "confirmed", "already_submitted"):
+        return
+    if state in ("submission_unknown", "submission_uncertain"):   # clicked or may have been, receipt unproven: never "ok"
+        raise typer.Exit(EXIT_UNCERTAIN)
+    if state == "failed":
+        raise typer.Exit(EXIT_FAILED)
+    if state == "not_ready":                      # you approved but required answers were still missing: nothing was sent
+        raise typer.Exit(EXIT_NOT_READY)
+    if code := exit_code(res):                    # blocked 4, failed or stuck 1, review but not ready 5; skipped while ready 0
+        raise typer.Exit(code)
 
 
 @app.command("confirm")
 def confirm_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> of a submitted application."),
-                minutes: float = typer.Option(1, help="How long to watch the inbox.")) -> None:
-    """Look for a submitted application's confirmation mail again."""
+                minutes: float = typer.Option(1, help="How long to watch the inbox."),
+                attest: str = typer.Option("", help="After checking the portal yourself, settle an attempt of unknown outcome: "
+                                           "'sent' or 'not-sent' ('not-sent' is what lets a new attempt start).")) -> None:
+    """Look for a submitted application's confirmation mail again; settles an attempt whose outcome is unknown."""
     from pathlib import Path
 
     from jobagent import db
@@ -576,7 +881,9 @@ def confirm_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-
     from jobagent.tools.inbox import open_inbox
 
     with open_inbox() as inbox:
-        console.print(confirm(Path(job_dir), inbox, db.connect(), timeout_s=minutes * 60), highlight=False)
+        if attest not in ('', 'sent', 'not-sent'):
+            raise typer.BadParameter("--attest is 'sent' or 'not-sent'")
+        console.print(confirm(Path(job_dir), inbox, db.connect(), timeout_s=minutes * 60, attest=attest or None), highlight=False)
 
 
 @app.command("applications")

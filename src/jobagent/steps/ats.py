@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from jobagent import llm
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
-from jobagent.tools import ats_sites, layout
+from jobagent.tools import ats_sites, bundle, layout
 from jobagent.tools import projects as P
 from jobagent.tools import tailor as T
 
@@ -80,7 +80,7 @@ def skill_words(words: list[str], jd: JobDescription, log=print) -> list[str]:
 ELIGIBILITY = re.compile(r"(?i)\b(authori[sz]\w*|sponsor\w*|citizen\w*|clearance|relocat\w*|gpa|ph\.?d|doctor\w*|"
                          r"certifi\w*|licen[cs]\w*|located|city|zip|address|on-?site|hybrid|commut\w*)\b")
 # Sites whose "missing keywords" are word overlap with the posting: only the real skills among them are used
-WORD_OVERLAP_SITES = {"autoapplymax"}
+WORD_OVERLAP_SITES = {"autoapplymax", "skillsyncer"}
 # Words a posting uses for whoever applies: never written into a resume, whatever a checker says
 APPLICANT_WORDS = re.compile(r"(?i)^(applicants?|candidates?|people|persons?|individuals?|you|your|yourself|we|us|"
                              r"our|employees?|hires?|talent|job ?seekers?|employment|equal|opportunity)$")
@@ -89,18 +89,26 @@ APPLICANT_WORDS = re.compile(r"(?i)^(applicants?|candidates?|people|persons?|ind
 def evaluate(job_dir: Path, jd: JobDescription, jd_text: str, rnd: int, sites, log=print) -> dict:
     """Score the resume on `sites` and record each in ats_runs. Returns {"scores", "missing" (per site: keywords and
     phrases to work in), "advice" (the sites' suggestions), "template" (advice about locked template parts)}."""
-    out = {"scores": {}, "missing": {}, "advice": [], "template": [], "keep": []}
-    for s in ats_sites.score_all(job_dir / "resume.pdf", jd_text, sites, jd.title or "", log=log) if sites else []:
+    out = {"scores": {}, "missing": {}, "advice": [], "advice_by_site": {}, "template": [], "keep": [], "completed": []}
+    for s in ats_sites.score_all(job_dir / "resume.pdf", jd_text, sites, jd.title or "", log=log,
+                                 company=jd.company) if sites else []:
         ats_sites.record(job_dir, s.site, rnd, s.score, s.missing, s.to_dict())
-        if s.score is None:
+        if s.score is None and not s.breakdown.get("feedback_only"):
             continue
-        out["scores"][s.site] = s.score
-        out["advice"] += [a for a in s.advice if not ELIGIBILITY.search(a)]
+        out["completed"].append(s.site)
+        if s.score is not None:
+            out["scores"][s.site] = s.score
+        advice = [a for a in s.advice if not ELIGIBILITY.search(a)]
+        out["advice"] += advice
+        out["advice_by_site"][s.site] = advice
         out["template"] += s.breakdown.get("template", [])
         out["keep"] += [k for k in s.breakdown.get("matched", []) if not T.is_generic(k)]
         if s.job_specific:
             new = [m for m in s.missing if not ELIGIBILITY.search(m)]
-            if s.site in WORD_OVERLAP_SITES:
+            if s.site == "skillsyncer":
+                # This scanner includes benefits/legal boilerplate and frequency gaps in its keyword inventory.
+                new = skill_words(new, jd, log)
+            elif s.site in WORD_OVERLAP_SITES:
                 # Every word but the ones naming applicants: work phrases first, then skills, then other non-generic
                 # words (finance, compliance, product) for the Summary, bullets or projects
                 new = [m for m in new if not APPLICANT_WORDS.match(m.strip())]
@@ -165,6 +173,8 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
         sites=ats_sites.DEFAULT_SITES, rewrite_letter: bool = True, log=print) -> dict:
     """Round 0 scores every site; rounds 1..n rescore only the unlimited sites (budget sites keep their round-0
     missing keywords and advice), and the budget sites are scanned once more on the final resume if it changed."""
+    if sites and all(name in ats_sites.FEEDBACK_ONLY_SITES for name in sites):
+        raise ValueError("The ATS improvement loop requires at least one numeric checker alongside SkillsFirst's written feedback.")
     s = get_settings()
     job_dir = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
@@ -179,19 +189,25 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
     ev = evaluate(job_dir, jd, jd_text, 0, sites, log)
     scores = {**ev["scores"], **ats_sites.manual_scores(job_dir)}
     budget_missing = [m for site in budget for m in ev["missing"].get(site, [])]
-    budget_advice = [a for a in ev["advice"] if a.startswith("Show these soft skills")] if budget else []
+    budget_advice = [a for site in budget for a in ev["advice_by_site"].get(site, [])]
     missing, advice, template = merged_missing(ev["missing"]), ev["advice"], ev["template"]
     keep = list(dict.fromkeys(ev["keep"]))
-    loop_avg = average({k: v for k, v in scores.items() if k in every})
+    loop_avg = ats_sites.score_summary(scores, every)["average"]
     covered = present(job_dir, budget_missing)
-    history, changed = [average(scores)], False
-    log(f"ats round 0: average {history[0]} {scores}; missing {missing[:MAX_KEYWORDS]}; advice {len(advice)}")
+    initial = ats_sites.score_summary(scores, sites)
+    history = [initial["average"]] if initial["complete"] else []
+    comparison_history = [loop_avg] if loop_avg is not None else []
+    changed = False
+    log(f"ats round 0: average {initial['average']} {scores}; missing {missing[:MAX_KEYWORDS]}; advice {len(advice)}")
     for t in dict.fromkeys(template):
         log(f"ats: template advice (not applied; locked or eligibility): {t}")
     n_keywords, last = MAX_KEYWORDS, ""
     base_layout = len(layout.check(job_dir / "resume.pdf").issues)  # the change must not make the page read worse
     for rnd in range(1, rounds + 1):
-        if average(scores) >= target or not (missing or advice):
+        if (not changed and initial["average"] is not None and initial["average"] >= target) or not (missing or advice):
+            break
+        if loop_avg is None:
+            log("ats: comparison scores are incomplete; keeping the current resume")
             break
         proj_path = job_dir / "projects.json"
         proj_before = proj_path.read_text() if proj_path.exists() else None
@@ -224,8 +240,7 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
         missing = missing[n_keywords:] + tried  # a rejected round tries the other keywords first next time
         if proj_after != proj_before:
             proj_path.write_text(proj_after)
-        undo = lambda: ((job_dir / "resume.tex").write_text(backup[0]), (job_dir / "resume.pdf").write_bytes(backup[1]),
-                        proj_before is not None and proj_path.write_text(proj_before))
+        undo = lambda: bundle.publish(job_dir, {"resume.tex": backup[0], "resume.pdf": backup[1], "projects.json": proj_before})
         tex, problems, pages, err = render_keeping_projects(r, g, current, job_dir)
         new_layout = layout.check(job_dir / "resume.pdf").issues if pages == 1 and not err else []
         if len(new_layout) > base_layout:
@@ -237,8 +252,12 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
                     else f"it broke resume rules: {'; '.join((issues + uncovered)[:3])}"))
             continue
         ev = evaluate(job_dir, jd, jd_text, rnd, every, log)
-        new_scores = {**scores, **ev["scores"]}
-        new_loop = average({k: v for k, v in new_scores.items() if k in every})
+        new_scores = {**{k: v for k, v in scores.items() if k not in every}, **ev["scores"]}
+        new_loop = ats_sites.score_summary(ev["scores"], every)["average"]
+        if new_loop is None:
+            undo()
+            log(f"ats round {rnd}: comparison scores incomplete; restored the previous resume")
+            continue
         new_covered = present(job_dir, budget_missing)
         added = [t for a in kp.skills for t in a.terms]
         log(f"ats round {rnd}: unlimited-site average {loop_avg} -> {new_loop} {ev['scores']}; budget keywords "
@@ -260,7 +279,7 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
         missing = list(dict.fromkeys(missing))
         advice = ev["advice"] + budget_advice
         keep = list(dict.fromkeys(keep + ev["keep"]))
-        history.append(average(scores))
+        comparison_history.append(new_loop)
         (job_dir / "filled.json").write_text(f.model_dump_json(indent=1))
     if changed and budget:  # the budget sites' score for the final resume (if scans are left)
         ev = evaluate(job_dir, jd, jd_text, rounds + 1, budget, log)
@@ -268,13 +287,19 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
         scores = {**{k: v for k, v in scores.items() if k not in stale}, **ev["scores"]}
         if stale:
             log(f"ats: {stale} could not rescore the final resume; left out of the final average")
-        history.append(average(scores))
     if changed and rewrite_letter:
         from jobagent.steps.tailor import cover_letter
         cover_letter(job_dir, company_slug, log=log)
-    avg = average(scores)
-    result = {"average": avg, "scores": scores, "history": history, "missing": missing,
-              "template_advice": list(dict.fromkeys(template)), "reached": avg >= target}
+    summary = ats_sites.write_summary(job_dir, scores, sites)
+    avg = summary["average"]
+    if changed and avg is not None:
+        history.append(avg)
+    result = {"average": avg, "scores": summary["scores"], "history": history, "missing": missing,
+              "comparison_history": comparison_history, "average_sites": summary["sites"],
+              "average_missing": summary["missing"], "average_complete": summary["complete"],
+              "template_advice": list(dict.fromkeys(template)), "reached": avg is not None and avg >= target}
+    outcome = "incomplete; missing " + ", ".join(summary["missing"]) if avg is None else (
+        "target reached" if result["reached"] else "gap " + str(round(target - avg, 1)))
     log(f"ats: {' -> '.join(map(str, history))} {scores} "
-        f"({'target reached' if result['reached'] else 'gap ' + str(round(target - avg, 1))})")
+        f"({outcome})")
     return result

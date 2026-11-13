@@ -167,26 +167,38 @@ def _wd_create(page: Page, email: str, password: str) -> str:
 ADAPTERS = {"workday": (_wd_site, _wd_sign_in, _wd_create, _wd_signed_in)}
 
 
-def _confirm_email(page: Page, inbox, host: str, since: datetime, log, purpose: str, timeout_s: float = 300) -> bool:
-    """Use the portal's verification mail (a link opened in this browser, or a code typed into the page)."""
+def _confirm_email(page: Page, inbox, host: str, since: datetime, log, purpose: str, timeout_s: float = 300,
+                   settle_s: float = 8) -> bool:
+    """Use the portal's verification mail (a link opened in this browser, or a code typed into the page). The mail is the
+    agent's, and trashed, only when the site is seen to ACCEPT it: affirmative evidence within `settle_s` seconds
+    (tools/verification.outcome); an unchanged form, a pending request, a challenge or an error page is not acceptance."""
+    from jobagent.tools import verification
     try:
         mail, v = inbox.wait_for_verification(f"https://{host}", since, kind="portal", timeout_s=timeout_s)
     except TimeoutError:
         log(f"portal {host}: no verification mail within 5 min")
         return False
+    box = None
     if v.link:
         page.goto(v.link, wait_until="domcontentloaded")
         page.wait_for_timeout(4000)
     elif v.code:
-        box = page.locator('input[autocomplete="one-time-code"], input[name*="code" i], input[id*="code" i]')
-        if not box.count():
-            log(f"portal {host}: got a code but found no field for it")
+        field = page.locator('input[autocomplete="one-time-code"], input[name*="code" i], input[id*="code" i]')
+        if not field.count():
+            log(f"portal {host}: got a code but found no field for it; the mail is left alone")
             return False
-        box.first.fill(v.code)
+        box = field.first
+        box.fill(v.code)
         page.keyboard.press("Enter")
-        page.wait_for_timeout(3000)
-    inbox.consume_and_trash(mail, purpose)
-    log(f"portal {host}: email confirmed; verification mail trashed ({mail.subject!r})")
+        page.wait_for_timeout(1500)
+    verdict = verification.outcome(page, (lambda: box.is_visible()) if box is not None else None, settle_s=settle_s)
+    if verdict != "accepted":
+        log(f"portal {host}: the site did not accept the code or link ({verdict}); the mail is left alone")
+        return False
+    inbox.mark_used(mail, f"{host} accepted it")             # only now is this mail the agent's
+    cleanup = inbox.consume_and_trash(mail, purpose)
+    log(f"portal {host}: email confirmed (the site accepted it); cleanup: {cleanup.status}"
+        + ("" if cleanup.ok else f" ({cleanup.detail})"))
     return True
 
 
@@ -219,22 +231,28 @@ def candidate_values(email: str, password: str) -> dict:
 
 
 def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print,
-                      fresh: bool = False) -> PortalLogin:
+                      fresh: bool = False, already_open: bool = False) -> PortalLogin:
     """Any portal without an adapter: the general agent (tools/portal_agent.py) signs in or registers."""
     from jobagent.tools import portal_agent
+    if already_open and not fresh and page.url != url:
+        raise PortalError("The open sign-in page no longer matches the requested portal URL")
     host = urlparse(url).netloc.lower()
     key = f"portal:{host}"
     res = PortalLogin(host, platform_of(url))
     mem = PortalMemory(portal_key(url))
     db.record_agent_domain(inbox.conn, f"https://{host}", "portal")
     creds = vault.get(key) or {}
+    email = creds.get("email") or email
     password = creds.get("password") or portal_password(vault)
     if not creds:
         vault.set(key, email=email, password=password, platform=res.platform,
                   attempted=datetime.now(UTC).isoformat(), verified=False)  # saved before anything is submitted
     if fresh:
         _clear_site_cookies(page, host)
-    challenge.goto(page, url, hitl, log=log)
+    if already_open and not fresh:
+        challenge.guard(page)              # preserve POST-backed login state and the browser's current form
+    else:
+        challenge.goto(page, url, hitl, log=log)
     # A portal that rejects the shared password as weak/common gets its own strong one, saved before it's typed
     alt = (vault.get(key) or {}).get("alt_password") or new_password()
     vault.set(key, **{**(vault.get(key) or {}), "alt_password": alt})
@@ -262,13 +280,13 @@ def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, ema
 
 
 def ensure_account(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print,
-                   fresh: bool = False) -> PortalLogin:
+                   fresh: bool = False, already_open: bool = False) -> PortalLogin:
     """Signed in to the portal of `url` with the agent's account: sign in first (stored or shared password); register
     only when the portal has no account for the email; never a password reset. Workday has its own adapter; every
     other portal goes to the general agent."""
     platform = platform_of(url)
     if platform not in ADAPTERS:
-        return ensure_with_agent(page, url, vault, inbox, hitl, email, log=log, fresh=fresh)
+        return ensure_with_agent(page, url, vault, inbox, hitl, email, log=log, fresh=fresh, already_open=already_open)
     try:
         return _ensure_with_adapter(page, url, vault, inbox, hitl, email, log=log, fresh=fresh)
     except PortalError:

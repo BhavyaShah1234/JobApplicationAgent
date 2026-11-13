@@ -79,12 +79,17 @@ late reply changes the labels by itself.
 | pending | inside the cutoff: a censored observation, never a failure |
 | withdrawn | left out of every rate |
 
-The cutoff is the 90th percentile of the days to first response among applications that got one (clamped to 21-120 days)
-once 20 have, per portal else overall; 45 days until then. Time to first response uses Kaplan-Meier, so applications
-still waiting are not counted as failures, and a median or "responded by 30 days" figure is shown only when at least 15
-applications are old enough to tell (with fewer, the estimator is over-confident). Rates carry a Wilson 95% interval;
-groups under 15 resolved applications say "too few". What the submitted resume was (hash, checker scores, role
-family, skills) is frozen into `applications` at submission and filled in for older rows at the first sync.
+The ghosting cutoff is a statistical estimate only when it can be identified (F21): the day by which 90% of ALL applications
+(responders and still-waiting ones, the latter censored) had responded - the Kaplan-Meier 90th percentile, clamped to 21-120
+days - and only if at least 20 responded, the curve reaches 90% and at least 15 applications are still informative there.
+Otherwise the conservative default of 45 days is used, `stats` prints the basis, and the result is labelled uncertain. A
+percentile over the responders alone (a few fast replies among many silences) is never used as a deadline for everyone. Time
+to first response uses Kaplan-Meier, so applications still waiting are not counted as failures; a median or "replied by 30
+days" figure is shown only when at least 15 applications can tell. The "replied" and "positive" columns are SHARES OF THE
+RESOLVED APPLICATIONS (with Wilson 95% intervals): fast replies and older applications are over-represented there, so they are
+not callback probabilities; the KM columns are. Applications submitted after the evaluation date (`--as-of`) are not part of
+that evaluation. What the submitted resume was (hash, checker scores, role family, skills) is frozen into `applications` at
+submission and filled in for older rows at the first sync.
 
 ## 15c — learning, advisory
 
@@ -92,18 +97,26 @@ Asked of resolved applications only. **Advisory:** `reflect` prints findings wit
 off by default, each switch one lever into behaviour (`LEARNING_USE_SITE_MIX`, `LEARNING_USE_TAILORING_HINTS`,
 `LEARNING_USE_LESSONS` in `.env`).
 
-- **Checker sites:** the AUC of each site's score for telling positive from not-positive applications, with a bootstrap
-  99% interval; above 0.5 means a higher score went with more replies. (Used instead of a bandit over sites: it answers
-  the question asked, whether a checker predicts anything, and uses every application.)
-- **Skills in a role family:** Fisher's exact test per skill listed on the resumes, Benjamini-Hochberg across the
-  skills tested, 5% false discovery rate.
-- **Floors:** 15 positive and 15 not-positive resolved applications per group before anything is said.
-- **Lessons:** `lessons` rows with the application ids they rest on; a lesson the data stops supporting is retired.
+- **One test for the whole family (F23).** Every site and every skill-by-role-family comparison over the data floor is tested
+  together by a Westfall-Young max-statistic permutation test (outcomes shuffled within role families, whole companies
+  moving together), so the chance of ANY false recommendation in an effect-free world is held near 5% however many things are
+  looked at. Checker sites: weighted AUC of the score for telling positive from not-positive applications; skills: weighted
+  difference in the share of positive replies with and without the skill. Ghosted applications weigh 0.5 as negatives;
+  pending ones are censored and left out. Skills are compared only when the snapshot's skill list is the submitted one.
+- **Hold-out.** Findings come from the earliest 70% of resolved applications and must point the same way on the latest 30%
+  to be actionable; contradicted ones are reported and not acted on.
+- **Association, not cause.** Nothing here shows that raising a score or adding a skill brings replies.
+- **Floors:** 15 positive and 15 not-positive resolved applications per group (among the earlier ones) before anything is said.
+- **Lessons:** `lessons` rows with the application ids they rest on, versioned by a hash of the full evidence (scores, skills,
+  weights, parameters): a lesson whose evidence changed is a new version even if its sentence did not; one the data stops
+  supporting is retired. Only confirmed recommendations and "no relationship" notes are stored.
 - **Switches:** the tailoring prompt gets the skills that went with replies and the active lessons for the job's role
-  family (`tools/tailor.learning_hint`, empty without touching the database when both switches are off). The site-mix
-  function (`learning.site_mix`) drops a site only when its interval sits inside 0.45-0.55 with at least 30 per class
-  and never the last site; **it is not wired into the ATS loop yet**, because `steps/ats.py`, `steps/multi_agent.py` and
-  `tools/ats_sites.py` carry the candidate's uncommitted changes: the call goes before `score_all` once they are committed.
+  family (`tools/tailor.learning_hint`, empty without touching the database when both switches are off).
+  `LEARNING_USE_SITE_MIX` is **unsupported and has no effect** (F24): the ATS loop always runs every required checker so that
+  the five-site average stays comparable; `reflect` says so when it is set.
+- **Repairing the record (F24):** `outcomes events` lists every event with its id; `outcomes discard <id>` removes an accepted
+  false positive from the analysis (confirmation state and followers corrected, audited); `outcomes label <id> <stage>`
+  relabels by event id; `sync-inbox --dry-run` changes nothing in the database.
 
 ### What the simulation says about how much data this needs
 
@@ -136,6 +149,5 @@ recommendation: another reason learning only advises.
 ## Not done
 
 - No real outcome has been seen: the first real replies will show what the fixtures missed.
-- The site-mix switch is not wired into the ATS loop (see above).
 - `sync-inbox` runs by hand, with `--watch` or from a host cron line; it does not yet run inside the container at bootstrap.
 - Notifications for a new interview or offer are a printed line (and `outcomes`); a push or dashboard alert belongs to steps 17 and 19.

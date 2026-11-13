@@ -31,7 +31,7 @@ contact:
     seen: ["Phone", "Phone Number", "Phone Device Type", "Country Phone Code", "Phone Extension"]
     answer: {number: "", country_code: "", country: "", device_type: "", extension: ""}
 
-# Current home address. Must be your real address: it is checked at the background check / I-9.
+# The agent selects a geocoded address in a configured well-known city within the JD's state. The selection is cached per job.
 address:
   - question: "Current address"
     seen: ["Address Line 1", "Address Line 2", "City", "State", "Postal Code", "County", "Country"]

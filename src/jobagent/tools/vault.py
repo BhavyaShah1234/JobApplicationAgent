@@ -1,5 +1,7 @@
 """Fernet-encrypted credential store, keyed by entry name (e.g. "gmail", a portal domain)."""
 
+import contextlib
+import fcntl
 import json
 import os
 import tempfile
@@ -77,26 +79,42 @@ class Vault:
         """Replace an unreadable vault with the last good backup; the bad file is kept alongside."""
         if not self.backup_path.exists():
             raise VaultError("no vault backup to restore")
-        names = sorted(self._decrypt(self.backup_path))
-        if self.path.exists():
-            os.replace(self.path, self.path.with_name(self.path.name + ".unreadable"))
-        self._write_atomic(self.path, self.backup_path.read_bytes())
+        with self._locked():
+            names = sorted(self._decrypt(self.backup_path))
+            if self.path.exists():
+                os.replace(self.path, self.path.with_name(self.path.name + ".unreadable"))
+            self._write_atomic(self.path, self.backup_path.read_bytes())
         return names
 
     def get(self, name: str) -> dict[str, Any] | None:
         return self._load().get(name)
 
+    @contextlib.contextmanager
+    def _locked(self):
+        """Hold the vault's exclusive lock across a whole read-modify-write (F25). An atomic rename keeps the file from being
+        half written, but two processes that each read, change and write would still lose one change; the lock (a lock file
+        beside the vault, released by the OS if the holder dies) makes the second wait for the first and read ITS result."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path.with_name(self.path.name + ".lock"), "a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
     def set(self, name: str, **fields: Any) -> None:
-        data = self._load()
-        data[name] = {**data.get(name, {}), **fields}
-        self._save(data)
+        with self._locked():
+            data = self._load()
+            data[name] = {**data.get(name, {}), **fields}
+            self._save(data)
 
     def delete(self, name: str) -> bool:
-        data = self._load()
-        if data.pop(name, None) is None:
-            return False
-        self._save(data)
-        return True
+        with self._locked():
+            data = self._load()
+            if data.pop(name, None) is None:
+                return False
+            self._save(data)
+            return True
 
     def names(self) -> list[str]:
         return sorted(self._load())

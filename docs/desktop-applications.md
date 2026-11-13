@@ -1,0 +1,87 @@
+# Desktop application fallback
+
+`jobagent apply` can use a dedicated desktop Chrome for any public HTTPS application URL.
+It is no longer restricted to Carvana. The Voyager planner, answer checker and form tools
+run inside Docker and connect to that host browser. Chrome uses an isolated profile per
+posting, never a personal browser profile.
+
+From the project directory on the Linux desktop, keep the host bridge running:
+
+```bash
+PYTHONPATH=src python3 -m jobagent.tools.desktop_browser serve
+```
+
+Run the application agent in Docker:
+
+```bash
+docker exec -it jobagent jobagent apply outputs/COMPANY/JOB_ID COMPANY \
+  --browser-mode auto --model qwen3-30b-a3b
+```
+
+`docker` remains the default mode. `auto` starts in Docker and immediately hands off to
+desktop when a bot-protection challenge is detected; no terminal `skip` response is
+needed for that handoff. `desktop` opens the dedicated host session directly. If the
+desktop session shows verification, form actions pause for the human. A successful
+resolution requires three readiness checks spaced two seconds apart; resolution is
+bounded to two cycles with a 15-minute deadline each. The agent never solves challenges,
+changes browser fingerprints or copies verification cookies between browsers.
+
+The bridge uses an owner-only Unix socket under `state/desktop-browser`. Host networking
+and the shared state mount in docker-compose.yml let Docker reach its loopback debugging
+ports. Chrome chooses a different port for each session; existing review windows do not
+occupy a single shared port. Process executable, profile lock and DevTools endpoint are
+validated before attachment. Sessions live under `state/desktop-browser/agent-session/<url-hash>`.
+The old `desktop_probe serve --authorized-stage serve` command delegates to the updated
+broker, but an already-running old bridge must be restarted to load updated code.
+
+Ordinary initial HTTPS redirects are supported. Subsequent pages can use the entry
+origins, the JD source origin, application/login links and form actions published by the
+loaded top-level page. Embedded frame origins do not grant top-level navigation permission. Same-origin paths, queries and fragments may
+change between steps. Extra trusted login origins can be supplied explicitly:
+
+```bash
+docker exec -it jobagent jobagent apply outputs/COMPANY/JOB_ID COMPANY \
+  --browser-mode auto --desktop-allow-origin https://identity.example.com
+```
+
+Public HTTPS embedded forms are discovered without an ATS-vendor frame allowlist. Links
+with `target="_blank"` open in the dedicated application tab. Unexpected additional tabs,
+unrecognized navigation origins and local/non-HTTPS destinations stop the application.
+An application landing page can show Apply or sign-in first; desktop startup now follows
+the same start/sign-in workflow as Docker, without reloading a usable posting.
+
+The application stops at review and observes the filled desktop form for 30 seconds.
+Chrome stays open for review. Both `apply` and `submit` use the same session abstraction. Filling never sends.
+An explicitly authorized desktop submission uses the same dedicated session:
+
+```bash
+jobagent submit outputs/COMPANY/JOB_ID COMPANY --browser-mode desktop --allow-desktop-submit
+```
+
+The reviewed payload must still be approved at the final prompt. `auto` is a filling mode; a submission cannot silently
+switch browsers. Scraping and ATS scoring keep their own browser workflows.
+
+## Form filling audit
+
+Field discovery and answer planning are shared across employers. Controls are read from
+the current DOM and embedded frames; labels, options, sections and applicant facts are
+sent to Voyager, then answers are checked and read back. The code does not contain a
+closed list of posting IDs, employer-specific answer maps or fixed field positions.
+Applicant wording examples and user-requested referral/address policies are data/policy,
+not a list of supported forms.
+
+There are platform-specific widget handlers (for example Workday dates/search pickers,
+React selects and grouped buttons). These extend the generic reader. Lazy uploads now
+use the clicked control's chooser/new input rather than fixed Carvana captions or IDs.
+Native uploads, accessible custom radios and editable text regions are read back too.
+Conditional fields and subsequent pages use the same planner.
+
+Author closed shadow roots are recovered through Chrome's DOM protocol and remain closed to the site's ordinary DOM API.
+The same reader and an agent selector engine traverse them, including option lists; native text/select/radio/upload controls
+are exercised in real Chrome tests. Unreadable frames still produce extraction blockers. Unusual proprietary
+widgets, JavaScript authentication popups and unsupported account flows may need human
+help or another adapter. The random-address policy still resolves US locations; it runs
+only when an actual candidate address/location question is encountered, before those
+answers are planned. Forms without address questions no longer require a US address lookup.
+Cloudflare can still challenge desktop Chrome; a successful navigation test cannot
+guarantee acceptance on every site.

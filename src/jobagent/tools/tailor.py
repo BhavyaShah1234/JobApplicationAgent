@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from jobagent import llm
 from jobagent.clock import with_today
@@ -197,13 +197,40 @@ def compile_pdf(tex: str, out_dir: Path, name: str = "resume") -> tuple[int, str
 
 PLACEHOLDER = re.compile(r"\b[XYZN]\s*%|\bby [XYZN]\b|\b[XYZN]x\b")
 
+# --- LENGTH BUDGETS: one definition for the generation schemas, the prompts, the repair requests and the validators (F18).
+# A budget is a request the writer is told about AND a rule it is checked against, with the same number everywhere, so an
+# answer the schema accepts is never one a validator then refuses. Character budgets are a first filter: the rendered PDF
+# (one page, one printed line per bullet) still decides whether the page fits.
+BULLET_TARGET = 110            # a NEW bullet: about one printed line
+BULLET_MAX = 130               # ... and never more than this; a bullet copied verbatim from the template (`original`) is exempt
+BULLET_VERBATIM_MAX = 300      # the schema's ceiling, for those verbatim template bullets only
+SUMMARY_TARGET = 400           # what the Summary is asked to be
+SUMMARY_MAX = 450              # what the schema and the validator accept
+SUMMARY_TIGHT = 300            # asked for when the page overflows
+PARAGRAPH_MIN, PARAGRAPH_MAX = 300, 420   # a Projects paragraph: three sentences
+
+
+def budget_text() -> str:
+    """The budgets in one line, for prompts and repair feedback."""
+    return (f"new bullet about {BULLET_TARGET} characters and at most {BULLET_MAX}; Summary at most {SUMMARY_TARGET} "
+            f"(never over {SUMMARY_MAX}); project paragraph {PARAGRAPH_MIN}-{PARAGRAPH_MAX}")
+
 
 class FillBullet(BaseModel):
-    text: str = Field(max_length=300, description="Plain text, no LaTeX, past tense, aim for <= 200 chars")
+    text: str = Field(max_length=BULLET_VERBATIM_MAX, description=f"Plain text, no LaTeX, past tense, about {BULLET_TARGET} "
+                      f"characters, at most {BULLET_MAX} unless copied verbatim from an original bullet")
     duties: list[int] = Field(min_length=1, max_length=3, description="Indices of the JD ITEMS this bullet covers")
     original: int | None = Field(None, description="Index of this role's original bullet if reused, else null")
     estimated: list[str] = Field(default_factory=list, max_length=3,
                                  description="Each number/metric in this bullet that you estimated (e.g. '22%', '40 s')")
+
+    @model_validator(mode="after")
+    def _within_budget(self):
+        if self.original is None and len(self.text) > BULLET_MAX:
+            raise ValueError(f"this new bullet is {len(self.text)} characters; a new bullet may have at most {BULLET_MAX} "
+                             f"(aim for {BULLET_TARGET}) so that it fits one line: shorten it, or reuse an original bullet "
+                             f"verbatim. Text: {self.text[:90]!r}")
+        return self
 
 
 class FillRole(BaseModel):
@@ -250,7 +277,7 @@ class SkillLine(BaseModel):
 
 
 class Filled(BaseModel):
-    summary: str = Field(max_length=800, description="Plain text, 2-3 complete sentences, <= 450 characters")
+    summary: str = Field(max_length=SUMMARY_MAX, description=f"Plain text, 2-3 complete sentences, at most {SUMMARY_TARGET} characters")
     roles: list[FillRole] = Field(min_length=1, max_length=6)
     skills: list[SkillLine] = Field(min_length=3, max_length=8)
     notes: str = Field(max_length=600, description="How duties were distributed across roles and why")
@@ -259,7 +286,7 @@ class Filled(BaseModel):
 def filled_schema(r: "Resume") -> type[BaseModel]:
     """One fixed slot per role (role_0 = first role ...) so bullets cannot drift to a neighbouring role."""
     from pydantic import create_model
-    fields = {"summary": (str, Field(max_length=800, description="Plain text, 2-3 complete sentences, <= 450 characters"))}
+    fields = {"summary": (str, Field(max_length=SUMMARY_MAX, description=f"Plain text, 2-3 complete sentences, at most {SUMMARY_TARGET} characters"))}
     for i, role in enumerate(r.roles):
         fields[f"role_{i}"] = (list[FillBullet], Field(min_length=MIN_BULLETS, max_length=MAX_BULLETS,
                                description=f"Bullets for: {role.title} at {role.company}"))
@@ -315,7 +342,7 @@ Experience bullets:
   (e.g. Microsoft Copilot agents / Copilot Studio agents are 2024+, Microsoft Fabric is late 2023+, LangGraph is
   2024+); otherwise use a contemporary equivalent or move the duty to a later role.
 - {max_bullets} bullets in total at most (the resume must fit one page). Keep every bullet to ONE line on the
-  page: ~110 characters, never more than 130.
+  page: ~{bullet_target} characters, never more than {bullet_max} (a bullet copied verbatim from the template is exempt).
 
 Technical Skills:
 - 5-8 short categories that suit THIS job (no parentheses in category names). Cover every technology, method and standard from the posting's
@@ -411,7 +438,7 @@ def build_fill_prompt(r: Resume, jd: JobDescription, company_md: str, max_bullet
             "\n\nCURRENT SKILLS:\n" + "\n".join(f"- {c}: {to_plain(v)}" for c, v in r.skills))
     if feedback:
         text += f"\n\nREVISION REQUEST:\n{feedback}"
-    return [SystemMessage(with_today(FILL_PROMPT.format(max_bullets=max_bullets))),
+    return [SystemMessage(with_today(FILL_PROMPT.format(max_bullets=max_bullets, bullet_target=BULLET_TARGET, bullet_max=BULLET_MAX))),
             HumanMessage(text + learning_hint(jd) + "\n\n" + facts_block())]
 
 
@@ -500,10 +527,39 @@ def apply_fill(r: Resume, f: Filled) -> tuple[str, list[str]]:
     return tex, problems
 
 
-def fill_checks(r: Resume, jd: JobDescription, f: Filled) -> tuple[list[int], list[str], list[str]]:
-    """(REQUIRED JD item indices no NEW bullet covers, JD skills found nowhere, invented-number warnings)."""
+ITEMS_PER_BULLET = 3      # FillBullet.duties allows at most this many JD items per bullet
+
+
+def coverage_target(jd: JobDescription, slots: int) -> tuple[list[int], list[int]]:
+    """(REQUIRED JD item indices the build must cover, those it cannot). `slots` bullets cover at most ITEMS_PER_BULLET items
+    each; the posting's order is its priority, so the items beyond that capacity are the ones given up - and said so, instead of
+    asking the writer again and again for something the page cannot hold."""
+    required = [i for i, (_, _, need) in enumerate(jd_items(jd)) if need == "REQUIRED"]
+    cap = max(slots, 0) * ITEMS_PER_BULLET
+    return required[:cap], required[cap:]
+
+
+def feasibility(r: Resume, jd: JobDescription, slots: int) -> list[str]:
+    """Combinations of coverage and page constraints that cannot be met, found BEFORE the models are called (F18). Character
+    budgets are not a guarantee of fit - the rendered PDF still decides - but these are impossible on arithmetic alone."""
+    out = []
+    if len(r.roles) * MIN_BULLETS > slots:
+        out.append(f"{len(r.roles)} roles need at least {MIN_BULLETS} bullets each ({len(r.roles) * MIN_BULLETS}), above the "
+                   f"{slots} the page allows")
+    _, dropped = coverage_target(jd, slots)
+    if dropped:
+        out.append(f"the posting has {len(coverage_target(jd, slots)[0]) + len(dropped)} REQUIRED items, but {slots} bullets cover at "
+                   f"most {slots * ITEMS_PER_BULLET}: items {dropped} (the lowest priority) cannot be covered")
+    return out
+
+
+def fill_checks(r: Resume, jd: JobDescription, f: Filled, slots: int | None = None) -> tuple[list[int], list[str], list[str]]:
+    """(REQUIRED JD item indices no NEW bullet covers, JD skills found nowhere, invented-number warnings). With `slots`,
+    only the items that many bullets can hold are expected (see `coverage_target`)."""
     covered = {d for e in f.roles for b in e.bullets if b.original is None for d in b.duties}
-    uncovered = [i for i, (_, _, need) in enumerate(jd_items(jd)) if need == "REQUIRED" and i not in covered]
+    expected = coverage_target(jd, slots)[0] if slots is not None else None
+    uncovered = [i for i, (_, _, need) in enumerate(jd_items(jd)) if need == "REQUIRED" and i not in covered
+                 and (expected is None or i in expected)]
     text = " ".join([f.summary] + [b.text for e in f.roles for b in e.bullets] +
                     [x for s in f.skills for x in s.render()]).lower()
     norm = lambda s: re.sub(r"[\s\-‑/]+", " ", s.lower().replace("®", "")).strip()
@@ -668,7 +724,8 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
 class BulletFix(BaseModel):
     role: int = Field(description="role_N index of the bullet")
     bullet: int = Field(description="1-based position of the bullet in that role")
-    text: str = Field(max_length=300, description="The rewritten bullet, plain text, <= 130 characters")
+    text: str = Field(max_length=BULLET_MAX, description=f"The rewritten bullet, plain text, about {BULLET_TARGET} characters, "
+                                                           f"at most {BULLET_MAX}")
     estimated: list[str] = Field(default_factory=list, max_length=3)
 
 
@@ -676,10 +733,10 @@ class Repair(BaseModel):
     fixes: list[BulletFix] = Field(min_length=1, max_length=8)
 
 
-REPAIR_PROMPT = """You fix specific bullets of a tailored resume. Rewrite ONLY the bullets listed under PROBLEMS, each
+REPAIR_PROMPT = f"""You fix specific bullets of a tailored resume. Rewrite ONLY the bullets listed under PROBLEMS, each
 in place, so that every problem is solved; leave all other bullets alone. Each rewritten bullet must keep covering
 the JD items it covered (shown), name concrete technologies, state a result (a believable estimated metric is fine;
-list it in `estimated`), stay under ~120 characters, not repeat any other bullet, use no academic wording and no
+list it in `estimated`), stay within the length budget (about {BULLET_TARGET} characters, at most {BULLET_MAX}), not repeat any other bullet, use no academic wording and no
 dashes as punctuation, and describe work done at THAT role's employer (never another employer's work). A change by
 a percentage takes "by"."""
 
@@ -720,25 +777,25 @@ class SkillAdd(BaseModel):
 
 class ProjectFix(BaseModel):
     project: int = Field(description="1-based number of the project under PROJECTS")
-    paragraph: str = Field(max_length=700, description="The rewritten description: 3 sentences, 300-420 characters")
+    paragraph: str = Field(max_length=PARAGRAPH_MAX, description=f"The rewritten description: 3 sentences, {PARAGRAPH_MIN}-{PARAGRAPH_MAX} characters")
 
 
 class KeywordPass(BaseModel):
     skills: list[SkillAdd] = Field(default_factory=list, max_length=4)
     bullets: list[BulletFix] = Field(default_factory=list, max_length=6)
     projects: list[ProjectFix] = Field(default_factory=list, max_length=4)
-    summary: str = Field("", max_length=800, description="The rewritten Summary (plain text, 2-3 sentences, <= 450 "
-                                                          "characters), or empty to keep it")
+    summary: str = Field("", max_length=SUMMARY_MAX, description=f"The rewritten Summary (plain text, 2-3 sentences, at most "
+                                                                  f"{SUMMARY_TARGET} characters), or empty to keep it")
 
 
-KEYWORD_PROMPT = """ATS scans of this tailored resume found the posting's keywords listed under MISSING, and the checkers
+KEYWORD_PROMPT = f"""ATS scans of this tailored resume found the posting's keywords listed under MISSING, and the checkers
 gave the suggestions under ADVICE. The goal is an average ATS score above 90: work in EVERY missing item and follow
 EVERY piece of advice, within the CANDIDATE FACTS:
 - Prefer adding a keyword to the most fitting existing Technical Skills category (`skills`): list ONLY the new
   keywords in `terms`, never the skills already there; open a new short category only if none fits (at most 8).
 - Where a keyword names work rather than a tool (a practice, a system, a domain), rewrite ONE existing bullet that
   fits it (`bullets`: role_N index and 1-based position), keeping that bullet's numbers, coverage and length
-  (<= ~120 characters). Never move work to another employer.
+  (at most {BULLET_MAX} characters). Never move work to another employer.
 - A MISSING entry may be a phrase about work ("leading small projects independently", "navigating large code
   bases") or a requirement ("2 years of fraud analysis"): work it into the Summary or a bullet in the posting's
   own words (years only within CANDIDATE FACTS).
@@ -749,12 +806,12 @@ EVERY piece of advice, within the CANDIDATE FACTS:
   different from what was undone, and never resend changes that were already in place.
 - A MISSING word that is not a skill (finance, compliance, product, safety) goes into a natural sentence of the
   Summary, a bullet or a project description (`projects`: rewrite a PROJECTS paragraph, keeping its problem,
-  system and result, 3 sentences, 300-420 characters). Never write words that refer to applicants.
+  system and result, 3 sentences, {PARAGRAPH_MIN}-{PARAGRAPH_MAX} characters). Never write words that refer to applicants.
 - Soft skills and qualities ("collaboration", "comfort with ambiguity") never go in Technical Skills: show them in
   the Summary or in what a bullet's work involved ("partnered with security and product teams to ...").
 - Follow the ADVICE (vary repeated words, add a result to a line without one, name the teams the work involved,
   state the experience the posting asks for, open the Summary with the posting's exact title). Rewrite the Summary
-  (`summary`) whenever that helps; keep it 2-3 sentences, <= 450 characters.
+  (`summary`) whenever that helps; keep it 2-3 sentences, at most {SUMMARY_TARGET} characters.
 - Every keyword under KEEP is already matched by the checkers: a rewritten bullet or Summary must still contain
   each KEEP word it contained before. Never make a bullet or the Summary longer than it was (checkers penalise
   long sentences); swap words in rather than append clauses.

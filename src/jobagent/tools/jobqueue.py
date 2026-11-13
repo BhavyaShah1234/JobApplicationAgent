@@ -3,11 +3,21 @@
 Status flow: `queued` / `needs_review` / `skipped` (with the reason in `notes`) when a listing is found; the runner
 moves a queued job to `running` and then to `scraped` / `failed` / `closed` / `blocked` / `applied`. A job already past
 `queued` is never overwritten by a later discovery, and a listing is the same job by canonical URL or by
-(company, requisition id). A runner killed mid-job leaves `running` rows; `requeue_stale` puts them back.
+(company, requisition id).
+
+**Claims and leases (F13).** A runner takes a job with `claim`, one atomic statement that also records WHO took it
+(`claimed_by`, "host:pid:random") and until when (`lease_until`). Two runners can never take the same job. The owner keeps
+the lease alive with `renew` while it works, and only the owner can record the job's outcome (`finish`). `requeue_stale`
+puts a `running` job back only when its lease has EXPIRED or its owner is a process on this machine that no longer exists;
+it never touches work a live runner is doing.
 """
 
+import os
 import re
+import socket
 import sqlite3
+import uuid
+from datetime import UTC, datetime, timedelta
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -16,6 +26,7 @@ from jobagent.tools.matching import Match
 
 TRACKING = re.compile(r"(?i)^(utm_.*|gclid|fbclid|mc_[a-z]+|ref|referrer|source|src|trk|trackingid|gh_src|lever-source.*)$")
 OPEN = ("queued", "needs_review", "skipped")  # statuses a new discovery may still change
+LEASE_S = 900                                  # a claim lasts this long unless its owner renews it
 
 
 @dataclass
@@ -99,18 +110,109 @@ def pending(conn: sqlite3.Connection, status: str = "queued", company: str | Non
     return conn.execute(sql, args).fetchall()
 
 
+def _iso(when: datetime) -> str:
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def worker_id() -> str:
+    """Who this runner is: unique per process, readable in the table, and carrying the pid so a dead local owner is detectable."""
+    return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:6]}"
+
+
+def claim(conn: sqlite3.Connection, worker: str, company: str | None = None, lease_s: int = LEASE_S,
+          now: datetime | None = None) -> sqlite3.Row | None:
+    """Atomically take the best queued job for `worker`: choose it and mark it running in ONE write transaction, so two
+    runners cannot take the same job. None when nothing is queued."""
+    now = now or datetime.now(UTC)
+    if conn.in_transaction:
+        conn.commit()                                      # BEGIN IMMEDIATE cannot nest inside the caller's open transaction
+    sql = "SELECT id FROM jobs WHERE status = 'queued'"
+    args: list = []
+    if company:
+        sql += " AND company_slug = ?"
+        args.append(slug(company))
+    sql += " ORDER BY COALESCE(match_score, 0) DESC, id LIMIT 1"
+    conn.execute("BEGIN IMMEDIATE")                       # takes the write lock before reading: the choice cannot go stale
+    try:
+        row = conn.execute(sql, args).fetchone()
+        if row is None:
+            conn.execute("COMMIT")
+            return None
+        conn.execute("UPDATE jobs SET status = 'running', claimed_by = ?, lease_until = ?, updated_at = ? WHERE id = ? AND status = 'queued'",
+                     (worker, _iso(now + timedelta(seconds=lease_s)), _iso(now), row["id"]))
+        got = conn.execute("SELECT * FROM jobs WHERE id = ?", (row["id"],)).fetchone()
+        conn.execute("COMMIT")
+        return got
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+
+
+def renew(conn: sqlite3.Connection, url: str, worker: str, lease_s: int = LEASE_S, now: datetime | None = None) -> bool:
+    """Extend the lease. False when the job is no longer this worker's (its lease expired and it was given to another)."""
+    now = now or datetime.now(UTC)
+    with conn:
+        cur = conn.execute("UPDATE jobs SET lease_until = ?, updated_at = ? WHERE url = ? AND status = 'running' AND claimed_by = ?",
+                           (_iso(now + timedelta(seconds=lease_s)), _iso(now), url, worker))
+    return cur.rowcount == 1
+
+
+def finish(conn: sqlite3.Connection, url: str, worker: str, status: str, note: str = "") -> bool:
+    """Record the outcome of a claimed job, only if `worker` still holds the claim; the claim is then released. False when
+    the job was taken from this worker (the outcome of a stale runner never overwrites the new owner's)."""
+    with conn:
+        cur = conn.execute("UPDATE jobs SET status = ?, notes = COALESCE(NULLIF(?, ''), notes), claimed_by = NULL, lease_until = NULL, "
+                           "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE url = ? AND claimed_by = ?",
+                           (status, note, url, worker))
+    return cur.rowcount == 1
+
+
 def mark(conn: sqlite3.Connection, url: str, status: str, note: str = "") -> None:
+    """Set a job's status (discovery, the `queue` commands, a step recording what it found). Leaving `running` also
+    releases the claim."""
     with conn:
         conn.execute("UPDATE jobs SET status = ?, notes = COALESCE(NULLIF(?, ''), notes), "
-                     "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE url = ?", (status, note, url))
+                     "claimed_by = CASE WHEN ? = 'running' THEN claimed_by ELSE NULL END, "
+                     "lease_until = CASE WHEN ? = 'running' THEN lease_until ELSE NULL END, "
+                     "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE url = ?", (status, note, status, status, url))
 
 
-def requeue_stale(conn: sqlite3.Connection) -> int:
-    """A runner that was killed leaves its job `running`: put those back in the queue."""
+def _owner_is_dead(owner: str | None) -> bool:
+    """True only when the owner is a process on THIS machine that no longer exists. Unknown or remote owners are never
+    declared dead from here: their lease has to run out."""
+    try:
+        host, pid, _ = (owner or "").split(":")
+        if host != socket.gethostname():
+            return False
+        os.kill(int(pid), 0)
+        return False
+    except ProcessLookupError:
+        return True
+    except (ValueError, PermissionError, OSError):
+        return False
+
+
+def requeue_stale(conn: sqlite3.Connection, now: datetime | None = None, lease_s: int = LEASE_S) -> int:
+    """Put back the `running` jobs whose runner is gone: the lease expired, or the owner is a dead local process. A row from
+    before leases existed (no owner, no lease) is recovered once it has not been touched for a full lease. Live work is
+    never reset."""
+    now = now or datetime.now(UTC)
+    n = 0
     with conn:
-        cur = conn.execute("UPDATE jobs SET status = 'queued', notes = 'requeued after an interrupted run', "
-                           "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE status = 'running'")
-    return cur.rowcount
+        for r in conn.execute("SELECT id, claimed_by, lease_until, updated_at FROM jobs WHERE status = 'running'").fetchall():
+            if r["lease_until"]:
+                gone = r["lease_until"] < _iso(now) or _owner_is_dead(r["claimed_by"])
+            else:
+                gone = _owner_is_dead(r["claimed_by"]) or (r["updated_at"] or "") < _iso(now - timedelta(seconds=lease_s))
+            if gone:
+                conn.execute("UPDATE jobs SET status = 'queued', claimed_by = NULL, lease_until = NULL, "
+                             "notes = 'requeued after an interrupted run', updated_at = ? WHERE id = ? AND status = 'running'",
+                             (_iso(now), r["id"]))
+                n += 1
+        # a step moved the job past `running` (scraped...) and its runner then died: the work stays where it got to, the claim is dropped
+        conn.execute("UPDATE jobs SET claimed_by = NULL, lease_until = NULL WHERE status != 'running' AND claimed_by IS NOT NULL "
+                     "AND lease_until IS NOT NULL AND lease_until < ?", (_iso(now),))
+    return n
 
 
 def summary(conn: sqlite3.Connection, company: str | None = None) -> dict[str, int]:

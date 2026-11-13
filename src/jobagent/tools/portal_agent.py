@@ -19,6 +19,7 @@ from playwright.sync_api import Page
 from pydantic import BaseModel, Field
 
 from jobagent import llm
+from jobagent.tools import verification
 from jobagent.tools import challenge
 
 MAX_STEPS = 30
@@ -151,6 +152,7 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
     agent = llm.writer(3000, timeout=240, model=model)
     history: list[str] = []
     state = {"state": "failed", "registered": False, "verified_mail": False, "steps": history}
+    code_mail, accepted_mail = None, None      # the candidate whose code {CODE} holds / the one the site was seen to accept
     since = datetime.now(UTC)
     code, challenges, repeats, last_action, pw_submitted, wrong_pw = "", 0, 0, None, False, 0
     state["alt_password_used"] = False
@@ -250,12 +252,13 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
             if v.link and (a.action == "link_sent" or not v.code):
                 page.goto(v.link, wait_until="domcontentloaded")
                 history.append("opened the emailed confirmation link")
+                if verification.outcome(page, None, settle_s=6, email=values.get("EMAIL", "")) == "accepted":
+                    accepted_mail = mail        # this very link, seen to work
             else:
                 code = v.code or ""
+                code_mail = mail                # selected, not used: a newer candidate supersedes it
                 history.append("the emailed code is now available as {CODE}")
-            inbox.consume_and_trash(mail, "portal_verify")
-            state["verified_mail"] = True
-            log(f"portal {host}: verification mail used and trashed ({mail.subject!r})")
+            log(f"portal {host}: verification mail found ({mail.subject!r}); it is trashed only if the site accepts it")
             continue
         key = (a.action, a.frame, a.element, a.value)
         repeats = repeats + 1 if key == last_action else 0
@@ -324,6 +327,11 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
                 else:
                     page.keyboard.press("Enter")
                     history.append("submitted the code (Enter)")
+                # this candidate's code was entered: it counts only if the site is then seen to accept it
+                if verification.outcome(page, lambda: loc.is_visible(), settle_s=6, email=values.get("EMAIL", "")) == "accepted":
+                    accepted_mail = code_mail
+                else:
+                    history.append("the site did not accept that code yet")
         except Exception as e:
             history.append(f"{a.action} failed: {type(e).__name__}: {str(e)[:80]}")
         finally:
@@ -332,6 +340,13 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
                                          ".forEach(e => e.removeAttribute('data-agent-target'))")
             except Exception:
                 pass
+    if accepted_mail is not None and state["state"] == "signed_in":
+        # only the one candidate whose code or link the site was seen to accept becomes the agent's; a superseded, rejected
+        # or unused candidate does not, however the run eventually signed in
+        inbox.mark_used(accepted_mail, f"{host} accepted it and the account is signed in")
+        cleanup = inbox.consume_and_trash(accepted_mail, "portal_verify")
+        state["verified_mail"] = cleanup.ok
+        log(f"portal {host}: verification mail accepted by the site; cleanup {cleanup.status} ({accepted_mail.subject!r})")
     return state
 
 

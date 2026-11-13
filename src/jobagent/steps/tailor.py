@@ -177,7 +177,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
                 return f, dups
             T.apply_repair(trial, fixes)
             new_dups = T.duplicates(r, trial) + T.quality(r, jd, trial)
-            new_unc, new_missing, new_warn = T.fill_checks(r, jd, trial)
+            new_unc, new_missing, new_warn = T.fill_checks(r, jd, trial, max_bullets)
             new = render(trial)
             log(f"round {attempt} repair {k}: {time.monotonic() - t0:.0f}s {len(new_dups)} bullet issues, "
                 f"{len(new_unc)} items missing → {new[2] or 'compile error'} page(s)")
@@ -205,7 +205,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
             continue
         filled_in = T.backfill(r, jd, f)
         dups = T.duplicates(r, f) + T.quality(r, jd, f)
-        uncovered, missing, warn = T.fill_checks(r, jd, f)
+        uncovered, missing, warn = T.fill_checks(r, jd, f, max_bullets)     # F18: only what that many bullets can hold
         tex, problems, pages, err = render(f)
         if dups and pages == 1 and not uncovered and not err:  # nearly there: fix just the flagged bullets
             f, dups = repair(f, dups, attempt)
@@ -222,7 +222,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
         if pages and pages > 1:
             asks.append(f"The resume came out {pages} pages; it must be ONE. Keep every REQUIRED item covered but merge "
                         "related duties, drop the least relevant bullets from roles above their target and shorten every "
-                        f"bullet to ONE line (<= 110 characters); never below {T.MIN_BULLETS} bullets per role; "
+                        f"bullet to ONE line (about {T.BULLET_TARGET} characters, at most {T.BULLET_MAX}); never below {T.MIN_BULLETS} bullets per role; "
                         "give each tools_for entry at most 2 tools (never drop posting terms).")
             max_bullets = max(T.MIN_BULLETS * len(r.roles), n - 2)
         if len(missing) > 3:
@@ -287,7 +287,8 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
     final_layout = layout.check(job_dir / "resume.pdf").issues  # the page as it finally reads (after the ATS loop)
     log(f"layout: {len(final_layout)} issue(s)" + "".join(f"\n  - {i}" for i in final_layout))
     if not letter:  # e.g. the model experiment: the resume and its ATS scores only
-        return {"job_dir": job_dir, "pages": pages, "uncovered": uncovered, "problems": problems + warn,
+        return {"job_dir": job_dir, "pages": pages, "uncovered": uncovered, "coverage_limited": T.feasibility(r, jd, max_bullets),
+                "problems": problems + warn,
                 "bullet_issues": T.duplicates(r, f) + T.quality(r, jd, f), "ats": ats_result,
                 "layout": final_layout}
     cl = cover_letter(job_dir, company_slug, log=log)
@@ -296,7 +297,8 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
         [x for line in f.skills for x in line.render()] + \
         ([x for e in proj.entries for x in (e.title, e.paragraph, e.short)] if proj else []) + \
         [p.text for p in cl["letter"].paragraphs]
-    return {"job_dir": job_dir, "pages": pages, "uncovered": uncovered, "missing_skills": missing,
+    return {"job_dir": job_dir, "pages": pages, "uncovered": uncovered, "coverage_limited": T.feasibility(r, jd, max_bullets),
+            "missing_skills": missing,
             "problems": problems + warn, "bullet_issues": T.duplicates(r, f) + T.quality(r, jd, f),
             "bullets_per_role": [len(e.bullets) for e in f.roles], "projects": len(proj.entries) if proj else None,
             "letter": cl, "dashes": sum(len(T.DASH.findall(t)) for t in generated), "ats": ats_result,

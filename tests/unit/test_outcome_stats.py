@@ -68,13 +68,52 @@ def test_a_thirty_day_figure_needs_enough_applications_old_enough_to_tell():
 def test_the_cutoff_is_45_days_until_there_are_twenty_responses_then_learned_and_clamped():
     few = [app(i, [("interview", 10)]) for i in range(19)]
     assert S.ghost_cutoff(few, T0 + timedelta(days=100)) == 45
-    many = [app(i, [("interview", 10 + i)]) for i in range(25)]          # first responses on days 10..34
-    cut = S.ghost_cutoff(many, T0 + timedelta(days=100))
-    assert cut == pytest.approx(10 + 0.9 * 24)                            # the 90th percentile of the responders
+    many = [app(i, [("interview", 10 + i)]) for i in range(25)]          # first responses on days 10..34, nobody silent
+    cut, basis = S.ghost_cutoff_info(many, T0 + timedelta(days=100))
+    assert cut == 32 and "Kaplan-Meier" in basis                          # day by which 90% of all applications had replied
     quick = [app(i, [("interview", 2)]) for i in range(25)]
     assert S.ghost_cutoff(quick, T0 + timedelta(days=100)) == 21          # clamped below
     slow = [app(i, [("interview", 200)]) for i in range(25)]
     assert S.ghost_cutoff(slow, T0 + timedelta(days=300)) == 120          # and above
+
+
+def test_fast_responders_among_many_silent_applications_do_not_set_a_short_deadline():
+    # 20 replies on day 2, 80 applications silent for 30 days: the responders alone say "2 days", all applications say
+    # "only 20% had replied by day 30", so no deadline can be estimated and the default is used and labelled uncertain.
+    fast = [app(i, [("confirmation", 0), ("interview", 2)]) for i in range(20)]
+    silent = [app(100 + i, [("confirmation", 0)]) for i in range(80)]
+    cut, basis = S.ghost_cutoff_info(fast + silent, T0 + timedelta(days=30))
+    assert cut == 45 and "uncertain" in basis
+    sts = S.statuses(fast + silent, T0 + timedelta(days=30))
+    assert all(sts[100 + i].label == "pending" for i in range(80))        # nobody is called ghosted on day 30
+
+
+def test_a_heavily_censored_curve_falls_back_instead_of_inventing_a_deadline():
+    # 20 replies, 10 old applications that never answered (so the curve cannot reach 90%) and 60 too young to say anything
+    replies = [app(i, [("interview", 5 + i)]) for i in range(20)]
+    replies += [app(300 + i, [("confirmation", 0)]) for i in range(10)]
+    young = [S.AppEvents(100 + i, T0 + timedelta(days=60), [("confirmation", T0 + timedelta(days=60))]) for i in range(60)]
+    cut, basis = S.ghost_cutoff_info(replies + young, T0 + timedelta(days=64))
+    assert cut == 45 and "uncertain" in basis
+
+
+def test_an_application_submitted_after_the_evaluation_date_is_absent_and_never_has_a_negative_age():
+    old = app(1, [("confirmation", 0)])
+    future = S.AppEvents(2, T0 + timedelta(days=40), [("confirmation", T0 + timedelta(days=40))])
+    as_of = T0 + timedelta(days=30)
+    sts = S.statuses([old, future], as_of)
+    assert set(sts) == {1}
+    assert all(st.age_days >= 0 for st in sts.values())
+    assert [g.n for g in S.group_by([old, future], sts, lambda a: "x")] == [1]
+    assert S.visible([old, future], as_of) == [old]
+
+
+def test_a_late_reply_after_the_cutoff_updates_the_label():
+    a = app(1, [("confirmation", 0)])
+    assert label(a, 60).label == "ghosted"
+    a2 = app(1, [("confirmation", 0), ("interview", 70)])
+    assert label(a2, 60).label == "ghosted"                      # as of day 60 the reply had not come yet
+    assert label(a2, 80).label == "positive"
 
 
 def test_wilson_interval():
@@ -100,24 +139,36 @@ def test_groups_report_rates_and_mark_small_ones():
 
 
 def test_snapshot_freezes_the_resume_scores_role_and_skills(tmp_path, monkeypatch):
+    """F06: the hash is the submitted PDF's own, the scores are the required sites' for exactly that PDF and job."""
+    import hashlib
+
+    from jobagent.tools import ats_sites
     conn = db.connect(tmp_path / "jobs.sqlite")
     job = tmp_path / "outputs" / "acme" / "1"
     job.mkdir(parents=True)
+    pdf = b"%PDF-1.4 submitted resume" + b"." * 300
+    sha = hashlib.sha256(pdf).hexdigest()
+    (job / "resume.pdf").write_bytes(pdf)
+    (job / "jd.json").write_text(json.dumps({"company": "Acme", "title": "Engineer"}))
+    (job / "jd.txt").write_text("the posting")
     (job / "filled.json").write_text(json.dumps({"skills": [{"terms": ["Python", "SQL"], "tools_for": [{"tools": ["PyTorch"]}]},
                                                             {"terms": ["python"]}]}))
     conn.execute("INSERT INTO jobs (url, status, role_id) VALUES ('https://acme.com/j/1', 'scraped', 'swe')")
     conn.execute("INSERT INTO applications (job_dir, company, url, state, submitted_at, portal) VALUES (?,?,?,?,?,?)",
                  (str(job), "Acme", "https://acme.com/j/1", "submitted", "2026-09-01T12:00:00Z", "ashby"))
-    for rnd, site, score in [(0, "hireflow", 50), (1, "hireflow", 60), (1, "jobalytics", 90)]:
-        conn.execute("INSERT INTO ats_runs (job_dir, site, round, score, resume_sha) VALUES (?,?,?,?,?)",
-                     (str(job), site, rnd, score, "abcdef1234567890"))
+    fp = ats_sites.job_fingerprint("the posting", "Engineer", "Acme")
+    required = ats_sites.numeric_sites(ats_sites.AVERAGE_SITES)
+    for rnd, site, score in [(0, required[0], 50)] + [(1, s, 60 + 5 * i) for i, s in enumerate(required)]:
+        conn.execute("INSERT INTO ats_runs (job_dir, site, round, score, raw, resume_sha) VALUES (?,?,?,?,?,?)",
+                     (str(job), site, rnd, score, json.dumps({"breakdown": {"job_fingerprint": fp}}), sha))
     conn.commit()
     snap = S.snapshot(conn, job)
-    assert snap["resume_sha"] == "abcdef1234567890" and snap["ats_average"] == 75.0 and snap["role_id"] == "swe"
+    assert snap["resume_sha"] == sha and snap["ats_average"] == 70.0 and snap["role_id"] == "swe"
     assert json.loads(snap["keywords"]) == ["python", "sql", "pytorch"]
     row = S.load(conn)[0]
-    assert (row.portal, row.role_id, row.resume_sha, row.ats_average) == ("ashby", "swe", "abcdef12", 75.0)
+    assert (row.portal, row.role_id, row.resume_sha, row.ats_average) == ("ashby", "swe", sha[:8], 70.0)
     # a later re-tailor of the folder must not rewrite what was submitted
-    conn.execute("INSERT INTO ats_runs (job_dir, site, round, score, resume_sha) VALUES (?,?,?,?,?)", (str(job), "hireflow", 2, 99, "ffff"))
+    conn.execute("INSERT INTO ats_runs (job_dir, site, round, score, resume_sha) VALUES (?,?,?,?,?)", (str(job), required[0], 2, 99, "ffff"))
+    (job / "resume.pdf").write_bytes(b"%PDF-1.4 a later build" + b"." * 300)
     S.snapshot(conn, job)
-    assert S.load(conn)[0].resume_sha == "abcdef12"
+    assert S.load(conn)[0].resume_sha == sha[:8]

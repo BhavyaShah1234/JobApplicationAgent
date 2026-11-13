@@ -1,11 +1,22 @@
 # Step 10 — ATS score loop
 
 After the resume is tailored (step 9), the agent scores it on online ATS checkers, works the posting's missing
-keywords and the checkers' own advice in where they truthfully fit, and rescores, up to 5 rounds, aiming for an
+keywords and the checkers' own advice in where they truthfully fit, and rescores, up to 3 rounds, aiming for an
 average of 90.
 Every score is recorded, and the cover letter is written afterwards from the final resume.
 
-> **Current state (2026-11-02).** The resume builder is the **multi-agent team with devstral2-123b for every agent**
+> **Current integration:** eleven registered adapters. Jobscan, SkillSyncer and ATSAlign use saved Google sign-in;
+> ATS Friendly restores its login automatically. Limited sites run initially and on the final resume, with cached
+> results scoped to both resume and posting. The default numeric average uses exactly five sites:
+> AutoApplyMax, HireFlow, Jobscan, ATSAlign and ATS Friendly. SkillsFirst supplies written feedback separately.
+
+The five scores have equal weight. All five must be available for the same resume and JD; a missing score
+produces an incomplete result (`average: null`), without substituting zero or averaging fewer sites.
+`jobagent ats`, `jobagent tailor` and `jobagent ats-loop` save `ats_summary.json` with the selected scores,
+missing sites, average, resume SHA-256 and posting fingerprint. Explicit `--site` selections produce a custom
+average of the requested numeric sites; SkillsFirst never contributes a number.
+
+> **Historical benchmark (2026-11-02).** The resume builder was the **multi-agent team with devstral2-123b for every agent**
 > (`jobagent tailor`; section agents + a validator + the ATS router, see "Multi-agent builder" below). It is scored
 > every round on AutoApplyMax, Jobalytics and HireFlow (HireFlow averaged over 2 runs). No setup has reached a 90
 > average on any posting: best builders score 77.8-79.5 over the 3 entry-level test postings; AutoApplyMax reaches
@@ -45,7 +56,8 @@ jobagent multi-agent <job_dir>:<slug> ... [--same-model M] [--role agent=model] 
 jobagent model-experiment <job_dir>:<slug> ... [--model M] [--workers 6]   # every Voyager model, same harness
 jobagent ats-loop outputs/<company>/<job-id> <slug> [--target 90]   # the advice loop on an already-tailored resume
 jobagent ats outputs/<company>/<job-id>                        # one round of online scores, recorded
-jobagent ats-record outputs/<company>/<job-id> skillsfirst 92  # a score you got by hand; joins the average
+jobagent ats outputs/<company>/<job-id> --site jobscan --site skillsyncer --site atsalign
+jobagent ats-record outputs/<company>/<job-id> jobscan 92      # a score you got by hand; joins the average
 ```
 
 ## How it works
@@ -73,7 +85,7 @@ flowchart TD
     OUT[/"Final resume: ATS Friendly scans it once more<br/>then the cover letter is written from it"/]
 ```
 
-The loop runs at most 5 rounds. A model error or a rejected change costs one round; after a model error the
+The loop runs at most 3 refinement rounds after the initial evaluation. A model error or a rejected change costs one round; after a model error the
 next round tries with fewer keywords.
 
 ## The scorers (online only, since 2026-10-29)
@@ -87,16 +99,38 @@ The agent's own local scorer was removed at the user's request: every score now 
 | HireFlow | yes (no account) | Job match: keyword match, skills fit, experience fit, completeness; missing must-have / nice-to-have phrases |
 | ResumeAtlas | on request only | Required skills shown in work bullets; only 2 job matches a month |
 | ATS Friendly | yes (agent account via Google, 2026-10-29); 2 free scans a week, so start + final only, and a scan of the exact same PDF is reused | Job match: missing hard skills, soft skills and other keywords; job title, contact details, education notes |
-| SkillsFirst, Jobscan, SkillSyncer, AtsAlign, Novoresume, RemoWork, Lessie | no: their terms forbid bots or scraping | Run by hand; `jobagent ats-record` |
-| ApplyCove, Resmume | no: CAPTCHA on every scan | Run by hand; `jobagent ats-record` |
-| GotResumeBuilder, Resume Match Lab, CV Analyzer AI, Resume Worded, JobShinobi | no: no job-description form to automate, or unclear terms on automated use | Not used |
+| SkillsFirst | yes, using the saved ASU organization account | Resume PDF + JD -> written Skills Gap Analysis; advice feeds both tailoring paths, without contributing a numeric score |
+| Jobscan | yes, saved Google sign-in | Job-specific Match Rate; visible missing hard skills and soft-skill advice. Free-plan locked names are omitted and marked as limited feedback |
+| SkillSyncer | yes, saved Google sign-in, Classic Scan | Job-specific match report; missing terms separated from frequency shortfalls; boilerplate terms filtered before writing |
+| ATSAlign | yes, saved Google sign-in | Job Match with missing/partial skill coverage and existing-bullet recommendations; preserves the generated resume |
+| Novoresume | yes, first 2 anonymous scans; then quota is reported | PDF + full JD -> job-match score and specific fix-list advice. Country uses the applicant's address; experience level uses dated resume roles. Account signup is not automated |
+| ApplyCove | on request; upload automated, live report still blocked by background verification | Keyword match parser remains unverified against a successful live report; a rejected verification is pending, never a numeric zero |
+| RemoWork, Lessie, Resmume | no adapter enabled | Not selected by this implementation |
+| Resume Match Lab | not enabled | Live test returned degraded keyword-only fallback with misleading missing skills |
+| JobResumeMatch, OpenApply | not enabled | Live test failed to save a result / deployment unavailable |
+| GotResumeBuilder, CV Analyzer AI, Resume Worded, JobShinobi | no adapter enabled | Not selected |
 | ResyMatch | not built: about 5 free credits in total, too few for a per-round loop | Not used |
-| Resume Optimizer Pro | in the user's first pick, never built (no reason recorded) | Not used |
+| Resume Optimizer Pro | not enabled | Public checker gave parsing feedback; signed-in job matching led into its separate resume rewriting flow |
 
-About 21 sites were looked at; 5 are automated, and only AutoApplyMax, Jobalytics and HireFlow are free with no scan
-cap, allow automated use and show no CAPTCHA, so they are the ones every experiment uses. The user wanted the
-terms-forbidding sites automated anyway; that was declined because it breaks their terms of service. Scores the user
-records by hand count in the average for the exact resume version they scanned.
+The registry contains eleven adapters, including SkillsFirst's written-feedback adapter. Both tailoring paths use
+Jobscan, ATSAlign and ATS Friendly on the initial and final resume, and AutoApplyMax and HireFlow during refinement.
+SkillsFirst supplies writing advice. Jobalytics, SkillSyncer, Novoresume, ResumeAtlas and ApplyCove remain on request.
+ResumeAtlas reads the completed report pane, excluding the landing page's sample
+score; older cache rows from the sample-score parser are ignored.
+Jobscan waits for its animated Match Rate to settle before recording it; older cache rows from the immediate-read
+parser are ignored. Novoresume's first file selection is retried once if page hydration drops it, and its native
+experience selector avoids the country dropdown's closing animation.
+Between those scans, the writers retain the limited sites' initial missing skills and advice while the unlimited
+checkers compare revisions. These comparison scores are separate from the final five-site average.
+The limited sites are rescored for the final PDF; if any cannot return its score, the final average stays incomplete.
+Cached scans require the same PDF bytes, full JD, title and company; changing the posting invalidates the cache.
+Authentication, CAPTCHA and quota failures are recorded explicitly and do not reject an otherwise valid resume.
+The Google identity comes from the site's vault entry or the saved Gmail account. Additional security prompts
+are handed to the account owner in noVNC, with a bounded wait. Paid upgrades and external AI rewrites are not clicked.
+SkillsFirst accepts up to 7,000 JD characters:
+the adapter removes an introduction before an explicit `JOB OVERVIEW` heading when needed, then reports an error
+if the remaining text is still too long. It does not automatically summarize longer JDs.
+`jobagent ats-record` also remains available for any registered numeric scorer if the user runs it by hand.
 
 ## Rules
 
