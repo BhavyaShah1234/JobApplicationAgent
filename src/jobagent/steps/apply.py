@@ -1454,7 +1454,7 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
     approval and submission) is called there, in the same browser session, when given."""
     job_dir = Path(job_dir)
     from jobagent.filling import select_strategy
-    strategy=select_strategy(filling_strategy)
+    strategy=select_strategy(filling_strategy,resume_job=job_dir)
     ctx = context(job_dir, company)
     url = ctx["_jd"].get("apply_url") or ctx["_jd"].get("source_url")
     model = model or llm.writer(8000, timeout=300, model=model_name)
