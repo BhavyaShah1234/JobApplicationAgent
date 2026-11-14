@@ -181,6 +181,47 @@ Rules:
 - Answer every listed field id exactly once."""
 
 
+JD_FULL_LIMIT = 40_000        # a posting up to this size is given to the planner and the checker WHOLE
+JD_HEAD = 15_000
+
+
+def posting_text(job_dir: Path) -> tuple[str, str]:
+    """(the authoritative posting text, where it came from). The scraped source (`jd.txt`) is preferred: the generated summary
+    (`jd.md`) and the structured `jd.json` are lossy, and a requirement can sit in a header line or deep in a long posting (F30)."""
+    for name in ("jd.txt", "jd.md"):
+        p = job_dir / name
+        if p.exists() and p.read_text().strip():
+            return p.read_text(), name
+    return "", "none"
+
+
+def jd_for_planning(text: str, source: str) -> str:
+    """The posting as the planner sees it, with its provenance. Whole when it fits; otherwise the beginning plus an explicit
+    marker (never a silent prefix) - the passages relevant to a question are added by `jd_passages`."""
+    if not text:
+        return "(no posting text was saved)"
+    if len(text) <= JD_FULL_LIMIT:
+        return f"[source: {source}, {len(text)} characters, complete]\n{text}"
+    return (f"[source: {source}, {len(text)} characters; the first {JD_HEAD} are shown, the rest is searched for each question "
+            f"under JD_PASSAGES]\n{text[:JD_HEAD]}")
+
+
+def jd_passages(text: str, fields: list[forms.Field], limit: int = 6000) -> str:
+    """For a posting too long to show whole: the lines that share meaningful words with the form's questions (line numbers kept)."""
+    if len(text) <= JD_FULL_LIMIT:
+        return ""
+    words = {w for f in fields for w in re.findall(r"[a-z]{4,}", f"{f.label} {f.help}".lower())} - {"please", "select", "your", "with", "that", "this", "have", "will"}
+    out, size = [], 0
+    for n, line in enumerate(text.splitlines(), 1):
+        if len(line) > 3 and words & set(re.findall(r"[a-z]{4,}", line.lower())):
+            row = f"line {n}: {line.strip()[:300]}"
+            if size + len(row) > limit:
+                break
+            out.append(row)
+            size += len(row)
+    return "\n".join(out)
+
+
 def context(job_dir: Path, company: str) -> dict:
     """The candidate's files, as the planner sees them."""
     resume = ""
@@ -198,11 +239,13 @@ def context(job_dir: Path, company: str) -> dict:
     comp = Path(f"/app/state/companies/{company}.md")
     tex = (job_dir / "resume.tex").read_text() if (job_dir / "resume.tex").exists() else ""
     data = applicant.with_resume(applicant.load(), applicant.resume_experience(tex))
+    forms.set_approved_aliases(applicant.identity_aliases(data))        # the only forms of a school / employer treated as the same one (F29)
     return {
         # the answer file, its experience answers taken from this job's tailored resume
         "APPLICANT": yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=120),
         "RESUME": resume[:6000],
-        "JD": ((job_dir / "jd.md").read_text() if (job_dir / "jd.md").exists() else "")[:5000],
+        "JD": jd_for_planning(*posting_text(job_dir)),
+        "_jd_text": posting_text(job_dir)[0],
         "COMPANY": (comp.read_text() if comp.exists() else "")[:3000],
         "COVER_LETTER": cover_letter_text(job_dir),
         # the candidate's own answers for THIS application (application/answers.md, written or edited by them)
@@ -474,7 +517,12 @@ CHECK_PROMPT = """You check a planned job application against the candidate's fi
 the file is silent and the planner assumed it (a language not listed, an eligibility, a consent the candidate never
 gave, an option chosen while the APPLICANT entry for that question says another that is offered). For unsupported
 answers give the value the files do support, or ask_human when none does. Written answers (source written) are
-supported when true to the RESUME. Following an APPLICANT entry's instructions is support, and so are these rules:
+supported when true to the RESUME. Following an APPLICANT entry's instructions is support, EXCEPT that an instruction which
+points at the posting ("use the JD's percentage", "match the location") is satisfied only when the JD text given to you states
+that fact: check the answer against the JD, and where the JD states a value the answer contradicts, correct it to the option that
+means the JD's value (a numeric range by meaning: "30% or less" is not "50% or more"); where the JD is silent the instruction's
+own fallback applies. A school, employer or person must be the actual one the files name, never a similar-sounding neighbour.
+These rules are also support:
 agreeing to a consent needed to apply, choosing "I don't wish to answer" for self-identification APPLICANT leaves
 empty. An answer listed as a list of words gives variants of one answer: any of
 them is supported. APPLICANT wins over the RESUME where they disagree (never swap one for the other: that is flagged, not
@@ -509,7 +557,10 @@ def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, mode
             and f.kind != "file"]
     if not rows:
         return
-    files = "\n\n".join(f"== {k} ==\n{v}" for k, v in ctx.items() if not k.startswith("_") and k != "JD")
+    # the checker sees the posting too (F30): an instruction like "use the JD's percentage" cannot be validated without it
+    extra = jd_passages(ctx.get("_jd_text", ""), fields)
+    files = "\n\n".join(f"== {k} ==\n{v}" for k, v in ctx.items() if not k.startswith("_")) + \
+        (f"\n\n== JD_PASSAGES ==\n{extra}" if extra else "")
     try:
         checked = [f for f in fields if (a := answers.get(f.id)) and a.value
                    and a.source not in ('human','learned','lookup') and f.kind != 'file']
@@ -528,9 +579,22 @@ def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, mode
             continue
         f = next((x for x in fields if x.id == c.id), None)
         sheet = ctx.get("ANSWERS_FOR_THIS_APPLICATION", "")
-        if a.source == "applicant" and (in_applicant(a.value, data) or "instructions=" in h.get(c.id, "")
+        instr = h.get(c.id, "")
+        # instructions are support only for choices that do not depend on facts outside the applicant's file: an instruction that
+        # points at the posting ("use the JD's percentage"), or a question about WHICH institution, must be validated against that
+        # source, not waved through because an instruction exists (F29/F30)
+        instruction_ok = "instructions=" in instr and not re.search(r"(?i)\b(jd|job description|posting|listing)\b", instr) \
+            and not (f and forms.is_identity(f.label))
+        if a.source == "applicant" and (in_applicant(a.value, data) or instruction_ok
                                         or (len(a.value) > 1 and a.value.lower() in sheet.lower())):
             continue  # the file does say it (one of an answer's variants), or its instructions give it
+        if a.source == "applicant" and "instructions=" in instr and not instruction_ok and c.value and not c.ask_human \
+                and f and f.options and forms.match_option(c.value, f.options)[0] is not None:
+            # an instruction that points at the posting was followed with a value the posting contradicts: the checker read the
+            # posting and names the option that means its value
+            log(f"  check: [{c.id}] {a.value[:40]!r} -> {c.value[:40]!r} (the posting says otherwise)")
+            answers[c.id] = a.model_copy(update={"value": c.value, "flag": (a.flag + " corrected by the check against the posting").strip()})
+            continue
         if a.source == "applicant":
             # credited to the candidate's own file but not in it (or in conflict with the resume): theirs to say
             log(f"  check: [{c.id}] {a.value[:40]!r} isn't in applicant.yaml as planned; asking the candidate")

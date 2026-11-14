@@ -204,7 +204,9 @@ FIELDS_JS = r"""(start) => {
       add(e, {kind: 'file', label: q, required: required(e, q),   // the question's own marker counts, not only the caption's
               // only files really attached: the box's caption ("ATTACH RESUME/CV") is not a value
               value: e.files && e.files.length ? [...e.files].map(f => f.name).join(', ') : '',
-              accept: e.getAttribute('accept') || ''});
+              accept: e.getAttribute('accept') || '',
+              // set by the click that opened this input from a lazy trigger: it is that trigger's own native control
+              linked: !!e.getAttribute('data-jf-upload-label')});
       continue; }
     // a react-select input shrinks to nothing once a value is chosen: its control box is what shows
     const isCombo = (e.getAttribute('role') || '').toLowerCase() === 'combobox';
@@ -278,9 +280,9 @@ FIELDS_JS = r"""(start) => {
   const headings = all('h1, h2, h3, [data-automation-id=pageHeader], [aria-current=step]')
       .filter(vis).map(h => clean(h.innerText)).filter(Boolean).slice(0, 8);
   // Upload controls may mount a native input only after a button is clicked.
-  for (const button of all('button,[role=button]')) {
+  for (const button of all('button,[role=button],a')) {      // legacy portals use links: "Click here to attach your Resume"
     const text = clean(button.innerText || button.getAttribute('aria-label'));
-    if (!/^(choose (a )?file|browse( files)?|upload( (a |your )?(file|resume|cv|cover letter|document|attachment))?|attach( (a |your )?(file|resume|cv|cover letter|document|attachment))?)$/i.test(text)
+    if (!/^((click here to )?(choose (a )?file|browse( files)?|upload( (a |your )?(file|resume|cv|cover letter|document|attachment))?|attach( (a |your )?(file|resume|cv|cover letter|document|attachment))?))$/i.test(text)
         || !vis(button) || !shown(button) || button.hasAttribute('data-jf')) continue;
     const box = button.closest('fieldset,[data-field-path],[data-field-entry-id],[class*=upload i],.form-group,.form-field') || button.parentElement;
     if (!box || box.querySelector('input[type=file]')) continue;
@@ -316,6 +318,7 @@ class Field:
     format: str = ""
     help: str = ""
     slot: int = 0   # for uploads: which of several same-named uploads in this frame (DOM order); 0 for the first
+    linked: bool = False   # an upload's native input that a lazy trigger's own click opened (carries that trigger's caption)
 
     def brief(self) -> str:
         opts = ""
@@ -404,6 +407,17 @@ def clean_label(label: str) -> str:
     return COUNTER.sub("", label or "").strip()
 
 
+def merge_linked_uploads(fields: list) -> list:
+    """F28: a native input that a lazy trigger's own click opened and the page kept (outside the widget, hidden) is the SAME upload as
+    its trigger, not a second one. Merged only on that explicit association (`linked`) and only when exactly one trigger carries the
+    caption; with two same-caption triggers which one it belongs to is not known, so nothing is merged. Distinct widgets stay distinct."""
+    triggers: dict[tuple, int] = {}
+    for g in fields:
+        if g.kind == "file" and not g.linked:
+            triggers[(g.frame, g.label)] = triggers.get((g.frame, g.label), 0) + 1
+    return [g for g in fields if not (g.kind == "file" and g.linked and triggers.get((g.frame, g.label)) == 1)]
+
+
 def read_page(page: Page) -> PageView:
     """Every visible field on the page and in its iframes, numbered across frames, plus how much of the page was read."""
     fields, buttons, errors, headings, frames, n, adds = [], [], [], [], {}, 0, []
@@ -441,11 +455,13 @@ def read_page(page: Page) -> PageView:
             fields.append(Field(id=x["id"], kind=x["kind"], label=clean_label(x["label"]), required=bool(x.get("required")),
                                 value=x.get("value") or "", options=x.get("options") or [], section=x.get("section", ""),
                                 frame=k, multiple=bool(x.get("multiple")), accept=x.get("accept", ""),
-                                maxlength=x.get("maxlength"), format=x.get("format", ""), help=x.get("help", ""),))
+                                maxlength=x.get("maxlength"), format=x.get("format", ""), help=x.get("help", ""),
+                                linked=bool(x.get("linked"))))
         adds += [{**a, "frame": k} for a in snap.get("adds", [])]
         buttons += snap["buttons"]
         errors += snap["errors"]
         headings += snap["headings"]
+    fields = merge_linked_uploads(fields)
     seen: dict[tuple, int] = {}
     for g in fields:                      # uploads often share a native name ("file"): number them so none is lost
         if g.kind == "file":
@@ -475,12 +491,140 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s+.]", " ", s.lower())).strip()
 
 
+# --- numeric ranges: matched by meaning, never by spelling (F30) -----------------------------------------------------------
+
+_N = r"(\d+(?:\.\d+)?)"
+_LOW = r"(?:or less|or fewer|or under|and under|and below|or lower|or below)"
+_HIGH = r"(?:or more|or greater|or higher|and above|and over|or above|\+)"
+
+
+def parse_interval(text: str) -> tuple[float, float] | None:
+    """The interval of percentages a phrase means: "30% or less" -> (0, 30), "up to 25%" -> (0, 25), "50% or more" -> (50, 100),
+    "10-25%" -> (10, 25), "30%" -> (30, 30). None when the phrase holds no percentage or range."""
+    s = (text or "").lower().replace("\u2013", "-").replace("\u2014", "-")
+    # comparison symbols first: they must keep their meaning, never be dropped into an exact point (F30). A strict bound excludes
+    # its own value, an inclusive one keeps it.
+    s = s.replace("\u2264", "<=").replace("\u2265", ">=").replace("=<", "<=").replace("=>", ">=")
+    eps = 1e-6
+    if m := re.search(rf"<=\s*{_N}", s):
+        return 0.0, float(m.group(1))
+    if m := re.search(rf"<\s*{_N}", s):
+        return 0.0, float(m.group(1)) - eps
+    if m := re.search(rf">=\s*{_N}", s):
+        return float(m.group(1)), 100.0
+    if m := re.search(rf">\s*{_N}", s):
+        return float(m.group(1)) + eps, 100.0
+    if m := re.search(rf"between\s*{_N}\s*%?\s*(?:and|to|-)\s*{_N}\s*%", s):
+        return float(m.group(1)), float(m.group(2))
+    if re.search(r"[~\u2248]|\b(approx\w*|about|around|roughly|circa|nearly|almost)\b", s) and re.search(r"\d\s*%", s):
+        return None                                   # an approximation is not an interval this code can place: a person decides
+    if m := re.search(rf"{_N}\s*%?\s*(?:-|to)\s*{_N}\s*%", s):
+        return float(m.group(1)), float(m.group(2))
+    if m := re.search(rf"{_N}\s*%?\s*{_LOW}", s) or re.search(rf"(?:up to|less than|no more than|under|at most|maximum of|max)\s*{_N}\s*%", s):
+        return 0.0, float(m.group(1))
+    if m := re.search(rf"{_N}\s*%?\s*{_HIGH}", s) or re.search(rf"(?:at least|more than|over|minimum of|min)\s*{_N}\s*%", s):
+        return float(m.group(1)), 100.0
+    if m := re.search(rf"{_N}\s*%", s):
+        return float(m.group(1)), float(m.group(1))
+    return None
+
+
+def interval_option(answer: str, options: list[str]) -> tuple[str | None, bool]:
+    """(the option whose bracket CONTAINS the answer's interval, the tightest one; whether this was a numeric-range question at
+    all). A numeric question never falls back to spelling similarity: "30% or less" is not "50% or more"."""
+    want = parse_interval(answer)
+    ranges = [(o, parse_interval(o)) for o in options]
+    ranges = [(o, r) for o, r in ranges if r is not None]
+    if want is None:
+        # a percentage the code cannot interpret (an approximation, an odd comparator) against options that ARE ranges: no guess,
+        # no spelling similarity - the field is left for the candidate
+        return None, bool(ranges) and bool(re.search(r"\d\s*%", answer or ""))
+    if not ranges:
+        return None, False
+    fits = [(r[1] - r[0], o) for o, r in ranges if r[0] <= want[0] and want[1] <= r[1]]
+    return (min(fits)[1] if fits else None), True
+
+
+# --- factual identities: a school, an employer, a person (F29) --------------------------------------------------------------
+
+IDENTITY_Q = re.compile(r"(?i)\b(schools?|universit(?:y|ies)|colleges?|institutions?|institutes?|alma mater|employers?|company name|organi[sz]ations?|"
+                        r"referr\w* (name|employee)|employee name|supervisor|reference name)\b")
+OTHER_OPTION = re.compile(r"(?i)^\s*(other|not listed|my (school|institution|employer) is not listed|none of the above)\b")
+
+
+def is_identity(question: str) -> bool:
+    """Is this question asking WHICH institution / employer / person? Those are facts: a similarly spelled neighbour is a
+    different thing, so they are never matched by spelling similarity."""
+    return bool(IDENTITY_Q.search(question or ""))
+
+
+PERSON_Q = re.compile(r"(?i)\b(referr\w* (name|employee)|employee name|supervisor|reference name|manager name)\b")
+_CORP_SUFFIX = re.compile(r"(?i)^[\s.,]*((inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|company|gmbh|plc|lp|llp)\b[\s.,]*)+$")
+_STOP = {"of", "the", "and", "for", "at", "in"}
+_TYPE_WORD = re.compile(r"(?i)^\s*(university|college|institute|school|inc\.?|llc|ltd\.?|corp\.?|company|co\.?)?\s*$")
+
+# Aliases the CANDIDATE has approved: {normalised real name: [other forms the same institution / employer is listed under]}. Filled by
+# the application step from the applicant file (an entry's `aliases:` list). Nothing else makes two different names one identity.
+APPROVED_ALIASES: dict[str, list[str]] = {}
+
+
+def set_approved_aliases(mapping: dict[str, list[str]] | None) -> None:
+    APPROVED_ALIASES.clear()
+    for name, forms_ in (mapping or {}).items():
+        APPROVED_ALIASES[_norm(name)] = [x for x in forms_ if x]
+
+
+def _initialism(name: str) -> str:
+    return "".join(w[0] for w in re.findall(r"[A-Za-z]+", name) if w.lower() not in _STOP).upper()
+
+
+def _justified_extension(short: str, long: str) -> bool:
+    """Is `long` the same organisation as `short` by a JUSTIFIED, mechanical transformation? Only (1) a corporate suffix ("Acme
+    Robotics" / "Acme Robotics, Inc."), or (2) its OWN initialism in parentheses, optionally followed by the type word ("Arizona
+    State University" / "Arizona State University (ASU)", "Vellore Institute of Technology (VIT) University"). Punctuation does not
+    make an extension the same organisation: "Acme Robotics - Competitor", "Acme Robotics (Competitor)" and "Acme Robotics,
+    Competitor" are different identities. Campus or branch forms are accepted only as approved aliases."""
+    s, lg = short.strip(), long.strip()
+    if not lg.lower().startswith(s.lower()) or len(lg) == len(s):
+        return False
+    rest = lg[len(s):]
+    if _CORP_SUFFIX.match(rest):
+        return True
+    m = re.match(r"^\s*\(([A-Za-z.]{2,8})\)(.*)$", rest)
+    return bool(m) and m.group(1).replace(".", "").upper() == _initialism(s) and bool(_TYPE_WORD.match(m.group(2)))
+
+
+def identity_option(answer: str, options: list[str], person: bool = False) -> str | None:
+    """The option that IS this institution / employer / person: the same name (case and punctuation aside); for an organisation also
+    a mechanical variant (`_justified_extension`, in either direction) or a form the candidate has approved as an alias
+    (`APPROVED_ALIASES`). Never merely a similar name, a longer one, or one with something after a dash or comma: "Arizona State
+    University" is not "Adams State University", "Jane Doe" is not "Jane Doe Jr", "Acme Robotics" is not "Acme Robotics -
+    Competitor". A PERSON must match exactly."""
+    a = _norm(answer)
+    if not a:
+        return None
+    pool = [o for o in options if o and not OTHER_OPTION.match(o) and not re.match(r"(?i)^\s*(select|choose|--|please select)\b", o)]
+    for o in pool:
+        if _norm(o) == a:
+            return o
+    if person:
+        return None
+    approved = {_norm(x) for x in APPROVED_ALIASES.get(a, [])}
+    for o in pool:
+        if _norm(o) in approved or _justified_extension(answer, o) or _justified_extension(o, answer):
+            return o
+    return None
+
+
 def match_option(answer: str, options: list[str], cutoff: int = 80) -> tuple[str | None, int]:
     """The page option that means `answer` (e.g. "USA" -> "United States of America"); (None, best score) when no
     option is close enough for code to decide."""
     opts = [o for o in options if o and not re.match(r"(?i)^\s*(select|choose|--|please select)\b.*", o)]
     if not answer or not opts:
         return None, 0
+    picked, numeric = interval_option(answer, opts)
+    if numeric:
+        return (picked, 97) if picked else (None, 0)         # a percentage question is answered by meaning or not at all
     a = _norm(answer)
     for o in opts:  # exact (normalized) first
         if _norm(o) == a:
@@ -684,8 +828,17 @@ class FillError(RuntimeError):
 
 
 def _choose(question: str, answer: str, options: list[str], tie_break) -> str:
+    if is_identity(question):
+        # a fact about WHO: the named institution or nothing; the "Other" choice (whose name the form then asks for) when the list
+        # lacks it; never a neighbour that merely looks alike, and never a model's idea of "closest" (F29)
+        opt = identity_option(answer, options, person=bool(PERSON_Q.search(question or "")))
+        if opt is None:
+            opt = next((o for o in options if OTHER_OPTION.match(o or "")), None)
+        if opt is None:
+            raise FillError(f"{answer!r} is not offered, and the list has no Other choice; options: {options[:8]}: needs the candidate")
+        return opt
     opt, score = match_option(answer, options)
-    if opt is None and tie_break and options:
+    if opt is None and tie_break and options and parse_interval(answer) is None:
         opt = tie_break(question, answer, options)
     if opt is None:
         raise FillError(f"no option matches {answer!r} (best score {score}); options: {options[:12]}")
@@ -730,6 +883,16 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
     if f.kind == "file":
         path = files.get(answer) or answer
         name = path.rsplit("/", 1)[-1]
+        # Resolve THIS widget again at action time (F28): a page that re-rendered since it was read has renumbered its controls, and
+        # an index from the earlier read could now name another widget's. The widget is identified by its own caption (and slot);
+        # if that is not exactly one control now, nothing is attached.
+        live = read_page(page)
+        same = [g for g in live.fields if g.kind == "file" and g.label == f.label and g.slot == f.slot]
+        if len(same) != 1:
+            raise FillError(f"the upload {f.label[:60]!r} is not exactly one control on the page now ({len(same)}); not attaching "
+                            f"{name} to a control that might be another widget")
+        f, view = same[0], live
+        frame, loc = view.frames[f.frame], locate(view, f)
         if loc.evaluate("e => e.tagName !== 'INPUT'"):
             # Associate the clicked control with its chooser/new input, without assuming a caption or input ID.
             choosers = []
@@ -744,12 +907,16 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                     if choosers or fresh.count():
                         break
                     page.wait_for_timeout(500)
-                if choosers:
+                inside = [fresh.nth(i) for i in range(fresh.count())
+                          if loc.evaluate("(btn, el) => { const box = btn.closest('fieldset,[data-field-path],[data-field-entry-id],"
+                                          "[class*=upload i],.form-group,.form-field') || btn.parentElement; return !!box && box.contains(el); }",
+                                          fresh.nth(i).element_handle())]
+                if choosers:                      # the file chooser this very click opened: tied to this widget by the click itself
                     loc = choosers[0].element
-                elif fresh.count() == 1:
-                    loc = fresh.first
+                elif len(inside) == 1:            # a new input that appeared INSIDE this widget's own boundary
+                    loc = inside[0]
                 else:
-                    raise FillError('Upload button did not expose one identifiable file input')
+                    raise FillError('Upload button did not expose one identifiable file input inside its own widget')
                 loc.evaluate("(e,label)=>e.setAttribute('data-jf-upload-label',label)", f.label)
             finally:
                 page.remove_listener('filechooser', listener)
@@ -768,11 +935,16 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             for _ in range(10):
                 page.wait_for_timeout(2000)
                 try:
-                    if name in loc.evaluate('e=>[...(e.files||[])].map(f=>f.name)'):
+                    if loc.evaluate('e=>e.isConnected') and name in loc.evaluate('e=>[...(e.files||[])].map(f=>f.name)'):   # a detached input holds the file for nobody
                         return path
                 except Exception:
                     pass  # some uploaders replace their native input after accepting the file
-                if any(name in fr.locator("body").inner_text(timeout=5000) for fr in view.frames.values()):
+                # the name must show inside THIS widget's boundary; the same name elsewhere on the page (another widget holding that
+                # file, a document list) proves nothing about this one
+                others = [c for g in view.fields if g.kind == "file" and (g.id, g.frame) != (f.id, f.frame) for c in _captions(g.label)]
+                shown = attachment_evidence(page, view, f, others, [name], f.label) or \
+                    attachment_evidence(page, view, None, others, [name], f.label)
+                if name in (shown or ""):
                     return path
         raise FillError(f"{name} was attached but the page never showed it")
     loc.scroll_into_view_if_needed(timeout=5000)
@@ -839,7 +1011,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         page.keyboard.type(answer, delay=60)
         return answer
     if f.kind == "select":
-        opt = close_option(answer, f.options) if close else _choose(f.label, answer, f.options, tie_break)
+        opt = close_option(answer, f.options) if close and not is_identity(f.label) else _choose(f.label, answer, f.options, tie_break)
         if opt is None:
             raise FillError(f"{answer!r} isn't offered as such")
         loc.select_option(label=opt, timeout=8000)
@@ -902,6 +1074,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             page.wait_for_timeout(1200)
             opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
         pick = (lambda ans, o: (strict_option(ans, o), 0)) if strict else \
+            (lambda ans, o: (identity_option(ans, o, person=bool(PERSON_Q.search(f.label))), 0)) if is_identity(f.label) else \
             (lambda ans, o: (close_option(ans, o), 0)) if close else match_option
         opt, _ = pick(answer, opts) if opts else (None, 0)
         if opt is None and (loc.evaluate("e => e.tagName") == "INPUT"):

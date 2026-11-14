@@ -178,6 +178,16 @@ CREATE TABLE IF NOT EXISTS outcome_candidates (
     evidence       TEXT,
     PRIMARY KEY (event_id, application_id)
 );
+-- F23: a consumed look of the fixed-look learning protocol, frozen: the cohort and outcomes it was decided on, its parameters and its
+-- decision. Later calls for that look replay this record; changed data never re-spends the look.
+CREATE TABLE IF NOT EXISTS learning_looks (
+    look      INTEGER PRIMARY KEY,
+    n         INTEGER NOT NULL,       -- the look's declared size (resolved applications)
+    taken_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    cohort    TEXT NOT NULL,          -- JSON [[application id, positive 0/1, weight], ...]
+    params    TEXT NOT NULL,          -- JSON
+    result    TEXT NOT NULL           -- JSON: the sites and skills decided
+);
 -- F25: two addresses of one posting (the apply link vs the posting's own address): both find the same job.
 CREATE TABLE IF NOT EXISTS url_aliases (
     alias     TEXT NOT NULL,

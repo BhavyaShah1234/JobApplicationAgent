@@ -223,3 +223,59 @@ def test_the_writers_are_voyager_only_and_say_so():
     llm.structured_invoke(m, Out, [HumanMessage("x")])
     info = llm.last_call()
     assert info["provider"] == "voyager" and info["model"] == "fake" and info["calls"] == 1 and info["ok"]
+
+
+def test_a_slow_call_cannot_outlast_the_total_budget_and_its_late_answer_is_discarded():
+    import time as _t
+
+    class Slow(FakeModel):
+        def with_structured_output(self, schema, method):
+            class Bound:
+                def invoke(self, messages):
+                    _t.sleep(0.4)
+                    return Out(name="late")
+            return Bound()
+    started = _t.monotonic()
+    with pytest.raises(llm.StructuredError) as e:
+        llm.structured_invoke(Slow({}), Out, [HumanMessage("x")], deadline_s=0.05)
+    assert e.value.kind == "deadline" and _t.monotonic() - started < 0.3               # returned at the budget, not after the call
+    started = _t.monotonic()
+    with llm.deadline(0.05):                                                            # an outer budget bounds it too
+        with pytest.raises(llm.StructuredError):
+            llm.structured_invoke(Slow({}), Out, [HumanMessage("x")])
+    assert _t.monotonic() - started < 0.3
+
+
+def test_a_call_that_finishes_inside_the_budget_is_unaffected():
+    m = FakeModel({"json_schema": [Out(name="ok")]})
+    assert llm.structured_invoke(m, Out, [HumanMessage("x")], deadline_s=5).name == "ok"
+
+
+def test_an_abandoned_call_does_not_delay_the_process_exit():
+    import subprocess
+    import sys
+    script = """from jobagent import llm
+import atexit, time
+start = time.monotonic()
+atexit.register(lambda: print(round(time.monotonic() - start, 3), flush=True))
+try:
+    llm._bounded(lambda: time.sleep(.8), .01)
+except TimeoutError:
+    pass
+"""
+    p = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=20)
+    assert p.returncode == 0 and float(p.stdout.strip()) < 0.3          # exit does not wait for the abandoned provider call
+
+
+def test_repeated_timeouts_cannot_pile_up_abandoned_workers():
+    import time as _t
+    llm._ABANDONED.clear()
+    for _ in range(llm.MAX_ABANDONED):
+        with pytest.raises(TimeoutError):
+            llm._bounded(lambda: _t.sleep(0.5), 0.01)
+    started = _t.monotonic()
+    with pytest.raises(llm.StructuredError) as e:
+        llm._bounded(lambda: "never started", 5)
+    assert e.value.kind == "budget" and _t.monotonic() - started < 0.2
+    _t.sleep(0.7)                                                       # the abandoned calls finish; capacity returns
+    assert llm._bounded(lambda: "ok", 5) == "ok"

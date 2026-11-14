@@ -125,7 +125,14 @@ def _attachments(page: Page, view: forms.PageView, records: list[dict]) -> list[
                 except Exception:
                     held = None
             if held is None:
-                out.append({"frame": f.frame, "slot": f.slot, "label": f.label, "files": None, "unverified": "bytes unreadable"})
+                # the bytes cannot be read, but WHAT THE WIDGET SHOWS can: its file name (inside its own boundary) is part of what
+                # was approved, so replacing the file under it changes the approval hash even though its bytes are opaque (F04)
+                try:
+                    shown = forms.attachment_evidence(page, view, f, [], [], f.label)
+                except Exception:
+                    shown = ""
+                out.append({"frame": f.frame, "slot": f.slot, "label": f.label, "files": None, "unverified": "bytes unreadable",
+                            "observed": shown or (f.value or "")})
             else:
                 out.append({"frame": f.frame, "slot": f.slot, "label": f.label,
                             "files": [{"name": h["name"], "size": h["size"],
@@ -134,7 +141,7 @@ def _attachments(page: Page, view: forms.PageView, records: list[dict]) -> list[
             out.append({"frame": f.frame, "slot": f.slot, "label": f.label, "files": None,
                         "unverified": f"only the name is shown: {(forms.DOC_NAME.search(f.label) or forms.DOC_NAME.search(f.value)).group(0)}"})
     for w in forms.widget_uploads(page, view, records):   # uploads with no native input left: they stay in the inventory
-        out.append({"frame": None, "slot": None, "label": w["label"], "files": None,
+        out.append({"frame": None, "slot": None, "label": w["label"], "files": None, "observed": w["observed"] or "",
                     "unverified": f"only the name is shown: {w['observed']}" if w["observed"] else "no attachment shown"})
     return sorted(out, key=lambda d: (-1 if d["frame"] is None else d["frame"], d["slot"] or 0, d["label"]))
 
@@ -263,7 +270,8 @@ def live_blockers(page: Page, view: forms.PageView, records: list[dict] = (), jo
     fields still empty, required uploads with no file attached, and errors the page shows. Uploads are judged from
     the page itself (`forms.upload_blockers`), not from the earlier fill record: a manual upload clears a failed one,
     a removed file raises a verified one."""
-    out = [f"{f.label[:60]}: required and empty" for f in view.fields if f.required and not f.value and f.kind != "file"]
+    out = [f"the form was not fully read: {p}" for p in view.coverage.problems()]            # F17: unread parts cannot be approved
+    out += [f"{f.label[:60]}: required and empty" for f in view.fields if f.required and not f.value and f.kind != "file"]
     known = [p.name for p in (job_dir.glob("*.pdf") if job_dir and job_dir.exists() else [])]
     out += forms.upload_blockers(page, view, list(records), known)
     return out + [f"the page shows an error: {e[:80]}" for e in view.errors[:3]]
@@ -511,6 +519,12 @@ def make_at_review(job_dir: Path, jd: dict, hitl, inbox, conn, log, ask_s: float
             result.update(ready_to_submit=False, blockers=live)
             return {"state": "not_ready", "blockers": live}
         # the page is complete now (the candidate may have fixed what the fill could not): what is sent is described by this
+        earlier = [b for b in result.get("blockers", []) if b.startswith("page ") and "not fully read" in b]
+        if earlier:               # F17: a page earlier in the wizard that could not be read stays a blocker; approving does not clear it
+            record(conn, job_dir, jd, state="filled", notes="approve refused: " + "; ".join(earlier)[:300])
+            log(f"submit: not sent: {earlier[:3]}")
+            result.update(ready_to_submit=False, blockers=earlier)
+            return {"state": "not_ready", "blockers": earlier}
         result.update(ready_to_submit=True, blockers=[], readiness_rechecked_at_approval=_now())
         approved_at = _now()
         if stop := guard(conn, job_dir):              # the wait for the answer was long: another review may have sent it since

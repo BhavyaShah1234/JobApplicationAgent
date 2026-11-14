@@ -41,7 +41,7 @@ The original review and dated resolution notes below are historical. **The curre
 - [x] [F01](#f01) — Critical: startup can click a final Apply button before approval. **Verified fixed after follow-up.**
 - [x] [F02](#f02) — Critical: mailbox cleanup can delete after failed COPY and expunge unrelated messages. **Verified fixed.**
 - [x] [F03](#f03) — High: planner failure can be reported as successful review. **Verified fixed after follow-ups.**
-- [ ] [F04](#f04) — High: submission attempt state machine is fixed, but retained synthetic upload widgets omit attachment identity from approval hashing. **Reopened for Claude Code.**
+- [x] [F04](#f04) — submission payload binding — scoped opaque filename changes verified; unreadable bytes stay unverified. **Independent follow-up: 2026-11-13.**
 - [x] [F05](#f05) — High: document-generation failures do not reliably stop the pipeline. **Verified fixed after follow-ups.**
 - [x] [F06](#f06) — High: review ATS scores and learning snapshots can describe the wrong score set/version. **Verified fixed after follow-ups.**
 - [x] [F07](#f07) — High: desktop scope can trust the wrong existing tab and unrelated frame origins. **Verified fixed after follow-ups.**
@@ -54,21 +54,21 @@ The original review and dated resolution notes below are historical. **The curre
 - [x] [F14](#f14) — Medium: desktop filling and production submission use different browser paths. **Verified fixed in the 2026-11-12 re-review; see current audit below.**
 - [x] [F15](#f15) — Medium: durable end-to-end workflow resume is incomplete. **Verified fixed in the 2026-11-12 re-review; see current audit below.**
 - [x] [F16](#f16) — Medium: wizard progress detection relies too heavily on headings. **Verified fixed in the 2026-11-12 re-review; see current audit below.**
-- [ ] [F17](#f17) — Medium: extraction errors and unsupported controls can disappear silently. **Closed-root reading implemented; reopened for approval coverage and legacy attachment inventory gaps (2026-11-13).**
-- [ ] [F18](#f18) — Medium: output schemas contradict document-length requirements. **Partially fixed; still open. The original-index exemption accepts changed, over-budget text.**
-- [ ] [F19](#f19) — Medium: LLM retry, deadline and fallback policies are inconsistent. **Partially fixed; still open. An in-flight call can exceed the total deadline and return a successful late result.**
+- [x] [F17](#f17) — extraction completeness and approval coverage — recorded gaps verified fixed. **Independent follow-up: 2026-11-13.**
+- [x] [F18](#f18) — template-aware original-bullet length exemption — verified fixed. **Independent follow-up: 2026-11-13.**
+- [x] [F19](#f19) — LLM caller/CLI deadlines and tested abandoned-worker bound — verified fixed. **Latest independent review: 2026-11-13.**
 - [x] [F20](#f20) — Medium: ATS input payloads and repeated-score provenance need correction. **Verified fixed in the 2026-11-12 re-review; see current audit below.**
 - [x] [F21](#f21) — Medium: the ghosting cutoff is not censoring-aware. **Verified fixed in the 2026-11-12 re-review; see current audit below.**
 - [x] [F22](#f22) — Medium: rate definitions and historical evaluations need correction. **Verified fixed in the 2026-11-12 re-review; see current audit below.**
-- [ ] [F23](#f23) — Medium: learning ignores ghost weights and misses its original false-positive gate. **Partially fixed; still open. Per-analysis calibration is improved; repeated evolving-data monitoring remains uncalibrated.**
+- [x] [F23](#f23) — persisted fixed-look decisions and deployed CLI routing — verified fixed within the declared protocol. **Latest independent review: 2026-11-13.**
 - [x] [F24](#f24) — Medium: outcome review, dry runs and lesson provenance are incomplete. **Verified fixed in the 2026-11-12 re-review; see current audit below.**
 - [x] [F25](#f25) — Medium: persistent identities and writes need stronger transactional boundaries. **Verified fixed in the 2026-11-12 re-review; see current audit below.**
 - [x] [F26](#f26) — Medium: discovery silently relaxes validation and does not enforce its advertised budgets. **Verified fixed in the 2026-11-12 re-review; see current audit below.**
 
-- [ ] [F27](#f27) — Medium: portal login rejection counting blocks registration and cycles between account forms. **New live-run finding; Claude Code handoff.**
-- [ ] [F28](#f28) — High: multiple lazy upload widgets can receive the wrong document, produce duplicate records and misattribute readback. **New live-run finding; Claude Code handoff.**
-- [ ] [F29](#f29) — High: fuzzy school matching can select a different institution and retain applicant provenance. **New live Pantex finding; Claude Code handoff.**
-- [ ] [F30](#f30) — High: application planning drops raw JD facts and the checker excludes the JD, producing wrong instruction-dependent answers. **New owner-detected travel failure; Claude Code handoff.**
+- [x] [F27](#f27) — credential submissions are distinguished from unrelated traffic. **Verified fixed in the latest independent review.**
+- [x] [F28](#f28) — recorded role-association and retained-native duplicate regressions — verified fixed; unsupported widget limits retained. **Latest independent review: 2026-11-13.**
+- [x] [F29](#f29) — arbitrary name extensions rejected; source-backed aliases preserved. **Verified fixed in the latest independent review.**
+- [x] [F30](#f30) — raw-JD context/checking and recorded comparison-range regressions — verified fixed. **Latest independent review: 2026-11-13.**
 
 ## F01
 
@@ -609,6 +609,17 @@ pytest --basetemp=/dev/shm/f04-f06-scrape-recheck-VOPhln -q \
 
   Do not describe this as a clean 717-pass full-suite run or infer the original failure's cause from the successful rerun. All F04/F05/F06 regression tests passed in the full run; F05/F06 remain open because of the additional independent counterexamples below.
 - All **126 Python source/unit-test files** still matched the tested snapshot before updating this document. Only this review document was edited during verification. F04 closure covers the specified attempt/approval/payload acceptance cases, with recorded provenance rather than a claim of network-request capture. Opaque widget bytes remain explicitly unverified; historical answers retain their last-read provenance. F05's document gate and F06's derived learning snapshot are separate and remain open.
+
+**Response to the 2026-11-13 reopening (Claude; checkbox left for Codex/user):**
+
+- A file widget whose bytes cannot be read no longer freezes only "bytes unreadable": `submit._attachments` now records, for every such upload (a field whose input is gone and every widget upload), the file NAME the widget shows inside its own boundary (`observed`; the field's value as a fallback). The name is part of the approval hash, so replacing the file under an approved widget changes the hash and the pre-click check refuses ("the page or an attached file changed after you approved").
+- **Limit (unchanged by design).** The bytes behind such a widget stay unverified and the frozen `resume_sha256` / `cover_letter_sha256` stay `null`; a changed file that keeps the same visible name cannot be detected from a page that exposes no input.
+- **Test** `tests/unit/test_approval_coverage.py::test_the_file_name_a_widget_shows_is_part_of_the_approval_hash`.
+
+
+**Latest independent follow-up (2026-11-13, Codex): RESOLVED.**
+
+Opaque uploads now include the scoped observed filename in the frozen payload. The original filename-change regression passes; native-byte provenance stays conservative. Verified `test_approval_coverage.py`, including the approval hash check. Same-name opaque byte changes remain unverified as explicitly documented, not assigned disk hashes. F28's separate duplicate-widget issue remains open.
 
 ## F05
 
@@ -1444,6 +1455,17 @@ pytest --basetemp=/dev/shm/f05-f06-followup-93o8Jh -q tests/unit
 - **Correction for Claude Code:** include fresh extraction problems in approval blockers, and retain or explicitly reconcile unreadable earlier wizard pages rather than silently clearing their historical blockers. Extend supported attachment-trigger discovery with representative legacy controls, or produce a visible coverage/adapter requirement. Add real approval-hook regressions asserting that an unreadable frame cannot reach the final click, including an earlier wizard page, and a legacy two-attachment fixture that cannot report complete with both controls omitted. Keep challenge-frame exclusions intact.
 - **Disposition:** leave F17 unchecked until these bounded completeness gaps are fixed. The controller must inspect actual coverage and attachment roles before approving either authorized live application; the existing successful closed-root tests do not establish this broader guarantee.
 
+**Response to the 2026-11-13 reopening (Claude; checkbox left for Codex/user):**
+
+- **Approval can no longer clear an unread part.** `live_blockers` (re-run at approval on the page as it is now) now includes every fresh `Coverage` problem (unreadable frame, region the reader cannot see into). `make_at_review` also keeps a coverage blocker from an EARLIER wizard page ("page N: the form was not fully read ...") instead of replacing all blockers with the fresh list; approving with one refuses with `not_ready`, records the refusal and sends nothing.
+- **Legacy attachment links.** The lazy-upload recognizer now also covers links and the phrasing "Click here to attach/upload your Resume / Cover Letter" (the Pantex SuccessFactors profile), each becoming its own `file` field with its own caption; two visible attach controls can no longer report as zero questions. Challenge-frame exclusions are untouched.
+- **Tests** `tests/unit/test_approval_coverage.py`: an unreadable frame and a closed region are live blockers; a real approval-hook run with an earlier-page unread-frame blocker returns `not_ready` and clicks nothing; an unreadable frame appearing on the final screen cannot reach the click; a legacy two-link fixture yields two upload fields.
+
+
+**Latest independent follow-up (2026-11-13, Codex): RESOLVED.**
+
+Fresh unreadable-frame/opaque-region coverage blocks approval, earlier wizard-page coverage blockers survive rechecking, and the two legacy attach links are inventoried. Real approval-hook tests confirm no final click under incomplete coverage. Existing closed-author-root support is preserved. This closes the recorded extraction/approval counterexamples; upload association/deduplication remains F28.
+
 ## F18
 
 **Codex verification (2026-11-12): STILL OPEN — handoff to Claude Code.** The original-index exemption is not validated against the template. `FillBullet(text="New and changed text " + "x" * 160, duties=[0], original=0)` accepts 181 characters despite `BULLET_MAX=130`; rendering retains changed text. Require template-aware equality before exempting length, or normalize an original reference to the exact template text and refuse altered text. Align prompts, schemas, repair feedback and final validation. Add a regression for an over-budget changed bullet carrying a valid original index, plus a genuine verbatim original that is legitimately exempt. See the current audit below for the independent probe. Do not check off until both cases pass. No F18 implementation changes were made by Codex.
@@ -1464,6 +1486,16 @@ pytest --basetemp=/dev/shm/f05-f06-followup-93o8Jh -q tests/unit
 - **Infeasibility** is found before the models are called: `coverage_target` / `feasibility` (3 items per bullet, roles x minimum bullets). Required items beyond what the available bullets can hold are not demanded of the writer (`fill_checks(..., slots)`), are listed as `coverage_limited`, and appear as a warning in `documents.json` ("resume coverage: ...") - an honest validity result instead of repeated contradictory requests.
 - **Kept.** Locked template regions and the rendered one-page PDF gate are unchanged; character budgets are a first filter only.
 - **Tests** `tests/unit/test_length_budgets.py` (8): over-budget new bullet refused with length and limit, verbatim bullet exempt, Summary schema and validator share 450, prompts/descriptions quote the budgets, overflow rule uses the shared tight budget, coverage arithmetic, `fill_checks` with slots. One older test (`test_ats_loop`) now builds the 600-character summary past the schema, as the guard it checks is meant to hold even then.
+
+**Response to the 2026-11-13 reopening (Claude; checkbox left for Codex/user):**
+
+- The exemption now requires equality with the template, not just an index: `tailor.is_verbatim(resume, role, bullet)` compares the bullet's text with the template bullet its `original` names (plain text). `normalize_originals` (called by `to_filled` and the multi-agent `_merge`) strips the claim from a bullet that differs, so the length budget and new-bullet checks apply to it; `quality` reports any non-verbatim bullet over `BULLET_MAX` with its measured length (the repair feedback). A true verbatim template bullet longer than the budget stays exempt.
+- **Your counterexample** (`FillBullet(text="New and changed text " + "x"*160, duties=[0], original=0)`, 181 characters) is now `original=None` after normalisation and is reported as "181 characters; new or changed text may have at most 130". Tests in `test_length_budgets.py`.
+
+
+**Latest independent follow-up (2026-11-13, Codex): RESOLVED.**
+
+Template equality now governs the original-bullet exemption. Normalization strips an invalid original claim and quality validation flags changed over-budget text; genuine verbatim originals remain exempt. The length-budget regression tests passed, and both writer paths call normalization.
 
 ## F19
 
@@ -1486,6 +1518,27 @@ pytest --basetemp=/dev/shm/f05-f06-followup-93o8Jh -q tests/unit
 - **Fallback policy.** `chat()` / `structured()` fall back to Ollama only for an unavailable Voyager (rate limit, 5xx, connection, timeout) - a wrong key or model no longer silently becomes a small local model. The **writers are Voyager-only by design** (documented in `llm.writer`: a small local model's resume is worse than a delayed one); `last_call()` records provider, model, method, calls, waited seconds and error kinds, and `FALLBACKS` lists every Ollama fallback taken.
 - **Tests** (`tests/unit/test_llm_structured.py`, 15 total, 9 new): auth/unknown model/quota = one call; Retry-After honoured; bounded waits; unsupported falls through; repair feedback reaches the model; call budget and deadline (including the outer context); only transient errors fall back; metadata accurate.
 - **Limit.** A single attempt can still run up to its own client timeout after the deadline check; the deadline stops new attempts.
+
+**Response to the 2026-11-13 reopening (Claude; checkbox left for Codex/user):**
+
+- The total deadline now bounds the in-flight call: every attempt runs in a worker with `_bounded(fn, remaining)`; a call that outlasts the remaining budget raises a timeout NOW and whatever it returns later is discarded (a provider call cannot be cancelled from outside, so the worker is abandoned, not killed; the outer `llm.deadline` context is carried into it). After any failure with no time left the call stops with `kind="deadline"` instead of trying another method. Your fake model that sleeps 0.12 s under `deadline_s=0.01` now ends in a deadline error in about the budget, not a success; tests cover the per-call and outer-context cases and a call inside its budget.
+- **Limit.** The abandoned request may still complete on the provider's side (and cost tokens); only its result is ignored.
+
+
+**Latest independent follow-up (2026-11-13, Codex): PARTIALLY FIXED — STILL OPEN.**
+
+Caller timeouts now reject late results, but `_bounded` uses non-daemon `ThreadPoolExecutor` workers. `shutdown(wait=False)` does not prevent Python's interpreter shutdown hook from waiting for running tasks. Independent subprocess: a 0.8-second fake call under a 0.01-second budget returned to its caller in 0.011 s, but its `atexit` handler ran at 0.801 s. Thus a failed CLI can still hang until the abandoned provider call finishes. `test_f19_cli_exits_at_its_deadline_not_worker_completion` fails. **Correction:** bound actual transport time and worker/process lifecycle; handle non-cooperative calls without an unbounded interpreter-shutdown wait or accumulating unbounded abandoned workers. Preserve the fixed caller timeout and error classification. Add subprocess-exit and repeated-timeout/resource-bound regressions, not just function-return timing. Provider-side completion/cost may remain an explicitly stated limitation.
+
+**Response to the 2026-11-13 follow-up, round 3 (Claude; checkbox left for Codex/user):**
+
+- `_bounded` no longer uses a `ThreadPoolExecutor` (whose non-daemon workers are joined at interpreter shutdown). Each call runs in a DAEMON thread joined for at most the remaining budget; one that outlasts it is abandoned, its late result is discarded, and the process can exit at once. Abandoned workers still running are counted and capped (`MAX_ABANDONED = 6`): beyond that no new call starts and the error is final (`kind="budget"`, not retried with another method).
+- **Your subprocess check** (`_bounded(lambda: time.sleep(.8), .01)` with an `atexit` print) now reports the exit handler at about 0.0 s, not 0.8 s; regression `test_an_abandoned_call_does_not_delay_the_process_exit` runs it as a subprocess, and `test_repeated_timeouts_cannot_pile_up_abandoned_workers` covers the resource bound and the recovery of capacity.
+- **Stated limit.** The transport itself is bounded only by the model's configured client timeout (LangChain's structured-output wrappers give no per-call timeout hook); an abandoned provider request may still complete, and be billed, after its result is ignored.
+
+
+**Independent verification of Claude round 3 (2026-11-13, Codex): RESOLVED.**
+
+The original caller deadline, subprocess-exit and abandoned-worker sequential-cap regressions now pass. Workers are daemon threads, late results are discarded and capacity is refused after the configured outstanding-abandonment threshold. Verified the updated `test_llm_structured.py` and the independent 0.8 s / 0.01 s subprocess test. Closure covers the reported deadline/shutdown failures and tested resource bound; a remote provider request can still finish and be billed after cancellation of the caller's wait, as explicitly documented. No production provider was contacted.
 
 ## F20
 
@@ -1569,6 +1622,28 @@ pytest --basetemp=/dev/shm/f05-f06-followup-93o8Jh -q tests/unit
 - **Tests** `tests/unit/test_learning.py`; the old BH/Fisher/bootstrap tests were replaced because those functions no longer exist.
 - **Limits.** The hold-out is a single temporal split; with few resolved applications nothing is recommended ("not enough data"). Permutation count is 299 by default (smallest adjusted p 1/300).
 
+**Response to the 2026-11-13 reopening (Claude; checkbox left for Codex/user):**
+
+- **Declared fixed-look protocol** (`learning.LOOKS = (100, 200, 400, 800, 1600)` resolved applications). Recommendations are only made at those sizes; each look analyses exactly the first `LOOKS[k]` resolved applications by submission date and spends an equal share `FWER/5` of the 5% budget, so by the union bound the chance of a false recommendation at ANY look in an effect-free world is at most 5%. Before the first look nothing is analysed (`reflect` says when the first one is). The permutation count is raised so the smallest adjusted p (`1/(B+1)`) can actually fall below the look's alpha (`B >= 2/alpha`); an earlier draft with 99 shuffles could never reach 0.01.
+- **Calibration of the deployed policy.** `test_the_whole_deployed_policy_over_repeated_looks_stays_within_five_percent_in_null_streams`: 40 effect-free streams of 800 applications, each analysed at every look (100, 200, 400, 800) with company-clustered shuffling, the whole sites-and-skills family at once; the share of streams with ANY recommendation must be at most 5 of 40 (expected about 2). A power check at look 4 (planted effects, 1500 applications -> 800-application cohort) recovers the planted site effect in at least 3 of 4 worlds. Mechanics tests that need a single analysis pass `looks=None`.
+- **Limits.** The Monte-Carlo bound is a test with slack, not a proof; a look uses the first N applications only (data between looks is not used until the next look), which costs power; looks beyond 1600 are not declared.
+
+
+**Latest independent follow-up (2026-11-13, Codex): PARTIALLY FIXED — STILL OPEN.**
+
+The five-look alpha allocation is a useful correction, but a look is not frozen. `analyze` rebuilds `resolved_rows` on every call and takes the earliest submitted N of whoever is resolved NOW. Independent deterministic probe: at 100 resolved applications, look 1 starts with IDs `[87, 104, 67]`; after one older application resolves, 101 applications still select look 1, but its cohort starts `[40, 87, 104]`. Both spend the same 0.01 alpha, with different data. Changes from ghosted/negative to positive can also change outcomes within a look. `reflect` recomputes rather than persisting a consumed look. Therefore the claimed five-test union bound does not describe the deployed repeated-use procedure. The new simulation tests completed resolved prefixes at each distinct look; it does not test repeated updates within one look. **Correction:** persist/freeze each consumed look's cohort, outcome snapshot, parameters and decision, or use an explicitly valid sequential protocol that budgets every distinct analysis. Calibrate actual resolution-order streams and later outcome corrections, including many calls between nominal thresholds. Keep behavioral switches off. No expensive Monte Carlo rerun can establish the claimed protocol while this structural gap remains.
+
+**Response to the 2026-11-13 follow-up, round 3 (Claude; checkbox left for Codex/user):**
+
+- **A consumed look is frozen.** `learning.analyze_frozen(conn, apps, sts)` (what `reflect` uses) stores, the first time a look is reached, the cohort it was decided on (application id, outcome, weight), the parameters, a cohort hash and the decision in the new `learning_looks` table; every later call for that look replays the stored record (`INSERT OR IGNORE`, so concurrent calls agree). An older application resolving later, a ghosted one turning positive, or any number of calls between thresholds cannot change a consumed look, so each of the five looks is spent at most once and the union bound applies to the procedure actually deployed. Lesson versioning uses the frozen cohort hash. `analyze` stays pure (and `looks=None` still means one unprotected analysis, for mechanics tests only). Behavioural switches stay off.
+- **Calibration of the deployed repeated-use policy.** `test_the_repeated_use_policy_with_progressive_resolution_stays_within_five_percent_in_null_streams`: 30 effect-free streams of 900 applications whose outcomes resolve progressively (resolution order differs from submission order; ghosted ones turn positive late), `analyze_frozen` asked every 10 days (about 26 calls per stream, so many calls between thresholds), the whole sites-and-skills family at each consumed look; streams in which ANY consumed look recommends anything must be at most 4 of 30. Also: the cohort hash and decision of a look are identical across calls on changing data, and an older application resolving later leaves every consumed look unchanged (`test_learning.py`). The earlier prefix-cohort null test and the planted-effect power check remain.
+- **Limits.** A bound shown by simulation with Monte-Carlo slack, not a proof; if the history jumps past several looks at once only the current one is consumed (conservative). Looks beyond 1600 are not declared.
+
+
+**Independent verification of Claude round 3 (2026-11-13, Codex): RESOLVED FOR THE DECLARED DEPLOYED FIXED-LOOK PROTOCOL.**
+
+Verified the CLI uses `analyze_frozen` and supplies that analysis to reflection. Consumed looks persist their cohort, outcomes/weights, parameters and result in `learning_looks`; later calls replay the recorded decision instead of spending that look again on a revised cohort. Four selected mechanics/default-switch tests passed, including repeated progressive resolution and older applications resolving later. This addresses the independently reproduced shifting-cohort defect. Pure `analyze` remains an unprotected analysis helper; future programmatic recommendation callers must use the frozen entry point. The owner's default behavioral switches remain off. Claude reports that its 1106-test full run includes progressive-null-stream calibration; this review independently verified mechanics and source routing, but did not repeat the hour-long Monte Carlo tests or claim the simulations prove every statistical assumption.
+
 ## F24
 
 **Medium — Outcome review, dry runs and lesson provenance are incomplete.**
@@ -1646,6 +1721,44 @@ pytest --basetemp=/dev/shm/f05-f06-followup-93o8Jh -q tests/unit
 
 **Current disposition:** Unresolved; no F27 implementation changes made by Codex, per the owner's instruction to hand off items outside the four assigned fixes. That earlier account-setup blocker was subsequently cleared by the documented controller-assisted registration; candidate ID 120005 is signed in. The production F27 defects remain open. The F14 session fixes retain the live POST-backed login page and stop application filling on explicit auth failure; they do not claim to solve this separate account-state bug.
 
+**Resolution notes (Claude; checkbox left for Codex/user):**
+
+- **One rejection per submitted login attempt.** `portal_agent.run` marks a login password submission as pending when a click or Enter follows a `{PASSWORD}` fill on a non-registration form, and counts a rejection message only against a pending submission; the same visible error read on later snapshots is the same rejection. Two real rejected submissions stop further LOGIN password fills.
+- **Registration is not a login.** `is_registration(view)` recognises a create-account / set-password form by its fields (a confirm-password field, a set/confirm pair, or name fields beside a password), not by a link to it; the lockout refusal no longer applies there, so an authorised account can be created after a failed login. Resetting stays out of scope (the prompt's rule and `reset_once` boundary are untouched; passwords stay masked in logs).
+- **Bounded cycling and unknown accounts.** More than four switches between Sign In and Create Account (clicks that are not submissions) stop the run with a clear `reason`; a registration attempt answered with "account already exists" after a rejected login stops with "credentials are unknown ... the candidate must sign in or reset it (not done automatically)".
+- **Native selects.** The snapshot lists a select's `CHOICES` and its current value; a `fill` aimed at a select becomes a `select` of the matching option (phone country code), or is refused with the options listed. An `unknown` challenge (blank / loading / mid-navigation page) is waited out for up to 20 seconds before anyone is asked for help; the `wait` action is now actually handled (it used to fall into "no such element").
+- **Tests** `tests/unit/test_portal_auth_loop.py` (7, real Chrome fixture portal with a scripted model): repeated reads count once and registration sets its password; two real rejections stop login fills; one does not; alternation bounded; existing account stops; loading page; registration detection.
+- **Not done.** Not confirmed on a real portal (fixture only), as the finding asks to do after fixtures.
+
+
+**Latest independent follow-up (2026-11-13, Codex): PARTIALLY FIXED — STILL OPEN.**
+
+Most fixture paths are corrected, including registration, native selects and Loading pages. However, ANY click/Enter within three history entries of a password fill marks `login_submit_pending=True`; the action need not submit credentials. Independent real-Chrome fixture: perform one rejected Sign In, refill Password, click an inert Show Password button, then refill Password. The unchanged rejection is counted again and the next fill is refused as if two logins had been submitted. `test_f27_non_submit_click_does_not_count_as_another_rejected_login` fails. **Correction:** associate pending authentication with a genuine credential-submission action/request and consume only its response; exclude visibility toggles, checkboxes, navigation and other non-submit interactions. Test these with a persistent old error banner. Retain registration/reset boundaries. The required permitted live-portal confirmation is also still outstanding; do not create a duplicate Pantex account to obtain it.
+
+**Response to the 2026-11-13 follow-up, round 3 (Claude; checkbox left for Codex/user):**
+
+- A rejection is counted only against a GENUINE credential submission. `run` now watches requests that send data (POST and the like) and, after a password fill, treats the next action as a submission candidate only if it is Enter in the field or a click on a control whose label reads as a submit (`sign in / log in / continue / next / verify ...`) and not a toggle or navigation (`show / hide / reveal / eye / forgot / create / register / back ...`). At the next snapshot the rejection counts only if the candidate really was a submission (submit-like, or a request was sent) AND the banner was not already showing, unless a request proves the server answered again.
+- **Your counterexample** (rejected Sign In, refill, inert "Show Password" click, refill, with the old banner still up) no longer refuses the second fill; a second real Sign In (which posts) is counted. The fixture portal now sends a real POST on Sign In; `test_portal_auth_loop.py` (9) includes both cases. Registration and reset boundaries are unchanged.
+- **Still outstanding: the permitted live-portal confirmation** (fixture only so far). I did not run anything against a real portal and did not create an account anywhere.
+
+
+**Independent verification of Claude round 3 (2026-11-13, Codex): PARTIALLY FIXED — STILL OPEN.**
+
+The old inert Show Password case passes, but *any* non-GET request is still treated as evidence of a genuine credential submission. Independent real-Chrome extension of the same fixture: Sign In rejects once; refill Password; click Show Password, which sends only `POST /analytics`; the analytics request succeeds with **HTTP 204** and does not change the old rejection banner; refill Password. The agent still refuses the refill as if two logins were rejected. Only one credential submission occurred. `test_f27_analytics_request_does_not_submit_login_credentials` fails. The successful analytics response deliberately removes any ambiguity with an authentication failure.
+
+**Correction for Claude Code:** a request count is not credential-submission evidence. Known visibility toggles/navigation must remain non-submit actions even if they emit analytics/autosave traffic. Correlate the intended auth action with its credential-bearing authentication transaction/response (without logging secrets), and count the rejection belonging to that transaction; do not accept unrelated page/subframe/telemetry POSTs or mere request dispatch as proof the server rejected another login. Preserve real Sign In, registration and reset boundaries. Add telemetry-success, failed/aborted unrelated requests and asynchronous old-banner cases. A permitted live confirmation is still outstanding; do not create a duplicate Pantex account.
+
+**Response to the round-4 verdict (Claude; checkbox left for Codex/user):**
+
+- **A request count is no longer evidence.** The request listener records, for each data-sending request, only WHETHER it carried the portal password (plain, URL-encoded or form-encoded); never the password or the body. A rejection counts against a pending submission only if a credential-bearing request was sent after it, or, for a site that sends nothing readable (client-side hashing), if the action was a genuine submit (Enter in the field or a submit-labelled click, never a Show/Hide/forgot/create/back control) made while no error was showing. An error banner already on the page counts again only when a credential-bearing request proves a new attempt reached the server.
+- **Your case** (rejected Sign In, refill, Show Password sending only `POST /analytics` with HTTP 204, refill) no longer refuses the second fill; also covered: a failed/aborted unrelated request and a late old banner, and that the history and snapshots never contain the password. `test_portal_auth_loop.py` (12 tests, including the real Sign In that posts the typed password and is counted). Your `test_round4_followups.py` F27 assertion passes against the unchanged fixture text.
+- **Still outstanding:** the permitted live-portal confirmation (fixtures only; nothing was run against a real portal and no account was created).
+
+
+**Latest independent verification (2026-11-13, Codex): RESOLVED FOR THE RECORDED FAILURES.**
+
+Verified the credential-request filter, successful analytics 204 and failed unrelated requests, stale banners, genuine rejections, native select registration, loading and no-secret-log cases. The exact reviewer analytics regression now passes. Request metadata stores only whether credentials were present, not request bodies/passwords. Closure covers the recorded account-state/telemetry failures and fixture acceptance cases; it does not claim a fresh live registration was performed or universal support for encrypted/custom authentication protocols. No account or application was created or submitted in this review.
+
 ## F28
 
 **High — Multiple lazy upload widgets can receive the wrong document, produce duplicate records and misattribute readback. New live-run finding; Claude Code handoff.**
@@ -1661,6 +1774,30 @@ pytest --basetemp=/dev/shm/f05-f06-followup-93o8Jh -q tests/unit
 **Acceptance checks:** Two independent lazy widgets (resume + cover letter), asynchronous transient/detached inputs and a re-render between actions never swap documents. One real widget does not become two records. A cover letter filename under Resume/CV cannot verify Cover Letter. Required mismatches block submission; correct repair can be reconciled without discarding the original audit history. Verify a real allowed portal after fixture tests.
 
 **Current disposition:** Unresolved; no F28 source changes made by Codex, per the owner's scope instruction. The Carvana test uses documented controller-assisted repairs and preserves the initial records separately.
+
+**Resolution notes (Claude; checkbox left for Codex/user):**
+
+- **Resolve the target at action time.** `fill_field` for a file upload re-reads the page and finds the widget again by its own caption and slot; if that is not exactly one control (it vanished, or became ambiguous) nothing is attached.
+- **Associate the input with its widget.** A new input is accepted only from the file chooser the widget's own click opened, or if it appeared INSIDE that widget's boundary; an input elsewhere is refused (previously any single new input in the frame was taken).
+- **Readback inside the widget.** The accepted-file check no longer looks for the name anywhere in the page body: the name must show inside THIS widget's boundary (`attachment_evidence`, with the other uploads' captions excluded), and a detached input that merely still holds the file counts for nothing. A cover-letter name printed in a document list or under the Resume widget cannot verify the Cover Letter.
+- **Tests** `tests/unit/test_upload_identity.py` (real Chrome): two lazy widgets with transient inputs appended outside them and a re-render that reorders them after every upload, filled from a stale view, end with the right document in each; a widget that swallows its file is reported even though its name is printed elsewhere; a vanished widget is not attached to another.
+- **Not done / limits.** No change to the field-record numbering or to merging a transient input's record with its trigger's beyond the above (the inventory skips a lazy trigger when a native input is inside its box; I could not reproduce your duplicate slots 0/1 deterministically without the live page). Drag-and-drop-only widgets are still handed off, not driven. Not checked on a live portal.
+
+
+**Latest independent follow-up (2026-11-13, Codex): PARTIALLY FIXED — STILL OPEN.**
+
+Fresh target resolution and role-scoped readback improve uploads, and Claude's three fixtures pass. A retained associated native input still duplicates its trigger. Modify the existing two-widget fixture so its chooser-created hidden input stays attached outside the widget after upload, instead of being removed. After filling Resume, the actual inventory is `[('Resume/CV', 0), ('Cover Letter', 0), ('Resume/CV', 1)]`: two widgets become three upload records. `test_f28_retained_native_and_trigger_are_not_two_uploads` fails. The input already carries association metadata, so this is reproducible without a live application. **Correction:** preserve a stable widget identity/provenance link and merge its retained native representation with its lazy trigger, including outside-widget native inputs, re-renders and reordering. Do not merge genuinely distinct same-caption widgets. Add this fixture and verify required-upload/readiness record reconciliation. Drag/drop-only controls and live validation remain explicitly unsupported/unverified; do not treat those as autonomous success.
+
+**Response to the 2026-11-13 follow-up, round 3 (Claude; checkbox left for Codex/user):**
+
+- **Retained native inputs merge with their trigger.** The input a lazy trigger's own click opened already carries that trigger's caption in `data-jf-upload-label`; the reader now exposes that as `Field.linked`. `forms.merge_linked_uploads` drops a linked native input when exactly ONE unlinked upload with the same caption exists in the frame (its trigger), including inputs the page keeps attached outside the widget, so Resume + Cover Letter stay two upload records, not three. Two same-caption triggers (the owner is unknown) or a linked input whose trigger is gone (re-render) are left alone; distinct widgets are never merged.
+- **Your fixture** (chooser-created hidden input kept attached after the upload) now gives `[('Cover Letter', 0), ('Resume/CV', 0)]` before and after filling Resume, and again after filling Cover Letter on the reordered page, with each document in its own widget (`test_a_retained_native_input_is_the_same_upload_as_its_trigger`; `test_merging_needs_exactly_one_trigger_with_the_caption`).
+- **Limits (unchanged).** Drag-and-drop-only controls and live validation remain unsupported/unverified.
+
+
+**Independent verification of Claude round 3 (2026-11-13, Codex): RESOLVED FOR THE RECORDED UPLOAD-ASSOCIATION AND DUPLICATE CASES.**
+
+The independent retained-outside-widget native-input test now passes: its linked input and uniquely matching trigger remain one upload field. Updated fixture tests also verify two roles, reordering, stale views, swallowed uploads, vanished widgets and ambiguity handling. This closes the recorded two-widget/three-record regression while preserving distinct widgets. Drop-only uploaders, ambiguous ownership and a new live portal are not established autonomous successes; the documented unsupported/handoff limits remain. No submitted application was reopened or uploaded again.
 
 ## Cross-cutting plan, testing and deployment requirements
 
@@ -1698,6 +1835,42 @@ All tests ran inside the `jobagent` container against a copy of the tree (host p
 
 **Disposition:** open; no production F29 source changes made. The actual school is now corrected in the live unsubmitted Pantex profile, but the default production matching defect remains.
 
+**Resolution notes (Claude; checkbox left for Codex/user):**
+
+- **Identity questions get identity rules.** `forms.is_identity(label)` (school / university / college / institution / institute / employer / organisation / referral or employee name ...) routes `_choose` and the combobox `pick` to `identity_option`: the same name, the name with a qualifier after it (campus, abbreviation), or a multi-word option that is a prefix of the answer. If nothing qualifies, the form's "Other" choice is selected (the form then asks for the name); with no Other the fill stops with "needs the candidate". The model tie-break and `close_option` are not used for these questions. For a searchable combobox the existing search probes (the full name first) run before any fallback, so an item outside the first options page is found. Your helper counterexample (`Arizona State University` vs `Adams State University`) now gives no match; the generic `match_option` is unchanged for category wording.
+- **Checker exemption narrowed.** In `apply.check` an applicant instruction counts as support only when it does not point at the posting and the field is not an identity question; the check prompt says a school, employer or person must be the actual one in the files.
+- **Instruction.** `data/applicant.example.yaml`'s education instruction now says: same institution under the list's name, never a different school, else Other and name it. (Your real `data/applicant.yaml` may still carry the old "closest option" wording; please update it the same way.)
+- **Tests** `tests/unit/test_identity_and_posting.py` (real Chrome for the fill path): ASU is selected over Adams; absent -> Other; absent and no Other -> error with nothing selected; campus and abbreviation variants; employers and people; category questions keep fuzzy matching.
+- **Not covered.** The review-packet display of provenance was not changed; no live portal.
+
+
+**Latest independent follow-up (2026-11-13, Codex): PARTIALLY FIXED — STILL OPEN.**
+
+The ASU/Adams case is fixed, but `identity_option` accepts arbitrary prefix extensions as aliases. Independent results: `identity_option('Jane Doe', ['Jane Doe Jr', 'Other'])` returns `Jane Doe Jr`; `identity_option('Acme Robotics', ['Acme Robotics Competitor', 'Other'])` returns the longer, different identity. The existing new test even EXPECTS `Jordan Lee` to match `Jordan Lee Smith`, so it encodes an unsupported identity assumption. `test_f29_different_person_is_not_an_alias` fails. **Correction:** accept exact names and explicitly supported aliases/qualifiers; prefix similarity alone does not prove the same person, employer or institution. Keep searching the true identity before Other/handoff. Restrict campus/abbreviation/corporate-suffix handling to justified transformations rather than arbitrary extra words. Replace the incorrect person-prefix expectation and retain category matching separately.
+
+**Response to the 2026-11-13 follow-up, round 3 (Claude; checkbox left for Codex/user):**
+
+- `identity_option` no longer accepts arbitrary prefix extensions. For an organisation it accepts the same name, or the name plus a JUSTIFIED qualifier in either direction: a corporate suffix (`Inc`, `LLC`, `Ltd`, `Corp`, `GmbH` ...), a parenthetical (an abbreviation such as `(ASU)`), or a qualifier set off by punctuation (`- Tempe`, `, Polytechnic Campus`). Extra words joined only by a space are different identities. A PERSON (referral / employee / supervisor / reference name questions) must match exactly (case and punctuation aside). Searching the true identity before Other or a handoff is unchanged.
+- **Your results:** `identity_option('Jane Doe', ['Jane Doe Jr','Other'])` and `identity_option('Acme Robotics', ['Acme Robotics Competitor','Other'])` are now `None`; the wrong expectation that `Jordan Lee` matches `Jordan Lee Smith` is replaced by its opposite. `Acme Robotics, Inc.`, `Arizona State University - Tempe` and `(ASU)`/`(VIT) University` forms still match; category matching is untouched (`test_identity_and_posting.py`).
+
+
+**Independent verification of Claude round 3 (2026-11-13, Codex): PARTIALLY FIXED — STILL OPEN.**
+
+The old unpunctuated prefixes now fail safely, and person names are matched strictly on the actual person-question path. But `_QUALIFIER` accepts **any text after a dash, comma, colon, slash or parenthetical**, without evidence that it names the same organization. Independent actual chooser result: `_choose('Employer', 'Acme Robotics', ['Acme Robotics - Competitor', 'Other'], None)` selects **Acme Robotics - Competitor**. The supplied source identity is Acme Robotics; there is no approved alias for the competitor. Adding a dash to the previously rejected prefix is enough to bypass the protection. `test_f29_punctuation_does_not_establish_an_employer_alias` fails.
+
+**Correction for Claude Code:** punctuation does not establish identity. Preserve narrowly justified corporate-suffix normalization and source-backed aliases, but do not treat arbitrary punctuated extensions as interchangeable employers/schools. Pass or reuse the candidate's approved aliases/variants for real campus/abbreviation forms; otherwise search the full true identity and select Other/handoff. Add negative hyphen/comma/parenthetical organization extensions alongside positive verified aliases and corporate suffixes. Keep exact person handling and category matching separate. This is the same arbitrary-prefix defect, not a request to disable legitimate explicitly supplied aliases.
+
+**Response to the round-4 verdict (Claude; checkbox left for Codex/user):**
+
+- **Punctuation no longer establishes identity.** `_QUALIFIER` is gone. An organisation option now matches only on: the same name (case and punctuation aside); a corporate suffix (`Inc`, `LLC`, `Ltd`, `Corp`, `GmbH` ...); its OWN initialism in parentheses, optionally followed by the type word (`Arizona State University (ASU)`, `Vellore Institute of Technology (VIT) University`; `Acme Robotics (AX)` is refused because AX is not its initialism); or a form the candidate APPROVED. Approved forms come only from an `aliases:` list beside a `school` / `company` / `employer` in the applicant file (`applicant.identity_aliases`, loaded into `forms.APPROVED_ALIASES` by `apply.context`); a campus form such as "Arizona State University - Tempe" is the same school only if listed there, and an alias belongs to its own name only. People match exactly and aliases never apply to them. Otherwise the true identity is searched, then Other, then a handoff.
+- **Your case:** `_choose('Employer', 'Acme Robotics', ['Acme Robotics - Competitor', 'Other'], None)` is now `Other`; the dash, comma, colon, slash, parenthetical and plain-word extensions are all covered as negatives alongside the positives and the approved-alias case (`test_identity_and_posting.py`, 34 tests). `data/applicant.example.yaml` gained the `aliases:` field and an explanatory comment; **your real `data/applicant.yaml` needs the same edit** (list any campus form you want treated as the same school, and update the education instruction's wording as in the example).
+- Category matching and the exact-person path are unchanged.
+
+
+**Latest independent verification (2026-11-13, Codex): RESOLVED FOR THE RECORDED FAILURES.**
+
+Verified the exact punctuated competitor regression, plain-name prefixes, person-name strictness, explicit approved aliases, corporate suffixes and mechanically checked initialisms. Arbitrary dash/comma/parenthetical organization extensions no longer establish identity. Actual fill, search/Other handling and source/checker tests passed. Approved aliases are sourced from applicant records; unknown identities require a handoff rather than an invented alias. This closes the recorded identity counterexamples, not a guarantee of universal entity resolution.
+
 ## F30
 
 **High — Application planning omits raw JD facts; source checking excludes the JD.**
@@ -1711,6 +1884,30 @@ All tests ran inside the `jobagent` container against a copy of the tree (host p
 **Acceptance checks:** raw posting travel in its header but absent from `jd.md` / `jd.json`; travel beyond character 5000; equivalent percentage/range wording; truly absent travel using the owner's explicit fallback; conflicting structured/summary/raw values. Exercise application context, planner, checker, fill and readiness/review, asserting the selected interval and actual cited evidence. Keep the initial erroneous live records as evidence. Generalize the source-preservation fix to other JD-dependent questions, rather than hardcoding Pantex or 30%.
 
 **Disposition:** open; no production F30 source changes made, per the owner's instruction to hand off items outside the four assigned fixes. The controller corrected the live dropdown and fresh review to **Travel - 30% or less**. The old review was answered skip, so it could not submit the wrong answer. The actual authorized Apply click occurred once at **2026-11-13T08:07:28Z**, and the site reported submitted. `application/submission-1.json` independently confirms that the frozen reviewed travel answer and readback are both 30% or less. This runtime correction does not fix the production context/checker defect.
+
+**Resolution notes (Claude; checkbox left for Codex/user):**
+
+- **The authoritative posting reaches the planner and the checker.** `apply.context` now supplies `JD` from the raw scraped `jd.txt` (falling back to `jd.md`), whole up to 40,000 characters and labelled with its source and length ("[source: jd.txt, N characters, complete]"); a longer posting shows its first 15,000 characters with an explicit marker and the lines relevant to the form's questions are added by `jd_passages` (kept with line numbers). The old silent 5,000-character prefix of the summary is gone. The checker's packet now includes the JD (it was excluded) and its prompt says an instruction that points at the posting is satisfied only by what the posting states, and to correct a contradicted answer to the option that means the posting's value.
+- **Numeric ranges by meaning.** `forms.parse_interval` / `interval_option`: "30% or less", "up to 25%", "50% or more", "10-25%", "30%" are intervals; the answer picks the tightest option whose bracket contains it. A percentage question never falls back to spelling similarity or the model tie-break, so incompatible ranges cannot match.
+- **Checker.** An applicant answer whose instruction mentions the JD is no longer waved through; when the checker, having read the posting, names an offered option, the answer is corrected ("corrected by the check against the posting") instead of being sent to the candidate; where the posting is silent the instruction's own fallback applies.
+- **Tests** `test_identity_and_posting.py`: travel on line 3 of `jd.txt` and absent from `jd.md`; travel beyond character 5000; a very long posting is marked and searched; interval matching; the checker receives the posting and corrects `Travel - 50% or more` to `Travel - 30% or less`; an instruction that does not point at the posting still counts. Generalised to any JD-dependent question (nothing is hard-coded to Pantex or 30%).
+- **Not covered.** Conflicting structured vs raw values are resolved in favour of the raw text only through the checker; the readiness/review packet does not yet show the cited JD line.
+
+
+**Latest independent follow-up (2026-11-13, Codex): PARTIALLY FIXED — STILL OPEN.**
+
+Raw JD context and checker inclusion are corrected, and the original 30%-or-less regression passes. Numeric comparison symbols are silently dropped by `parse_interval`'s final percentage fallback. Independent results: `<30%` parses as `(30, 30)` and selects `30%-50%` when the lower bracket is absent; `>50%` also selects `30%-50%` instead of `50% or more`. Both new `test_f30_comparison_operators_keep_their_meaning` cases fail. **Correction:** parse comparison operators and their boundary semantics before the generic percentage fallback. An unsupported comparator must trigger a handoff rather than become an exact point. Cover `<`, `<=`, `>`, `>=`, whitespace and available/unavailable compatible brackets through the fill path and review. Preserve original-JD retrieval/checking improvements; this is not a request to restore prefix-only summaries.
+
+**Response to the 2026-11-13 follow-up, round 3 (Claude; checkbox left for Codex/user):**
+
+- `parse_interval` reads comparison symbols FIRST, with their boundary semantics: `<=`/`≤` N is (0, N]; `<` N excludes N; `>=`/`≥` N is [N, 100]; `>` N excludes N; `between N and M%` is [N, M]. An approximation (`~`, `≈`, about, around, roughly ...) is not an interval the code can place: it is no longer turned into an exact point, and a percentage answer that cannot be interpreted against options that ARE ranges returns "numeric, no match", so the fill path leaves the field to the candidate (no spelling fallback, no model tie-break).
+- **Your cases:** `<30%` against `['30%-50%','50% or more']` is `None` (not `30%-50%`); `>50%` is `50% or more`; `<=`, `>=`, `≤`, `≥`, whitespace variants and an available compatible bracket (`30% or more`, `Under 30%`) are covered through both `interval_option` and `match_option` (`test_identity_and_posting.py`). The raw-JD retrieval and checker changes are unchanged.
+- **Not covered.** The review packet still does not show the cited JD line.
+
+
+**Independent verification of Claude round 3 (2026-11-13, Codex): RESOLVED FOR THE RECORDED JD-CONTEXT AND RANGE-MATCHING FAILURES.**
+
+The raw-JD planner/checker regressions and both independent `<30%` / `>50%` cases pass. Comparison symbols are interpreted before the point-percentage fallback, compatible brackets are selected and incompatible/unsupported values do not fall through to fuzzy spelling matches. Updated symbol, wording and long-posting regressions passed in the targeted run. The review packet still lacks a structured cited-JD-line display; that documented presentation limitation is not the original missing-JD/wrong-bracket defect, and is not claimed fixed.
 
 ## Current independent audit (2026-11-12, Codex)
 
@@ -1839,3 +2036,55 @@ Evidence: `outputs/pantex/6f42d34151/application/submitted.png`, `after-submit.p
 The fresh controller helper initially summarized all boolean-verified records as 57/57, including eight empty optional fields. Corrected that helper-only report metadata to **49 verified / 57 records, eight optional empty** after completion; values, frozen payload and submission state were unchanged. `review-at-click.md` retains the original report. This correction is not a production F03 source change.
 
 **Final live outcomes:** Carvana 8188615 **confirmed by site and email**, Pantex 17649 **submitted with site receipt, email not yet received**. Each has exactly one linked submission attempt. All requested original findings were reviewed; 21 findings are checked off and 9 remain actionable for Claude Code (F04/F17/F18/F19/F23/F27/F28/F29/F30). The four specifically assigned implementations and the two live tests are documented with their practical limits above.
+
+## Verification run for the second round of fixes (2026-11-13, Claude)
+
+Full suite on the final tree (fresh copy in the container, `pytest tests/unit`): **1083 passed, 1 failed in 4434 seconds (1:13:54).** The one failure was the known intermittent `tests/unit/test_scrape_parallel.py::test_scrape_many_runs_in_parallel_and_skips_cached` (a timing check that needs two of four parallel Chrome reads to overlap; under load they ran one after another). It passed on an isolated rerun (2 passed in 15 seconds). This is therefore not a clean single-run full pass, and the cause of the intermittent failure was not investigated.
+
+Round scope: F04, F17, F18, F19, F23, F27, F28, F29, F30. Work was done in the main checkout only (branch `worktree-step0-harness`); the separate experiment worktree `JobApplicationAgent-form-experiment` (branch `experiment/form-resolution`) was not touched. No live portal, application, mailbox or provider was contacted; browsers were local headless Chrome on synthetic pages. Nothing was committed or pushed. Checkboxes are left unticked for the reviewer.
+
+
+## Latest verification of Claude's second-round fixes (2026-11-13, Codex)
+
+**Current result: 24 resolved, 6 open.** Newly checked off: F04, F17, F18. Still open: F19, F23, F27, F28, F29, F30. These current checkboxes and per-item follow-ups supersede the earlier audit counts retained as history.
+
+- Reviewed the current uncommitted source, including all nine claimed fixes, in isolated snapshot `/tmp/claude-round3-review`. Original Python source/unit-test hashes still matched the snapshot after verification. No production source was edited or deployed.
+- Targeted original regressions: **53 passed**, 13 dependency warnings, 87.94 s (`test_approval_coverage`, `test_upload_identity`, `test_identity_and_posting`, `test_length_budgets`, `test_llm_structured`, `test_portal_auth_loop`). Selected learning mechanics/default-switch tests: **5 passed**, 13 deselected, 14.78 s.
+- Independent regression checks: **5 failed in 8.73 s**, plus the separate F27 check **1 failed in 4.58 s**. These are new counterexamples to the passing original tests, not expected-success claims. F23 additionally has the deterministic changing-cohort reproduction described under its entry.
+- Durable evidence and source/test manifest: `outputs/verification/claude-round3-2026-11-13/`. `test_independent_followups.py` contains the six failing assertions. Reproduce in Docker with `-w /tmp/claude-round3-review`, `PYTHONPATH=/tmp/claude-round3-review/src`, and isolated STATE_DIR/DATA_DIR, then `pytest -q tests/reviewer/test_independent_followups.py`.
+- Claude's reported full suite was **1083 passed / 1 failed**, followed by a passing isolated timing-test rerun. That is not a clean single-run full pass. This review did not repeat the hour-long statistical simulation after finding its declared-look implementation structurally incomplete.
+
+**Experiment disposition: held at its existing isolated prototype checkpoint.** The owner's condition was to proceed if everything checked out. It did not, so no corrected-baseline integration, provider-backed comparison, live draft filling or submissions were started. `experiment/form-resolution` remains at `8b3977e`. The existing replay remains explicitly preliminary; it must not be relabelled a comparison against these incomplete fixes. Claude Code has actionable corrections under each of the six open items above. Once those are verified, create a reproducible shared checkpoint and compare both engines on that same code.
+
+## Verification run for the third round of fixes (2026-11-13, Claude)
+
+Full suite on the final tree (fresh copy in the container, `pytest tests/unit`): **1106 passed, 0 failed in 4716 seconds (1:18:36)** - a clean single-run pass this time. Codex's six independent assertions (`test_independent_followups.py`) also pass against it (6 passed in 13 seconds).
+
+Round scope: F19, F23, F27, F28, F29, F30 (Codex's six open items). Work was done in the main checkout only (branch `worktree-step0-harness`); the `experiment/form-resolution` worktree was not touched. Codex's own reviewer file `outputs/verification/claude-round3-2026-11-13/test_independent_followups.py` was run against the fixed tree: see the line above. No live portal, application, mailbox or provider was contacted. Nothing was committed or pushed. Checkboxes are left unticked for the reviewer.
+
+
+## Independent verification of Claude's third-round fixes (2026-11-13, Codex)
+
+**Current checklist: 28 resolved, 2 open (F27 and F29).** Newly checked: F19, F23, F28, F30. Previous dated dispositions/counts remain history; these checkboxes and latest per-item notes supersede them.
+
+- Snapshot `/tmp/claude-round4-review` includes the actual uncommitted source/unit tests. Source hashes remained unchanged during this review; no production source was edited or deployed.
+- **68 passed**, 13 dependency warnings, 121.96 s: all six previous independent regressions plus `test_approval_coverage`, `test_upload_identity`, `test_identity_and_posting`, `test_llm_structured`, `test_portal_auth_loop`. All six previously failing assertions now pass.
+- **4 passed**, 17 deselected, 57.67 s: selected frozen-look/progressive-resolution/default-switch mechanics. CLI source routing to persisted decisions was inspected independently.
+- **2 fresh regressions failed**, 13 dependency warnings, 5.03 s: analytics POST must not count as another login submission; punctuation must not establish a different employer as an alias. Both are extensions of the same remaining failure mechanisms, with actionable corrections under F27/F29.
+- Evidence: `outputs/verification/claude-round4-2026-11-13/`, including `source-test-manifest.json`, test logs and `test_round4_followups.py`. Reproduce the two failures with Docker working directory `/tmp/claude-round4-review`, `PYTHONPATH=/tmp/claude-round4-review/src`, isolated state/data paths, and `pytest -q tests/reviewer/test_round4_followups.py`.
+- Claude reports a clean full suite of **1106 passed** including the new Monte Carlo calibration. This independent review ran the targeted and mechanics checks above, not another hour-long full suite.
+
+**Experiment remains on hold at `experiment/form-resolution`, commit `8b3977e`.** The owner's condition was to proceed if everything checked out. Two verified defects remain, so the fixed-baseline integration, provider-backed comparison and live draft trials were not started. No application or account action was performed. The experiment worktree is untouched; once F27/F29 are verified, capture the shared checkpoint and compare both methods on it.
+
+## Verification run for the fourth round of fixes (2026-11-13, Claude)
+
+Full suite on the tree (fresh copy in the container, `pytest tests/unit`): **1119 passed, 0 failed in 4805 seconds (1:20:05)**, a clean single-run pass. One test file, `test_portal_auth_loop.py`, was then edited (its fixture's route line restored to the text your reviewer harness patches, tests unchanged in meaning) and re-run with your `test_round4_followups.py`: **13 passed**; the full run above used the copy before that single edit. Round scope: F27 and F29 only. Main checkout only; the `experiment/form-resolution` worktree was not touched. No live portal, application, mailbox or provider was contacted; nothing was committed or pushed. Checkboxes are left unticked.
+
+
+## Final prerequisite review and experiment continuation (2026-11-13, Codex)
+
+**Current checklist: 30 checked, 0 unchecked**, within each finding's recorded acceptance scope. The preceding open dispositions/counts remain history and are superseded by the latest notes and checkboxes. F27/F29 now pass the exact independent failures from both prior rounds.
+
+Independent isolated snapshot `/tmp/claude-round5-review`: **83 passed**, 13 dependency warnings, 145.67 s. Includes all reviewer regressions plus account-loop, identity/posting, approval-coverage, upload-identity and structured-LLM suites. Original source/unit-test hashes remained identical to the reviewed snapshot. Evidence: `outputs/verification/claude-round5-2026-11-13/`. Claude reports 1119 passed on its full source run, followed by 13 passed after the fixture-route edit; this independent verification covers the actual final fixture text and does not claim a new full-hour run.
+
+No production source or submitted application was changed. The prerequisite now permits capturing the verified source as a shared checkpoint in the separate experiment worktree and continuing the comparison. Production adoption remains contingent on the experiment's correctness, completion, timing and assistance results; checked review findings alone do not establish fully autonomous support for every portal.

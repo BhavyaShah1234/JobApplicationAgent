@@ -99,3 +99,34 @@ def test_fill_checks_only_expects_what_the_page_can_hold():
                                               for i in range(8)]})()]
     assert T.fill_checks(R(), jd, f)[0] == list(range(24, 30))
     assert T.fill_checks(R(), jd, f, 8)[0] == []
+
+
+# --- F18 follow-up: an `original` index does not exempt new text ---------------------------------------------------------
+
+class TemplateResume:
+    def __init__(self):
+        self.roles = [type("Role", (), {"bullets": ["Built the original data pipeline for the team."]})()]
+        self.skills = []
+
+
+def test_new_text_that_claims_an_original_index_is_still_held_to_the_budget(monkeypatch):
+    r = TemplateResume()
+    long_new = "New and changed text " + "x" * 160
+    b = bullet(long_new, original=0)
+    assert len(b.text) == 181 and b.original == 0                               # the schema alone accepts it (ceiling 300)
+    assert not T.is_verbatim(r, 0, b)
+    f = type("F", (), {})()
+    f.summary, f.skills, f.roles = "", [], [T.FillRole(role=0, bullets=[b, T.FillBullet(text="Built the original data pipeline for the team.", duties=[0], original=0)])]
+    T.normalize_originals(r, f)
+    assert b.original is None and f.roles[0].bullets[1].original == 0           # the altered one lost the claim; the true copy keeps it
+    jd = JobDescription(company="Acme", title="Engineer")
+    issues = T.quality(r, jd, f)
+    assert any("181 characters" in i and f"at most {T.BULLET_MAX}" in i for i in issues)
+    assert not any("original data pipeline" in i and "characters;" in i for i in issues)
+
+
+def test_a_verbatim_template_bullet_longer_than_the_budget_is_still_exempt():
+    r = TemplateResume()
+    r.roles[0].bullets = ["z " * 90 + "end"]
+    b = T.FillBullet(text=T.to_plain(r.roles[0].bullets[0]), duties=[0], original=0)
+    assert len(b.text) > T.BULLET_MAX and T.is_verbatim(r, 0, b)

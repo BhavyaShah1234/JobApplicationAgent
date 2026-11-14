@@ -195,6 +195,42 @@ def _parse_json(text: str, schema: type[BaseModel]) -> BaseModel:
     return schema.model_validate_json(text[start:end + 1])
 
 
+_ABANDONED: list = []         # worker threads whose call outlasted its budget and is still running
+MAX_ABANDONED = 6             # beyond this many, no new call is started: a provider that hangs must not pile up threads
+
+
+def _bounded(fn, seconds: float):
+    """Run `fn()` and wait at most `seconds` for it (F19). A provider call cannot be cancelled from outside, so one that outlasts
+    the budget is ABANDONED in its worker and whatever it returns later is discarded - the caller gets a timeout now, not a late
+    answer. The worker is a DAEMON thread, so an abandoned call never delays the interpreter's exit (a non-daemon executor worker
+    is joined at shutdown, which made a failed CLI wait for the provider); the number of abandoned workers still running is
+    bounded (`MAX_ABANDONED`). The caller's context variables (the outer deadline) are carried into the thread."""
+    import contextvars
+    import threading
+
+    _ABANDONED[:] = [w for w in _ABANDONED if w.is_alive()]
+    if len(_ABANDONED) >= MAX_ABANDONED:
+        raise StructuredError(f"{len(_ABANDONED)} earlier calls are still running after their budgets ran out; not starting "
+                              "another until some finish", "budget")
+    ctx, box = contextvars.copy_context(), {}
+
+    def work():
+        try:
+            box["value"] = ctx.run(fn)
+        except BaseException as e:           # handed to the caller, which classifies it
+            box["error"] = e
+
+    worker = threading.Thread(target=work, name="llm-call", daemon=True)
+    worker.start()
+    worker.join(max(seconds, 0.0))
+    if worker.is_alive():
+        _ABANDONED.append(worker)
+        raise TimeoutError(f"the call outlasted the remaining {max(seconds, 0):.1f}s of its budget")
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
 # an outer deadline (monotonic seconds) set by a caller that makes several calls: they all stop at the same moment
 DEADLINE: ContextVar[float | None] = ContextVar("llm_deadline", default=None)
 
@@ -258,9 +294,10 @@ def structured_invoke(model: ChatOpenAI, schema: type[BaseModel], messages: list
                     # as a user turn: some servers reject a system message that isn't the first one
                     hint = HumanMessage("Answer with ONE JSON object only (no prose, no code fence) that matches "
                                         "this JSON schema:\n" + json.dumps(schema.model_json_schema()))
-                    out = _parse_json(model.invoke([*msgs, hint]).content, schema)
+                    out = _parse_json(_bounded(lambda: model.invoke([*msgs, hint]), stop_at - time.monotonic()).content, schema)
                 else:
-                    out = model.with_structured_output(schema, method=method).invoke(msgs)
+                    bound = model.with_structured_output(schema, method=method)
+                    out = _bounded(lambda: bound.invoke(msgs), stop_at - time.monotonic())
                 if out is not None:
                     info.update(method=method, ok=True, seconds=round(time.monotonic() - started, 1))
                     return out
@@ -268,6 +305,8 @@ def structured_invoke(model: ChatOpenAI, schema: type[BaseModel], messages: list
                 info["errors"].append("empty")
                 content_tries += 1
                 continue
+            except StructuredError:
+                raise                                          # already a final answer (e.g. too many abandoned calls)
             except Exception as e:
                 kind = classify(e)
                 info["errors"].append(kind)
@@ -285,6 +324,8 @@ def structured_invoke(model: ChatOpenAI, schema: type[BaseModel], messages: list
                     _sleep(wait)
                     info["waited_s"] += wait
                     continue                              # the SAME method again: the service was busy, the method is fine
+                if time.monotonic() >= stop_at:                # out of time: no more methods or waits, whatever the failure was
+                    raise fail("deadline", "the time budget for this call ran out during an attempt") from e
                 if kind == "timeout":
                     # A hang in one mode (e.g. a model looping in json_schema) gets one other method; two hangs = slow.
                     timeouts += 1

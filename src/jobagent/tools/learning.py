@@ -44,6 +44,13 @@ PERMS = 299                 # shuffles; the smallest possible adjusted p is 1 / 
 HOLDOUT_FRACTION = 0.3      # the latest applications are kept back to confirm what the earlier ones suggest
 MIN_HOLDOUT_ARM = 5         # in each outcome class (sites) or each skill group (skills) before the hold-out can confirm
 SEED = 7
+# FIXED-LOOK PROTOCOL (F23). Re-running a 5% test on the growing history every week would be repeated monitoring: the chance of
+# SOME false recommendation over many looks grows well past 5%. So recommendations are only made at these pre-declared numbers of
+# resolved applications; each look analyses exactly the first LOOKS[k] resolved applications (by submission date) and spends an
+# equal share FWER / len(LOOKS) of the error budget, so by the union bound the chance of a false recommendation at ANY look,
+# in a world with no effects, is at most FWER. Between looks the report is the last look's. `looks=None` in `analyze` turns the
+# protocol off (a single analysis at the full FWER), which is what the mechanics tests use.
+LOOKS = (100, 200, 400, 800, 1600)
 NO_KEYWORDS = frozenset({"mismatch", "unknown", "unverifiable"})   # snapshots whose skill list is not known to be the submitted one
 
 
@@ -257,11 +264,25 @@ def _direction(spec: tuple, later: list[Row], z: float) -> str:
     return "confirmed" if (d > 0) == (z > 0) else "contradicted"
 
 
+def looks_passed(n_resolved: int, looks: tuple | None = LOOKS) -> int:
+    """How many of the declared looks the history has reached."""
+    return sum(1 for x in (looks or ()) if n_resolved >= x)
+
+
 def analyze(apps: list[AppEvents], sts: dict[int, Status], min_arm: int = MIN_ARM, perms: int = PERMS,
-            seed: int = SEED, fwer: float = FWER) -> Analysis:
+            seed: int = SEED, fwer: float = FWER, looks: tuple | None = LOOKS) -> Analysis:
     """The whole recommendation procedure, once: eligible hypotheses are found on the earliest 70% of resolved applications,
     tested as one family by a max-statistic permutation test, and checked against the latest 30%."""
     rows = resolved_rows(apps, sts)
+    n_resolved, look = len(rows), looks_passed(len(rows), looks)
+    if looks:
+        if look == 0:       # before the first declared look nothing is analysed and nothing can be recommended
+            return Analysis([], [], {"min_arm": min_arm, "perms": perms, "seed": seed, "fwer": fwer, "look": 0, "looks": list(looks),
+                                     "next_look": looks[0], "resolved": n_resolved, "hypotheses": 0, "train": 0, "holdout": 0,
+                                     "holdout_fraction": HOLDOUT_FRACTION, "min_holdout_arm": MIN_HOLDOUT_ARM, "ghost_weight": []})
+        rows = sorted(rows, key=lambda r: (r.app.submitted_at, r.app.id))[:looks[look - 1]]      # exactly this look's cohort
+        fwer = fwer / len(looks)                                                                  # this look's share of the budget
+    perms = max(perms, math.ceil(2 / fwer))        # the smallest possible adjusted p is 1/(perms+1): it must be able to fall below alpha
     train, later = _split(rows)
     ok, thin = _specs(train, min_arm)
     observed = {s: _stat(s, train) for s in ok}
@@ -296,10 +317,41 @@ def analyze(apps: list[AppEvents], sts: dict[int, Status], min_arm: int = MIN_AR
         sites.append(SiteEffect(site, len(sc), sum(r.y for r in sc), None, None, None, "not enough data", "untested",
                                 [r.app.id for r in sc]))
     sites.sort(key=lambda e: e.site)
-    params = {"min_arm": min_arm, "perms": perms, "seed": seed, "fwer": fwer, "holdout_fraction": HOLDOUT_FRACTION,
+    params = {"min_arm": min_arm, "perms": perms, "seed": seed, "fwer": fwer, "look": look, "looks": list(looks or ()),
+              "next_look": next((x for x in (looks or ()) if x > n_resolved), None), "resolved": n_resolved,
+              "holdout_fraction": HOLDOUT_FRACTION,
               "min_holdout_arm": MIN_HOLDOUT_ARM, "hypotheses": len(ok), "train": len(train), "holdout": len(later),
               "ghost_weight": sorted({round(r.w, 3) for r in rows if r.w != 1.0})}
     return Analysis(sites, kws, params)
+
+
+def analyze_frozen(conn, apps: list[AppEvents], sts: dict[int, Status], **kw) -> Analysis:
+    """The deployed entry point of the fixed-look protocol (F23). A look is CONSUMED the first time it is reached: its cohort, the
+    outcomes of that cohort, the parameters and the decision are stored (`learning_looks`) and every later call for that look
+    replays the stored decision. Without this the analysis would be recomputed on whatever is resolved NOW, so one look could
+    be spent on several different cohorts (an older application resolving later, a ghosted one turning positive) and the
+    union bound over the declared looks would not hold. Before the first look nothing is consumed."""
+    import dataclasses
+
+    rows = resolved_rows(apps, sts)
+    look = looks_passed(len(rows), LOOKS)
+    if look == 0:
+        return analyze(apps, sts, **kw)
+    got = conn.execute("SELECT * FROM learning_looks WHERE look = ?", (look,)).fetchone()
+    if got is None:
+        an = analyze(apps, sts, **kw)
+        cohort = [[r.app.id, r.y, round(r.w, 3)] for r in sorted(rows, key=lambda r: (r.app.submitted_at, r.app.id))[:LOOKS[look - 1]]]
+        sha = hashlib.sha1(json.dumps([cohort, an.params], sort_keys=True, default=str).encode()).hexdigest()[:12]
+        an.params["cohort_sha"], an.params["frozen"] = sha, True
+        result = {"sites": [dataclasses.asdict(s) for s in an.sites], "keywords": [dataclasses.asdict(k) for k in an.keywords]}
+        with conn:
+            conn.execute("INSERT OR IGNORE INTO learning_looks (look, n, taken_at, cohort, params, result) VALUES (?,?,?,?,?,?)",
+                         (look, LOOKS[look - 1], datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), json.dumps(cohort),
+                          json.dumps(an.params, default=str), json.dumps(result, default=str)))
+        got = conn.execute("SELECT * FROM learning_looks WHERE look = ?", (look,)).fetchone()   # a concurrent call may have won
+    res, params = json.loads(got["result"]), json.loads(got["params"])
+    params["taken_at"], params["resolved_now"] = got["taken_at"], len(rows)
+    return Analysis([SiteEffect(**d) for d in res["sites"]], [KeywordEffect(**d) for d in res["keywords"]], params)
 
 
 def site_effects(apps: list[AppEvents], sts: dict[int, Status], min_arm: int = MIN_ARM, **kw) -> list[SiteEffect]:
@@ -366,7 +418,7 @@ def reflect(conn, apps: list[AppEvents], sts: dict[int, Status], as_of: datetime
     an = analysis or analyze(apps, sts)
     found = findings(apps, sts, an)
     storable = [f for f in found if f["actionable"] or f["text"].find("no clear relationship") >= 0]
-    snap = _snapshot(resolved_rows(apps, sts), an.params)
+    snap = an.params.get("cohort_sha") or _snapshot(resolved_rows(apps, sts), an.params)     # a frozen look: the cohort it was decided on
     now = (as_of or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
     active = {r["key"]: r for r in conn.execute("SELECT * FROM lessons WHERE status = 'active'")}
     new = kept = 0

@@ -233,6 +233,7 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
         T.apply_repair(g, outs["experience"])
     elif outs.get("experience") is not None:
         g.roles = [T.FillRole(role=i, bullets=getattr(outs["experience"], f"role_{i}")) for i in range(len(r.roles))]
+    T.normalize_originals(r, g)                      # F18: a claimed `original` that is not the template's text is new text
     if outs.get("skills") is not None:
         g.skills = outs["skills"].skills
     if outs.get("summary") is not None and 80 <= len(outs["summary"].summary) <= 600:

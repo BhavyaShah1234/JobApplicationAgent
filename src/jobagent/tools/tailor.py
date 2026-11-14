@@ -295,9 +295,27 @@ def filled_schema(r: "Resume") -> type[BaseModel]:
     return create_model("FilledSlots", **fields)
 
 
+def is_verbatim(r: "Resume", role: int, b: "FillBullet") -> bool:
+    """True only when the bullet IS the template bullet its `original` index names (compared as plain text). The index alone
+    proves nothing: a model can attach one to brand-new text to slip past the length budget (F18)."""
+    if b.original is None or not 0 <= role < len(r.roles) or not 0 <= b.original < len(r.roles[role].bullets):
+        return False
+    return to_plain(r.roles[role].bullets[b.original]).strip() == b.text.strip()
+
+
+def normalize_originals(r: "Resume", f: "Filled") -> "Filled":
+    """A bullet that claims an original but differs from it is NEW text: it loses the claim (so the length budget and the
+    new-bullet checks apply to it). Called wherever model output becomes a `Filled`."""
+    for e in f.roles:
+        for b in e.bullets:
+            if b.original is not None and not is_verbatim(r, e.role, b):
+                b.original = None
+    return f
+
+
 def to_filled(r: "Resume", out: BaseModel) -> Filled:
     roles = [FillRole(role=i, bullets=getattr(out, f"role_{i}")) for i in range(len(r.roles))]
-    return Filled(summary=out.summary, roles=roles, skills=out.skills, notes=out.notes)
+    return normalize_originals(r, Filled(summary=out.summary, roles=roles, skills=out.skills, notes=out.notes))
 
 
 FILL_PROMPT = """You write the Experience bullets and the Technical Skills of a resume for one job posting.
@@ -697,6 +715,9 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
     for e in f.roles:
         for k, b in enumerate(e.bullets):
             where = f"role_{e.role} bullet {k + 1} (\"{b.text}\")"
+            if not is_verbatim(r, e.role, b) and len(b.text) > BULLET_MAX:      # F18: an `original` index does not exempt new text
+                out.append(f"{where} is {len(b.text)} characters; new or changed text may have at most {BULLET_MAX} "
+                           f"(aim for {BULLET_TARGET}); only a bullet identical to its template original is exempt")
             if DASH.search(b.text):
                 out.append(f"{where} uses a dash as punctuation; rewrite with a comma, semicolon or colon")
             if e.role < len(r.roles) and (other := moved_from(r, e.role, b.text)) is not None:

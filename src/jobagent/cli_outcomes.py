@@ -129,9 +129,18 @@ def register(app: typer.Typer, console) -> None:
         note = L.site_mix_unsupported(s)
         if note:
             console.print(f"[yellow]{note}[/]", highlight=False)
-        an = L.analyze(apps, sts)
+        an = L.analyze_frozen(conn, apps, sts)
         effects = an.sites
         pr = an.params
+        if pr.get("looks") and pr["look"] == 0:
+            console.print(f"reflect: {pr['resolved']} resolved application(s); the first analysis is made at {pr['next_look']} "
+                          "(fixed-look protocol: recommendations are only made at declared look sizes so that repeated checking "
+                          "cannot inflate false recommendations).", highlight=False)
+        elif pr.get("looks"):
+            console.print(f"reflect: look {pr['look']} of {len(pr['looks'])} (the first {pr['looks'][pr['look'] - 1]} resolved "
+                          f"applications, frozen {pr.get('taken_at', 'now')} and replayed since; each look spends 1/{len(pr['looks'])} of the "
+                          f"5% error budget); next look at "
+                          f"{pr['next_look'] or 'none (the last)'}", highlight=False)
         console.print(f"reflect: one family-wise permutation test over {pr['hypotheses']} comparison(s) "
                       f"(chance of ANY false recommendation about {pr['fwer']:.0%}); found on the earliest {pr['train']} resolved "
                       f"application(s), confirmed on the latest {pr['holdout']}. Associations, not causes.", highlight=False)

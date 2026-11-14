@@ -88,11 +88,13 @@ education:
   - question: "Degrees"
     seen: ["School or University", "School", "Degree", "Field of Study", "Discipline", "Overall Result (GPA)", "What is your degree major and/or minor?", "University"]
     answer:
-      - {school: "", degree: "", field: "",
+      # `aliases:` are the other forms the SAME institution is listed under on portals (a campus, a long form): only what you list here is
+      # treated as the same school; a similar-looking name is never assumed to be it. Example: aliases: ["Arizona State University - Tempe"]
+      - {school: "", aliases: [], degree: "", field: "",
          start: "", end: "", gpa: ""}
       - {school: "", degree: "", field: "",
          start: "", end: "", gpa: ""}
-    instructions: "One education entry per degree. When the form's list doesn't have the exact name, the closest option."
+    instructions: "One education entry per degree. The school is a fact: choose the same institution under the name the list uses (its own initialism or a form listed under `aliases` is the same school; a similar name never is); if the list lacks it, choose Other and name the school."
   - question: "Graduation date"
     seen: ["Please confirm your graduation date", "What is your current estimated graduation date (MM/YYYY)", "Expected graduation"]
     answer: ""
