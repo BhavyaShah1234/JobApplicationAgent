@@ -22,7 +22,7 @@ def read_view(page):
         loc=forms.locate(view,f)
         if f.kind=='file':
             labels=loc.evaluate('e=>[...(e.labels||[])].map(x=>x.innerText.trim()).filter(Boolean)')
-            if len(labels)==1:f.label=labels[0]
+            if len(labels)==1:f.upload_caption=labels[0]
         if not f.format:
             fmt=loc.get_attribute('placeholder') or ''
             if re.search(r'(?i)mm|yyyy|dd',fmt):f.format=fmt
@@ -161,7 +161,8 @@ class Candidate:
                     decisions=self.plan(nonfiles)
                     for f in todo:
                         if f.kind=='file':
-                            role='cover_letter' if 'cover' in f.label.lower() else 'resume' if any(x in f.label.lower() for x in ('resume','cv')) else None
+                            caption=getattr(f,'upload_caption',f.label).lower()
+                            role='cover_letter' if 'cover' in caption else 'resume' if any(x in caption for x in ('resume','cv')) else None
                             decisions[f.id]=Decision(role,'document role')
                     # Parent controls first; always refresh the inventory after each mutation.
                     order=sorted(todo,key=lambda f:(0 if norm(f.label) in ('country','how did you hear about this position') else 1,f.id))
@@ -194,7 +195,7 @@ class Candidate:
                             if not valid:raise ValueError('control not accepted or exact readback unavailable')
                             self.cache[key(f)]=d;changed=True
                             records.append({'label':f.label,'section':f.section,'answer':value,'readback':actual.value,
-                                            'source':d.source,'fact_id':d.fact_id,'outcome':'verified','held_file_sha256':held_sha})
+                                            'widget_caption':getattr(f,'upload_caption',None),'source':d.source,'fact_id':d.fact_id,'outcome':'verified','held_file_sha256':held_sha})
                         except Exception as e:
                             records.append({'label':f.label,'section':f.section,'outcome':'failed','error':str(e)[:200]})
                             self.failures[key(f)]=self.failures.get(key(f),0)+1
