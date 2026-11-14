@@ -173,10 +173,11 @@ def test_structured_preferred_name_and_explicit_blank_extension_are_preserved(wo
     assert not result['experimental_questions']
 
 
-def test_upload_obligation_survives_filename_added_to_caption(world):
+@pytest.mark.parametrize('native_id',['id=resume',''])
+def test_upload_obligation_survives_filename_added_to_caption(world,native_id):
     (world.job/'resume.pdf').write_bytes(b'%PDF-1.4 test candidate document')
-    world.setup(CONTACT+'<label for=resume>Resume</label><div><input id=resume type=file '
-                'onchange="this.nextElementSibling.textContent=this.files[0].name"><span>Resume</span></div>')
+    world.setup(CONTACT+f'<div><label>Resume<input {native_id} type=file '
+                'onchange="this.nextElementSibling.textContent=this.files[0].name"><span>Resume</span></label></div>')
     result=A.run(world.page,world.job,'fixture',model=SourceModel(),filling_strategy='experimental',log=lambda _:None)
     assert result['ready_to_submit']
     upload=next(f for f in result['fields'] if f['kind']=='file')

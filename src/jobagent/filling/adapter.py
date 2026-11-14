@@ -12,9 +12,15 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
     documents=ctx.setdefault('_experimental_uploads',{}).setdefault(page_no,{})
 
     def upload_identity(view,field):
-        node=forms.locate(view,field).evaluate('e=>[e.id,e.getAttribute("name")]')
+        node=forms.locate(view,field).evaluate('''e=>{
+            const w=e.ownerDocument.defaultView;
+            const r=w.__jobagentUploadNodes ||= {ids:new WeakMap(),next:0,
+                epoch:crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`};
+            if(!r.ids.has(e))r.ids.set(e,++r.next);
+            return [e.id,e.getAttribute('name'),r.epoch,r.ids.get(e)];
+        }''')
         frame=view.frames[field.frame]
-        return (frame,*node) if any(node) else (frame,field.section,field.label,field.slot)
+        return (frame,'named',*node[:2]) if any(node[:2]) else (frame,'node',*node[2:])
 
     def observe_upload(view,field,role):
         ident=upload_identity(view,field)
