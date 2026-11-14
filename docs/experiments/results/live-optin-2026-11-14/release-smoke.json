@@ -1,0 +1,20 @@
+{
+  "state": "review",
+  "ready": true,
+  "metrics": {
+    "setup_s": 6.343090954993386,
+    "elapsed_filling_s": 100.90584630500234,
+    "human_wait_s": 34.00793718600471,
+    "active_filling_s": 66.89790911899763,
+    "human_prompt_events": 1,
+    "writer_model_starts": 3,
+    "writer_tokens_reported": 28069,
+    "classification": "unreviewed; writer audit excludes embedding and SDK retries"
+  },
+  "elapsed_total_s": 107.2504330510128,
+  "not_in_comparison": true,
+  "source_commit": "dca97d3",
+  "logical_questions": 2,
+  "avoidable_questions": 2,
+  "necessary_questions": 0
+}

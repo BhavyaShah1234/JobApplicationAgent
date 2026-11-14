@@ -20,6 +20,11 @@ The experimental planner discovers the current reachable controls, prepares an a
 plan, asks about missing answers together, fills and verifies, then repeats when conditions
 or wizard pages expose more controls. It cannot inspect unrequested server-side pages.
 
+The [four-portal live pilot](results/live-optin-2026-11-14/REPORT.md) did not meet the
+promotion gate. The experimental path still has choice-rendering, source-binding
+and field-identity limitations documented there. Keep it opt-in while these are
+addressed; the original method also produced an unsupported preference in that pilot.
+
 `application.json` records `filling_strategy` and `filling_metrics`. Active filling time
 starts after navigation/login and excludes recorded human waiting and the optional
 post-fill observation period. Writer invocation/token counts exclude embedding requests
