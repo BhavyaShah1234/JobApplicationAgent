@@ -1,0 +1,29 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__ test_employer_city_cannot_use_current_home_city_when_work_city_is_supplied __
+
+    def test_employer_city_cannot_use_current_home_city_when_work_city_is_supplied():
+        data={'Contact':[{'question':'Current address','answer':{'city':'Austin'}}],
+              'Experience':[{'question':'Work history','answer':[{'company':'Example Systems','city':'Boston'}]}]}
+        decision=resolve(Field(id=0,kind='text',label='City',section='Work Experience 1'),compile_facts(data,''))
+>       assert decision.value in (None,'Boston'),decision
+E       AssertionError: Decision(value='Austin', source='applicant/Contact/Current address/answer/city', fact_id='applicant/Contact/Current address/answer/city', reason='')
+E       assert 'Austin' in (None, 'Boston')
+E        +  where 'Austin' = Decision(value='Austin', source='applicant/Contact/Current address/answer/city', fact_id='applicant/Contact/Current address/answer/city', reason='').value
+
+../test_scope_boundary.py:10: AssertionError
+_____________ test_reference_email_cannot_use_the_applicants_email _____________
+
+    def test_reference_email_cannot_use_the_applicants_email():
+        data={'Contact':[{'question':'Email address','answer':'applicant@example.test'}]}
+        decision=resolve(Field(id=0,kind='email',label='Email address',section='References 1'),compile_facts(data,''))
+>       assert decision.value is None,decision
+E       AssertionError: Decision(value='applicant@example.test', source='applicant/Contact/Email address/answer', fact_id='applicant/Contact/Email address/answer', reason='')
+E       assert 'applicant@example.test' is None
+E        +  where 'applicant@example.test' = Decision(value='applicant@example.test', source='applicant/Contact/Email address/answer', fact_id='applicant/Contact/Email address/answer', reason='').value
+
+../test_scope_boundary.py:16: AssertionError
+=========================== short test summary info ============================
+FAILED ../test_scope_boundary.py::test_employer_city_cannot_use_current_home_city_when_work_city_is_supplied
+FAILED ../test_scope_boundary.py::test_reference_email_cannot_use_the_applicants_email
+2 failed in 7.15s

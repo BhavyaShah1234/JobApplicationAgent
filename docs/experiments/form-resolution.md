@@ -184,3 +184,18 @@ are documented in the report. No live draft was filled or submitted.
 Production adoption is **not approved** by these results. Validate the repair on fresh layouts and complete
 the planned paired live drafts, including actual fact compilation, before claiming the experiment succeeded
 across portals. Three additional baseline follow-ups are documented in the root review handoff.
+
+
+### Refreshed comparison after final production follow-ups
+
+Shared checkpoint `54dbf90` passed 91 independent targeted checks, including the exact three prior reviewer cases.
+The refreshed protocol and four fresh compiler layouts were frozen in `4bed99a`; the original comparison remains
+unchanged. [The refreshed report](results/4bed99a-refreshed/REPORT.md) records all 72 trials: candidate 36/36 correct
+and ready versus baseline 33/36; median active time 4.48 vs 14.70 seconds (69.56% lower); avoidable questions 0 vs 2.
+Total questions were 6 vs 5 because the candidate correctly asked for missing days. Invalid partial dates were
+reported ready by the baseline. Writer callback/token counts exclude separate embeddings and lower-level retries.
+
+Post-measurement compiler entity-boundary checks failed on the frozen candidate and were repaired in `ba14d7b`
+(35 tests passed); explicit blank Address Line 2 handling followed in `c6db5d4` (8 address/entity tests passed).
+The report preserves those failures and separates the repairs from measured timings. No live drafts or submissions
+were performed. The latest prototype still needs actual profile/hierarchy and paired live validation before adoption.

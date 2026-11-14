@@ -2259,3 +2259,55 @@ No production source or deployed implementation was changed. The verified files 
 shared checkpoint in `experiment/form-resolution`, followed by the repaired prototype's focused tests and a fresh
 provider-backed comparison. Both engines must use the same checkpoint; the first comparison stays unchanged.
 Live filling, paired portal coverage and production adoption remain separate gates. No application was submitted.
+
+
+## Refreshed experiment result after the verified fixes (2026-11-14, Codex)
+
+The two preceding production fixes remain **verified**, with 91 targeted passes. All 154 reviewed source/unit
+files still match that snapshot. Both engines now share captured checkpoint `54dbf90` in the separate experiment
+worktree. No production implementation was edited or deployed.
+
+Completed **72 real-model synthetic trials** on frozen `4bed99a`: eight development cases and four fresh structured
+profile layouts, each repeated three times per engine with counterbalanced order. Source hashes stayed unchanged.
+Correct and ready: **current 33/36, candidate 36/36**. Median active filling time: **14.70 s vs 4.48 s** (69.56%
+lower). Avoidable questions: **2 vs 0**; necessary questions: **3 vs 6**. Total questions were **5 vs 6** because the
+candidate correctly asked for three missing exact days that the baseline failed to request. The writer-model-start
+audit is **84 vs 29** and writer-reported tokens **271,936 vs 24,095**; separate embeddings/SDK transport retries
+are not fully counted, so these are not total request or billing figures. Human replies were simulated, not live.
+
+### Additional production observation: native date constraints are not enough reflected in readiness
+
+This is a new experiment observation, not a reappearance of the repaired ZIP/placeholder cases. In all three
+`fresh-compiled-conditional-date` baseline trials, the source provided January 2027 and instructed asking for the
+exact day if the form required one. The revealed text input has placeholder MM/DD/YYYY and a full-date pattern.
+The baseline filled **January 2027**, asked no exact-day question, marked the readback verified and reported ready.
+The candidate asked for the missing day and filled **01/04/2027**, the declared simulated-owner answer.
+
+Independent replay into the unchanged registered control confirms the baseline value has
+`validity.valid=false`, `patternMismatch=true`; the full date is valid. No agent trial was refilled or repaired by
+that diagnostic. **Future production correction:** expose relevant format/pattern/constraint metadata to planning
+and source checks and validate actual controls before declaring readiness. A copied source string is insufficient
+when it does not satisfy the control. Missing precision must be asked for rather than invented. Preserve valid
+prefills and the owner's already explicit date-approximation authorizations in their actual scope. No submission
+was attempted; this does not establish that a real portal would accept the invalid value after Submit.
+
+### Experiment-only source-boundary repairs after measurement
+
+Two independent compiler probes outside the registered cohort failed on the measured prototype: it could use the
+applicant's City for an employer City and the applicant's Email for a reference Email. This materially limits what
+36/36 synthetic successes establish. Codex repaired those cases **only in the experiment worktree**, commit
+`ba14d7b`: retain structured entity city/state/country facts, preserve entity indices, and prevent general contact
+components from being mapped into recognized employment/education/reference scopes, including via model mapping.
+Focused experiment plus boundary tests: **35 passed**, 13 dependency warnings, 72.56 s. Common numbered headings
+are handled; arbitrary/unindexed portal hierarchies and actual personal-file coverage remain live-validation work.
+
+Commit `c6db5d4` additionally preserves a known blank Address Line 2 and clears its stale prefill; an absent component
+remains unknown. Address/entity-source checks: **8 passed**, 13 warnings, 4.05 s. Neither repair is silently included
+in the frozen timings. Claude Code should not duplicate these prototype edits into production or edit this branch.
+
+Report and raw evidence: `outputs/verification/form-refreshed-2026-11-14/`. Git artifacts in the experiment worktree:
+`docs/experiments/results/4bed99a-refreshed/REPORT.md`, including registered protocol, cases, manifests and audits.
+**Disposition:** fixture speed and avoidable-assistance targets are met, but production adoption is not approved.
+Live paired drafts, actual profile/document/learned-answer/company/referral source parity, source-hierarchy support
+and desktop/auth setup still require validation. No live draft, account or application was filled or submitted in
+this experiment phase; submitted Carvana/Pantex postings remain untouched.
