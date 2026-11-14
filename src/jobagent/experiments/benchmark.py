@@ -13,6 +13,7 @@ from playwright.sync_api import sync_playwright
 from .resolution import Fact
 from .engine import Candidate
 from .metrics import CallAudit
+from .resolution import compile_facts
 
 
 def revision():
@@ -72,8 +73,32 @@ def human_reply(case,facts,label,section=None):
     requested=case.get('source_questions',{}).get(label,label)
     matches=[f for f in facts if norm(requested) in map(norm,f.aliases)
              and (not section or not f.section or norm(section)==norm(f.section))]
+    if section:
+        scoped=[f for f in matches if f.section and norm(section)==norm(f.section)]
+        if scoped:matches=scoped
     values={f.value for f in matches}
     return next(iter(values)) if len(values)==1 else None
+
+
+def inputs_for(case):
+    """Give both arms the same source content, including prepared-address context.
+
+    Fresh cases exercise the real compiler; development registries retain their original scopes.
+    """
+    import copy
+    if 'applicant' in case:
+        data=copy.deepcopy(case['applicant'])
+        facts=compile_facts(data,case.get('raw_jd',''))
+    else:
+        facts=[Fact(**f) for f in case['facts']]
+        data={'fixture':[{'question':x.aliases[0],'seen':x.aliases,'answer':x.value,
+                'instructions':('Applies only to '+x.section) if x.section else ''} for x in facts]}
+    if case['name']=='conditional' or case.get('prepared_address'):
+        contact=[{'question':'Current address','seen':['Country','State'],
+            'answer':{'line1':'123 Example Street','city':'Houston','state':'Texas','postal_code':'77002','country':'United States'}}]
+        data['contact']=contact
+        facts+=compile_facts({'contact':contact},'')
+    return data,facts
 
 
 def execute(case,engine,pw,root,real_model):
@@ -88,7 +113,9 @@ def execute(case,engine,pw,root,real_model):
         page.route('https://fixture.example/questions',lambda route:route.fulfill(
             headers={'access-control-allow-origin':'*'},content_type='application/json',
             body=json.dumps({'questions':[{'label':'Province or State','type':'text','required':True}]})))
-    page.set_content(case['html']);facts=[Fact(**f) for f in case['facts']]
+    page.set_content(case['html']);data,facts=inputs_for(case)
+    from jobagent.tools import applicant
+    forms.set_approved_aliases(applicant.identity_aliases(data))
     model=real_model or Replay(facts)
     audit=CallAudit()
     if real_model:real_model.callbacks=[*(real_model.callbacks or []),audit]
@@ -105,13 +132,9 @@ def execute(case,engine,pw,root,real_model):
     try:
         if engine=='candidate':r=Candidate(facts,ask,real_model).fill(page,files)
         else:
-            data={'fixture':[{'question':x.aliases[0],'seen':x.aliases,'answer':x.value,
-                    'instructions':('Applies only to '+x.section) if x.section else ''} for x in facts]}
-            if case['name']=='conditional' or case.get('prepared_address'):
-                data['contact']=[{'question':'Current address','seen':['Country','State'],
-                    'answer':{'line1':'123 Example Street','city':'Houston','state':'Texas','postal_code':'77002','country':'United States'}}]
             import yaml
-            ctx_data={'APPLICANT':yaml.safe_dump(data),'RESUME':'','JD':'','_applicant':data,'_jd':{}}
+            ctx_data={'APPLICANT':yaml.safe_dump(data),'RESUME':'','JD':case.get('raw_jd',''),
+                      '_jd_text':case.get('raw_jd',''),'_applicant':data,'_jd':{}}
             class Hitl:
                 count=0
                 last_answer=None
@@ -151,11 +174,14 @@ def execute(case,engine,pw,root,real_model):
                 actual[selector]=page.evaluate('(s)=>window.__jobagentAll(s)[0]?.value',selector[7:])
             elif selector.startswith('frame:'):actual[selector]=page.frames[1].locator(selector[6:]).input_value()
             else:actual[selector]=page.locator(selector).input_value()
+        value_correct=actual==expected
+        missing_questions=[q for q in case.get('required_human_questions',[]) if q not in requests]
         r.update(model_calls=audit.calls if real_model else r.get('model_calls'),reported_tokens=audit.reported_tokens,
                  model_name=getattr(model,'model_name','replay'),fixture=case['name'],heldout=case['heldout'],
                  avoidable_questions=sum(x not in case.get('human_answers',{}) for x in requests),
                  necessary_questions=sum(x in case.get('human_answers',{}) for x in requests),
-                 question_labels=requests,graded_correct=actual==expected,
+                 question_labels=requests,values_correct=value_correct,missing_required_questions=missing_questions,
+                 graded_correct=value_correct and not missing_questions,
                  submitted=page.evaluate('!!window.sent'),actual=actual)
         return r
     except Exception as e:
@@ -168,7 +194,9 @@ def execute(case,engine,pw,root,real_model):
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=Path,required=True)
     p.add_argument('--repetitions',type=int,default=3);p.add_argument('--model',action='store_true')
-    p.add_argument('--smoke',action='store_true');p.add_argument('--model-name');args=p.parse_args()
+    p.add_argument('--smoke',action='store_true');p.add_argument('--model-name')
+    p.add_argument('--cohort',choices=['original','refreshed'],default='original')
+    args=p.parse_args()
     if args.output.exists():raise ValueError('output must be new')
     args.output.mkdir(parents=True,mode=0o700)
     import hashlib
@@ -180,27 +208,34 @@ def main():
         from jobagent import llm
         from jobagent.config import get_settings
         model=True
-    rows=[];cases=fixtures()[:2] if args.smoke else fixtures()
+    rows=[];cases=fixtures()
+    if args.cohort=='refreshed':
+        from .cohort_v2 import refreshed
+        cases=refreshed(cases)
+    if args.smoke:cases=[c for c in cases if not c['heldout']][:2]
     import hashlib
     source_hashes={str(f):hashlib.sha256(f.read_bytes()).hexdigest() for f in Path('src/jobagent').rglob('*.py')}
     (args.output/'source-manifest.json').write_text(json.dumps(source_hashes,indent=2))
+    (args.output/'cases.json').write_text(json.dumps(cases,indent=2))
     abort_reason=None
     with sync_playwright() as pw:
         for rep in range(args.repetitions):
             if abort_reason:break
-            for case in cases:
+            for case_index,case in enumerate(cases):
                 if abort_reason:break
-                for engine in (['current','candidate'] if rep%2==0 else ['candidate','current']):
+                for engine in (['current','candidate'] if (rep+case_index)%2==0 else ['candidate','current']):
                     trial_model=None
                     if args.model:
                         trial_model=llm.writer(model=args.model_name or get_settings().model_writer,timeout=get_settings().llm_timeout_s)
                     r=execute(case,engine,pw,args.output/f'{rep}-{case["name"]}-{engine}',trial_model)
+                    r.update(repetition=rep,pair_index=rep*len(cases)+case_index)
                     rows.append(r);print(case['name'],engine,r['graded_correct'],r.get('error',''),flush=True)
                     (args.output/'trials.json').write_text(json.dumps(rows,indent=2))
                     if r.get('error','').endswith((': config',': budget')):
                         abort_reason=r['error'];break
     summary={'classification':'exploratory-real-model' if args.model else 'replay-smoke-not-a-latency-or-promotion-result',
              'source_commit':revision(),
+             'cohort':args.cohort,
              'input_sha256':__import__('hashlib').sha256(json.dumps(cases,sort_keys=True).encode()).hexdigest(),
              'source_sha256':{str(f):__import__('hashlib').sha256(f.read_bytes()).hexdigest() for f in Path('src/jobagent').rglob('*.py')},
              'sources_changed_during_run':any(hashlib.sha256(Path(f).read_bytes()).hexdigest()!=h for f,h in source_hashes.items()),
