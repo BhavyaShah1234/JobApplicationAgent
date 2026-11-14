@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,6 +35,7 @@ class Settings(BaseSettings):
     # devstral2-123b (the user's "fast model for now", 2026-11-08): glm-5-3 was tried that day as a larger model and
     # wrote more specific bullets, but scored 73.3 vs 76.7 on General Mills and took ~140 min vs 44.
     model_writer: str = "devstral2-123b"
+    filling_strategy: Literal['original','experimental'] = 'original'
     # F05: what an ATS shortfall does to a valid resume. "warn" (default): the application may proceed, the review packet says the
     # average is below the target (or unscored); "block": no application is filled until the target is met. Invalid documents
     # (missing, not compiled, not one page, unresolved hard findings) always block, whatever this says.

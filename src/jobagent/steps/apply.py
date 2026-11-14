@@ -1354,6 +1354,23 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
 
 
 def run(page: Page, job_dir: str | Path, company: str, *args, **kwargs) -> dict:
+    from jobagent.filling.metrics import FillingMetrics,RecordedHitl
+    metrics=FillingMetrics();kwargs['_filling_metrics']=metrics
+    if kwargs.get('hitl') is not None:kwargs['hitl']=RecordedHitl(kwargs['hitl'],metrics)
+    try:
+        result=_guarded_run(page,job_dir,company,*args,**kwargs)
+    except Exception:
+        path=Path(job_dir)/'application'/'application.json'
+        if path.exists():
+            result=json.loads(path.read_text());result['filling_metrics']=metrics.snapshot()
+            path.write_text(json.dumps(result,indent=2))
+        raise
+    result['filling_metrics']=metrics.snapshot()
+    (Path(job_dir)/'application'/'application.json').write_text(json.dumps(result,indent=2))
+    return result
+
+
+def _guarded_run(page: Page, job_dir: str | Path, company: str, *args, **kwargs) -> dict:
     out = Path(job_dir) / "application"
     out.mkdir(parents=True, exist_ok=True)
 
@@ -1431,10 +1448,13 @@ def recover_desktop_form(page, log=print):
 
 def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, log=print, model=None,
         hitl=None, ask_s: float = 1800, model_name: str | None = None, at_review=None,
-        already_open: bool = False, observe_s: float = 0) -> dict:
+        already_open: bool = False, observe_s: float = 0, filling_strategy: str | None = None,
+        _filling_metrics=None) -> dict:
     """Fill the application to its review screen. Never clicks Submit itself: `at_review(page, view, result)` (step 13's
     approval and submission) is called there, in the same browser session, when given."""
     job_dir = Path(job_dir)
+    from jobagent.filling import select_strategy
+    strategy=select_strategy(filling_strategy)
     ctx = context(job_dir, company)
     url = ctx["_jd"].get("apply_url") or ctx["_jd"].get("source_url")
     model = model or llm.writer(8000, timeout=300, model=model_name)
@@ -1445,6 +1465,7 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         audit = out_dir / 'planner-calls.jsonl'
         audit.write_text('')
         model.callbacks = list(model.callbacks or []) + [PlannerAudit(audit, getattr(model, 'model_name', 'configured writer'))]
+        if _filling_metrics is not None:model.callbacks.append(_filling_metrics)
     if already_open:
         recover_desktop_form(page, log)
         challenge.guard(page)
@@ -1463,6 +1484,7 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
     result = {"url": url, "started": datetime.now().isoformat(timespec="seconds"), "pages": [], "state": "failed"}
     result['planner'] = {'provider': 'Voyager', 'model': getattr(model, 'model_name', model_name or 'configured writer')}
     result['browser_mode'] = 'desktop' if already_open else 'docker'
+    result['filling_strategy']=strategy
     result["address_lookup"] = None  # prepared before planning if an address field is actually encountered
     def checkpoint(current=None):
         result['address_lookup'] = ctx.get('_application_address')
@@ -1477,6 +1499,7 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
     env = {"hitl": hitl, "company": company, "host": urlparse(url).netloc, "ask_s": ask_s,
            "checkpoint": checkpoint, 'out_dir': out_dir}
     known, errors, page_no, start = None, [], 0, 0
+    if _filling_metrics is not None:_filling_metrics.begin()
     for _ in range(MAX_PAGES + 3):
         challenge.guard(page)
         view = forms.read_page(page)
@@ -1489,7 +1512,16 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         log(f"apply: page {page_no}{' (again: ' + '; '.join(errors)[:120] + ')' if known else ''}: {heads[:100]} "
             f"({len(view.fields)} fields)")
         try:
-            view, done = fill_page(page, ctx, files, model, log, record, page_no, env, known, errors)
+            if strategy=='experimental':
+                from jobagent.filling.adapter import fill_page as planned_page
+                view,done=planned_page(page,ctx,files,model,log,record,page_no,env,known,errors)
+                if env.get('_experimental_blockers'):
+                    result.update(state='blocked',blocked_by='filling',reason='; '.join(env['_experimental_blockers']),resumable=True)
+                    result['pages'].append({'page':page_no,'headings':view.headings[:4],'errors':view.errors,
+                                            'buttons':view.buttons,'extraction':view.coverage.summary()})
+                    checkpoint();break
+            else:
+                view, done = fill_page(page, ctx, files, model, log, record, page_no, env, known, errors)
         except PlannerFailed as exc:
             # the fields found are recorded (outcome unplanned); the form is not advanced, and no review is offered
             result.update(state="blocked", blocked_by="planner", reason=f"the answer planner failed on page {page_no}: {exc}",
@@ -1530,6 +1562,7 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         else:
             log(f"apply: moved on ({why})")
             known, errors, same = None, [], 0
+    if _filling_metrics is not None:_filling_metrics.finish()
     if observe_s:
         deadline = time.monotonic() + observe_s
         while time.monotonic() < deadline:
@@ -1537,6 +1570,13 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
             page.wait_for_timeout(2000)
         result['observed_seconds'] = observe_s
     result["fields"] = record
+    if _filling_metrics is not None:
+        _filling_metrics.finish();result['filling_metrics']=_filling_metrics.snapshot()
+    if strategy=='experimental':
+        result['experimental_pages']=ctx.get('_experimental_pages',[])
+        filler=ctx.get('_experimental_filler')
+        result['experimental_questions']=filler.questions if filler else 0
+        result['experimental_question_batches']=filler.batches if filler else 0
     # "verified" means read back as the answer we put there (or a value the page already had); an optional field nobody
     # answered is not "verified", it is counted under its own outcome
     result["verified"] = sum(1 for e in record if e.get("outcome", "verified" if e.get("verified") else "") == "verified")

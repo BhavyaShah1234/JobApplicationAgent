@@ -471,11 +471,13 @@ def run_pipeline_cmd(
     allow_desktop_submit: bool = typer.Option(False, "--allow-desktop-submit"),
     force: bool = typer.Option(False, help="Refresh input stages and regenerate documents."),
     no_ats: bool = typer.Option(False, "--no-ats", help="Skip ATS scans while generating documents; document validity still gates submission."),
+    filling_strategy: str = typer.Option(None, help="original or experimental; default FILLING_STRATEGY/original."),
 ) -> None:
     from jobagent.tools.pipeline import Pipeline
     try:
         result = Pipeline(log=lambda m: console.print(m, highlight=False)).run(
-            url, through=through, browser_mode=browser_mode, allow_desktop_submit=allow_desktop_submit, force=force, no_ats=no_ats)
+            url, through=through, browser_mode=browser_mode, allow_desktop_submit=allow_desktop_submit, force=force, no_ats=no_ats,
+            filling_strategy=filling_strategy)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     console.print(f"run: {result.state}; {result.job_dir}; {result.note}", highlight=False)
@@ -722,6 +724,7 @@ def apply_cmd(
     ask_minutes: float = typer.Option(30, help="How long to wait for your answer to a question (then it's left for review)."),
     model: str = typer.Option(None, help="Voyager model that plans the answers (default: the writer model)."),
     browser_mode: str = typer.Option('docker', help="docker, desktop, or auto (Docker then desktop on a challenge block)."),
+    filling_strategy: str = typer.Option(None, help="original or experimental; default FILLING_STRATEGY/original."),
     desktop_allow_origin: list[str] = typer.Option(None, "--desktop-allow-origin",
         help="Additional trusted application/login HTTPS origin; repeat for extra origins."),
 ) -> None:
@@ -737,6 +740,9 @@ def apply_cmd(
 
     if not no_submit:
         raise typer.BadParameter("submitting comes with the human review (step 13)")
+    from jobagent.filling import select_strategy
+    try:strategy=select_strategy(filling_strategy,resume_job=job_dir)
+    except ValueError as e:raise typer.BadParameter(str(e)) from e
     try:
         check_mode(browser_mode, submitting=False)
     except ValueError as e:
@@ -762,7 +768,7 @@ def apply_cmd(
                 page = sess.page
                 sign_in = lambda url: ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log, already_open=True)
                 res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
-                          ask_s=ask_minutes * 60, model_name=model,
+                          ask_s=ask_minutes * 60, model_name=model, filling_strategy=strategy,
                           **sess.run_options(observe_s=30, auto_fallback=browser_mode == 'auto'))
             if not (res.get('state')=='blocked' and res.get('resumable') and mode=='docker' and browser_mode=='auto'):
                 break
@@ -790,6 +796,7 @@ def submit_cmd(
     ask_minutes: float = typer.Option(30, help="How long a question while filling waits for your answer."),
     review_minutes: float = typer.Option(60, help="How long the filled form waits for your approve / skip."),
     mail_minutes: float = typer.Option(15, help="How long to watch the inbox for the confirmation mail."),
+    filling_strategy: str = typer.Option(None, help="original or experimental; resumes the application's recorded strategy by default."),
     browser_mode: str = typer.Option('docker', help="docker (default) or desktop: the browser that holds the application "
                                      "(`apply --browser-mode auto` is for filling only)."),
     allow_desktop_submit: bool = typer.Option(False, "--allow-desktop-submit",
@@ -815,8 +822,10 @@ def submit_cmd(
     from jobagent.steps.apply import EXIT_UNCERTAIN
     from jobagent.steps.submit import guard
 
+    from jobagent.filling import select_strategy
     try:
         check_mode(browser_mode, submitting=True, allow_desktop_submit=allow_desktop_submit)
+        strategy=select_strategy(filling_strategy,resume_job=job_dir)
     except ValueError as e:
         raise typer.BadParameter(str(e)) from e
     if stop := guard(db.connect(), Path(job_dir)):     # before a browser opens: a sent application is never filled again
@@ -845,7 +854,7 @@ def submit_cmd(
             hook = make_at_review(Path(job_dir), jd, open_hitl(log), inbox, conn, log, ask_s=review_minutes * 60,
                                   mail_s=mail_minutes * 60)
             res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
-                      ask_s=ask_minutes * 60, at_review=hook, **sess.run_options())
+                      ask_s=ask_minutes * 60, at_review=hook, filling_strategy=strategy, **sess.run_options())
     except Unavailable as gone:
         wf.mark("submit", "failed", error=f"unavailable: {gone.kind}")
         _stopped(job_dir, gone, "submit")

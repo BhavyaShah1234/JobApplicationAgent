@@ -53,17 +53,21 @@ class Pipeline:
         from jobagent.tools.scrape import _slug
         return (self.settings.outputs_dir / _slug(row["company"] or "unknown") / str(row["job_id"] or "")).resolve()
 
-    def run(self, url, *, through="apply", browser_mode="docker", allow_desktop_submit=False, force=False, no_ats=False):
+    def run(self, url, *, through="apply", browser_mode="docker", allow_desktop_submit=False, force=False, no_ats=False,
+            filling_strategy=None):
         from jobagent.tools import bundle
         if through not in {"scrape", "tailor", "apply", "submit"}:
             raise ValueError("through must be scrape, tailor, apply or submit")
         from jobagent.tools.session import check_mode
         check_mode(browser_mode, submitting=through == "submit", allow_desktop_submit=allow_desktop_submit)
+        if filling_strategy is not None:
+            from jobagent.filling import select_strategy
+            filling_strategy=select_strategy(filling_strategy)
         root = (self.settings.state_dir / "workflows" / hashlib.sha256(url.encode()).hexdigest()[:24]).resolve()
         with bundle.job_lock(root, "pipeline"):
-            return self._run(url, through, browser_mode, allow_desktop_submit, force, root, no_ats)
+            return self._run(url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy)
 
-    def _run(self, url, through, browser_mode, allow_desktop_submit, force, root, no_ats):
+    def _run(self, url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy=None):
         from jobagent.tools import research, places
         from jobagent.tools.queue_runner import outcome_of_apply, fresh_result
         wf = W.Workflow(root)
@@ -124,6 +128,7 @@ class Pipeline:
             return PipelineResult("tailored", str(d))
         stage = "submit" if through == "submit" else "apply"
         kwargs = {"job_dir": str(d), "company": slug, "browser_mode": browser_mode}
+        if filling_strategy is not None:kwargs['filling_strategy']=filling_strategy
         if stage == "submit":
             kwargs["allow_desktop_submit"] = allow_desktop_submit
         started = time.time()
