@@ -114,12 +114,19 @@ def execute(case,engine,pw,root,real_model):
             ctx_data={'APPLICANT':yaml.safe_dump(data),'RESUME':'','JD':'','_applicant':data,'_jd':{}}
             class Hitl:
                 count=0
+                last_answer=None
+                last_label=None
                 def ask(self,prompt,**kwargs):
                     self.count+=1
+                    if self.last_answer and ('to "'+str(self.last_label)+'"') in prompt and repr(self.last_answer[:80]) in prompt and "'keep'" in prompt:
+                        requests.append('confirmation: '+str(self.last_label))
+                        return 'keep'
                     match=re.search(r'application asks: "([^"]+)"',prompt)
                     label=match[1] if match else prompt
                     requests.append(label)
-                    return human_reply(case,facts,label) or 'skip'
+                    self.last_label=label
+                    self.last_answer=human_reply(case,facts,label)
+                    return self.last_answer or 'skip'
             h=Hitl();records=[]
             for n in range(1,16):
                 view,_=A.fill_page(page,ctx_data,files,model,lambda _:None,records,n,env={'hitl':h,'company':'fixture','host':'fixture'})
