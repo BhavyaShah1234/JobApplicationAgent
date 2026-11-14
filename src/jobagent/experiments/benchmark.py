@@ -38,6 +38,8 @@ def fixtures():
       case('closed-shadow','<custom-form></custom-form><script>document.querySelector("custom-form").attachShadow({mode:"closed"}).innerHTML=\'<label for=e>Email</label><input id=e type=email required>\'</script>',[fact('Email','person@example.test')],{'closed:#e':'person@example.test'},True),
       case('iframe','<iframe srcdoc="<label for=e>Email</label><input id=e required>"></iframe>',[fact('Email','person@example.test')],{'frame:#e':'person@example.test'},True),
       case('wizard','<div id=step>'+email+'</div><button type=button id=next onclick="document.getElementById(\'step\').innerHTML=\'<label for=n>Name</label><input id=n required>\';this.remove()">Next</button>',[fact('Email','person@example.test'),fact('Name','Example Person')],{'#n':'Example Person'},True)]
+    from .cohort import heldout
+    cases=cases[:8]+heldout(case,fact)
     for c in cases:c['html']+=apply
     return cases
 
@@ -70,28 +72,43 @@ def execute(case,engine,pw,root,real_model):
     os.environ.update(DATA_DIR=str(root/'data'),STATE_DIR=str(root/'state'),OUTPUTS_DIR=str(root/'outputs'))
     (root/'data').mkdir(parents=True);get_settings.cache_clear()
     ctx=pw.chromium.launch(channel='chrome',headless=True).new_context();shadow.install(pw,ctx)
-    browser=ctx.browser;page=ctx.new_page();page.set_content(case['html']);facts=[Fact(**f) for f in case['facts']]
+    browser=ctx.browser;page=ctx.new_page()
+    if case['name']=='heldout-fetched-question':
+        page.route('https://fixture.example/questions',lambda route:route.fulfill(
+            headers={'access-control-allow-origin':'*'},content_type='application/json',
+            body=json.dumps({'questions':[{'label':'Province or State','type':'text','required':True}]})))
+    page.set_content(case['html']);facts=[Fact(**f) for f in case['facts']]
     model=real_model or Replay(facts)
     audit=CallAudit()
     if real_model:real_model.callbacks=[*(real_model.callbacks or []),audit]
-    def ask(q):return {}  # unanswered source gaps remain gaps, never repaired using the grader
+    requests=[]
+    def ask(q):
+        requests.extend(x['label'] for x in q)
+        return {str(x['id']):case.get('human_answers',{}).get(x['label']) for x in q}
     files={}
     for role in ('resume','cover_letter'):
-        path=root/(role+'.pdf');path.write_bytes(('%PDF-1.4\n% Synthetic '+role+' fixture\n%%EOF').encode());files[role]=str(path)
+        path=root/role/'attachment.pdf' if case.get('same_filename') else root/(role+'.pdf')
+        path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_bytes(('%PDF-1.4\n% Synthetic '+role+' fixture\n%%EOF').encode());files[role]=str(path)
     start=time.monotonic()
     try:
         if engine=='candidate':r=Candidate(facts,ask,real_model).fill(page,files)
         else:
             data={'fixture':[{'question':x.aliases[0],'seen':x.aliases,'answer':x.value,
                     'instructions':('Applies only to '+x.section) if x.section else ''} for x in facts]}
-            if case['name']=='conditional':
+            if case['name']=='conditional' or case.get('prepared_address'):
                 data['contact']=[{'question':'Current address','seen':['Country','State'],
                     'answer':{'line1':'123 Example Street','city':'Houston','state':'Texas','postal_code':'77002','country':'United States'}}]
             import yaml
             ctx_data={'APPLICANT':yaml.safe_dump(data),'RESUME':'','JD':'','_applicant':data,'_jd':{}}
             class Hitl:
                 count=0
-                def ask(self,*args,**kwargs):self.count+=1;return 'skip'
+                def ask(self,prompt,**kwargs):
+                    self.count+=1
+                    match=re.search(r'application asks: "([^"]+)"',prompt)
+                    label=match[1] if match else prompt
+                    requests.append(label)
+                    return case.get('human_answers',{}).get(label,'skip')
             h=Hitl();records=[]
             for n in range(1,16):
                 view,_=A.fill_page(page,ctx_data,files,model,lambda _:None,records,n,env={'hitl':h,'company':'fixture','host':'fixture'})
@@ -103,16 +120,24 @@ def execute(case,engine,pw,root,real_model):
             blockers=A.blockers_of(records)+view.coverage.problems()+view.errors
             r={'engine':'current','ready':not blockers and any(forms.SUBMIT.search(b) for b in view.buttons),'records':records,'blockers':blockers,
                'active_s':time.monotonic()-start,'questions':h.count,'model_calls':getattr(model,'calls',None)}
-        actual={}
+        actual={};expected=dict(case['expected'])
         for selector in case['expected']:
-            if selector.startswith('file:'):
+            if selector.startswith('sha:'):
+                import base64,hashlib
+                held=page.locator(selector[4:]).evaluate('''async e=>{const b=new Uint8Array(await e.files[0].arrayBuffer());return btoa(String.fromCharCode(...b))}''')
+                actual[selector]=hashlib.sha256(base64.b64decode(held)).hexdigest()
+                expected[selector]=hashlib.sha256(Path(files[case['expected'][selector]]).read_bytes()).hexdigest()
+            elif selector.startswith('file:'):
                 actual[selector]=page.locator(selector[5:]).evaluate('e=>e.files?.[0]?.name')
             elif selector.startswith('closed:'):
                 actual[selector]=page.evaluate('(s)=>window.__jobagentAll(s)[0]?.value',selector[7:])
             elif selector.startswith('frame:'):actual[selector]=page.frames[1].locator(selector[6:]).input_value()
             else:actual[selector]=page.locator(selector).input_value()
         r.update(model_calls=audit.calls if real_model else r.get('model_calls'),reported_tokens=audit.reported_tokens,
-                 model_name=getattr(model,'model_name','replay'),fixture=case['name'],heldout=case['heldout'],graded_correct=actual==case['expected'],
+                 model_name=getattr(model,'model_name','replay'),fixture=case['name'],heldout=case['heldout'],
+                 avoidable_questions=sum(x not in case.get('human_answers',{}) for x in requests),
+                 necessary_questions=sum(x in case.get('human_answers',{}) for x in requests),
+                 question_labels=requests,graded_correct=actual==expected,
                  submitted=page.evaluate('!!window.sent'),actual=actual)
         return r
     except Exception as e:
@@ -141,9 +166,12 @@ def main():
     import hashlib
     source_hashes={str(f):hashlib.sha256(f.read_bytes()).hexdigest() for f in Path('src/jobagent').rglob('*.py')}
     (args.output/'source-manifest.json').write_text(json.dumps(source_hashes,indent=2))
+    abort_reason=None
     with sync_playwright() as pw:
         for rep in range(args.repetitions):
+            if abort_reason:break
             for case in cases:
+                if abort_reason:break
                 for engine in (['current','candidate'] if rep%2==0 else ['candidate','current']):
                     trial_model=None
                     if args.model:
@@ -151,15 +179,20 @@ def main():
                     r=execute(case,engine,pw,args.output/f'{rep}-{case["name"]}-{engine}',trial_model)
                     rows.append(r);print(case['name'],engine,r['graded_correct'],r.get('error',''),flush=True)
                     (args.output/'trials.json').write_text(json.dumps(rows,indent=2))
+                    if r.get('error','').endswith((': config',': budget')):
+                        abort_reason=r['error'];break
     summary={'classification':'exploratory-real-model' if args.model else 'replay-smoke-not-a-latency-or-promotion-result',
              'source_commit':revision(),
              'input_sha256':__import__('hashlib').sha256(json.dumps(cases,sort_keys=True).encode()).hexdigest(),
              'source_sha256':{str(f):__import__('hashlib').sha256(f.read_bytes()).hexdigest() for f in Path('src/jobagent').rglob('*.py')},
              'sources_changed_during_run':any(hashlib.sha256(Path(f).read_bytes()).hexdigest()!=h for f,h in source_hashes.items()),
-             'formal_checkpoint_integrated':checkpoint_verified,'promotion_allowed':False,'trials':len(rows)}
+             'formal_checkpoint_integrated':checkpoint_verified,'promotion_allowed':False,'trials':len(rows),
+             'planned_trials':len(cases)*args.repetitions*2,'abort_reason':abort_reason}
     for engine in ('current','candidate'):
         arm=[r for r in rows if r['engine']==engine]
-        summary[engine]={'provider_calls':sum(r.get('model_calls') or 0 for r in arm),
+        summary[engine]={'avoidable_questions':sum(r.get('avoidable_questions',0) for r in arm),
+                         'necessary_questions':sum(r.get('necessary_questions',0) for r in arm),
+                         'provider_calls':sum(r.get('model_calls') or 0 for r in arm),
                          'provider_reported_tokens':sum(r.get('reported_tokens') or 0 for r in arm) if any(r.get('reported_tokens') is not None for r in arm) else None,
                          'correct':sum(r['graded_correct'] for r in arm),'completed':sum(bool(r.get('ready')) for r in arm),
                          'median_active_s':statistics.median(r['active_s'] for r in arm),'questions':sum(r.get('questions',0) for r in arm),
