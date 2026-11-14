@@ -8,10 +8,12 @@ def heldout(case, fact):
         '<label for=p>Preferred contact method</label><select id=p required><option>Choose</option><option>Email</option><option>Phone</option></select></fieldset>',
         [fact('Email','person@example.test')],{'#e':'person@example.test','#p':'Email'},True))
     cases[-1]['human_answers']={'Preferred contact method':'Email'}
+    cases[-1]['source_questions']={'Your email address':'Email'}
     cases.append(case('heldout-fetched-question',
         '''<label for=c>Country</label><select id=c onchange="fetch('https://fixture.example/questions').then(r=>r.json()).then(d=>document.getElementById('new').innerHTML='<label for=s>Province or State</label><input id=s required>')"><option>Choose</option><option>United States</option></select><div id=new></div>''',
         [fact('Country','United States'),fact('State','Texas')],{'#c':'United States','#s':'Texas'},True))
     cases[-1]['prepared_address']=True
+    cases[-1]['source_questions']={'Province or State':'State'}
     cases.append(case('heldout-same-filename-documents',
         '<section><h2>Resume</h2><label for=r>Resume</label><input type=file id=r required></section>'
         '<section><h2>Cover Letter</h2><label for=l>Cover Letter</label><input type=file id=l required></section>',[],

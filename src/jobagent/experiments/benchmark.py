@@ -65,6 +65,17 @@ class Replay:
         return SimpleNamespace(invoke=invoke)
 
 
+def human_reply(case,facts,label,section=None):
+    """Simulated owner consults supplied facts, never the independent grader's expectations."""
+    from .resolution import norm
+    if label in case.get('human_answers',{}):return case['human_answers'][label]
+    requested=case.get('source_questions',{}).get(label,label)
+    matches=[f for f in facts if norm(requested) in map(norm,f.aliases)
+             and (not section or not f.section or norm(section)==norm(f.section))]
+    values={f.value for f in matches}
+    return next(iter(values)) if len(values)==1 else None
+
+
 def execute(case,engine,pw,root,real_model):
     from jobagent.tools import forms,shadow,wizard
     from jobagent.steps import apply as A
@@ -84,7 +95,7 @@ def execute(case,engine,pw,root,real_model):
     requests=[]
     def ask(q):
         requests.extend(x['label'] for x in q)
-        return {str(x['id']):case.get('human_answers',{}).get(x['label']) for x in q}
+        return {str(x['id']):human_reply(case,facts,x['label'],x.get('section')) for x in q}
     files={}
     for role in ('resume','cover_letter'):
         path=root/role/'attachment.pdf' if case.get('same_filename') else root/(role+'.pdf')
@@ -108,7 +119,7 @@ def execute(case,engine,pw,root,real_model):
                     match=re.search(r'application asks: "([^"]+)"',prompt)
                     label=match[1] if match else prompt
                     requests.append(label)
-                    return case.get('human_answers',{}).get(label,'skip')
+                    return human_reply(case,facts,label) or 'skip'
             h=Hitl();records=[]
             for n in range(1,16):
                 view,_=A.fill_page(page,ctx_data,files,model,lambda _:None,records,n,env={'hitl':h,'company':'fixture','host':'fixture'})
