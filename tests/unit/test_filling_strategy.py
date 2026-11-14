@@ -133,3 +133,28 @@ def test_saved_instruction_uses_common_source_checker_only_for_unresolved_fields
     result=A.run(world.page,world.job,'fixture',model=SourceModel(),filling_strategy='experimental',log=lambda _:None)
     assert result['ready_to_submit']
     assert planned==checked==['Desired salary'] and world.page.locator('#s').input_value()=='125000'
+
+
+def test_generic_file_type_label_does_not_hide_the_document_role(world):
+    (world.job/'resume.pdf').write_bytes(b'%PDF-1.4 test candidate document')
+    world.setup(CONTACT+'<label for=resume>Accepted file types: pdf doc docx txt rtf</label><input id=resume type=file>')
+    result=A.run(world.page,world.job,'fixture',model=SourceModel(),filling_strategy='experimental',log=lambda _:None)
+    assert result['ready_to_submit']
+    upload=next(f for f in result['fields'] if f['kind']=='file')
+    assert upload['verified'] and upload['answer']=='resume' and upload['held_file_sha256']
+
+
+def test_disappearing_upload_without_native_required_marker_cannot_be_ready(world,monkeypatch):
+    (world.job/'resume.pdf').write_bytes(b'%PDF-1.4 test candidate document')
+    world.setup(CONTACT+'<label for=resume>Resume</label><input id=resume type=file>')
+    fill=forms.fill_field
+    def replacing_uploader(page,view,field,value,files,*a,**kw):
+        if field.kind=='file':
+            forms.locate(view,field).evaluate('e=>e.remove()')
+            return files[value]
+        return fill(page,view,field,value,files,*a,**kw)
+    monkeypatch.setattr(forms,'fill_field',replacing_uploader)
+    result=A.run(world.page,world.job,'fixture',model=SourceModel(),filling_strategy='experimental',log=lambda _:None)
+    assert not result['ready_to_submit'] and result['state']=='blocked'
+    assert any('provided resume upload is not verified' in b for b in result['blockers'])
+    assert not world.page.evaluate('!!window.sent')

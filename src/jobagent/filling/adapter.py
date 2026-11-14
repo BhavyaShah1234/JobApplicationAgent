@@ -1,5 +1,8 @@
 """Experimental page planning inside the existing audited application workflow."""
 import json
+import hashlib
+import re
+from pathlib import Path
 from .facts import compile_facts,Decision,key
 from .planned import PlannedFiller,read_view
 
@@ -68,7 +71,13 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         ctx['_experimental_filler']=filler
     if filler.step!=page_no:
         filler.cache={};filler.step=page_no;filler.failures={}
-    try:result=filler.fill(page,files,advance_pages=False)
+    documents=ctx.setdefault('_experimental_uploads',{}).setdefault(page_no,{})
+    try:
+        for field in read_view(page).fields:
+            if field.kind!='file' or re.search(r'(?i)autofill|auto-fill|parse your resume',field.label):continue
+            role=A.upload_role(field.label)
+            if role in files:documents[(field.frame,field.label,field.slot)]=role
+        result=filler.fill(page,files,advance_pages=False)
     except Exception as exc:
         from jobagent.tools.challenge import Blocked
         if isinstance(exc,Blocked):raise
@@ -93,6 +102,17 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
              'readback':f.value,'verified':success,'held_file_sha256':entry.get('held_file_sha256')}
         row['outcome']=A.outcome_of(row,f)
         record.append(row);done[A._key(f)]=row
+    # A widget can disappear after dispatch, and its native required marker may
+    # be absent even when the visible form requires a resume. Neither situation
+    # makes a provided, recognised document optional to our verification.
+    document_blockers=[]
+    for (frame,label,slot),role in documents.items():
+        row=next((r for r in done.values() if (r['frame'],r['label'],r['slot'])==(frame,label,slot)),{})
+        if not (row.get('verified') and row.get('answer')==role and
+                row.get('held_file_sha256')==hashlib.sha256(Path(files[role]).read_bytes()).hexdigest()):
+            document_blockers.append(f'{label}: provided {role} upload is not verified')
+    if document_blockers:
+        result.update(state='blocked',ready=False,blockers=result['blockers']+document_blockers)
     env['_experimental_blockers']=result['blockers'] if result['state']!='page_complete' else []
     audit=ctx.setdefault('_experimental_pages',[])
     audit.append({'page':page_no,**{k:v for k,v in result.items() if k not in ('records','events')},

@@ -22,7 +22,9 @@ def read_view(page):
         loc=forms.locate(view,f)
         if f.kind=='file':
             labels=loc.evaluate('e=>[...(e.labels||[])].map(x=>x.innerText.trim()).filter(Boolean)')
-            if len(labels)==1:f.upload_caption=labels[0]
+            if len(labels)==1 and not re.fullmatch(
+                    r'(?i)\s*(?:attach|upload|browse|choose(?: a)? file|file|accepted file types?:.*)\s*[*:]?\s*',labels[0]):
+                f.upload_caption=labels[0]
         if not f.format:
             fmt=loc.get_attribute('placeholder') or ''
             if re.search(r'(?i)mm|yyyy|dd',fmt):f.format=fmt
