@@ -71,6 +71,7 @@ class PlannedFiller:
         self.facts=facts;self.ask=ask;self.model=model;self.cache={};self.events=[];self.model_calls=0
         self.human_wait_s=0.;self.questions=0;self.batches=0;self.failures={};self.step=0;self.human_answers={}
         self.declined=set()
+        self.upload_observer=None
 
     def plan(self, fields):
         if self.prepare_sources:self.facts=self.prepare_sources(fields)
@@ -215,6 +216,7 @@ class PlannedFiller:
                             held_sha=None
                             if f.kind=='file':
                                 if value not in files:raise ValueError('no role-specific file provided')
+                                if self.upload_observer:self.upload_observer(fresh,f,value)
                             chosen=forms.fill_field(page,fresh,f,value,files,strict=f.kind in ('select','combobox'))
                             page.wait_for_timeout(100)
                             after=read_view(page)

@@ -1,7 +1,6 @@
 """Experimental page planning inside the existing audited application workflow."""
 import json
 import hashlib
-import re
 from pathlib import Path
 from .facts import compile_facts,Decision,key
 from .planned import PlannedFiller,read_view
@@ -10,6 +9,20 @@ from .planned import PlannedFiller,read_view
 def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
     from jobagent.steps import apply as A
     from jobagent.tools import forms,application_address,learned
+    documents=ctx.setdefault('_experimental_uploads',{}).setdefault(page_no,{})
+
+    def upload_identity(view,field):
+        node=forms.locate(view,field).evaluate('e=>[e.id,e.getAttribute("name")]')
+        frame=view.frames[field.frame]
+        return (frame,*node) if any(node) else (frame,field.section,field.label,field.slot)
+
+    def observe_upload(view,field,role):
+        ident=upload_identity(view,field)
+        count=sum(upload_identity(view,g)==ident for g in view.fields if g.kind=='file')
+        previous=documents.get(ident,{})
+        documents[ident]={'role':role,'label':previous.get('label',field.label),
+                          'ambiguous':previous.get('ambiguous',False) or count!=1 or
+                          previous.get('role',role)!=role}
 
     def prepare(fields):
         matches=A.match_entries(fields,ctx.get('_jd',{}).get('company',''),ctx.get('_applicant') or {})
@@ -71,12 +84,8 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         ctx['_experimental_filler']=filler
     if filler.step!=page_no:
         filler.cache={};filler.step=page_no;filler.failures={}
-    documents=ctx.setdefault('_experimental_uploads',{}).setdefault(page_no,{})
+    filler.upload_observer=observe_upload
     try:
-        for field in read_view(page).fields:
-            if field.kind!='file' or re.search(r'(?i)autofill|auto-fill|parse your resume',field.label):continue
-            role=A.upload_role(field.label)
-            if role in files:documents[(field.frame,field.label,field.slot)]=role
         result=filler.fill(page,files,advance_pages=False)
     except Exception as exc:
         from jobagent.tools.challenge import Blocked
@@ -106,9 +115,11 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
     # be absent even when the visible form requires a resume. Neither situation
     # makes a provided, recognised document optional to our verification.
     document_blockers=[]
-    for (frame,label,slot),role in documents.items():
-        row=next((r for r in done.values() if (r['frame'],r['label'],r['slot'])==(frame,label,slot)),{})
-        if not (row.get('verified') and row.get('answer')==role and
+    for ident,doc in documents.items():
+        role=doc['role'];label=doc['label']
+        matches=[done[A._key(f)] for f in view.fields if f.kind=='file' and upload_identity(view,f)==ident]
+        row=matches[0] if len(matches)==1 else {}
+        if not (not doc['ambiguous'] and row.get('verified') and row.get('answer')==role and
                 row.get('held_file_sha256')==hashlib.sha256(Path(files[role]).read_bytes()).hexdigest()):
             document_blockers.append(f'{label}: provided {role} upload is not verified')
     if document_blockers:

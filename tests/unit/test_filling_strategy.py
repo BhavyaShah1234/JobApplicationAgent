@@ -171,3 +171,13 @@ def test_structured_preferred_name_and_explicit_blank_extension_are_preserved(wo
     assert world.page.locator('#p').input_value()=='CJ Morgan'
     assert world.page.locator('#x').input_value()==''
     assert not result['experimental_questions']
+
+
+def test_upload_obligation_survives_filename_added_to_caption(world):
+    (world.job/'resume.pdf').write_bytes(b'%PDF-1.4 test candidate document')
+    world.setup(CONTACT+'<label for=resume>Resume</label><div><input id=resume type=file '
+                'onchange="this.nextElementSibling.textContent=this.files[0].name"><span>Resume</span></div>')
+    result=A.run(world.page,world.job,'fixture',model=SourceModel(),filling_strategy='experimental',log=lambda _:None)
+    assert result['ready_to_submit']
+    upload=next(f for f in result['fields'] if f['kind']=='file')
+    assert 'resume.pdf' in upload['label'] and upload['verified'] and upload['held_file_sha256']
