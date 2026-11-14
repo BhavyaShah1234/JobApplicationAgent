@@ -5,7 +5,7 @@ batched questions and verified filling method:
 
 ```sh
 jobagent apply outputs/COMPANY/JOB_ID COMPANY --filling-strategy experimental
-jobagent run POSTING_URL COMPANY --filling-strategy experimental
+jobagent run POSTING_URL --filling-strategy experimental
 ```
 
 `submit` accepts the same option. Submission still uses the existing review, approval and
