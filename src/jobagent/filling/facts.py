@@ -119,7 +119,7 @@ def from_fact(f, fact):
 
 
 def resolve(f, facts):
-    label=f.label
+    label=re.sub(r'(?i)\((?:optional|if applicable)\)', '', f.label).strip()
     suffix=' '.join(f.options)
     if suffix and label.endswith(suffix):label=label[:-len(suffix)].strip()
     matches = [x for x in facts if norm(label) in map(norm, x.aliases)
@@ -142,7 +142,10 @@ def compile_facts(data, raw_jd):
                             'line2':['Address Line 2','Address 2','Apartment','Suite','Unit'],
                             'postal_code':['Zip Code','ZIP','Postal Code'], 'street': ['Address', 'Street Address', 'Address Line 1'], 'city': ['City'],
                             'state': ['State'], 'zip': ['Zip Code', 'ZIP', 'Postal Code'], 'country': ['Country']},
-        'Phone': {'number': ['Phone', 'Primary Phone', 'Phone Number']},
+        'Preferred name': {'first': ['Preferred first name'], 'last': ['Preferred last name'],
+                           'full': ['Preferred name', 'Preferred full name']},
+        'Phone': {'number': ['Phone', 'Primary Phone', 'Phone Number'],
+                  'extension': ['Phone Extension'], 'device_type': ['Phone Device Type']},
     }
     for section, entry in entries(data):
         value = entry.get('answer'); q = entry['question']; source = f'applicant/{section}/{q}/answer'

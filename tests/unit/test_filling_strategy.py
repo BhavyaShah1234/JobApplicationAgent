@@ -158,3 +158,16 @@ def test_disappearing_upload_without_native_required_marker_cannot_be_ready(worl
     assert not result['ready_to_submit'] and result['state']=='blocked'
     assert any('provided resume upload is not verified' in b for b in result['blockers'])
     assert not world.page.evaluate('!!window.sent')
+
+
+def test_structured_preferred_name_and_explicit_blank_extension_are_preserved(world):
+    world.data['Contact'] += [
+        {'question':'Preferred name','answer':{'first':'CJ','last':'Morgan','full':'CJ Morgan'}},
+        {'question':'Phone','answer':{'number':'2025550109','extension':''}}]
+    world.setup(CONTACT+'<label for=p>Preferred Name (if applicable)</label><input id=p value=Wrong>'
+                '<label for=x>Phone Extension</label><input id=x value=999>')
+    result=A.run(world.page,world.job,'fixture',model=SourceModel(),filling_strategy='experimental',log=lambda _:None)
+    assert result['ready_to_submit']
+    assert world.page.locator('#p').input_value()=='CJ Morgan'
+    assert world.page.locator('#x').input_value()==''
+    assert not result['experimental_questions']
