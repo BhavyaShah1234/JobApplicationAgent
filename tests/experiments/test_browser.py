@@ -123,3 +123,34 @@ def test_existing_referral_policy_is_retained_without_model_or_human_help(page):
     page.set_content('<label for=s>How did you hear about us?</label><select id=s><option>Choose</option><option>Company Website</option><option>Employee Referral</option></select><button type=button>Apply</button>')
     r=Candidate([],lambda q:pytest.fail(str(q)),referral_context={'company':'Fixture','contact':{}}).fill(page)
     assert r['ready'] and page.locator('#s').input_value()=='Employee Referral'
+
+
+def test_same_named_documents_finish_without_repeated_uploads(page,tmp_path):
+    page.set_content('<section><h2>Resume</h2><label for=r>Resume</label><input id=r type=file required></section>'
+                     '<section><h2>Cover Letter</h2><label for=c>Cover Letter</label><input id=c type=file required></section>'
+                     '<button type=button onclick="window.sent=true">Apply</button>'
+                     '<script>window.uploads=0;document.addEventListener("change",e=>{if(e.target.type==="file")window.uploads++})</script>')
+    files={}
+    for role in ('resume','cover_letter'):
+        directory=tmp_path/role;directory.mkdir()
+        p=directory/'attachment.pdf';p.write_bytes(('%PDF-1.4 '+role).encode());files[role]=str(p)
+    result=Candidate([],lambda q:pytest.fail(str(q))).fill(page,files,max_rounds=3)
+    assert result['ready'],result['blockers']
+    assert page.evaluate('window.uploads')==2
+    assert not page.evaluate('!!window.sent')
+    assert {r['answer'] for r in result['records']}=={'resume','cover_letter'}
+    assert all(r['held_file_sha256'] for r in result['records'])
+
+
+def test_same_name_file_replacement_is_detected_before_ready(page,tmp_path):
+    page.set_content('<label for=r>Resume</label><input id=r type=file required>'
+                     '<label for=c>Cover Letter</label><input id=c type=file required onchange="tamper()">'
+                     '<button type=button>Apply</button><script>function tamper(){if(window.changed)return;'
+                     'window.changed=true;let d=new DataTransfer();d.items.add(new File(["wrong bytes"],"resume.pdf"));'
+                     'document.getElementById("r").files=d.files;}</script>')
+    files={}
+    for role in ('resume','cover_letter'):
+        p=tmp_path/(role+'.pdf');p.write_bytes(('%PDF-1.4 '+role).encode());files[role]=str(p)
+    result=Candidate([],lambda q:pytest.fail(str(q))).fill(page,files,max_rounds=4)
+    assert result['ready'],result['blockers']
+    assert page.locator('#r').evaluate('async e=>await e.files[0].text()')=='%PDF-1.4 resume'

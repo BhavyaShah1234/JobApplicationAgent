@@ -29,6 +29,11 @@ def read_view(page):
     return view
 
 
+def held_file_sha256(view, field):
+    encoded=forms.locate(view,field).evaluate('''async e=>{const f=e.files?.[0];if(!f||f.size>5000000)return null;const b=new Uint8Array(await f.arrayBuffer());let s='';for(let i=0;i<b.length;i+=8192)s+=String.fromCharCode(...b.subarray(i,i+8192));return btoa(s)}''')
+    return hashlib.sha256(base64.b64decode(encoded)).hexdigest() if encoded else None
+
+
 class Mapping(BaseModel):
     field_id: int
     fact_id: str | None = None
@@ -153,8 +158,20 @@ class Candidate:
                     return self.result('blocked',records,started,view.coverage.problems())
                 if forms.human_check(page):
                     return self.result('challenge',records,started,['human challenge requires separate assistance'])
-                todo=[f for f in view.fields if key(f) not in self.cache or
-                      (self.cache[key(f)].value is not None and not forms.same_value(self.cache[key(f)].value,f.value,f.kind))]
+                def unchanged(f):
+                    decision=self.cache.get(key(f))
+                    if decision is None:return False
+                    if decision.value is None:return not f.required
+                    if f.kind=='file':
+                        # The cached value is a document ROLE, not its filename. Recheck retained
+                        # bytes so same-named files and a later widget mutation cannot defeat readiness.
+                        try:
+                            return decision.value in files and held_file_sha256(view,f)==hashlib.sha256(
+                                Path(files[decision.value]).read_bytes()).hexdigest()
+                        except Exception:
+                            return False
+                    return forms.same_value(decision.value,f.value,f.kind)
+                todo=[f for f in view.fields if not unchanged(f)]
                 if todo:
                     forms.discover_options(page,view)
                     nonfiles=[f for f in todo if f.kind!='file']
@@ -189,8 +206,7 @@ class Candidate:
                                 valid=valid and not forms.locate(after,actual).evaluate(
                                     'e=>e.getAttribute("aria-invalid")==="true" || (e.validity && !e.validity.valid)')
                             if valid and f.kind=='file':
-                                encoded=forms.locate(after,actual).evaluate('''async e=>{const f=e.files?.[0];if(!f||f.size>5000000)return null;const b=new Uint8Array(await f.arrayBuffer());let s='';for(let i=0;i<b.length;i+=8192)s+=String.fromCharCode(...b.subarray(i,i+8192));return btoa(s)}''')
-                                held_sha=hashlib.sha256(base64.b64decode(encoded)).hexdigest() if encoded else None
+                                held_sha=held_file_sha256(after,actual)
                                 valid=bool(held_sha) and held_sha==hashlib.sha256(Path(files[value]).read_bytes()).hexdigest()
                             if not valid:raise ValueError('control not accepted or exact readback unavailable')
                             self.cache[key(f)]=d;changed=True
