@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from playwright.sync_api import sync_playwright
 from .resolution import Fact
 from .engine import Candidate
+from .metrics import CallAudit
 
 
 def revision():
@@ -71,6 +72,8 @@ def execute(case,engine,pw,root,real_model):
     ctx=pw.chromium.launch(channel='chrome',headless=True).new_context();shadow.install(pw,ctx)
     browser=ctx.browser;page=ctx.new_page();page.set_content(case['html']);facts=[Fact(**f) for f in case['facts']]
     model=real_model or Replay(facts)
+    audit=CallAudit()
+    if real_model:real_model.callbacks=[*(real_model.callbacks or []),audit]
     def ask(q):return {}  # unanswered source gaps remain gaps, never repaired using the grader
     files={}
     for role in ('resume','cover_letter'):
@@ -79,7 +82,11 @@ def execute(case,engine,pw,root,real_model):
     try:
         if engine=='candidate':r=Candidate(facts,ask,real_model).fill(page,files)
         else:
-            data={'fixture':[{'question':x.aliases[0],'answer':x.value} for x in facts]}
+            data={'fixture':[{'question':x.aliases[0],'seen':x.aliases,'answer':x.value,
+                    'instructions':('Applies only to '+x.section) if x.section else ''} for x in facts]}
+            if case['name']=='conditional':
+                data['contact']=[{'question':'Current address','seen':['Country','State'],
+                    'answer':{'line1':'123 Example Street','city':'Houston','state':'Texas','postal_code':'77002','country':'United States'}}]
             import yaml
             ctx_data={'APPLICANT':yaml.safe_dump(data),'RESUME':'','JD':'','_applicant':data,'_jd':{}}
             class Hitl:
@@ -94,7 +101,7 @@ def execute(case,engine,pw,root,real_model):
                 verdict,_,_,_=wizard.wait_for_progress(page,before)
                 if verdict!='advanced':break
             blockers=A.blockers_of(records)+view.coverage.problems()+view.errors
-            r={'engine':'current','ready':not blockers,'records':records,'blockers':blockers,
+            r={'engine':'current','ready':not blockers and any(forms.SUBMIT.search(b) for b in view.buttons),'records':records,'blockers':blockers,
                'active_s':time.monotonic()-start,'questions':h.count,'model_calls':getattr(model,'calls',None)}
         actual={}
         for selector in case['expected']:
@@ -104,26 +111,32 @@ def execute(case,engine,pw,root,real_model):
                 actual[selector]=page.evaluate('(s)=>window.__jobagentAll(s)[0]?.value',selector[7:])
             elif selector.startswith('frame:'):actual[selector]=page.frames[1].locator(selector[6:]).input_value()
             else:actual[selector]=page.locator(selector).input_value()
-        r.update(fixture=case['name'],heldout=case['heldout'],graded_correct=actual==case['expected'],
+        r.update(model_calls=audit.calls if real_model else r.get('model_calls'),reported_tokens=audit.reported_tokens,
+                 model_name=getattr(model,'model_name','replay'),fixture=case['name'],heldout=case['heldout'],graded_correct=actual==case['expected'],
                  submitted=page.evaluate('!!window.sent'),actual=actual)
         return r
     except Exception as e:
         return {'engine':engine,'fixture':case['name'],'ready':False,'graded_correct':False,
-                'active_s':time.monotonic()-start,'error':type(e).__name__+': '+str(e)[:200]}
+                'model_calls':audit.calls if real_model else getattr(model,'calls',0),
+                'reported_tokens':audit.reported_tokens,'active_s':time.monotonic()-start,'error':type(e).__name__+': '+getattr(e,'kind','browser_or_harness')}
     finally:browser.close()
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=Path,required=True)
     p.add_argument('--repetitions',type=int,default=3);p.add_argument('--model',action='store_true')
-    p.add_argument('--smoke',action='store_true');args=p.parse_args()
+    p.add_argument('--smoke',action='store_true');p.add_argument('--model-name');args=p.parse_args()
     if args.output.exists():raise ValueError('output must be new')
     args.output.mkdir(parents=True,mode=0o700)
+    import hashlib
+    checkpoint=Path('docs/experiments/shared-checkpoint/verified-source-test-manifest.json')
+    checkpoint_verified=checkpoint.exists() and all(Path(f).exists() and hashlib.sha256(Path(f).read_bytes()).hexdigest()==h for f,h in json.loads(checkpoint.read_text()).items())
+    if args.model and not checkpoint_verified:raise ValueError('Provider trials require the verified shared checkpoint')
     model=None
     if args.model:
         from jobagent import llm
         from jobagent.config import get_settings
-        model=llm.writer(model=get_settings().model_planner,timeout=120)
+        model=True
     rows=[];cases=fixtures()[:2] if args.smoke else fixtures()
     import hashlib
     source_hashes={str(f):hashlib.sha256(f.read_bytes()).hexdigest() for f in Path('src/jobagent').rglob('*.py')}
@@ -132,7 +145,10 @@ def main():
         for rep in range(args.repetitions):
             for case in cases:
                 for engine in (['current','candidate'] if rep%2==0 else ['candidate','current']):
-                    r=execute(case,engine,pw,args.output/f'{rep}-{case["name"]}-{engine}',model)
+                    trial_model=None
+                    if args.model:
+                        trial_model=llm.writer(model=args.model_name or get_settings().model_writer,timeout=get_settings().llm_timeout_s)
+                    r=execute(case,engine,pw,args.output/f'{rep}-{case["name"]}-{engine}',trial_model)
                     rows.append(r);print(case['name'],engine,r['graded_correct'],r.get('error',''),flush=True)
                     (args.output/'trials.json').write_text(json.dumps(rows,indent=2))
     summary={'classification':'exploratory-real-model' if args.model else 'replay-smoke-not-a-latency-or-promotion-result',
@@ -140,10 +156,12 @@ def main():
              'input_sha256':__import__('hashlib').sha256(json.dumps(cases,sort_keys=True).encode()).hexdigest(),
              'source_sha256':{str(f):__import__('hashlib').sha256(f.read_bytes()).hexdigest() for f in Path('src/jobagent').rglob('*.py')},
              'sources_changed_during_run':any(hashlib.sha256(Path(f).read_bytes()).hexdigest()!=h for f,h in source_hashes.items()),
-             'formal_checkpoint_integrated':False,'promotion_allowed':False,'trials':len(rows)}
+             'formal_checkpoint_integrated':checkpoint_verified,'promotion_allowed':False,'trials':len(rows)}
     for engine in ('current','candidate'):
         arm=[r for r in rows if r['engine']==engine]
-        summary[engine]={'correct':sum(r['graded_correct'] for r in arm),'completed':sum(bool(r.get('ready')) for r in arm),
+        summary[engine]={'provider_calls':sum(r.get('model_calls') or 0 for r in arm),
+                         'provider_reported_tokens':sum(r.get('reported_tokens') or 0 for r in arm) if any(r.get('reported_tokens') is not None for r in arm) else None,
+                         'correct':sum(r['graded_correct'] for r in arm),'completed':sum(bool(r.get('ready')) for r in arm),
                          'median_active_s':statistics.median(r['active_s'] for r in arm),'questions':sum(r.get('questions',0) for r in arm),
                          'false_ready':sum(bool(r.get('ready')) and not r['graded_correct'] for r in arm),
                          'errors':sum('error' in r for r in arm)}

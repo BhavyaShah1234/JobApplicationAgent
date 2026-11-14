@@ -65,7 +65,7 @@ def run(args):
     candidate_data={k:v for k,v in ctx_data['_applicant'].items() if k!='experiment_explicit_facts'}
     raw=(job/'jd.txt').read_text()
     facts=compile_facts(candidate_data,raw)+explicit
-    model=llm.writer(model=get_settings().model_planner,timeout=120) if args.model else None
+    model=llm.writer(model=get_settings().model_writer,timeout=get_settings().llm_timeout_s) if args.model else None
     from .metrics import CallAudit
     audit=CallAudit()
     if model:model.callbacks=[*(model.callbacks or []),audit]
