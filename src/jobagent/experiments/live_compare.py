@@ -150,7 +150,8 @@ def main():
         adapter.fill_page=instrument(adapter.fill_page)
     blocked=[]
     def route(r):
-        request=r.request;url=request.url.lower();body=request.post_data or ''
+        request=r.request;url=request.url.lower()
+        body=(request.post_data_buffer or b'').decode('utf-8',errors='replace')
         is_final=request.method=='POST' and (
             any(x in url for x in ('submitapplication','submit-application','application/submit','jobapplication/submit')) or
             ('greenhouse.io' in url and '/jobs/' in url and not any(x in url for x in ('upload','parse','validate'))) or
