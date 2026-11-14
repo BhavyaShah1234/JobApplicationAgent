@@ -195,12 +195,17 @@ FIELDS_JS = r"""(start) => {
       // file inputs are often hidden behind an "Attach" button: count them when their container shows
       const box = e.closest('div, section, fieldset') || e.parentElement;
       if (!box || !vis(box) || !shown(box)) continue;
-      // the upload's own caption ("Resume/CV*", "Cover Letter"): the nearest container text that isn't just buttons
+      // The caption is the upload's OWN explicit label first (`label[for]`, aria, a wrapping label), then the text of the nearest
+      // container that holds THIS upload alone and is short (usually the wrapping label itself). A container that also holds another
+      // upload, or is long, adds nothing: on a flat page it is the whole body, whose text names the other documents too, and used to
+      // make a Resume input read "... Cover Letter ...", so that the cover-letter file went into both.
+      const own = question(e);
       let cap = '';
       for (let a = e.parentElement, k = 0; a && k < 5 && !cap; a = a.parentElement, k++) {
+        if ([...a.querySelectorAll('input[type=file]')].some(x => x !== e)) break;
         const x = clean(a.innerText).replace(/\b(attach|dropbox|google drive|enter manually|upload|or drag and drop( here)?|browse)\b/gi, '').replace(/[,|]/g, ' ').trim();
-        if (x.length > 2) cap = clean(x).slice(0, 120); }
-      const q = e.getAttribute('data-jf-upload-label') || [question(e), cap, e.id || e.name].filter(t => t && !/^attach$/i.test(t)).join(' / ');
+        if (x.length > 2 && x.length <= 120) cap = clean(x); }
+      const q = e.getAttribute('data-jf-upload-label') || [own, cap, e.id || e.name].filter(t => t && !/^attach$/i.test(t)).join(' / ');
       add(e, {kind: 'file', label: q, required: required(e, q),   // the question's own marker counts, not only the caption's
               // only files really attached: the box's caption ("ATTACH RESUME/CV") is not a value
               value: e.files && e.files.length ? [...e.files].map(f => f.name).join(', ') : '',
@@ -251,9 +256,15 @@ FIELDS_JS = r"""(start) => {
       add(e, {kind: 'checkbox', label: q, required: required(e, q), value: on ? 'checked' : ''}); continue; }
     if (role === 'radio') continue;  // ARIA radio groups are rare on forms; left to the page model
     if (e.tagName === 'SELECT') {
-      const opts = [...e.options].map(o => clean(o.text)).filter(Boolean);
+      const opts = [...e.options].filter(o => !o.disabled && !o.hidden).map(o => clean(o.text)).filter(Boolean);   // a disabled prompt is not a choice
       add(e, {kind: 'select', label: q, required: required(e, q), options: opts.slice(0, 300), multiple: e.multiple,
-              value: e.selectedIndex >= 0 && e.value ? clean(e.options[e.selectedIndex].text) : ''}); continue; }
+              value: e.selectedIndex >= 0 && e.value ? clean(e.options[e.selectedIndex].text) : '',
+              // The selected option's own evidence that it is a PROMPT and not an answer: a disabled option is never submitted, a hidden
+              // one is not offered, and a `data-placeholder` / placeholder-labelled one says so. A longer, question-specific prompt
+              // ("Select your preferred contact method") cannot be recognised by its words, so the control says it here.
+              prompt: e.selectedIndex >= 0 && (e.options[e.selectedIndex].disabled || e.options[e.selectedIndex].hidden
+                  || e.options[e.selectedIndex].hasAttribute('data-placeholder') || e.options[e.selectedIndex].getAttribute('value') === 'placeholder'
+                  || (e.options[e.selectedIndex].parentElement.tagName === 'OPTGROUP' && e.options[e.selectedIndex].parentElement.disabled))}); continue; }
     if (role === 'combobox' || e.getAttribute('aria-haspopup') === 'listbox' || e.getAttribute('aria-autocomplete')) {
       const box = e.closest('[class*=control i]') || (e.parentElement && e.parentElement.closest('[data-automation-id]')) || e.parentElement;
       const shownValue = e.tagName === 'BUTTON' ? clean(e.innerText).replace(/^(select all that apply|select( an?)?( answer| option| one)?)\b\s*/i, '') :
@@ -318,6 +329,7 @@ class Field:
     format: str = ""
     help: str = ""
     slot: int = 0   # for uploads: which of several same-named uploads in this frame (DOM order); 0 for the first
+    prompt: bool = False   # a select whose selected option is itself a prompt (disabled / hidden / marked placeholder), not an answer
     linked: bool = False   # an upload's native input that a lazy trigger's own click opened (carries that trigger's caption)
 
     def brief(self) -> str:
@@ -407,6 +419,17 @@ def clean_label(label: str) -> str:
     return COUNTER.sub("", label or "").strip()
 
 
+PLACEHOLDER_VALUE = re.compile(r"(?i)^\s*[-\u2013\u2014 ]*(please\s+)?(select|choose|pick)\b[^a-z0-9]*(an?\s+)?(one|option|answer|value|item)?[^a-z0-9]*[-\u2013\u2014 ]*$")
+
+
+def has_value(f: "Field") -> bool:
+    """Does the field hold a real answer? A choice field showing its own prompt ("Choose", "-- Select --", "Please select one") holds
+    none: that is the empty state of the control, not a prefilled value, and must never count as an answer or as verified (F-exp)."""
+    if not f.value or f.prompt:
+        return False          # a prompt the control itself marks (disabled / hidden / placeholder option) is never an answer
+    return not (f.kind in ("select", "combobox", "radio", "buttons", "checkboxes") and PLACEHOLDER_VALUE.match(f.value))
+
+
 def merge_linked_uploads(fields: list) -> list:
     """F28: a native input that a lazy trigger's own click opened and the page kept (outside the widget, hidden) is the SAME upload as
     its trigger, not a second one. Merged only on that explicit association (`linked`) and only when exactly one trigger carries the
@@ -456,7 +479,7 @@ def read_page(page: Page) -> PageView:
                                 value=x.get("value") or "", options=x.get("options") or [], section=x.get("section", ""),
                                 frame=k, multiple=bool(x.get("multiple")), accept=x.get("accept", ""),
                                 maxlength=x.get("maxlength"), format=x.get("format", ""), help=x.get("help", ""),
-                                linked=bool(x.get("linked"))))
+                                linked=bool(x.get("linked")), prompt=bool(x.get("prompt"))))
         adds += [{**a, "frame": k} for a in snap.get("adds", [])]
         buttons += snap["buttons"]
         errors += snap["errors"]

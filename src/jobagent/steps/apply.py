@@ -631,13 +631,52 @@ def _tie_break(model, log):
 
 ENTRY_OK = re.compile(r"(?i)work experience|employment|education|^experience")
 ERRORS_HEAD = re.compile(r"(?i)^errors? found|^\d+ errors?|^error")
-def is_address(label: str) -> bool:
+COVER_WORD = re.compile(r"(?i)cover")
+RESUME_WORD = re.compile(r"(?i)resume|r\u00e9sum\u00e9|\bcv\b|curriculum")
+
+
+def upload_role(label: str) -> str:
+    """'resume', 'cover_letter' or '' for an upload, from its OWN caption: the label's parts in order (the explicit caption first,
+    then a fallback container text, then the input's id or name). A part that names exactly one role decides; a part naming both
+    ("Resume and Cover Letter") or neither is passed over; if no part decides the role is left to the planner, never guessed. Only a
+    generic "upload a file" is taken as the resume. Surrounding text can no longer turn a Resume caption into a cover letter."""
+    parts = [p for p in re.split(r"\s/\s", label or "") if p.strip()]
+    for part in parts:
+        cover, resume = bool(COVER_WORD.search(part)), bool(RESUME_WORD.search(part))
+        if cover and not resume:
+            return "cover_letter"
+        if resume and not cover:
+            return "resume"
+    return "resume" if re.search(r"(?i)upload a file", label or "") else ""
+
+
+NOT_POSTAL = re.compile(r"(?i)e-?mail|\burl\b|web\s?site|\bip address\b|\bmac address\b|\blinkedin\b|\bgithub\b|\bportfolio\b")
+POSTAL_CODE_Q = re.compile(r"(?i)\b(zip|postal|post\s?code|pin\s?code)\b")
+PHONE_Q = re.compile(r"(?i)\b(phone|telephone|mobile|cell|fax|tel)\b")
+
+
+def not_postal(label: str, kind: str = "") -> bool:
+    """Is this field clearly NOT a postal-address part? The ONE classifier behind the address helpers, the selected-address
+    enforcement and the address question to the candidate, so they cannot disagree. Intent comes from the question, with the input type as
+    evidence: an email or link is never postal; a `tel` input is a phone UNLESS its question is explicitly a postal code (sites use
+    type=tel for the numeric keyboard of a ZIP), and a question that names a phone is a phone whatever its type."""
+    label = label or ""
+    if kind in ("email", "url") or NOT_POSTAL.search(label):
+        return True
+    if kind == "tel":
+        return not POSTAL_CODE_Q.search(label) or bool(PHONE_Q.search(label))
+    return False
+
+
+def is_address(label: str, kind: str = "") -> bool:
     """An address part ("City", "State", "Postal Code", "Address Line 1"), not a question that mentions one
     ("Are you a current Federal, State or local government employee?")."""
+    if not_postal(label, kind):
+        return False                              # "Your email address" asks for an email, not a postal address; a ZIP typed tel still is one
     return bool(ADDRESS.search(label)) and (len(label) <= 40 or re.search(r"(?i)\baddress\b", label) is not None)
 
 
-ADDRESS = re.compile(r"(?i)\baddress\b|\bstreet\b|^\s*city\b|\bstate\b|^\s*region\b|province|postal|\bzip\b|county|"
+ADDRESS = re.compile(r"(?i)\baddress\b|\bstreet\b|^\s*city\b|\bstate\b|^\s*region\b|province|postal|\bzip\b|post\s?code|pin\s?code|county|"
                      r"current location|location \(city\)")
 
 
@@ -681,6 +720,8 @@ def enforce_selected_address(todo: list[forms.Field], answers: dict, ctx: dict) 
     matched = match_entries(todo, ctx.get("_jd", {}).get("company", ""), ctx["_applicant"])
 
     for f in todo:
+        if not_postal(f.label, f.kind):
+            continue                      # an email / link / phone field is never filled from the postal address (a tel-typed ZIP is not skipped)
         question = matched.get(f.id, ("", {}))[1].get("question")
 
         if question == "Current location (city)":
@@ -760,7 +801,7 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
             continue
 
         if (
-            is_address(field.label)
+            is_address(field.label, field.kind)
             and not has_addr
             and (answer.value or answer.lookup)
             and not field.value
@@ -840,8 +881,8 @@ def misfit(f: forms.Field, ans: str) -> str:
 def consult_learned(todo: list[forms.Field], answers: dict, ctx: dict, model, log) -> None:
     """Questions applicant.yaml didn't answer: look up what the candidate taught on earlier forms (data/learned.yaml,
     only the few entries closest to each question) and plan those fields again with them."""
-    stuck = [f for f in todo if f.kind != "file" and not is_address(f.label)
-             and ((a := answers.get(f.id)) is None or a.ask_human or (f.required and not a.value and not f.value))]
+    stuck = [f for f in todo if f.kind != "file" and not is_address(f.label, f.kind)
+             and ((a := answers.get(f.id)) is None or a.ask_human or (f.required and not a.value and not forms.has_value(f)))]
     if not stuck:
         return
     company = ctx.get("_jd", {}).get("company", "")
@@ -895,7 +936,7 @@ def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict,
     consult_learned(todo, answers, ctx, model, log)
     if env.get("hitl") is None:
         return
-    unanswered = [f for f in todo if f.kind != "file" and not f.value
+    unanswered = [f for f in todo if f.kind != "file" and not forms.has_value(f)
                   and not (answers.get(f.id) and answers[f.id].value)]
     # ask only what matters: a required field, or a question (choice field) the planner says only the candidate
     # can answer; an optional text box with no data (Address Line 2) stays empty
@@ -903,13 +944,13 @@ def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict,
                and (f.required or f.kind not in forms.TEXT_KINDS or HEARD.search(f.label))]
     # a required field the planner left empty without asking may vanish once the page is filled (the To date of a
     # job marked "I currently work here"): asked after filling, if it's still there
-    later = [f for f in unanswered if f.required and f not in flagged and not is_address(f.label)]
+    later = [f for f in unanswered if f.required and f not in flagged and not is_address(f.label, f.kind)]
     if deferred is not None:
         deferred += later
-        ask = flagged + [f for f in unanswered if f.required and is_address(f.label) and f not in flagged]
+        ask = flagged + [f for f in unanswered if f.required and is_address(f.label, f.kind) and f not in flagged]
     else:
         ask = flagged + later
-    addr = [f for f in ask if is_address(f.label)]
+    addr = [f for f in ask if is_address(f.label, f.kind)]
     if addr:
         # the address belongs in applicant.yaml's address entry (not a learned answer): one request for all its fields
         from jobagent.tools.hitl import HitlTimeout
@@ -990,8 +1031,8 @@ def outcome_of(e: dict, f) -> str:
         return "gone"
     if e.get("clear"):
         return "verified" if e["verified"] else "failed"
-    if f.value:
-        return "verified"                       # the page already had a value (prefilled)
+    if forms.has_value(f):
+        return "verified"                       # the page already had a value (prefilled); a choice showing its prompt has none
     if not e.get("answered", True):
         return "unplanned" if e["required"] else "unplanned (optional)"
     return "unanswered (required)" if e["required"] else "left empty (optional)"
@@ -1113,8 +1154,7 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                 answers[f.id] = Answer(id=f.id, why="an autofill box would overwrite filled answers", value="",
                                        source="applicant")
             elif f.kind == "file":
-                kind = "cover_letter" if re.search(r"(?i)cover", f.label) else \
-                    "resume" if re.search(r"(?i)resume|\bcv\b|upload a file", f.label) else ""
+                kind = upload_role(f.label)
                 if kind:
                     answers[f.id] = Answer(id=f.id, why="upload by its caption", value=kind, source="applicant")
         deferred: list[forms.Field] = []
@@ -1242,7 +1282,7 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
         elif e.get("clear"):
             e["verified"] = not f.value and not e["required"]
         elif not want:
-            e["verified"] = not e["required"] or bool(f.value)
+            e["verified"] = not e["required"] or forms.has_value(f)
         else:
             e["verified"] = forms.same_value(want, f.value, e["kind"])
         e["outcome"] = outcome_of(e, f)
