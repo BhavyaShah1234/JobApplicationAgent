@@ -9,8 +9,8 @@ The original checkout remains available to Claude Code; do not deploy these modu
 - Initial source baseline: `011116f`. This includes the allowlisted dirty implementation from the original checkout,
   not just its earlier HEAD. `baseline-manifest.json` records the captured files. No actual applicant files or state
   were added to Git.
-- Claude Code owns unchecked findings in the original checkout. This branch does not mark those findings resolved.
-- After Claude commits completed fixes, record that commit, reconcile overlapping interfaces in this worktree, and
+- Claude Code owns production repairs in the original checkout. Codex verified the final F27/F29 repairs there; all 30 original findings are now checked within their recorded acceptance scope.
+- Capture Claude's completed fixes with a source/test hash manifest, reconcile overlapping interfaces in this worktree, and
   rerun BOTH engines against the same integrated code and identical private inputs. No automatic merge or rebase
   of the owner's dirty checkout. A new checkpoint starts a new measurement batch.
 - Until that checkpoint is available, all benchmark results are exploratory. Replay timings are not model timings
@@ -30,12 +30,14 @@ The replay runs the actual existing `apply.fill_page` against a deterministic mo
 experimental engine. It independently grades DOM values, preserves failures, alternates arm order, and writes
 `trials.json`, `trials.csv`, `summary.json`, and a source manifest. It never repairs answers using the grader.
 The synthetic upload PDFs are transport-test payloads, not valid production documents.
-Add `--model` only for explicitly intended Voyager calls; both arms then use the configured planner model.
+Add `--model` only for explicitly intended Voyager calls; both arms then use the configured production filling/writer model (`devstral2-123b` in the current environment).
 No live provider calls are made by replay or the tests.
 
-Twelve cases include ordinary text, numeric travel choices, school identities, dates, hidden fields, embedded
-schemas, dependent controls, two upload roles, repeated entity scopes, closed roots, embedded frames and a wizard.
-Four cases are tagged held-out. Keep their results visible, and do not tune against them while describing them as
+The current twelve-case provider cohort includes ordinary text, numeric travel choices, school identities, dates, hidden
+fields, embedded schemas, dependent controls, two upload roles, a contact-label variation with a genuinely missing preference,
+an API-delivered question, same-named documents checked by bytes, and a 50-field scoped education/employment form.
+Four cases are tagged held-out. The historical replay used a different held-out set; closed roots, frames and a wizard
+remain covered by focused browser tests, not by the current provider cohort. Keep their results visible, and do not tune against them while describing them as
 unseen. Additional browser tests exercise fetched question definitions and refusal of false readiness.
 
 ## A live draft trial
@@ -141,3 +143,44 @@ The recorded replay is in `results/c60db6d-replay/REPORT.md`. It is explicitly n
 - Scope is established from the initial navigation before the manual authentication/navigation pause and checked
   again afterwards, so unrelated setup navigation is not silently trusted as a fresh redirect.
 - `git diff --check` passes. Production source and the original checkout were not edited by this experiment.
+
+## Verified shared checkpoint and provider evaluation (2026-11-13)
+
+Claude's final production fixes were captured as checkpoint `51cebb0` without modifying or committing the owner's
+dirty production checkout. The source/unit manifest and independent 83-pass prerequisite run are retained under
+`shared-checkpoint/`. All final reviewer regressions from the previous two rounds passed. No new independent full
+1119-test run is claimed. Earlier “pending checkpoint” dispositions above describe historical prototype versions.
+
+The experiment's native-file adapter was reconciled with the updated production field identity API. The focused
+experiment suite then passed **22 tests**, with 13 dependency warnings, in 66.84 s. Production CLI paths still do
+not import these experiment modules. The source remained separate from `/app/src/jobagent`.
+
+A four-trial real-provider pilot used the actual writer model and passed on both arms. A fresh 12-case, three-repeat
+comparison was then frozen at `2e5a46f`: 72 trials, counterbalanced engine order, isolated trial state and model audit,
+identical supplied fact content, independent DOM/upload grading, and no final application clicks. The four held-out
+layouts were frozen before their provider results were observed. Several earlier partial preparation runs were
+aborted to correct the simulated-owner protocol before reaching those held-out layouts; they are excluded from the
+evaluation batch and must not be pooled with it.
+
+The fixture responder only answers from supplied sources or the explicitly declared missing-preference oracle. It
+also confirms a source-backed answer when the baseline requests “keep”; such confirmations still count as avoidable
+assists. The grader is never used to answer a question. An additional provenance audit marks selecting the missing
+contact preference without asking as unsupported, even if the resulting value happens to match the oracle.
+
+Fixture facts are already normalized. This isolates source-to-control resolution but does **not** establish that the
+compiler correctly normalizes every real applicant file. Account setup, browser challenges and actual portal layout
+coverage require separate live-draft evidence. Production promotion remains disabled until that evidence is reviewed.
+
+### Completed first provider cohort
+
+The full 72-trial frozen result is in [the provider report](results/2e5a46f-provider/REPORT.md).
+Measured candidate values were correct in 36/36 trials versus 30/36; median active time was 2.37 s versus
+10.76 s, and avoidable questions were 0 versus 9. Both arms reported ready in 33/36, but the candidate had a
+new per-case completion regression on same-named files. A post-measurement repair is `9d6aad1`; the 24-test
+experiment suite passed, including two regressions that failed on the measured version. The original results
+remain unchanged. A separate six-trial prepared-address context check and read-only live-posting preflight
+are documented in the report. No live draft was filled or submitted.
+
+Production adoption is **not approved** by these results. Validate the repair on fresh layouts and complete
+the planned paired live drafts, including actual fact compilation, before claiming the experiment succeeded
+across portals. Three additional baseline follow-ups are documented in the root review handoff.

@@ -1,0 +1,6 @@
+0 candidate True ['Preferred contact method']
+0 current False []
+1 current False []
+1 candidate True ['Preferred contact method']
+2 candidate True ['Preferred contact method']
+2 current False []

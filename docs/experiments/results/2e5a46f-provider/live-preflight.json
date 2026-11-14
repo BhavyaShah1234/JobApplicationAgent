@@ -1,0 +1,677 @@
+[
+  {
+    "company": "Stripe",
+    "job_dir": "outputs/stripe/8130881",
+    "portal": "greenhouse",
+    "url": "https://job-boards.greenhouse.io/stripe/jobs/8130881",
+    "status": "excluded_non_US_from_saved_JD"
+  },
+  {
+    "company": "Symbotic",
+    "job_dir": "outputs/symbotic/748f7518d9",
+    "portal": "symbotic.com",
+    "url": "https://www.symbotic.com/careers/jobs/R7014/",
+    "status": "loaded",
+    "http_status": 200,
+    "final_url": "https://www.symbotic.com/careers/jobs/R7014/",
+    "fields": [],
+    "buttons": [
+      "SKIP TO MAIN CONTENT",
+      "Investors",
+      "Contact Us",
+      "English",
+      "Home",
+      "Solutions",
+      "Industries",
+      "News & Events",
+      "About Us",
+      "Careers",
+      "CONTACT",
+      "Search",
+      "APPLY NOW",
+      "BACK TO ALL OPEN POSITIONS",
+      "Senior Mechanical Engineer - Robotics Fleet",
+      "APPLY",
+      "Staff Software Engineer",
+      "Principal Autonomous Test Engineer",
+      "Principal Software Engineer, Perception",
+      "Return to homepage",
+      "Linkedin",
+      "Facebook",
+      "X",
+      "Instagram",
+      "Cookies Settings",
+      "Reject All",
+      "Accept All Cookies",
+      "Close"
+    ],
+    "coverage": [],
+    "apply_links": [
+      {
+        "text": "APPLY NOW",
+        "href": "https://symbotic.wd504.myworkdayjobs.com/Symbotic/job/USA-Wilmington--MA---HQ/Robotics-Planning-Engineer--All-Levels-_R7014"
+      },
+      {
+        "text": "APPLY NOW",
+        "href": "https://symbotic.wd504.myworkdayjobs.com/Symbotic/job/USA-Wilmington--MA---HQ/Robotics-Planning-Engineer--All-Levels-_R7014"
+      },
+      {
+        "text": "APPLY",
+        "href": "https://www.symbotic.com/careers/jobs/R8260/"
+      },
+      {
+        "text": "APPLY",
+        "href": "https://www.symbotic.com/careers/jobs/R7514/"
+      },
+      {
+        "text": "APPLY",
+        "href": "https://www.symbotic.com/careers/jobs/R8197/"
+      },
+      {
+        "text": "APPLY",
+        "href": "https://www.symbotic.com/careers/jobs/R7829/"
+      }
+    ],
+    "frame_urls": [
+      "https://www.symbotic.com/careers/jobs/R7014/",
+      "about:blank",
+      "about:blank",
+      "https://match.adsrvr.org/track/cei?advertiser_id=5q5erfp&cookie_sync=1&upv=3.0.0&upid=2tuofuk&ref=https%3a%2f%2fwww.symbotic.com&redirect=1",
+      "https://dsum-sec.casalemedia.com/rum?cm_dsp_id=39&external_user_id=1feafc5a-26de-43b7-ba8b-8dcf9005c299&expiration=1797217448&gdpr=0&gdpr_consent=&C=1",
+      "https://match.adsrvr.org/track/cmf/rubicon?gdpr=0",
+      "https://ib.adnxs.com/getuid?https%3a%2f%2fmatch.adsrvr.org%2ftrack%2fcmf%2fappnexus%3fttd%3d1%26anid%3d%24UID&ttd_tdid=1feafc5a-26de-43b7-ba8b-8dcf9005c299"
+    ],
+    "setup_seconds": 4.661047577999852
+  },
+  {
+    "company": "General Mills",
+    "job_dir": "outputs/general-mills/10129073",
+    "portal": "workday",
+    "url": "https://genmills.wd1.myworkdayjobs.com/en-US/GMI_External_Careers/job/Sr-Data-Scientist--Remote-Eligible-_10129073?locationCountry=bc33aa3152ec42d4995f4791a106ed09",
+    "status": "loaded",
+    "http_status": 521,
+    "final_url": "https://genmills.wd1.myworkdayjobs.com/en-US/GMI_External_Careers/job/Sr-Data-Scientist--Remote-Eligible-_10129073?locationCountry=bc33aa3152ec42d4995f4791a106ed09",
+    "fields": [],
+    "buttons": [],
+    "coverage": [],
+    "apply_links": [],
+    "frame_urls": [
+      "https://genmills.wd1.myworkdayjobs.com/en-US/GMI_External_Careers/job/Sr-Data-Scientist--Remote-Eligible-_10129073?locationCountry=bc33aa3152ec42d4995f4791a106ed09"
+    ],
+    "setup_seconds": 3.177814134996879
+  },
+  {
+    "company": "Intel",
+    "job_dir": "outputs/intel/JR0288200-1",
+    "portal": "workday",
+    "url": "https://intel.wd1.myworkdayjobs.com/en-US/External/job/GPU-Software-Development-Engineer_JR0288200-1?locations=1e4a4eb3adf101b8aec18a77bf810dd0",
+    "status": "loaded",
+    "http_status": 521,
+    "final_url": "https://intel.wd1.myworkdayjobs.com/en-US/External/job/GPU-Software-Development-Engineer_JR0288200-1?locations=1e4a4eb3adf101b8aec18a77bf810dd0",
+    "fields": [],
+    "buttons": [],
+    "coverage": [],
+    "apply_links": [],
+    "frame_urls": [
+      "https://intel.wd1.myworkdayjobs.com/en-US/External/job/GPU-Software-Development-Engineer_JR0288200-1?locations=1e4a4eb3adf101b8aec18a77bf810dd0"
+    ],
+    "setup_seconds": 3.0373640670004534
+  },
+  {
+    "company": "Intel",
+    "job_dir": "outputs/intel/JR0287335",
+    "portal": "workday",
+    "url": "https://intel.wd1.myworkdayjobs.com/en-US/External/job/US-California-Santa-Clara/AI-Software-Development-Engineer---Neuromorphic-Computing_JR0287335",
+    "status": "loaded",
+    "http_status": 521,
+    "final_url": "https://intel.wd1.myworkdayjobs.com/en-US/External/job/US-California-Santa-Clara/AI-Software-Development-Engineer---Neuromorphic-Computing_JR0287335",
+    "fields": [],
+    "buttons": [],
+    "coverage": [],
+    "apply_links": [],
+    "frame_urls": [
+      "https://intel.wd1.myworkdayjobs.com/en-US/External/job/US-California-Santa-Clara/AI-Software-Development-Engineer---Neuromorphic-Computing_JR0287335"
+    ],
+    "setup_seconds": 3.0221958109978004
+  },
+  {
+    "company": "Adobe",
+    "job_dir": "outputs/adobe/R172085",
+    "portal": "workday",
+    "url": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/San-Jose/XMLNAME-2027-University-Graduate---Machine-Learning-Engineer_R172085",
+    "status": "loaded",
+    "http_status": 521,
+    "final_url": "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/San-Jose/XMLNAME-2027-University-Graduate---Machine-Learning-Engineer_R172085",
+    "fields": [],
+    "buttons": [],
+    "coverage": [],
+    "apply_links": [],
+    "frame_urls": [
+      "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/San-Jose/XMLNAME-2027-University-Graduate---Machine-Learning-Engineer_R172085"
+    ],
+    "setup_seconds": 2.9880124620030983
+  },
+  {
+    "company": "Amazon",
+    "job_dir": "outputs/amazon/10585694",
+    "portal": "amazon.jobs",
+    "url": "https://www.amazon.jobs/en/jobs/10585694/software-development-engineer-amazon-quick",
+    "status": "loaded",
+    "http_status": 200,
+    "final_url": "https://www.amazon.jobs/en/jobs/10585694/software-development-engineer-amazon-quick",
+    "fields": [
+      {
+        "label": "English",
+        "kind": "combobox",
+        "required": false,
+        "section": "Share this job"
+      }
+    ],
+    "buttons": [
+      "Skip to main content",
+      "menu",
+      "Amazon Jobs home page",
+      "Search jobs",
+      "My career",
+      "Apply now",
+      "https://amazon.jobs/content/en/how-we-hire/accommodations",
+      "https://amazon.jobs/en/benefits",
+      "Software Development",
+      "Software Development Engineer - Military Veterans",
+      "Software Development Engineer Intern - Summer 2027 (USA)",
+      "Share with facebook",
+      "Share with linkedin",
+      "Share with twitter",
+      "Share with email",
+      "Print this job",
+      "Join us on facebook",
+      "Join us on linkedin",
+      "Join us on instagram",
+      "Join us on twitter",
+      "Download Amazon A to Z from App Store",
+      "Download Amazon A to Z from Google Play",
+      "Job Categories",
+      "Teams",
+      "Locations",
+      "Military careers",
+      "Hourly",
+      "Culture",
+      "Benefits",
+      "Amazon Newsletter",
+      "Inclusive experiences",
+      "Leadership Principles",
+      "FAQ",
+      "How We Hire",
+      "Application status",
+      "Accommodations",
+      "Legal disclosures and notices",
+      "Privacy and Data",
+      "Impressum",
+      "Cookie Preference Center",
+      "Candidate Cookie Notice",
+      "Candidate Privacy Notice",
+      "California supplement notice",
+      "Accept all",
+      "Reject all",
+      "Customize cookies"
+    ],
+    "coverage": [],
+    "apply_links": [
+      {
+        "text": "My applications",
+        "href": "https://www.amazon.jobs/applicant/dashboard/applications"
+      },
+      {
+        "text": "My applications  ",
+        "href": "https://www.amazon.jobs/applicant/dashboard/applications"
+      },
+      {
+        "text": "Apply now",
+        "href": "https://www.amazon.jobs/applicant/jobs/10585694/apply"
+      },
+      {
+        "text": "Application status",
+        "href": "https://www.amazon.jobs/applicant/check_application_status"
+      }
+    ],
+    "frame_urls": [
+      "https://www.amazon.jobs/en/jobs/10585694/software-development-engineer-amazon-quick",
+      "",
+      "https://amazonhr.demdex.net/dest5.html?d_nsid=0#https%3A%2F%2Fwww.amazon.jobs",
+      "https://11435057.fls.doubleclick.net/activityi;dc_pre=CM_F2eq8hpgDFX7I_QUdMm8ZOw;src=11435057;type=amazo0;cat=amazo0;rcb=18;ord=8197787594770;npa=0;auiddc=491157752.1794625465;uaa=x86;uab=64;uafvl=Google%2520Chrome%3B155.0.8059.84%7CChromium%3B155.0.8059.84%7CNot(A%253ABrand%3B24.0.0.0;uamb=0;uam=;uap=Linux;uapv=;uaw=0;pscdl=noapi;frm=0;_tu=IFA;gtm=45fe6bb1v9188087943za200zb9228431377zd9228431377xecxf1;gcs=G111;gcd=13t3t3t3t5l1;dma=0;dc_fmt=2;tag_exp=115938466~115938469~118897920~118897930~120213116~120385423~120412528~120420414~120469145~120469153~121191155~121246026~121246034;epver=2;dc_random=1794625464_7fzCfUHZ-PgZSOLN_1a41gJrqkWwRLkyDQ;_dc_test=1;~oref=https%3A%2F%2Fwww.amazon.jobs%2Fen%2Fjobs%2F10585694%2Fsoftware-development-engineer-amazon-quick?",
+      "https://match.adsrvr.org/track/cei?advertiser_id=zu8y992&cookie_sync=1&upv=3.0.0&upid=6xiq3yt&ref=https%3a%2f%2fwww.amazon.jobs&redirect=1",
+      "https://ib.adnxs.com/getuid?https%3a%2f%2fmatch.adsrvr.org%2ftrack%2fcmf%2fappnexus%3fttd%3d1%26anid%3d%24UID&ttd_tdid=acce9eed-a1ad-436c-b622-6e7f97d33042",
+      "https://match.adsrvr.org/track/cmf/generic?ttd_pid=bidswitch",
+      "https://match.adsrvr.org/track/cmf/google?g_uuid=&gdpr=0&gdpr_consent=&ttd_tdid=acce9eed-a1ad-436c-b622-6e7f97d33042&google_gid=CAESEML6v6rLz6Cqxd3yg-ZWpI4&google_cver=1",
+      "https://11074375.fls.doubleclick.net/activityi;dc_pre=CJ7ckuu8hpgDFYRPCAQdf-ssTA;src=11074375;type=tests0;cat=amazo0;rcb=14;ord=6217884521226;npa=0;auiddc=491157752.1794625465;u1=10585694;u2=Software%20Development%20Engineer%2C%20Amazon%20Quick;u3=Software%20Development;u4=USA;uaa=x86;uab=64;uafvl=Google%2520Chrome%3B155.0.8059.84%7CChromium%3B155.0.8059.84%7CNot(A%253ABrand%3B24.0.0.0;uamb=0;uam=;uap=Linux;uapv=;uaw=0;pscdl=noapi;frm=0;user_data_mode=a;_tu=KFA;gtm=45fe6bc0h2v9135075348z89228431377za20gzb9228431377zd9228431377xeaxf1;gcs=G111;gcd=13t3t3Z3t5l1;dma=0;dc_fmt=2;tag_exp=115938466~115938468~118897920~118897930~119793974~120213116~120385422~120412526~120420414~120469145~120469153~121191155~121246026~121246034~123785234;epver=2;em=tv.1;emd=tvd.1;dc_random=1794625465_vMkVxvS-ofQIkvLlVx_uUGpVR1UE73Db3Q;_dc_test=1;~oref=https%3A%2F%2Fwww.amazon.jobs%2Fen%2Fjobs%2F10585694%2Fsoftware-development-engineer-amazon-quick?"
+    ],
+    "setup_seconds": 4.668192156001169
+  },
+  {
+    "company": "OpenAI",
+    "job_dir": "outputs/openai/3c67f712-697d-48d8-b05c-01be896e61da",
+    "portal": "ashby",
+    "url": "https://jobs.ashbyhq.com/openai/3c67f712-697d-48d8-b05c-01be896e61da",
+    "status": "loaded",
+    "http_status": 200,
+    "final_url": "https://jobs.ashbyhq.com/openai/3c67f712-697d-48d8-b05c-01be896e61da",
+    "fields": [],
+    "buttons": [
+      "Back to OpenAI\u2019s Job Listings",
+      "Overview",
+      "Application",
+      "this form",
+      "link",
+      "OpenAI Global Applicant Privacy Policy",
+      "Apply for this Job",
+      "Powered by",
+      "Privacy Policy",
+      "Security",
+      "Vulnerability Disclosure"
+    ],
+    "coverage": [],
+    "apply_links": [
+      {
+        "text": "Application",
+        "href": "https://jobs.ashbyhq.com/openai/3c67f712-697d-48d8-b05c-01be896e61da/application"
+      },
+      {
+        "text": "Apply for this Job",
+        "href": "https://jobs.ashbyhq.com/openai/3c67f712-697d-48d8-b05c-01be896e61da/application"
+      }
+    ],
+    "frame_urls": [
+      "https://jobs.ashbyhq.com/openai/3c67f712-697d-48d8-b05c-01be896e61da"
+    ],
+    "setup_seconds": 3.2546206939987314
+  },
+  {
+    "company": "NVIDIA",
+    "job_dir": "outputs/nvidia/JR2026744",
+    "portal": "workday",
+    "url": "https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/SoC-Software-Engineer---New-College-Grad-2027_JR2026744",
+    "status": "loaded",
+    "http_status": 521,
+    "final_url": "https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/SoC-Software-Engineer---New-College-Grad-2027_JR2026744",
+    "fields": [],
+    "buttons": [],
+    "coverage": [],
+    "apply_links": [],
+    "frame_urls": [
+      "https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/SoC-Software-Engineer---New-College-Grad-2027_JR2026744"
+    ],
+    "setup_seconds": 2.9218162990000565
+  },
+  {
+    "company": "DoorDash",
+    "job_dir": "outputs/doordash/8163709",
+    "portal": "greenhouse",
+    "url": "https://job-boards.greenhouse.io/doordashusa/jobs/8163709",
+    "status": "loaded",
+    "http_status": 200,
+    "final_url": "https://job-boards.greenhouse.io/doordashusa/jobs/8163709",
+    "fields": [
+      {
+        "label": "First Name*",
+        "kind": "text",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Last Name*",
+        "kind": "text",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Email*",
+        "kind": "text",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Country*",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Phone*",
+        "kind": "tel",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Location (City)*",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Accepted file types: pdf doc docx txt rtf / resume",
+        "kind": "file",
+        "required": false,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Accepted file types: pdf doc docx txt rtf / cover_letter",
+        "kind": "file",
+        "required": false,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "School*",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Degree*",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "LinkedIn Profile*",
+        "kind": "text",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Are you legally authorized to work in the United States?*",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Will you now require immigration sponsorship by our company to attain or maintain your employment eligibility (e.g., H-1B, E-3, TN, O-1, STEM OPT, or any immigration work authorization requiring a written submission from the company to a government agency)?*",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Will you in the future require immigration sponsorship by our company to attain or maintain your employment eligibility (e.g., H-1B, E-3, TN, O-1, STEM OPT, or any immigration work authorization requiring a written submission from the company to a government agency)? *",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Have you worked at DoorDash?*",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Please confirm your graduation date: *",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Do you have over 2 years of industry work experience (non-internship experience)? *",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "How many software engineering or closely related technical internships have you completed? *",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Have you received a competitive academic scholarship, fellowship, or academic honor? *",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Select all locations you would be open to being placed: *",
+        "kind": "checkboxes",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Please indicate your most recent GPA*",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Which technical domains are you most interested in? *",
+        "kind": "checkboxes",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Which engineering organizations are you most interested in? Please select up to 3 preferences. We\u2019ll use your selections to help inform team matching later in the interview process. *",
+        "kind": "checkboxes",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Applicant Privacy Acknowledgement *",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "Would you like to receive communications via SMS and/or WhatsApp to the number provided [above or during the application process] about your application process? Message & data rates may apply and message frequency may vary. If you select no, we will only communicate with you via email and/or teleph",
+        "kind": "combobox",
+        "required": true,
+        "section": "Apply for this job"
+      },
+      {
+        "label": "How would you describe your gender?*",
+        "kind": "combobox",
+        "required": true,
+        "section": "Voluntary Self-Identification"
+      },
+      {
+        "label": "Race (*Please select one option that best describes how you identify*)*",
+        "kind": "combobox",
+        "required": true,
+        "section": "Voluntary Self-Identification"
+      },
+      {
+        "label": "Protected Veteran Status*",
+        "kind": "combobox",
+        "required": true,
+        "section": "Voluntary Self-Identification"
+      },
+      {
+        "label": "Would you say you have a disability?*",
+        "kind": "combobox",
+        "required": true,
+        "section": "Voluntary Self-Identification"
+      }
+    ],
+    "buttons": [
+      "Back to jobs",
+      "Apply",
+      "here",
+      "https://trust.warden-ai.com/metaview/application-review",
+      "Toggle flyout",
+      "Locate me",
+      "Attach",
+      "Dropbox",
+      "Google Drive",
+      "Enter manually",
+      "Add another",
+      "Applicant Privacy Notice",
+      "Submit application"
+    ],
+    "coverage": [],
+    "apply_links": [
+      {
+        "text": "https://trust.warden-ai.com/metaview/application-review",
+        "href": "https://trust.warden-ai.com/metaview/application-review"
+      }
+    ],
+    "frame_urls": [
+      "https://job-boards.greenhouse.io/doordashusa/jobs/8163709",
+      "https://content.googleapis.com/static/proxy.html?usegapi=1&jsh=m%3B%2F_%2Fscs%2Fabc-static%2F_%2Fjs%2Fk%3Dgapi.lb.en.etOqPKhAhvg.O%2Fd%3D1%2Frs%3DAHpOoo-l5JrVgGKVELwC844E6riBHX86-w%2Fm%3D__features__#parent=https%3A%2F%2Fjob-boards.greenhouse.io&rpctoken=1186426380",
+      "https://www.recaptcha.net/recaptcha/enterprise/anchor?ar=1&k=6LfmcbcpAAAAAChNTbhUShzUOAMj_wY9LQIvLFX0&co=aHR0cHM6Ly9qb2ItYm9hcmRzLmdyZWVuaG91c2UuaW86NDQz&hl=en&v=4i3aN5wAweL7i3ADI7BSX4B-&size=invisible&anchor-ms=20000&execute-ms=30000&ovv=CADq00gF&cb=3lh5l45p7ncs",
+      "about:blank",
+      "https://jsv3.recruitics.com/969d39bc-98f0-11e9-bf69-83e62c80cc13-iframe?e=%7B%22viewer%22%3A%7B%22v2_first%22%3Anull%2C%22v2_local%22%3Anull%2C%22v3_first%22%3Anull%2C%22v3_first_samesite%22%3Anull%2C%22v3_local%22%3Anull%2C%22v3_param%22%3Anull%7D%2C%22referrer%22%3A%22%22%2C%22title%22%3A%22Job%20Application%20for%20Software%20Engineer%20I%2C%20Entry-Level%20(Graduation%20Date%3A%20Fall%202026-Summer%202027)%20-%20US%20at%20DoorDash%20USA%22%2C%22eventType%22%3A%22jobview%22%2C%22pageType%22%3A%22Job%20Details%22%2C%22scriptId%22%3A%22969d39bc-98f0-11e9-bf69-83e62c80cc13%22%2C%22partnerId%22%3A%22d056b859-3c00-11e7-8fe9-89f468934c80%22%2C%22cid%22%3A%223246%22%2C%22versionId%22%3A%222b8e5064-d93f-11f1-890c-8ff57abf2cb1%22%2C%22jobId%22%3A%228163709%22%2C%22uri%22%3A%22https%3A%2F%2Fjob-boards.greenhouse.io%2Fdoordashusa%2Fjobs%2F8163709%22%2C%22hasCustomJs%22%3Atrue%2C%22anonymizeIp%22%3Afalse%2C%22nvp%22%3A%7B%7D%7D",
+      "about:blank"
+    ],
+    "setup_seconds": 4.09775134800293
+  },
+  {
+    "company": "GoDaddy",
+    "job_dir": "outputs/godaddy/11c495a3e4",
+    "portal": "careers.godaddy",
+    "url": "https://careers.godaddy.com/jobs/software-development-engineer-ai-services-tempe-arizona-united-states/b6f88c8e46e18dcd738ee0c6011adb2a",
+    "status": "loaded",
+    "http_status": 404,
+    "final_url": "https://careers.godaddy/jobs/software-development-engineer-ai-services-tempe-arizona-united-states/b6f88c8e46e18dcd738ee0c6011adb2a",
+    "fields": [],
+    "buttons": [
+      "See Open Roles",
+      "Join Our Network",
+      "Home",
+      "Search All Jobs",
+      "About Us",
+      "Careers",
+      "Corporate Responsibility",
+      "Investor Relations",
+      "Legal",
+      "Newsroom",
+      "Trust Center",
+      "Help Center",
+      "Community",
+      "Venture Forward: Microbusiness Data",
+      "GoDaddy Blog",
+      "Contact Us",
+      "Report Abuse",
+      "Webmail",
+      "WHOIS",
+      "GoDaddy Mobile App",
+      "ICANN Confirmation",
+      "Designers & Developers",
+      "Corporate Domains",
+      "Redeem Code",
+      "Product Catalog",
+      "Videos",
+      "Business Name Generator",
+      "Affiliates",
+      "Reseller Programs",
+      "GoDaddy Pro",
+      "My Products",
+      "Renewals And Billing",
+      "Create Account",
+      "Buy A Domain",
+      "Websites",
+      "WordPress",
+      "Hosting",
+      "Web Security",
+      "Email & Office",
+      "Phone Numbers",
+      "Facebook",
+      "Instagram",
+      "Twitter",
+      "YouTube",
+      "Privacy Policy",
+      "Advertising Preferences",
+      "Cookies",
+      "Do not sell my personal information",
+      "Universal Terms of Service.",
+      "Employee and Applicant Notices"
+    ],
+    "coverage": [],
+    "apply_links": [],
+    "frame_urls": [
+      "https://careers.godaddy/jobs/software-development-engineer-ai-services-tempe-arizona-united-states/b6f88c8e46e18dcd738ee0c6011adb2a"
+    ],
+    "setup_seconds": 4.140281972999219
+  },
+  {
+    "company": "Palantir Technologies",
+    "job_dir": "outputs/palantir-technologies/10dfc8bc-99ad-4ca2-ab76-853cb90a92c2",
+    "portal": "lever",
+    "url": "https://jobs.lever.co/palantir/10dfc8bc-99ad-4ca2-ab76-853cb90a92c2",
+    "status": "excluded_non_US_from_saved_JD"
+  },
+  {
+    "company": "Mercor",
+    "job_dir": "outputs/mercor/799ecfcc-4258-4075-8b11-12fc64fb2868",
+    "portal": "mercor.com",
+    "url": "https://www.mercor.com/careers/799ecfcc-4258-4075-8b11-12fc64fb2868/",
+    "status": "loaded",
+    "http_status": 200,
+    "final_url": "https://www.mercor.com/careers/799ecfcc-4258-4075-8b11-12fc64fb2868/",
+    "fields": [],
+    "buttons": [
+      "Close",
+      "Cookie Policy",
+      "Accept All",
+      "Reject All",
+      "Customize My Choices",
+      "Back to Mercor\u2019s Job Listings",
+      "Overview",
+      "Application",
+      "Apply for this Job",
+      "Powered by",
+      "Privacy Policy",
+      "Security",
+      "Vulnerability Disclosure"
+    ],
+    "coverage": [],
+    "apply_links": [],
+    "frame_urls": [
+      "https://www.mercor.com/careers/799ecfcc-4258-4075-8b11-12fc64fb2868/",
+      "https://jobs.ashbyhq.com/mercor/799ecfcc-4258-4075-8b11-12fc64fb2868",
+      "about:blank"
+    ],
+    "setup_seconds": 3.641027749999921
+  },
+  {
+    "company": "Plante Moran",
+    "job_dir": "outputs/plante-moran/84eb50d3d8",
+    "portal": "plantemoran.com",
+    "url": "https://careers.plantemoran.com/ai-data-engineer/job/8E736DCABBE5EE1B1B7B363DA0A2E59F",
+    "status": "loaded",
+    "http_status": 200,
+    "final_url": "https://careers.plantemoran.com/ai-data-engineer/job/8E736DCABBE5EE1B1B7B363DA0A2E59F",
+    "fields": [],
+    "buttons": [
+      "Go to Plante Moran's home page",
+      "Careers Home",
+      "Our Culture",
+      "Experienced Careers",
+      "Early Careers",
+      "ALL JOBS",
+      "Back To Careers",
+      "APPLY NOW",
+      "SHARE",
+      "Privacy Notice",
+      "California Privacy Notice",
+      "Cookie Notice",
+      "Cookie Settings",
+      "Go to Plante Moran's Facebook (opens in new tab)",
+      "Go to Plante Moran's LinkedIn (opens in new tab)",
+      "Go to Plante Moran's Instagram (opens in new tab)",
+      "Cookie Notice.",
+      "Cookie settings",
+      "Accept Cookies",
+      "Close"
+    ],
+    "coverage": [],
+    "apply_links": [
+      {
+        "text": "APPLY NOW",
+        "href": "https://plantemoran.wd1.myworkdayjobs.com/pmexternalcareers/job/Southfield/AI-Data-Engineer_JR-03394/apply"
+      },
+      {
+        "text": "APPLY NOW",
+        "href": "https://plantemoran.wd1.myworkdayjobs.com/pmexternalcareers/job/Southfield/AI-Data-Engineer_JR-03394/apply"
+      }
+    ],
+    "frame_urls": [
+      "https://careers.plantemoran.com/ai-data-engineer/job/8E736DCABBE5EE1B1B7B363DA0A2E59F",
+      "about:blank"
+    ],
+    "setup_seconds": 4.054532669000764
+  }
+]

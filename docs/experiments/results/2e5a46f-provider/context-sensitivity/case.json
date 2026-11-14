@@ -1,0 +1,78 @@
+{
+  "name": "heldout-contact-alias",
+  "html": "<fieldset><legend>Contact details</legend><label for=e>Your email address</label><input id=e type=email required><label for=p>Preferred contact method</label><select id=p required><option>Choose</option><option>Email</option><option>Phone</option></select></fieldset><button type=button onclick=\"window.sent=true\">Apply</button>",
+  "facts": [
+    {
+      "id": "Email",
+      "aliases": [
+        "Email"
+      ],
+      "value": "person@example.test",
+      "source": "fixture source",
+      "section": "",
+      "variants": []
+    },
+    {
+      "id": "prepared-address/Street Address",
+      "aliases": [
+        "Street Address"
+      ],
+      "value": "123 Example Street",
+      "source": "synthetic prepared-address source",
+      "section": "",
+      "variants": []
+    },
+    {
+      "id": "prepared-address/City",
+      "aliases": [
+        "City"
+      ],
+      "value": "Houston",
+      "source": "synthetic prepared-address source",
+      "section": "",
+      "variants": []
+    },
+    {
+      "id": "prepared-address/State",
+      "aliases": [
+        "State"
+      ],
+      "value": "Texas",
+      "source": "synthetic prepared-address source",
+      "section": "",
+      "variants": []
+    },
+    {
+      "id": "prepared-address/Postal Code",
+      "aliases": [
+        "Postal Code"
+      ],
+      "value": "77002",
+      "source": "synthetic prepared-address source",
+      "section": "",
+      "variants": []
+    },
+    {
+      "id": "prepared-address/Country",
+      "aliases": [
+        "Country"
+      ],
+      "value": "United States",
+      "source": "synthetic prepared-address source",
+      "section": "",
+      "variants": []
+    }
+  ],
+  "expected": {
+    "#e": "person@example.test",
+    "#p": "Email"
+  },
+  "heldout": false,
+  "human_answers": {
+    "Preferred contact method": "Email"
+  },
+  "source_questions": {
+    "Your email address": "Email"
+  },
+  "prepared_address": true
+}

@@ -1,0 +1,542 @@
+[
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Your email address",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "widget_caption": null,
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified",
+        "held_file_sha256": null
+      },
+      {
+        "label": "Preferred contact method",
+        "section": "",
+        "answer": "Email",
+        "readback": "Email",
+        "widget_caption": null,
+        "source": "human",
+        "fact_id": "",
+        "outcome": "verified",
+        "held_file_sha256": null
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 3.4431609839994053,
+    "human_wait_s": 5.405000047176145e-05,
+    "active_s": 3.4431081949987856,
+    "questions": 1,
+    "question_batches": 1,
+    "model_calls": 2,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Your email address",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Preferred contact method",
+            "type": "select-one",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "human_questions",
+        "fields": [
+          {
+            "label": "Preferred contact method",
+            "section": ""
+          }
+        ],
+        "classification": "unclassified"
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Your email address",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Preferred contact method",
+            "type": "select-one",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "reported_tokens": 715,
+    "model_name": "devstral2-123b",
+    "fixture": "heldout-contact-alias",
+    "heldout": false,
+    "avoidable_questions": 0,
+    "necessary_questions": 1,
+    "question_labels": [
+      "Preferred contact method"
+    ],
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test",
+      "#p": "Email"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Your email address",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "Email address provided in APPLICANT's fixture section.",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 1,
+        "section": "",
+        "label": "Preferred contact method",
+        "kind": "select",
+        "required": true,
+        "options": [
+          "Choose",
+          "Email",
+          "Phone"
+        ],
+        "before": "Choose",
+        "answer": "",
+        "why": "Preferred contact method inferred from the provided email address in APPLICANT.",
+        "source": "applicant",
+        "flag": "planned 'Email'",
+        "filled": "",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "Choose",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 10.46194786200067,
+    "questions": 0,
+    "model_calls": 2,
+    "reported_tokens": 4273,
+    "model_name": "devstral2-123b",
+    "fixture": "heldout-contact-alias",
+    "heldout": false,
+    "avoidable_questions": 0,
+    "necessary_questions": 0,
+    "question_labels": [],
+    "graded_correct": false,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test",
+      "#p": "Choose"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Your email address",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "Email address provided in APPLICANT's fixture section.",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 1,
+        "section": "",
+        "label": "Preferred contact method",
+        "kind": "select",
+        "required": true,
+        "options": [
+          "Choose",
+          "Email",
+          "Phone"
+        ],
+        "before": "Choose",
+        "answer": "",
+        "why": "Preferred contact method inferred from the provided email address in APPLICANT.",
+        "source": "applicant",
+        "flag": "planned 'Email'",
+        "filled": "",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "Choose",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 14.37655458199879,
+    "questions": 0,
+    "model_calls": 2,
+    "reported_tokens": 4273,
+    "model_name": "devstral2-123b",
+    "fixture": "heldout-contact-alias",
+    "heldout": false,
+    "avoidable_questions": 0,
+    "necessary_questions": 0,
+    "question_labels": [],
+    "graded_correct": false,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test",
+      "#p": "Choose"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Your email address",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "widget_caption": null,
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified",
+        "held_file_sha256": null
+      },
+      {
+        "label": "Preferred contact method",
+        "section": "",
+        "answer": "Email",
+        "readback": "Email",
+        "widget_caption": null,
+        "source": "human",
+        "fact_id": "",
+        "outcome": "verified",
+        "held_file_sha256": null
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 3.220124236999254,
+    "human_wait_s": 5.180799780646339e-05,
+    "active_s": 3.22007426500204,
+    "questions": 1,
+    "question_batches": 1,
+    "model_calls": 2,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Your email address",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Preferred contact method",
+            "type": "select-one",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "human_questions",
+        "fields": [
+          {
+            "label": "Preferred contact method",
+            "section": ""
+          }
+        ],
+        "classification": "unclassified"
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Your email address",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Preferred contact method",
+            "type": "select-one",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "reported_tokens": 715,
+    "model_name": "devstral2-123b",
+    "fixture": "heldout-contact-alias",
+    "heldout": false,
+    "avoidable_questions": 0,
+    "necessary_questions": 1,
+    "question_labels": [
+      "Preferred contact method"
+    ],
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test",
+      "#p": "Email"
+    }
+  },
+  {
+    "engine": "candidate",
+    "state": "review",
+    "ready": true,
+    "records": [
+      {
+        "label": "Your email address",
+        "section": "",
+        "answer": "person@example.test",
+        "readback": "person@example.test",
+        "widget_caption": null,
+        "source": "fixture source",
+        "fact_id": "Email",
+        "outcome": "verified",
+        "held_file_sha256": null
+      },
+      {
+        "label": "Preferred contact method",
+        "section": "",
+        "answer": "Email",
+        "readback": "Email",
+        "widget_caption": null,
+        "source": "human",
+        "fact_id": "",
+        "outcome": "verified",
+        "held_file_sha256": null
+      }
+    ],
+    "blockers": [],
+    "elapsed_s": 3.983074370997201,
+    "human_wait_s": 7.411900151055306e-05,
+    "active_s": 3.983000529995479,
+    "questions": 1,
+    "question_batches": 1,
+    "model_calls": 2,
+    "events": [
+      {
+        "event": "inventory",
+        "round": 0,
+        "fields": [
+          {
+            "label": "Your email address",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Preferred contact method",
+            "type": "select-one",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      },
+      {
+        "event": "human_questions",
+        "fields": [
+          {
+            "label": "Preferred contact method",
+            "section": ""
+          }
+        ],
+        "classification": "unclassified"
+      },
+      {
+        "event": "inventory",
+        "round": 1,
+        "fields": [
+          {
+            "label": "Your email address",
+            "type": "email",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          },
+          {
+            "label": "Preferred contact method",
+            "type": "select-one",
+            "visible": true,
+            "required": true,
+            "format": "",
+            "source": "DOM"
+          }
+        ],
+        "problems": []
+      }
+    ],
+    "reported_tokens": 715,
+    "model_name": "devstral2-123b",
+    "fixture": "heldout-contact-alias",
+    "heldout": false,
+    "avoidable_questions": 0,
+    "necessary_questions": 1,
+    "question_labels": [
+      "Preferred contact method"
+    ],
+    "graded_correct": true,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test",
+      "#p": "Email"
+    }
+  },
+  {
+    "engine": "current",
+    "ready": true,
+    "records": [
+      {
+        "page": 1,
+        "section": "",
+        "label": "Your email address",
+        "kind": "email",
+        "required": true,
+        "options": [],
+        "before": "",
+        "answer": "person@example.test",
+        "why": "Email address provided in APPLICANT's fixture section.",
+        "source": "applicant",
+        "flag": "",
+        "filled": "person@example.test",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "person@example.test",
+        "verified": true,
+        "outcome": "verified"
+      },
+      {
+        "page": 1,
+        "section": "",
+        "label": "Preferred contact method",
+        "kind": "select",
+        "required": true,
+        "options": [
+          "Choose",
+          "Email",
+          "Phone"
+        ],
+        "before": "Choose",
+        "answer": "",
+        "why": "Preferred contact method inferred from the provided email address in APPLICANT.",
+        "source": "applicant",
+        "flag": "planned 'Email'",
+        "filled": "",
+        "error": "",
+        "answered": true,
+        "frame": 0,
+        "slot": 0,
+        "clear": false,
+        "readback": "Choose",
+        "verified": true,
+        "outcome": "verified"
+      }
+    ],
+    "blockers": [],
+    "active_s": 10.735185315999843,
+    "questions": 0,
+    "model_calls": 2,
+    "reported_tokens": 4273,
+    "model_name": "devstral2-123b",
+    "fixture": "heldout-contact-alias",
+    "heldout": false,
+    "avoidable_questions": 0,
+    "necessary_questions": 0,
+    "question_labels": [],
+    "graded_correct": false,
+    "submitted": false,
+    "actual": {
+      "#e": "person@example.test",
+      "#p": "Choose"
+    }
+  }
+]

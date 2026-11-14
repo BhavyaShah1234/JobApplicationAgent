@@ -2088,3 +2088,45 @@ Full suite on the tree (fresh copy in the container, `pytest tests/unit`): **111
 Independent isolated snapshot `/tmp/claude-round5-review`: **83 passed**, 13 dependency warnings, 145.67 s. Includes all reviewer regressions plus account-loop, identity/posting, approval-coverage, upload-identity and structured-LLM suites. Original source/unit-test hashes remained identical to the reviewed snapshot. Evidence: `outputs/verification/claude-round5-2026-11-13/`. Claude reports 1119 passed on its full source run, followed by 13 passed after the fixture-route edit; this independent verification covers the actual final fixture text and does not claim a new full-hour run.
 
 No production source or submitted application was changed. The prerequisite now permits capturing the verified source as a shared checkpoint in the separate experiment worktree and continuing the comparison. Production adoption remains contingent on the experiment's correctness, completion, timing and assistance results; checked review findings alone do not establish fully autonomous support for every portal.
+
+
+## Experiment handoff after F27/F29 verification (2026-11-13, Codex)
+
+All **30 original findings remain checked within their recorded verification scope**. The shared-checkpoint
+experiment has now completed 72 real-provider synthetic trials on frozen commit `2e5a46f` in the separate
+`experiment/form-resolution` worktree. This does not constitute production adoption or live-portal validation.
+Report and exact observed records: `outputs/verification/form-experiment-2026-11-13/REPORT.md`, `trials.json`,
+`audit.json`, and `context-sensitivity/trials.json`. The branch retains the source manifest and full report in
+`docs/experiments/results/2e5a46f-provider/`. No production code was edited or deployed.
+
+**Additional production follow-ups for Claude Code, found by the experiment (separate from the original fixes):**
+
+1. **Native upload caption contamination.** On a flat page with explicitly associated Resume and Cover Letter
+   labels, `forms.FIELDS_JS` produces native upload labels including surrounding body text.
+   `apply.fill_page` then gives any label containing “cover” the cover-letter role. In all three frozen trials,
+   Resume received `cover_letter.pdf`, Cover Letter also received `cover_letter.pdf`, and the current arm reported
+   ready. See the `uploads` / `current` records. Give uploads their own explicit caption/role metadata; surrounding
+   context must not override that caption. Keep action-time identity resolution and F28's native/lazy association
+   repair intact: simply changing a recorded label can make fresh-target lookup fail. Regression: flat native
+   inputs plus separately scoped/lazy widgets must hold the correct role-specific bytes and block mismatches.
+   This is an additional role-classification issue, not a reproduction of the repaired duplicate-widget case.
+2. **Postal heuristics include email fields.** `apply.is_address`, `enforce`, and the address-specific HITL route
+   treat “Your email address” as postal. With a supplied email but no prepared postal address, enforcement erases
+   the valid email and asks for Current address. The normal production command prepares a postal address first;
+   the separate six-trial sensitivity check confirmed that adding it removes this particular email-clearing failure
+   in that case. Fix the helper boundary using field type/question intent, without weakening actual postal-source
+   requirements or the user's random-address policy. Test both minimal contact-only and prepared-address contexts.
+3. **A required placeholder can count as verified.** In that prepared-address sensitivity check, the current engine
+   filled email correctly, rejected an inferred contact preference, then left the required select at `Choose`,
+   asked no question and reported ready in all three repetitions. `apply.outcome_of` accepts any nonempty prefilled
+   value when no answer remains; `blockers_of` therefore sees no required-field blocker. Reject unresolved select
+   placeholders as answers, ask for the genuinely missing preference, and preserve legitimate prefilled values.
+   Test the source-check rejection path and actual readback, not only a model that asks correctly on its first try.
+
+**Experiment-only defect and repair:** the measured candidate exhausted its round budget on correct files both
+named `attachment.pdf` (3/3); its role string was compared with a filename. A new prototype revision now validates
+current retained bytes against the source role, also detecting a later same-name byte replacement. Both new browser
+regressions failed before the repair; the full experiment suite afterward is **24 passed**, 13 dependency warnings,
+69.39 s. The frozen report still shows the original completion regression. Production adoption remains disabled
+pending fresh and live validation, including actual personal-file compilation. No live draft was filled or submitted
+in this experiment phase; read-only preflight alone is not an application test.

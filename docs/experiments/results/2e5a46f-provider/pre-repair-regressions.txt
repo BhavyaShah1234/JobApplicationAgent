@@ -1,0 +1,55 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__________ test_same_named_documents_finish_without_repeated_uploads ___________
+
+page = <Page url='about:blank'>
+tmp_path = PosixPath('/tmp/pytest-of-agent/pytest-339/test_same_named_documents_fini0')
+
+    def test_same_named_documents_finish_without_repeated_uploads(page,tmp_path):
+        page.set_content('<section><h2>Resume</h2><label for=r>Resume</label><input id=r type=file required></section>'
+                         '<section><h2>Cover Letter</h2><label for=c>Cover Letter</label><input id=c type=file required></section>'
+                         '<button type=button onclick="window.sent=true">Apply</button>'
+                         '<script>window.uploads=0;document.addEventListener("change",e=>{if(e.target.type==="file")window.uploads++})</script>')
+        files={}
+        for role in ('resume','cover_letter'):
+            directory=tmp_path/role;directory.mkdir()
+            p=directory/'attachment.pdf';p.write_bytes(('%PDF-1.4 '+role).encode());files[role]=str(p)
+        result=Candidate([],lambda q:pytest.fail(str(q))).fill(page,files,max_rounds=3)
+>       assert result['ready'],result['blockers']
+E       AssertionError: ['discovery/filling round budget exhausted']
+E       assert False
+
+tests/experiments/test_browser.py:138: AssertionError
+___________ test_same_name_file_replacement_is_detected_before_ready ___________
+
+page = <Page url='about:blank'>
+tmp_path = PosixPath('/tmp/pytest-of-agent/pytest-339/test_same_name_file_replacemen0')
+
+    def test_same_name_file_replacement_is_detected_before_ready(page,tmp_path):
+        page.set_content('<label for=r>Resume</label><input id=r type=file required>'
+                         '<label for=c>Cover Letter</label><input id=c type=file required onchange="tamper()">'
+                         '<button type=button>Apply</button><script>function tamper(){if(window.changed)return;'
+                         'window.changed=true;let d=new DataTransfer();d.items.add(new File(["wrong bytes"],"resume.pdf"));'
+                         'document.getElementById("r").files=d.files;}</script>')
+        files={}
+        for role in ('resume','cover_letter'):
+            p=tmp_path/(role+'.pdf');p.write_bytes(('%PDF-1.4 '+role).encode());files[role]=str(p)
+        result=Candidate([],lambda q:pytest.fail(str(q))).fill(page,files,max_rounds=4)
+        assert result['ready'],result['blockers']
+>       assert page.locator('#r').evaluate('async e=>await e.files[0].text()')=='%PDF-1.4 resume'
+E       AssertionError: assert 'wrong bytes' == '%PDF-1.4 resume'
+E
+E         - %PDF-1.4 resume
+E         + wrong bytes
+
+tests/experiments/test_browser.py:156: AssertionError
+=============================== warnings summary ===============================
+../../opt/venv/lib/python3.14/site-packages/langsmith/_internal/_beta_decorator.py:70: 13 warnings
+  /opt/venv/lib/python3.14/site-packages/langsmith/_internal/_beta_decorator.py:70: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    if asyncio.iscoroutinefunction(func):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/experiments/test_browser.py::test_same_named_documents_finish_without_repeated_uploads
+FAILED tests/experiments/test_browser.py::test_same_name_file_replacement_is_detected_before_ready
+2 failed, 13 deselected, 13 warnings in 23.30s
