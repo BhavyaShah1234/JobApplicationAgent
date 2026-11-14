@@ -12,6 +12,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
+import threading
 import time
 
 
@@ -64,16 +66,29 @@ class TrialHitl:
         return value['answer']
 
 
+class TrialStopped(BaseException):pass
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--job',type=Path,required=True);p.add_argument('--company',required=True)
     p.add_argument('--strategy',choices=['original','experimental'],required=True)
     p.add_argument('--out',type=Path,required=True);p.add_argument('--url')
     p.add_argument('--storage-state',type=Path);p.add_argument('--headless',action='store_true')
+    p.add_argument('--active-budget-minutes',type=float,default=30)
     args=p.parse_args();os.umask(0o077)
     root=args.out.resolve();root.mkdir(parents=True,exist_ok=False)
     from jobagent.config import get_settings
     original=get_settings();data=root/'data';data.mkdir();state=root/'state';state.mkdir()
+    # The real CLI supplies this account callback. Keep credentials in the normal
+    # encrypted vault, not in the copied candidate inputs or result artifacts.
+    portal_vault=portal_inbox=None
+    if args.storage_state:
+        from jobagent.tools.vault import open_vault
+        from jobagent.tools.inbox import Inbox
+        from jobagent import db
+        portal_vault=open_vault();mail=portal_vault.get('gmail') or {}
+        portal_inbox=Inbox(mail['email'],mail['app_password'],db.connect())
     for name in ('applicant.yaml','learned.yaml','asu_contacts.csv'):
         src=original.data_dir/name
         if not src.exists() and name=='asu_contacts.csv':src=Path('/app/asu_contacts.csv')
@@ -95,6 +110,19 @@ def main():
     from playwright.sync_api import sync_playwright
     from jobagent.steps import apply as A
     from jobagent.tools import forms,shadow
+    from jobagent.filling import metrics as M
+    captured=[];base_metrics=M.FillingMetrics
+    class ObservedMetrics(base_metrics):
+        def __init__(self):super().__init__();captured.append(self)
+    M.FillingMetrics=ObservedMetrics
+    def stop(*_):raise TrialStopped('trial active-time budget or operator stop')
+    signal.signal(signal.SIGTERM,stop)
+    def budget():
+        while True:
+            time.sleep(2)
+            if captured and captured[0].snapshot()['active_filling_s']>args.active_budget_minutes*60:
+                os.kill(os.getpid(),signal.SIGTERM);return
+    threading.Thread(target=budget,daemon=True).start()
     if (job/'context-snapshot.json').exists():
         company_source=json.loads((job/'context-snapshot.json').read_text()).get('COMPANY','')
         build_context=A.context
@@ -137,19 +165,32 @@ def main():
         shadow.install(pw,context);context.add_init_script(GUARD);context.route('**/*',route)
         page=context.new_page();start=time.monotonic()
         try:
+            def sign_in(url):
+                if portal_vault is None:return
+                from jobagent.tools.portal_auth import ensure_account
+                ensure_account(page,url,portal_vault,portal_inbox,hitl,portal_inbox.address,log=print)
             result=A.run(page,job,args.company,hitl=hitl,ask_s=900,filling_strategy=args.strategy,
-                         log=lambda m:print(m,flush=True))
+                         ensure_signed_in=sign_in,log=lambda m:print(m,flush=True))
             write(root/'outcome.json',{'state':result.get('state'),'ready':result.get('ready_to_submit'),
                   'metrics':result.get('filling_metrics'),'elapsed_total_s':time.monotonic()-start})
-        except Exception as exc:
-            write(root/'exception.json',{'type':type(exc).__name__,'message':str(exc),'elapsed_total_s':time.monotonic()-start})
+        except BaseException as exc:
+            if captured:captured[0].finish()
+            write(root/'exception.json',{'type':type(exc).__name__,'message':str(exc),'elapsed_total_s':time.monotonic()-start,
+                  'metrics':captured[0].snapshot() if captured else None,'ready':False})
             raise
         finally:
             try:
                 page.screenshot(path=str(root/'final.png'),full_page=True)
                 write(root/'final-view.json',{'url':page.url,'fields':[asdict(f) for f in forms.read_page(page).fields],
-                      'submission_blocks':page.evaluate('window.__trialSubmissionBlocks||[]')})
-            finally:browser.close()
+                      'submission_blocks':page.evaluate('window.__trialSubmissionBlocks||[]'),
+                      'native_controls':[{'frame':i,'controls':frame.locator('input:not([type=password]),select,textarea').evaluate_all(
+                          "es=>es.filter(e=>e.type!=='hidden').map(e=>({id:e.id,name:e.name,type:e.type,required:e.required,"
+                          "aria_required:e.getAttribute('aria-required'),will_validate:e.willValidate,valid:e.validity?.valid,"
+                          "validation_message:e.validationMessage,labels:[...(e.labels||[])].map(x=>x.innerText)}))")}
+                          for i,frame in enumerate(page.frames)]})
+            finally:
+                browser.close()
+                if portal_inbox:portal_inbox.close()
 
 
 if __name__=='__main__':main()
