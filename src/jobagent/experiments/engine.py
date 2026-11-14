@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, SystemMessage
 from jobagent import llm
 from jobagent.tools import forms, wizard
-from .resolution import Decision, Fact, choice, key, norm, resolve, from_fact
+from .resolution import Decision, Fact, choice, key, norm, resolve, from_fact, scope_allows
 from .discovery import Discovery
 
 
@@ -87,7 +87,7 @@ class Candidate:
             proposals=[]
             for m in mapped.mappings:
                 f=next((f for f in missing if f.id==m.field_id),None);fact=facts.get(m.fact_id)
-                if f and fact and (not fact.section or norm(fact.section)==norm(f.section)):
+                if f and fact and scope_allows(f,fact):
                     proposals.append((f,fact))
             if proposals:
                 self.model_calls+=1

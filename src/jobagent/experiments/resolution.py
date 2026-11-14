@@ -31,6 +31,34 @@ def key(f):
     return (f.frame, f.section, f.label, f.kind, f.slot)
 
 
+ENTITY_HEADER = re.compile(r'^(?:(?:previous|prior|past)\s*)?(work\s*experience|employment(?:\s*history)?|professional\s*experience|education|academic(?:\s*(?:history|qualifications))?|references?|referrals?)\s*(?:entry\s*)?(\d+)?$')
+ENTITY_COMPONENTS = {
+    'first name','given name','middle name','last name','family name','surname','full name','name',
+    'email','email address','phone','phone number','primary phone','telephone','mobile',
+    'address','street address','address line 1','address line 2','city','town','state','province',
+    'region','country','zip','zip code','postal code','post code','pincode',
+}
+
+
+def entity_scope(section):
+    match=ENTITY_HEADER.fullmatch(norm(section))
+    if not match:return None
+    name=match[1]
+    group='education' if name.startswith(('education','academic')) else 'reference' if name.startswith('reference') else 'referral' if name.startswith('referral') else 'employment'
+    return group, int(match[2]) if match[2] else None
+
+
+def scope_allows(f, fact):
+    target=entity_scope(f.section)
+    if fact.section:
+        origin=entity_scope(fact.section)
+        return target==origin if target and origin else norm(f.section)==norm(fact.section)
+    # A general contact answer is not evidence for an employer, school or reference's contact details.
+    if target and (norm(f.label) in ENTITY_COMPONENTS or any(norm(a) in ENTITY_COMPONENTS for a in fact.aliases)):
+        return False
+    return True
+
+
 def percent_range(text):
     span=re.search(r'(\d+(?:\.\d+)?)\s*%?\s*[-–]\s*(\d+(?:\.\d+)?)\s*%',text)
     if span:return (float(span[1]),float(span[2]))
@@ -87,7 +115,7 @@ def resolve(f, facts):
     suffix=' '.join(f.options)
     if suffix and label.endswith(suffix):label=label[:-len(suffix)].strip()
     matches = [x for x in facts if norm(label) in map(norm, x.aliases)
-               and (not x.section or norm(x.section) == norm(f.section))]
+               and scope_allows(f,x)]
     human=[x for x in matches if x.source=='human']
     if len(human)==1:matches=human
     if len(matches) != 1:
@@ -118,7 +146,8 @@ def compile_facts(data, raw_jd):
                 group='Education' if q=='Degrees' else 'Work Experience' if q=='Work history' else q
                 aliases={'school':['School','University','Institute'], 'degree':['Degree'], 'field':['Field of Study','Major'],
                          'from':['From Date','Start Date'], 'start':['From Date','Start Date'],
-                         'end':['End Date'], 'to':['End Date'], 'company':['Company Name','Employer'], 'title':['Job Title']}
+                         'end':['End Date'], 'to':['End Date'], 'company':['Company Name','Employer'], 'title':['Job Title'],
+                         'city':['City'], 'state':['State','Province'], 'country':['Country']}
                 for component,names in aliases.items():
                     v=row.get(component)
                     variants=v if isinstance(v,list) else [v]
