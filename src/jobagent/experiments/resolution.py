@@ -131,6 +131,7 @@ def compile_facts(data, raw_jd):
     component_aliases = {
         'Legal name': {'first': ['First Name', 'Given Name'], 'middle': ['Middle Name'], 'last': ['Last Name', 'Family Name']},
         'Current address': {'line1':['Address','Street Address','Address Line 1'],
+                            'line2':['Address Line 2','Address 2','Apartment','Suite','Unit'],
                             'postal_code':['Zip Code','ZIP','Postal Code'], 'street': ['Address', 'Street Address', 'Address Line 1'], 'city': ['City'],
                             'state': ['State'], 'zip': ['Zip Code', 'ZIP', 'Postal Code'], 'country': ['Country']},
         'Phone': {'number': ['Phone', 'Primary Phone', 'Phone Number']},
