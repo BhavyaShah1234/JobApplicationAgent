@@ -99,6 +99,12 @@ def detect(page: Page) -> Challenge | None:
                 widget = frame.locator(selector)
                 for i in range(min(widget.count(), 3)):
                     el = widget.nth(i)
+                    if kind == 'recaptcha' and el.evaluate("e => !!e.closest('.grecaptcha-badge')"):
+                        # The provider's branding badge can contain a 256x60 frame
+                        # mostly outside the viewport. It is not an interactive
+                        # challenge; the actual checkbox/challenge frames remain
+                        # subject to the visibility checks below.
+                        continue
                     box = el.bounding_box()
                     # Invisible reCAPTCHA v3 / badge-only frames are tiny or off-screen, and portals pre-load a
                     # full-size challenge frame kept hidden (opacity 0) until it's needed: neither is a challenge.
