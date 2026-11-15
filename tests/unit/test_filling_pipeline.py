@@ -563,3 +563,13 @@ def test_preferred_is_not_misclassified_as_a_referrer():
     assert not needs_entity_binding('Preferred contact method')
     assert contact_party('Referrer email')=='referrer'
     assert needs_entity_binding('Email','Reference 1')
+
+
+def test_original_replaces_an_unverified_parser_website_with_owner_canonical_url():
+    from jobagent.steps import apply as A
+    data={'links':[{'question':'Portfolio / website','answer':'https://owner.example/profile'}]}
+    field=forms.Field(id=0,kind='text',label='Other website',value='http://owner.example/profile')
+    answers={0:A.Answer(id=0,value='',source='none')}
+    A.enforce([field],answers,{'_applicant':data},lambda _:None)
+    assert answers[0].value=='https://owner.example/profile'
+    assert answers[0].source=='applicant' and not answers[0].ask_human

@@ -834,7 +834,7 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
         answer=answers.get(field.id)
         if answer is None or answer.source in ('human','learned'):continue
         routing=route(field,evidence)
-        if routing.family not in ('start_date','preferred_name','external_sharing','residency','clearance_eligibility','clearance_held','arbitration','read_ack','event_history','account_status','privacy_consent','future_contact','sms_consent','ai_consent'):continue
+        if routing.family not in ('start_date','preferred_name','portfolio_link','external_sharing','residency','clearance_eligibility','clearance_held','arbitration','read_ack','event_history','account_status','privacy_consent','future_contact','sms_consent','ai_consent'):continue
         decision=resolve_routed(field,evidence,routing)
         if decision is None:continue
         if decision.value is not None:

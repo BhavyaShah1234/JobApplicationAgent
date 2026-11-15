@@ -77,3 +77,6 @@ The first post-VPN candidate (17b6a1f, snapshot v23) produced a correct Ashby pa
 
 
 The v24 broader check caught a second regression after 117 passes: a saved contact preference was filtered out because the referrer classifier also matched the middle of the word preferred. Referrer detection now requires a word boundary. The focused reproduction passed (2 tests), then the final v25 suite passed **221 tests in 308.61 seconds**, covering source routing, both strategies, forms, model error handling, observed regressions and all experiment tests. Snapshot v25 is the frozen runtime for the restarted live cohort. No measured portal arm overlapped that suite.
+
+
+The next watched baseline (Lever original on v25) left an unverified HTTP resume-parser prefill in Other website despite a canonical HTTPS owner source. It is rejected under the same standard as the earlier experimental smoke; required fields and upload alone are insufficient. Original enforcement now resolves this website family from its owner source, so the value is actually written and verified. The new regression plus related original/website checks passed (5 tests, 4.62 seconds). Experimental execution is unchanged by this baseline-only enforcement repair. The final matched cohort is restarted on v26, retaining all earlier attempts; its six runs use one source snapshot.
