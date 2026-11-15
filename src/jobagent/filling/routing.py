@@ -97,7 +97,7 @@ def same_qualification(field,fact):
 
 def contact_party(text):
     q=norm(text)
-    for party,pattern in [('emergency',r'emergency contact'),('referrer',r'referr|referral|referred.*employee'),
+    for party,pattern in [('emergency',r'emergency contact'),('referrer',r'\breferr\w*'),
                           ('reference',r'\breferences?\b'),('supervisor',r'\bsupervisor\b|\bmanager\b'),
                           ('relative',r'\brelative\b|family member')]:
         if re.search(pattern,q):return party

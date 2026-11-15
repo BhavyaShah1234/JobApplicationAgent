@@ -540,3 +540,26 @@ def test_entity_literal_is_not_saved_as_an_unscoped_learned_contact(world):
     result=A.run(world.page,world.job,'fixture',model=SourceModel(),hitl=Human(),filling_strategy='experimental',log=lambda _:None)
     assert result['ready_to_submit']
     assert not any(e['question']=='Institution' for e in learned.load())
+
+
+def test_original_enforces_explicit_owner_availability_and_full_preferred_name():
+    from jobagent.steps import apply as A
+    data={'identity':[{'question':'Preferred name','answer':{'first':'Bhavya','last':'Shah','full':'Bhavya Shah'}}],
+          'dates':[{'question':'Earliest start date','answer':'','instructions':"The coming Monday's date; in a list, 'immediately'."}]}
+    fields=[forms.Field(id=0,kind='checkboxes',label='When are you available to start full-time?',options=['Q4 2026 (October - December)','Q2 2027 (April - June)']),
+            forms.Field(id=1,kind='text',label='Preferred Name')]
+    answers={0:A.Answer(id=0,value='Q2 2027 (April - June)',source='applicant'),1:A.Answer(id=1,value='Bhavya',source='applicant')}
+    A.enforce(fields,answers,{'_applicant':data,'TODAY':'2026-11-15'},lambda _:None)
+    assert answers[0].value=='Q4 2026 (October - December)'
+    assert answers[1].value=='Bhavya Shah'
+    answers[0]=A.Answer(id=0,value='Q2 2027 (April - June)',source='human')
+    A.enforce(fields,answers,{'_applicant':data,'TODAY':'2026-11-15'},lambda _:None)
+    assert answers[0].value=='Q2 2027 (April - June)'
+
+
+def test_preferred_is_not_misclassified_as_a_referrer():
+    from jobagent.filling.routing import contact_party,needs_entity_binding
+    assert contact_party('Preferred contact method')=='applicant'
+    assert not needs_entity_binding('Preferred contact method')
+    assert contact_party('Referrer email')=='referrer'
+    assert needs_entity_binding('Email','Reference 1')
