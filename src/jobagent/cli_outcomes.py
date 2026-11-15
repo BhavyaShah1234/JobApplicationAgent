@@ -66,17 +66,22 @@ def register(app: typer.Typer, console) -> None:
         if not apps:
             console.print("stats: no submitted applications yet; nothing to report")
             return
+        apps = S.visible(apps, when)          # applications submitted after the evaluation date did not exist yet
+        if not apps:
+            console.print(f"stats: no application had been submitted by {when:%Y-%m-%d}")
+            return
         sts = S.statuses(apps, when)
         funnel = {k: sum(1 for s in sts.values() if s.label == k) for k in ("pending", "positive", "negative", "ghosted", "withdrawn")}
-        cutoff = S.ghost_cutoff(apps, when)
+        cutoff, basis = S.ghost_cutoff_info(apps, when)
         console.print(f"stats: {len(apps)} submitted application(s) as of {when:%Y-%m-%d}: "
                       + ", ".join(f"{n} {k}" for k, n in funnel.items() if n)
                       + f"; silence counts as ghosted after {cutoff:.0f} days", highlight=False)
+        console.print(f"stats: ghosted cutoff basis: {basis}", highlight=False)
         rows = []
         for title, key in (("all", lambda a: "all"), ("portal", lambda a: a.portal), ("role family", lambda a: a.role_id),
                            ("checker score", lambda a: S.band(a.ats_average)), ("resume version", lambda a: a.resume_sha)):
             table = Table(title=title)
-            for col in ("group", "n", "pos/neg/ghost/wait", "replied", "positive", "median d", "by 30d", "note"):
+            for col in ("group", "n", "pos/neg/ghost/wait", "replied (share of resolved)", "positive (share of resolved)", "median d (KM)", "replied by 30d (KM)", "note"):
                 table.add_column(col)
             for g in S.group_by(apps, sts, key):
                 pct = lambda p, ci: "-" if p is None else f"{p:.0%} ({ci[0]:.0%}-{ci[1]:.0%})"  # noqa: E731
@@ -112,6 +117,7 @@ def register(app: typer.Typer, console) -> None:
         when = datetime.strptime(as_of, "%Y-%m-%d").replace(tzinfo=UTC, hour=23, minute=59) if as_of else datetime.now(UTC)
         conn = db.connect()
         apps = S.load(conn)
+        apps = S.visible(apps, when)
         sts = S.statuses(apps, when)
         rows = L.resolved_outcomes(apps, sts)
         pos = sum(y for _, y in rows)
@@ -120,23 +126,41 @@ def register(app: typer.Typer, console) -> None:
         s = get_settings()
         console.print("switches (advisory by default): site mix {}, tailoring hints {}, lessons {}".format(
             *("[green]on[/]" if v else "off" for v in (s.learning_use_site_mix, s.learning_use_tailoring_hints, s.learning_use_lessons))))
-        effects = L.site_effects(apps, sts)
-        if not effects or all(e.verdict == "not enough data" for e in effects):
+        note = L.site_mix_unsupported(s)
+        if note:
+            console.print(f"[yellow]{note}[/]", highlight=False)
+        an = L.analyze_frozen(conn, apps, sts)
+        effects = an.sites
+        pr = an.params
+        if pr.get("looks") and pr["look"] == 0:
+            console.print(f"reflect: {pr['resolved']} resolved application(s); the first analysis is made at {pr['next_look']} "
+                          "(fixed-look protocol: recommendations are only made at declared look sizes so that repeated checking "
+                          "cannot inflate false recommendations).", highlight=False)
+        elif pr.get("looks"):
+            console.print(f"reflect: look {pr['look']} of {len(pr['looks'])} (the first {pr['looks'][pr['look'] - 1]} resolved "
+                          f"applications, frozen {pr.get('taken_at', 'now')} and replayed since; each look spends 1/{len(pr['looks'])} of the "
+                          f"5% error budget); next look at "
+                          f"{pr['next_look'] or 'none (the last)'}", highlight=False)
+        console.print(f"reflect: one family-wise permutation test over {pr['hypotheses']} comparison(s) "
+                      f"(chance of ANY false recommendation about {pr['fwer']:.0%}); found on the earliest {pr['train']} resolved "
+                      f"application(s), confirmed on the latest {pr['holdout']}. Associations, not causes.", highlight=False)
+        if not an.keywords and all(e.verdict == "not enough data" for e in effects):
             console.print(f"reflect: not enough data yet: each group needs {L.MIN_ARM} positive and {L.MIN_ARM} other resolved "
-                          "applications. At a few applications a week that takes months; `jobagent stats` shows the counts.")
+                          "applications among the earlier ones. At a few applications a week that takes months; "
+                          "`jobagent stats` shows the counts.")
         table = Table(title="checker sites: does a higher score go with more replies?")
-        for col in ("site", "resolved", "positive", "AUC", "99% interval", "reading"):
+        for col in ("site", "resolved", "positive", "AUC", "adjusted p", "later applications", "reading"):
             table.add_column(col)
         for e in effects:
             table.add_row(e.site, str(e.n), str(e.positives), "-" if e.auc is None else f"{e.auc:.2f}",
-                          "-" if e.ci is None else f"{e.ci[0]:.2f}-{e.ci[1]:.2f}", e.verdict)
+                          "-" if e.p_adj is None else f"{e.p_adj:.3f}", e.holdout, e.verdict)
         if effects:
             console.print(table)
-        found = L.findings(apps, sts)
+        found = L.findings(apps, sts, an)
         for f in found:
             console.print(("  * " if f["actionable"] else "  - ") + f["text"], highlight=False)
         if not dry_run:
-            res = L.reflect(conn, apps, sts, when)
+            res = L.reflect(conn, apps, sts, when, an)
             console.print(f"reflect: {res['actionable']} recommendation(s); lessons {res['new']} new, {res['kept']} kept, "
                           f"{res['retired']} retired", highlight=False)
 
@@ -153,10 +177,20 @@ def register(app: typer.Typer, console) -> None:
             table = Table(title="waiting for your approval (`outcomes approve <id>` / `outcomes reject <id>`)")
             for col in ("id", "application", "stage", "confidence", "date", "subject", "evidence"):
                 table.add_column(col)
+            for col in ("fits",):
+                table.add_column(col)
             for e in outcomes.pending_review(conn):
+                fits = f"[yellow]{e['candidate_count']} applications: `outcomes candidates {e['id']}`[/]" if e["ambiguous"] else ""
                 table.add_row(str(e["id"]), f"{e['company']} - {e['job_title']}"[:34], e["stage"], f"{e['confidence']}",
-                              e["received_at"][:10], (e["subject"] or "")[:34], (e["excerpt"] or "")[:50])
+                              e["received_at"][:10], (e["subject"] or "")[:34], (e["excerpt"] or "")[:50], fits)
             console.print(table)
+            stuck = outcomes.undecided(conn)
+            for r in stuck[:20]:
+                console.print(f"  {r['uidvalidity']}:{r['mailbox_uid']}  {r['sender_domain']}  {r['reason']}", highlight=False)
+            if stuck:
+                console.print(f"{len(stuck)} message(s) could not be classified and wait for you (mail_ledger state 'undecided'): "
+                              "`outcomes retry <uidvalidity:uid>` tries one again, `outcomes dismiss <uidvalidity:uid>` says it is not an outcome.",
+                              highlight=False)
             return
         table = Table(title="application status")
         for col in ("app", "company", "title", "state", "submitted", "events", "current", "furthest", "last event"):
@@ -188,15 +222,83 @@ def register(app: typer.Typer, console) -> None:
             console.print(f"outcomes: event {i} " + ("rejected" if outcomes.decide(conn, i, False) else "is not waiting"))
 
     @out_app.command("label")
-    def label(message_id: str = typer.Argument(..., help="The message's Message-ID, as shown by `outcomes --review`."),
+    def label(ref: str = typer.Argument(..., help="An event id from `outcomes --review` or `outcomes events` (or a Message-ID)."),
               stage: str = typer.Argument(..., help="confirmation, assessment, recruiter_screen, interview, offer, "
                                                     "rejection or withdrawn.")) -> None:
-        """Set a stored message's stage by hand."""
+        """Set an event's stage by hand; the application's confirmation state follows."""
         from jobagent import db
         from jobagent.tools import outcomes
 
         try:
-            ok = outcomes.label(db.connect(), message_id, stage)
+            ok = outcomes.label(db.connect(), ref, stage)
         except ValueError as e:
             raise typer.BadParameter(str(e)) from e
-        console.print("outcomes: labelled" if ok else "outcomes: no stored message with that id")
+        console.print("outcomes: labelled" if ok else "outcomes: no such event (see `outcomes events`)")
+
+    @out_app.command("discard")
+    def discard_cmd(ids: list[int] = typer.Argument(..., help="Event ids from `outcomes events` or `outcomes --review`.")) -> None:
+        """Remove events from the analysis, even ones already counted (an accepted false positive). The same message is never
+        added again; confirmation state and replies that followed the event are corrected; the change is audited."""
+        from jobagent import db
+        from jobagent.tools import outcomes
+
+        conn = db.connect()
+        for i in ids:
+            console.print(f"outcomes: event {i} " + ("discarded" if outcomes.discard(conn, i) else "not found or already discarded"))
+
+    @out_app.command("events")
+    def events_cmd(application: int = typer.Option(None, "--application", "-a", help="Only this application's events.")) -> None:
+        """Every stored event with the id the other commands take: counted, waiting for review, or discarded."""
+        from jobagent import db
+        from jobagent.tools import outcomes
+
+        table = Table(title="outcome events (`outcomes label <id> <stage>`, `outcomes assign <id> <application>`, `outcomes discard <id>`)")
+        for col in ("id", "app", "company", "stage", "state", "date", "subject"):
+            table.add_column(col)
+        rows = outcomes.events(db.connect(), application)
+        for r in rows:
+            table.add_row(str(r["id"]), str(r["application_id"]), (r["company"] or "")[:20], r["stage"], r["state"],
+                          (r["received_at"] or "")[:10], (r["subject"] or "")[:50])
+        console.print(table if rows else "outcomes: no events yet")
+
+    @out_app.command("candidates")
+    def candidates_cmd(event_id: int = typer.Argument(..., help="An event id from `outcomes --review`.")) -> None:
+        """Every application an event could belong to, with the matching evidence."""
+        from jobagent import db
+        from jobagent.tools import outcomes
+
+        rows = outcomes.candidates(db.connect(), event_id)
+        table = Table(title=f"event {event_id}: which application is it? (`outcomes assign {event_id} <application>`)")
+        for col in ("application", "company", "title", "score", "evidence", "now"):
+            table.add_column(col)
+        for r in rows:
+            table.add_row(str(r["application_id"]), r["company"] or "", (r["title"] or "")[:34], str(r["score"]),
+                          (r["evidence"] or "")[:70], "<- chosen" if r["chosen"] else "")
+        console.print(table if rows else "outcomes: no such event")
+
+    @out_app.command("assign")
+    def assign_cmd(event_id: int = typer.Argument(...), application_id: int = typer.Argument(...)) -> None:
+        """Say which application an event belongs to: it is then counted, the decision is recorded, and replies that were
+        waiting in the same thread follow it."""
+        from jobagent import db
+        from jobagent.tools import outcomes
+
+        ok = outcomes.assign(db.connect(), event_id, application_id)
+        console.print(f"outcomes: event {event_id} assigned to application {application_id}" if ok
+                      else "outcomes: no such event, or that application is not a submitted one")
+
+    @out_app.command("retry")
+    def retry_cmd(key: str = typer.Argument(..., help="uidvalidity:uid, as listed by `outcomes --review`.")) -> None:
+        """Try an undecided message again on the next sync."""
+        from jobagent import db
+        from jobagent.tools import outcomes
+
+        console.print("outcomes: queued for the next sync" if outcomes.requeue(db.connect(), key) else "outcomes: no such undecided message")
+
+    @out_app.command("dismiss")
+    def dismiss_cmd(key: str = typer.Argument(..., help="uidvalidity:uid, as listed by `outcomes --review`.")) -> None:
+        """An undecided message is not an outcome: never look at it again."""
+        from jobagent import db
+        from jobagent.tools import outcomes
+
+        console.print("outcomes: dismissed" if outcomes.dismiss(db.connect(), key) else "outcomes: no such undecided message")

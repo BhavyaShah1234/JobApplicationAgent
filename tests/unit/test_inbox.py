@@ -82,12 +82,20 @@ def _inbox(tmp_path, mails, agent_sites=("https://boards.greenhouse.io/acme",)):
     return inbox
 
 
+def _own(inbox, mail):
+    """The agent's action consumed this mail (what wait_for_verification records): the only thing that makes it the agent's."""
+    inbox.begin_action("https://boards.greenhouse.io/acme", "portal")
+    with inbox.conn:
+        inbox.conn.execute("UPDATE agent_actions SET status = 'consumed', consumed_message_id = ?", (mail.message_id,))
+
+
 @pytest.mark.parametrize(
     "value,domain",
     [("https://acme.wd5.myworkdayjobs.com/en-US/careers", "myworkdayjobs.com"),
      ("no-reply@us.greenhouse-mail.io", "greenhouse-mail.io"),
      ("Jobs <careers@mail.example.co.uk>", "example.co.uk"),
-     ("boards.greenhouse.io", "greenhouse.io")],
+     ("boards.greenhouse.io", "greenhouse.io"),
+     ("hr@unrelated.co.za", "unrelated.co.za"), ("hr@acme.co.za", "acme.co.za"), ("https://x.github.io/a", "x.github.io")],
 )
 def test_registrable_domain(value, domain):
     assert db.registrable_domain(value) == domain
@@ -105,21 +113,7 @@ def test_users_own_verification_mail_is_never_trashed(tmp_path):
     assert not inbox.is_agent_mail(own)
     with pytest.raises(PermissionError, match="isn't the agent's"):
         inbox.consume_and_trash(own, "otp")
-    assert inbox.sweep_stale_verification(max_age_h=24) == []
     assert inbox._imap.moved == []
-
-
-def test_sweep_filters_by_agent_senders_on_the_server(tmp_path):
-    mails = {"1": _mail("Your verification code", "code 111111", age_h=30, uid="1")}
-    inbox = _inbox(tmp_path, mails)
-    inbox.sweep_stale_verification(max_age_h=24)
-    assert all("FROM" in s for s in inbox._imap.searches)
-    assert any('FROM "greenhouse.io"' in s for s in inbox._imap.searches)
-
-    own = _mail("Your verification code", "code 999999", sender="no-reply@some-shop.com", age_h=30, uid="9")
-    empty = _inbox(tmp_path / "other", {"9": own}, agent_sites=())
-    assert empty.sweep_stale_verification(max_age_h=0) == []
-    assert not getattr(empty._imap, "searches", [])  # no agent sites → the inbox isn't even searched
 
 
 def test_self_test_mail_counts_as_agent_mail(tmp_path):
@@ -132,6 +126,7 @@ def test_self_test_mail_counts_as_agent_mail(tmp_path):
 def test_consume_and_trash_logs_without_secret(tmp_path):
     mail = _mail("Your verification code", "code 482913")
     inbox = _inbox(tmp_path, {"1": mail})
+    _own(inbox, mail)
     inbox.consume_and_trash(mail, "otp")
     assert inbox._imap.moved == ["1"]
     row = inbox.conn.execute("SELECT * FROM verification_log").fetchone()
@@ -142,22 +137,10 @@ def test_consume_and_trash_logs_without_secret(tmp_path):
 def test_refuses_to_trash_protected_mail(tmp_path):
     mail = _mail("Interview invitation", "verify code 1234")
     inbox = _inbox(tmp_path, {"1": mail})
+    _own(inbox, mail)
     with pytest.raises(PermissionError):
         inbox.consume_and_trash(mail, "otp")
     assert inbox._imap.moved == []
-
-
-def test_sweep_only_trashes_stale_verification(tmp_path):
-    mails = {
-        "1": _mail("Your verification code", "code 111111", age_h=30, uid="1"),   # stale → trash
-        "2": _mail("Your verification code", "code 222222", age_h=2, uid="2"),    # fresh → keep
-        "3": _mail("Interview invitation", "verify code 3333", age_h=48, uid="3"),  # protected → keep
-        "4": _mail("Application received", "Thanks for applying", age_h=72, uid="4"),  # not verification
-    }
-    inbox = _inbox(tmp_path, mails)
-    trashed = inbox.sweep_stale_verification(max_age_h=24)
-    assert inbox._imap.moved == ["1"] and len(trashed) == 1
-    assert set(mails) == {"2", "3", "4"}
 
 
 def test_verification_search_starts_the_day_before(monkeypatch):
@@ -168,7 +151,7 @@ def test_verification_search_starts_the_day_before(monkeypatch):
     ib.conn = None
     seen = {}
 
-    def fake_wait_for(predicate, criteria="ALL", timeout_s=180, poll_s=5):
+    def fake_wait_for(predicate, criteria="ALL", timeout_s=180, poll_s=5, header_filter=None):
         seen["criteria"] = criteria
         raise TimeoutError
 
