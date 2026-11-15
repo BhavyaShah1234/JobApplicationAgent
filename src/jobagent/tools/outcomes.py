@@ -973,6 +973,37 @@ def label(conn, ref: str, stage: str) -> bool:
     return bool(ids) and all([relabel(conn, i, stage) for i in ids])
 
 
+def add_manual(conn, application_id: int, stage: str, when: datetime | None = None, note: str = "") -> int:
+    """Record an outcome that did not arrive by email (a phone call, a LinkedIn message, a text from a recruiter) as the candidate's own
+    event: counted at once, marked `manual`, audited, and its derived state follows (a manual confirmation confirms the application).
+    The date is when it happened (default now) and may not precede the submission. Returns the new event id. Raises ValueError for an
+    unknown stage, an unknown or unsubmitted application, or a date before the submission."""
+    import uuid
+
+    if stage not in STAGES:
+        raise ValueError(f"stage must be one of {', '.join(STAGES)}")
+    app = conn.execute("SELECT * FROM applications WHERE id = ? AND state IN ('submitted', 'confirmed') AND submitted_at IS NOT NULL",
+                       (application_id,)).fetchone()
+    if app is None:
+        raise ValueError(f"application {application_id} is not a submitted application")
+    when = when or datetime.now(UTC)
+    when = when if when.tzinfo else when.replace(tzinfo=UTC)
+    if when < _parse(app["submitted_at"]) - timedelta(minutes=2):
+        raise ValueError("an outcome cannot precede the submission")
+    stamp = when.strftime("%Y-%m-%dT%H:%M:%SZ")
+    key = f"manual:{uuid.uuid4().hex[:12]}"
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO outcome_events (application_id, stage, message_id, sender, subject, excerpt, received_at, classifier, confidence, "
+            "needs_review, manual, inherited_from) VALUES (?, ?, ?, ?, ?, ?, ?, 'human', 1.0, 0, 1, 0)",
+            (application_id, stage, key, "candidate", f"{stage} (recorded by the candidate)", (note or "")[:EXCERPT], stamp))
+        eid = cur.lastrowid
+        _audit(conn, eid, "add", None, application_id, note[:200] or "recorded by the candidate, outside email")
+        if stage == "confirmation":
+            _confirm(conn, application_id, stamp, key, "candidate: recorded by hand")
+    return eid
+
+
 def events(conn, application_id: int | None = None) -> list:
     """Every stored event with its id (counted, waiting for review, or discarded), newest first - what the candidate needs to
     find an accepted false positive and discard or relabel it."""

@@ -345,3 +345,20 @@
   body: 'Hello [Applicant''s Name], we’re excited to move forward with your application for the [Job Title] position. Please join us for a video interview by selecting a time here: [Scheduling Link]. We
     look forward to learning more about you. Thank you for your interest in Larkspur Health!'
   expect: interview
+
+# --- real messages from the first production sync (2026-11-15), names removed ---------------------------------------------
+- id: real-carvana-confirm
+  from: Carvana <no-reply@carvana.com>
+  subject: "BOOM. Application received. It's just that easy."
+  body: "Hi there,\n\nApplication received. Thanks for applying to the Data Product Engineer role at Carvana. Our recruiting team will review your application and reach out if there is a fit."
+  expect: confirmation
+- id: real-pantex-registration
+  from: Pantex Recruiting <pantex@pantex.ns2cloud.com>
+  subject: New Candidate Registration
+  body: "Dear candidate, Thank you for registering at the Pantex career search page. Please check back often to view new openings as they become available."
+  expect: none
+- id: real-pantex-rejection
+  from: Pantex Recruiting <pantex@pantex.ns2cloud.com>
+  subject: Pantex Application Status - Cloud Solutions Engineer (17649)
+  body: "Dear candidate, Thank you for your interest in the position 17649 Cloud Solutions Engineer. Unfortunately, you have not been selected for further consideration for this position. You are encouraged to continue to monitor the Pantex Careers page for openings that you feel would be a match for your qualifications and skills. Sincerely, Pantex Talent"
+  expect: rejection

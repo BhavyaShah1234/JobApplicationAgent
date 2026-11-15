@@ -2,6 +2,7 @@
 import json
 from datetime import timedelta
 
+import pytest
 from typer.testing import CliRunner
 
 from jobagent import db
@@ -127,4 +128,51 @@ def test_review_and_events_listings_show_the_ids_the_commands_take(tmp_path, mon
     r = CliRunner().invoke(app, ["outcomes", "discard", "1"])
     assert r.exit_code == 0 and "discarded" in r.output.lower() + console.export_text().lower()
     assert conn.execute("SELECT needs_review FROM outcome_events").fetchone()[0] == 2
+    get_settings.cache_clear()
+
+
+# --- outcomes that arrive outside email ------------------------------------------------------------------------------------------
+
+def test_a_manual_outcome_counts_like_mail_and_is_marked_as_the_candidates(tmp_path):
+    from jobagent.tools import outcome_stats as OS
+    conn = make_db(tmp_path)
+    eid = O.add_manual(conn, 1, "interview", T0 + timedelta(days=5), "recruiter called")
+    row = conn.execute("SELECT * FROM outcome_events WHERE id = ?", (eid,)).fetchone()
+    assert (row["stage"], row["classifier"], row["manual"], row["needs_review"], row["confidence"]) == ("interview", "human", 1, 0, 1.0)
+    assert row["message_id"].startswith("manual:") and row["excerpt"] == "recruiter called"
+    assert conn.execute("SELECT action FROM outcome_audit WHERE event_id = ?", (eid,)).fetchone()[0] == "add"
+    app, = OS.load(conn)
+    assert [s for s, _ in app.events] == ["interview"]                                   # the statistics see it
+    assert conn.execute("SELECT current_stage FROM application_status").fetchone()[0] == "interview"
+
+
+def test_a_manual_confirmation_confirms_the_application_and_bad_input_is_refused(tmp_path):
+    conn = make_db(tmp_path)
+    O.add_manual(conn, 1, "confirmation", T0 + timedelta(days=1))
+    assert conn.execute("SELECT state FROM applications").fetchone()[0] == "confirmed"
+    with pytest.raises(ValueError, match="stage must be"):
+        O.add_manual(conn, 1, "hired")
+    with pytest.raises(ValueError, match="not a submitted application"):
+        O.add_manual(conn, 99, "offer")
+    with pytest.raises(ValueError, match="cannot precede"):
+        O.add_manual(conn, 1, "offer", T0 - timedelta(days=3))
+
+
+def test_the_add_command_records_an_event_with_a_date(tmp_path, monkeypatch):
+    import typer
+    from rich.console import Console
+    from jobagent.cli_outcomes import register
+    from jobagent.config import get_settings
+    monkeypatch.setenv("STATE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    conn = db.connect()
+    conn.execute("INSERT INTO applications (job_dir, company, title, url, state, submitted_at) VALUES ('outputs/a/1', 'A', 'T', 'https://a.test/1', 'submitted', '2026-11-01T00:00:00Z')")
+    conn.commit()
+    app = typer.Typer()
+    register(app, Console(width=200))
+    r = CliRunner().invoke(app, ["outcomes", "add", "1", "recruiter_screen", "--date", "2026-11-10", "--note", "LinkedIn message"])
+    assert r.exit_code == 0, r.output
+    assert conn.execute("SELECT stage, received_at, manual FROM outcome_events").fetchone()[:] == ("recruiter_screen", "2026-11-10T12:00:00Z", 1)
+    r = CliRunner().invoke(app, ["outcomes", "add", "1", "offer", "--date", "2026-10-01"])
+    assert r.exit_code == 2                                                              # before the submission
     get_settings.cache_clear()

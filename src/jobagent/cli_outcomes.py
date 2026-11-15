@@ -3,6 +3,7 @@
 import time
 
 import typer
+from jobagent.log import runlog
 from rich.table import Table
 
 
@@ -27,7 +28,7 @@ def register(app: typer.Typer, console) -> None:
         from jobagent.tools import outcomes
         from jobagent.tools.inbox import open_inbox
 
-        log = lambda m: console.print(m, highlight=False)  # noqa: E731
+        log = runlog("sync-inbox")
         while True:
             with open_inbox() as inbox:
                 res = outcomes.sync(inbox, db.connect(), since_days=since_days or None,
@@ -234,6 +235,25 @@ def register(app: typer.Typer, console) -> None:
         except ValueError as e:
             raise typer.BadParameter(str(e)) from e
         console.print("outcomes: labelled" if ok else "outcomes: no such event (see `outcomes events`)")
+
+    @out_app.command("add")
+    def add_cmd(application: int = typer.Argument(..., help="The submitted application's id (`jobagent applications`)."),
+                stage: str = typer.Argument(..., help="confirmation, assessment, recruiter_screen, interview, offer, rejection or withdrawn."),
+                date: str = typer.Option(None, help="When it happened, YYYY-MM-DD (default today)."),
+                note: str = typer.Option("", help="A short note (kept as the event's excerpt, 200 characters at most).")) -> None:
+        """Record an outcome that arrived outside email (a call, a LinkedIn or text message). It counts like a mail outcome, is marked as
+        yours, and feeds `stats` and the learning looks."""
+        from datetime import UTC, datetime
+
+        from jobagent import db
+        from jobagent.tools import outcomes
+
+        when = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=UTC, hour=12) if date else None
+        try:
+            eid = outcomes.add_manual(db.connect(), application, stage, when, note)
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from e
+        console.print(f"outcomes: recorded event {eid}: application {application} -> {stage}" + (f" on {date}" if date else ""), highlight=False)
 
     @out_app.command("discard")
     def discard_cmd(ids: list[int] = typer.Argument(..., help="Event ids from `outcomes events` or `outcomes --review`.")) -> None:

@@ -33,5 +33,19 @@ for example in /app/data/*.example.* /app/data/templates/*.example.*; do
     [ -e "$target" ] || cp "$example" "$target"
 done
 
+# Optional scheduled outcome sync (step 15 / 27): SYNC_INBOX_EVERY_HOURS=6 reads the mailbox for replies to submitted applications every
+# 6 hours. Off by default (unset or 0). It is read-only (nothing is trashed, labelled or marked read), is skipped while another sync is
+# running (the sync takes its own lock), and a failure is logged and retried at the next interval, never fatal to the container.
+if [ "${SYNC_INBOX_EVERY_HOURS:-0}" != "0" ]; then
+    (
+        sleep 120
+        while true; do
+            flock -n /app/state/sync-inbox.lock jobagent sync-inbox >>"$LOG_DIR/sync-inbox.log" 2>&1 || echo "$(date -u +%FT%TZ) sync-inbox failed (exit $?)" >>"$LOG_DIR/sync-inbox.log"
+            sleep "$(python -c "print(int(float('${SYNC_INBOX_EVERY_HOURS}') * 3600))")"
+        done
+    ) &
+    echo "Outcome sync scheduled every ${SYNC_INBOX_EVERY_HOURS} h (log: $LOG_DIR/sync-inbox.log)"
+fi
+
 echo "Harness ready: noVNC at http://localhost:${NOVNC_PORT}/vnc.html"
 exec "$@"
