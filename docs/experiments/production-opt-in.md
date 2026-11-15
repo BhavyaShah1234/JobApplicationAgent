@@ -26,6 +26,13 @@ failures motivated the regression fixes below. Those fixes do not change the his
 measurements. Keep it opt-in until a fresh live comparison passes; the original method
 also produced an unsupported preference in that pilot.
 
+The subsequent [watched three-portal follow-up](results/live-observed-2026-11-14/REPORT.md)
+also failed promotion. It caught a false readiness claim, wrong residency,
+unsupported external sharing in both engines, upload verification failures and
+stale original control handles. [Open corrections](results/live-observed-2026-11-14/FOLLOW_UPS.md)
+remain; neither an observed attachment nor a verified readback proves that the
+answer is supported for the right question or consent purpose.
+
 `application.json` records `filling_strategy` and `filling_metrics`. Active filling time
 starts after navigation/login and excludes recorded human waiting and the optional
 post-fill observation period. Writer invocation/token counts exclude embedding requests
