@@ -1129,6 +1129,34 @@ def _blank_entry(f, page_no: int, flag: str) -> dict:
             "filled": "", "error": "", "answered": False, "planner_failed": True, "frame": f.frame, "slot": f.slot}
 
 
+
+def _reconcile_unlisted_school(page,view,ctx,done,page_no,files,log):
+    """Evaluate this dependency after all school choices, including added rows."""
+    from jobagent.filling.facts import compile_facts
+    from jobagent.filling.routing import unlisted_school
+    conditional=[f for f in view.fields if re.search(r'(?i)did not see.*(?:university|school)|school (?:is )?not listed',f.label)]
+    if not conditional:return view
+    facts=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''),ctx.get('TODAY',''))
+    changed=False
+    for f in conditional:
+        decision=unlisted_school(f,view,facts)
+        if decision is None or decision.value is None:continue
+        entry=done.setdefault(_key(f),_blank_entry(f,page_no,''))
+        entry.update(answer=decision.value,source='applicant',why=decision.reason,identity=f.identity,
+                     clear=decision.value=='' and not f.required,answered=True,planner_failed=False,flag='')
+        try:
+            if decision.value!=f.value:
+                entry['filled']=forms.fill_field(page,view,f,decision.value,files)
+                changed=True
+                log(f"  [{f.kind}] {f.label[:60]!r} <- {decision.value[:60]!r} (school condition)")
+            else:entry['filled']=decision.value
+            entry['error']=''
+        except challenge.Blocked:raise
+        except Exception as exc:
+            entry.update(error=f'{type(exc).__name__}: {str(exc)[:160]}',answered=False)
+    return forms.read_page(page) if changed else view
+
+
 def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page_no: int, env: dict | None = None, known: dict | None = None, errors: list[str] = ()) -> tuple:
     """Plan and fill every field on the current page, then read it all back. Repeats for fields that appear
     after answers (conditional questions), at most 3 rounds. `known`: this page's fields from an attempt the site
@@ -1318,7 +1346,7 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
             e["error"] = f"{type(err).__name__}: {str(err)[:200]}"
             page.keyboard.press("Escape")
     # read-back: every field as the page shows it now
-    view = forms.read_page(page)
+    view = _reconcile_unlisted_school(page,forms.read_page(page),ctx,done,page_no,files,log)
     shown = {_key(f): f for f in view.fields}
     by_label: dict[tuple, list] = {}
     for g in view.fields:

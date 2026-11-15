@@ -81,9 +81,11 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         for f in fields:
             if entity_scope(f.section):continue  # old learned rows have no entity identifier
             if norm(f.label) not in cache:
-                exact=[e for e in eligible if norm(f.label) in [norm(x) for x in [e['question'],*(e.get('seen') or [])]]]
+                from .routing import needs_entity_binding
+                entries=[e for e in eligible if not needs_entity_binding(f.label,f.section,f.help) or e.get('instructions')]
+                exact=[e for e in entries if norm(f.label) in [norm(x) for x in [e['question'],*(e.get('seen') or [])]]]
                 cache[norm(f.label)]=exact[:3] or learned.relevant(f.label,company,entries=[
-                    {**e,'company':'any' if e.get('company')=='any' else company} for e in eligible],vector_bank=vector_bank)
+                    {**e,'company':'any' if e.get('company')=='any' else company} for e in entries],vector_bank=vector_bank)
             for entry in cache[norm(f.label)]:
                 value=entry.get('answer')
                 if value is None and not entry.get('instructions'):continue
@@ -93,8 +95,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                           instructions=entry.get('instructions',''))
                 known[ident]=fact
         filler=ctx['_experimental_filler']
-        existing={fact.id for fact in filler.facts}
-        filler.facts.extend(fact for ident,fact in known.items() if ident not in existing)
+        filler.facts=[fact for fact in filler.facts if fact.id not in known]+list(known.values())
         return {}
 
     def ask(questions):
@@ -111,13 +112,19 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         for q in questions:
             value=values.get(str(q['id']))
             if value is None:continue
-            text=str(value)
+            text=('Yes' if value else 'No') if isinstance(value,bool) else '; '.join(map(str,value)) if isinstance(value,list) else str(value)
             if A.RULE.match(text):
-                learned.add(q['label'],q['options'],'',env.get('company',''),env.get('host',''),rule=A.RULE.sub('',text))
-                values[str(q['id'])]=None  # a rule is not a literal answer; re-run uses it through the source resolver
+                rule=A.RULE.sub('',text)
+                learned.add(q['label'],q['options'],'',env.get('company',''),env.get('host',''),rule=rule)
+                values[str(q['id'])]=Fact('human-rule:'+str(page_no)+':'+str(q['id']),[q['label']],'','human',
+                    instructions=rule,reference_date=ctx.get('TODAY',''))
             else:
-                learned.add(q['label'],q['options'],text,env.get('company',''),env.get('host',''))
+                from .routing import needs_entity_binding
+                if not needs_entity_binding(q['label'],q.get('section',''),q.get('help','')):
+                    learned.add(q['label'],q['options'],text,env.get('company',''),env.get('host',''))
                 values[str(q['id'])]=text
+            ctx.pop('_experimental_learned_entries',None)
+            ctx.pop('_experimental_learned_retrieval',None)
         return values
 
     filler=ctx.get('_experimental_filler')

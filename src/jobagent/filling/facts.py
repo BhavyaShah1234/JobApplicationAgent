@@ -22,6 +22,7 @@ class Fact:
     tools: list[str] = field(default_factory=list)
     reference_date: str = ''
     authority: str = 'owner'
+    target_key: tuple | None = None
 
 
 @dataclass
@@ -48,7 +49,7 @@ ENTITY_COMPONENTS = {
     'first name','given name','middle name','last name','family name','surname','full name','name',
     'email','email address','phone','phone number','primary phone','telephone','mobile',
     'address','street address','address line 1','address line 2','city','town','state','province',
-    'region','country','zip','zip code','postal code','post code','pincode',
+    'region','country','zip','zip code','postal code','post code','pincode','language','languages','years of relevant experience','years of experience',
 }
 
 
@@ -61,6 +62,7 @@ def entity_scope(section):
 
 
 def scope_allows(f, fact):
+    if fact.target_key is not None and fact.target_key!=key(f):return False
     target=entity_scope(f.section)
     if fact.section:
         origin=entity_scope(fact.section)
@@ -124,7 +126,10 @@ def choice(f, values):
             if len(hits)==1:return hits[0]
         except ValueError:pass
     for value in values:
-        hit = forms.strict_option(value, f.options)
+        if forms.is_identity(f.label):
+            if f.options_state!='complete' and forms.OTHER_OPTION.match(value) and any(not forms.OTHER_OPTION.match(v) for v in values):continue
+            hit=forms.literal_identity_option(value,f.options,person=bool(forms.PERSON_Q.search(f.label)))
+        else:hit = forms.strict_option(value, f.options)
         if hit is not None:
             return hit
     for value in values:
@@ -274,7 +279,7 @@ def compile_facts(data, raw_jd, reference_date=''):
                                       instructions=entry.get('instructions',''),tools=tools))
         elif isinstance(value,list) and value and all(isinstance(x,dict) for x in value):
             for i,row in enumerate(value,1):
-                group='Education' if q=='Degrees' else 'Work Experience' if q=='Work history' else ''
+                group='Education' if q=='Degrees' else 'Work Experience' if q=='Work history' else 'Reference' if norm(q) in ('reference','references') else 'Referral' if norm(q) in ('referral','referrals') else ''
                 row_section=f'{group} {i}' if group else ''
                 aliases={'school':['School','University','Institute'], 'degree':['Degree'], 'field':['Field of Study','Major'],
                          'from':['From Date','Start Date'], 'start':['From Date','Start Date'],

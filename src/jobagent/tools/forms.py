@@ -723,8 +723,11 @@ def _justified_extension(short: str, long: str) -> bool:
     rest = lg[len(s):]
     if _CORP_SUFFIX.match(rest):
         return True
-    m = re.match(r"^\s*\(([A-Za-z.]{2,8})\)(.*)$", rest)
-    return bool(m) and m.group(1).replace(".", "").upper() == _initialism(s) and bool(_TYPE_WORD.match(m.group(2)))
+    m = re.match(r"^\s*\(([^()]+)\)(.*)$", rest)
+    if not m:return False
+    inside=m.group(1).replace('.', '').strip();initial=_initialism(s)
+    return bool(initial and inside.upper().startswith(initial) and
+                _TYPE_WORD.fullmatch(inside[len(initial):]) and _TYPE_WORD.fullmatch(m.group(2)))
 
 
 def identity_option(answer: str, options: list[str], person: bool = False) -> str | None:
@@ -747,6 +750,15 @@ def identity_option(answer: str, options: list[str], person: bool = False) -> st
         if _norm(o) in approved or _justified_extension(answer, o) or _justified_extension(o, answer):
             return o
     return None
+
+
+
+def literal_identity_option(answer,options,person=False):
+    """An explicit Other choice is valid; it never aliases a named institution."""
+    if OTHER_OPTION.match(answer or ''):
+        hits=[o for o in options if _norm(o)==_norm(answer)]
+        return hits[0] if len(hits)==1 else None
+    return identity_option(answer,options,person=person)
 
 
 def match_option(answer: str, options: list[str], cutoff: int = 80) -> tuple[str | None, int]:
@@ -830,7 +842,7 @@ def in_range(option: str, x: float) -> bool:
 def same_value(want: str, got: str, kind: str, question: str = "") -> bool:
     """The page shows the value that was meant (read-back check)."""
     if kind in ('combobox','select','radio','buttons') and is_identity(question):
-        return any(identity_option(v.strip(),[got],person=bool(PERSON_Q.search(question))) is not None
+        return any(_norm(v)==_norm(got) or identity_option(v.strip(),[got],person=bool(PERSON_Q.search(question))) is not None
                    for v in want.split(' | ') if v.strip())
     if " | " in want:
         # one of the candidate's wordings exactly: "Arizona State University" is not "Arizona State University - West"
@@ -1215,7 +1227,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         page.keyboard.type(answer, delay=60)
         return answer
     if f.kind == "select":
-        opt = strict_option(answer, f.options) if strict else close_option(answer, f.options) if close and not is_identity(f.label) else _choose(f.label, answer, f.options, tie_break)
+        opt = (literal_identity_option(answer,f.options,person=bool(PERSON_Q.search(f.label))) if is_identity(f.label) else strict_option(answer,f.options)) if strict else close_option(answer, f.options) if close and not is_identity(f.label) else _choose(f.label, answer, f.options, tie_break)
         if opt is None:
             raise FillError(f"{answer!r} isn't offered as such")
         values=[v for label,v in zip(f.options,f.option_values) if label==opt]
@@ -1280,8 +1292,8 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             page.wait_for_timeout(1200)
             opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
         geographic=bool(re.search(r'(?i)location|\bcity\b|where.*located',f.label)) and not is_identity(f.label)
-        pick = (lambda ans, o: (strict_option(ans, o) or (strict_place(ans,o) if geographic else None), 0)) if strict else \
-            (lambda ans, o: (identity_option(ans, o, person=bool(PERSON_Q.search(f.label))), 0)) if is_identity(f.label) else \
+        pick = (lambda ans, o: (literal_identity_option(ans, o, person=bool(PERSON_Q.search(f.label))), 0)) if is_identity(f.label) else \
+            (lambda ans, o: (strict_option(ans, o) or (strict_place(ans,o) if geographic else None), 0)) if strict else \
             (lambda ans, o: (close_option(ans, o), 0)) if close else match_option
         candidates=list(dict.fromkeys([answer,*[str(a) for a in alternatives if a and not OTHER_OPTION.match(str(a))]]))
         def offered(options):
@@ -1318,6 +1330,11 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                     opt=offered(opts)
                     if opt:
                         break
+        if opt is None and strict and is_identity(f.label):
+            fallback=next((str(a) for a in alternatives if OTHER_OPTION.match(str(a))),None)
+            if fallback:
+                page.keyboard.press('Escape')
+                return fill_field(page,view,f,fallback,files,strict=True)
         if opt is None and (strict or close):
             page.keyboard.press("Escape")
             raise FillError(f"{answer!r} isn't offered as such")

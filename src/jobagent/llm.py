@@ -309,6 +309,12 @@ def structured_invoke(model: ChatOpenAI, schema: type[BaseModel], messages: list
                 raise                                          # already a final answer (e.g. too many abandoned calls)
             except Exception as e:
                 kind = classify(e)
+                from openai import APIConnectionError
+                if kind=='timeout' or isinstance(e,APIConnectionError):
+                    info['connectivity_check_suggested']=True
+                    if log:
+                        detail='request timed out' if kind=='timeout' else 'connection failed'
+                        log(f'[llm] Voyager {detail}; check the VPN connection and provider availability.')
                 info["errors"].append(kind)
                 errors.append(f"{method}: {kind}: {str(e)[:100]}")
                 if kind == "config":

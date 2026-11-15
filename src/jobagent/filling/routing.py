@@ -65,14 +65,70 @@ def fact_family(fact):
     return family(fact.aliases[0] if fact.aliases else fact.id)
 
 
+
+def qualification_signature(text,kind):
+    """Parameters matter: a related question family is not the same claim."""
+    q=norm(text.replace('C++','cpp').replace('c++','cpp').replace('C#','csharp').replace('c#','csharp'))
+    if kind.startswith('clearance_'):
+        levels=[]
+        for name,pattern in [('ts sci',r'\bts sci\b|top secret.*sci'),('top secret',r'\btop secret\b'),
+                             ('secret',r'(?<!top )\bsecret\b'),('public trust',r'\bpublic trust\b'),
+                             ('q',r'\bq clearance\b'),('l',r'\bl clearance\b')]:
+            if re.search(pattern,q):levels.append(name)
+        if 'ts sci' in levels:levels=['ts sci']
+        timeframe='past' if re.search(r'\bever\b|\bprevious(?:ly)?\b|\bformerly\b|\bhad\b',q) else 'current'
+        return tuple(sorted(levels)),timeframe
+    if kind=='experience_years':
+        generic={'how','many','years','year','of','relevant','industry','professional','work','working','experience','do','you',
+                 'have','in','a','an','the','total','your','overall','full','time','post','college','graduate','postgraduate',
+                 'non','internship','noninternship','required','at','least','over','more','than','or','and','please','number',
+                 'minimum','combined','related','with','to','is','are'}
+        return tuple(sorted(set(q.split())-generic-{w for w in q.split() if w.replace('.','',1).isdigit()}))
+    return ()
+
+
+def same_qualification(field,fact):
+    kind=family(field.label)
+    if kind not in ('experience_years','clearance_held','clearance_eligibility'):return True
+    target=qualification_signature(field.label,kind)
+    return any(qualification_signature(alias,kind)==target for alias in fact.aliases)
+
+
+
+def contact_party(text):
+    q=norm(text)
+    for party,pattern in [('emergency',r'emergency contact'),('referrer',r'referr|referral|referred.*employee'),
+                          ('reference',r'\breferences?\b'),('supervisor',r'\bsupervisor\b|\bmanager\b'),
+                          ('relative',r'\brelative\b|family member')]:
+        if re.search(pattern,q):return party
+    return 'applicant'
+
+
+
+def needs_entity_binding(label,section='',help_text=''):
+    """A school/reference/employer literal needs its own record, not a global alias."""
+    from jobagent.tools.forms import is_identity
+    return bool(entity_scope(section) or contact_party(label+' '+section+' '+help_text)!='applicant' or
+                (is_identity(label) and family(label) not in ('current_employer','current_title')))
+
+
 def candidates(field,facts):
     kind=family(field.label)
     allowed=[x for x in facts if scope_allows(field,x)]
+    party=contact_party(field.label+' '+field.section+' '+field.help)
+    if kind in ('email','phone','legal_name','preferred_name','current_employer','current_title','country','location','languages','residency','clearance_held','clearance_eligibility','experience_years','work_authorization','sponsorship','pronouns','gender','race','hispanic','veteran','disability'):
+        allowed=[x for x in allowed if contact_party(' '.join(x.aliases)+' '+x.section)==party]
+    if party!='applicant':
+        components={'country':{'country'},'current_title':{'job title','title'},
+                    'current_employer':{'company name','employer','company'},
+                    'location':{'city','state','country','location','address'}}
+        if kind in components:
+            return [x for x in allowed if not x.record and any(norm(a) in components[kind] for a in x.aliases)]
     if kind=='current_title':
-        values=[x for x in facts if x.section=='Work Experience 1' and not x.record and any(norm(a)=='job title' for a in x.aliases)]
+        values=[x for x in allowed if x.section=='Work Experience 1' and not x.record and any(norm(a)=='job title' for a in x.aliases)]
         if values:return values
     if kind=='country':
-        return [x for x in facts if x.id.endswith('/Current address/answer/country')]
+        return [x for x in allowed if x.id.endswith('/Current address/answer/country')]
     if entity_scope(field.section) and re.search(r'\b(start|from|end|to)\b',norm(field.label)):
         end=bool(re.search(r'\b(end|to)\b',norm(field.label)))
         date_facts=[x for x in allowed if x.id.endswith(('/end','/to') if end else ('/start','/from'))]
@@ -83,7 +139,7 @@ def candidates(field,facts):
         return sheet or exact
     sheets=[x for x in allowed if x.id=='application.answers' and norm(field.label) in norm(x.value)]
     if sheets:return sheets
-    typed=[x for x in allowed if fact_family(x)==kind] if kind!='other' else []
+    typed=[x for x in allowed if fact_family(x)==kind and same_qualification(field,x)] if kind!='other' else []
     if kind=='on_site':typed=[x for x in typed if not x.record and not any(w in norm(x.aliases[0]) for w in ('remote','hybrid'))]
     if typed or kind!='other':return typed
     noise={'what','your','the','is','are','you','a','an','of','in','to','for','do','have','please','information','additional','details','optional','part','share','provide','application','candidate','candidates','us','about','any','other','this','our','we'}
@@ -99,7 +155,7 @@ def candidates(field,facts):
 
 
 def route(field,facts):
-    kind=family(field.label);found=candidates(field,facts)
+    kind=family(field.label);found=[x for x in candidates(field,facts) if same_qualification(field,x)]
     # A portal may call a country selector simply 'location'. Its actual
     # catalogue disambiguates the answer type before choosing a source.
     catalogue={norm(o) for o in field.options}
@@ -127,14 +183,22 @@ def resolve_routed(field,facts,route_info=None):
     if r.family=='clearance_held' and len(selected)==1 and norm(selected[0].value) in ('none','no','false'):
         return Decision(choice(field,['No']),selected[0].source,selected[0].id)
     if r.family=='residency':
+        exact=[x for x in owner if norm(field.label) in [norm(a) for a in x.aliases]]
+        if len(exact)==1:return from_fact(field,exact[0])
+        if re.search(r'\bever\b|\bpast\b|\blast \d|\bprevious|\bformerly\b|\blegal\b|\bpermanent\b|\btax\b|\bfor \d+ years',norm(field.label)):
+            return Decision(None,reason='explicit residency evidence missing')
         from jobagent.tools.forms import US_STATES
         stated=[code for name,code in US_STATES.items() if re.search(r'\b'+re.escape(name)+r'\b',norm(field.label))]
-        state=[x for x in facts if x.id=='owner.residence.state'] or [x for x in facts if x.id.endswith('/state') and '/Current address/' in x.id and not x.section]
+        party=contact_party(field.label+' '+field.section+' '+field.help)
+        if party=='applicant':
+            state=[x for x in facts if x.id=='owner.residence.state'] or [x for x in facts if x.id.endswith('/state') and '/Current address/' in x.id and not x.section]
+        else:
+            state=[x for x in facts if scope_allows(field,x) and contact_party(' '.join(x.aliases)+' '+x.section)==party and any(norm(a)=='state' for a in x.aliases)]
         if len(set(stated))==1 and len(state)==1:
             actual=US_STATES.get(norm(state[0].value),norm(state[0].value))
             if actual not in set(US_STATES.values()):return Decision(None,reason='state evidence unavailable')
             value=actual==stated[0]
-            if re.search(r'\bnot\b',norm(field.label)):value=not value
+            if re.search(r'\bnot (?:a )?resident\b|\bnot reside\b',norm(field.label)):value=not value
             return Decision(choice(field,['Yes' if value else 'No']),state[0].source,state[0].id)
         return Decision(None,reason='explicit residency evidence missing')
     if field.kind in ('text','url') and re.search(r'(?i)linkedin.*(?:github|portfolio|website)',field.label):
@@ -147,7 +211,7 @@ def resolve_routed(field,facts,route_info=None):
     if r.family=='languages':
         values=[];bound=[]
         for x in facts:
-            if x.record and x.aliases and x.aliases[0]=='Languages':
+            if x.record and x.aliases and x.aliases[0]=='Languages' and scope_allows(field,x):
                 try:value=json.loads(x.value).get('language')
                 except (ValueError,AttributeError):continue
                 if value:values.append(value);bound.append(x)
@@ -177,7 +241,7 @@ def resolve_routed(field,facts,route_info=None):
             if whole in field.options:return Decision(whole,fact.source,fact.id,'completed whole years')
         if re.search(r'\byear\b',norm(field.label)) and entity_scope(field.section):
             return from_fact(replace(field,format='YYYY'),fact)
-        if r.family in ('school','degree','discipline','current_employer','current_title','country','on_site','offer_deadline','portfolio_link','pronouns','gender','race','veteran','disability','hispanic','experience_years','clearance_eligibility','clearance_held','start_date','signature_date','email','phone','preferred_name','legal_name','location','gpa','work_authorization','external_sharing','privacy_consent','future_contact','sms_consent','ai_consent','arbitration','read_ack'):
+        if r.family in ('school','degree','discipline','current_employer','current_title','country','on_site','offer_deadline','portfolio_link','pronouns','languages','gender','race','veteran','disability','hispanic','experience_years','clearance_eligibility','clearance_held','start_date','signature_date','email','phone','preferred_name','legal_name','location','gpa','work_authorization','external_sharing','privacy_consent','future_contact','sms_consent','ai_consent','arbitration','read_ack'):
             return from_fact(field,fact)
     return None
 

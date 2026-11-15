@@ -279,3 +279,20 @@ def test_repeated_timeouts_cannot_pile_up_abandoned_workers():
     assert e.value.kind == "budget" and _t.monotonic() - started < 0.2
     _t.sleep(0.7)                                                       # the abandoned calls finish; capacity returns
     assert llm._bounded(lambda: "ok", 5) == "ok"
+
+
+def test_connection_failure_suggests_checking_vpn_without_changing_retry_policy(napping):
+    error=openai.APIConnectionError(request=httpx.Request('POST','https://voyager.test/v1/chat/completions'))
+    model=FakeModel({'json_schema':[error,Out(name='ok')],'function_calling':[],'json_mode':[]})
+    logs=[]
+    assert llm.structured_invoke(model,Out,[HumanMessage('x')],log=logs.append).name=='ok'
+    assert model.calls==['json_schema','json_schema']
+    assert any('VPN' in message and 'connection failed' in message for message in logs)
+    assert llm.last_call()['connectivity_check_suggested']
+
+
+def test_output_protocol_error_does_not_claim_a_connectivity_problem():
+    model=FakeModel({'json_schema':[bad_request()],'function_calling':[Out(name='ok')],'json_mode':[]})
+    logs=[]
+    assert llm.structured_invoke(model,Out,[HumanMessage('x')],log=logs.append).name=='ok'
+    assert not any('VPN' in message for message in logs)

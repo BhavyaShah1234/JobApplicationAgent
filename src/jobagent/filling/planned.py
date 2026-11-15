@@ -10,11 +10,11 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, SystemMessage
 from jobagent import llm
 from jobagent.tools import forms, wizard
-from .facts import Decision, Fact, choice, key, norm, resolve, from_fact, scope_allows, owner_only
+from .facts import Decision, Fact, choice, key, norm, resolve, from_fact, scope_allows, owner_only, entity_scope
 from .discovery import Discovery
 from .uploads import UploadProof
 from .live_view import LiveView
-from .routing import route,resolve_routed,binding_valid,field_packet,word_limits,unlisted_school
+from .routing import route,resolve_routed,binding_valid,field_packet,word_limits,unlisted_school,needs_entity_binding
 
 
 def read_view(page):
@@ -90,7 +90,7 @@ class PlannedFiller:
         self.prepared={};self.potential_seen=set()
         self.upload_proofs={}
         self.lookup_resolver=None;self.lookup_cache={}
-        self.dom_reads=0;self.routes=[];self.technical_failures={}
+        self.dom_reads=0;self.routes=[];self.technical_failures={};self.session_facts={};self.session_fact_steps={}
 
     def invoke(self,schema,messages,**kwargs):
         started=time.monotonic()
@@ -104,8 +104,9 @@ class PlannedFiller:
     def question_key(f):
         return norm(f.label),norm(f.section),f.kind
 
-    def plan(self, fields):
+    def plan(self, fields, allow_human=True):
         if self.prepare_sources:self.facts=self.prepare_sources(fields)
+        self.facts=[x for x in self.facts if x.id not in self.session_facts]+[x for ident,x in self.session_facts.items() if self.session_fact_steps.get(ident) in (None,self.step)]
         answers={};missing=[]
         routes={f.id:route(f,self.facts) for f in fields}
         self.routes.extend(asdict(r) for r in routes.values())
@@ -120,7 +121,7 @@ class PlannedFiller:
                 if bound and not any(x.authority=='owner' for x in bound):
                     d=Decision(None,reason='explicit owner evidence missing')
             routed=resolve_routed(f,self.facts,routes[f.id])
-            if d.source not in ('human','saved referral policy') and routed is not None:d=routed
+            if d.source not in ('human','saved referral policy') and not (d.value is not None and d.fact_id.startswith('application.answer.')) and routed is not None:d=routed
             answers[f.id]=d
             if d.value is None:missing.append(f)
         source_updates={}
@@ -257,18 +258,36 @@ class PlannedFiller:
                         answers[f.id]=Decision(d.value,'; '.join(provenance),
                                                ','.join(x.id for x in bound), 'independently source checked')
         unresolved=[f for f in missing if answers[f.id].value is None and (self.step,key(f)) not in self.declined and key(f) not in self.technical_failures]
-        if unresolved:
+        if unresolved and allow_human:
             self.events.append({'event':'human_questions','fields':[{'label':f.label,'section':f.section} for f in unresolved],'classification':'unclassified'})
             self.batches+=1;self.questions+=len(unresolved);started=time.monotonic()
             supplied=self.ask([{'id':f.id,'label':f.label,'section':f.section,'required':f.required,
                                 'kind':f.kind,'options':f.options,'format':f.format,'help':f.help} for f in unresolved])
             self.human_wait_s+=time.monotonic()-started
+            rules=[]
             for f in unresolved:
                 value=supplied.get(str(f.id))
-                if value is not None:
-                    answers[f.id]=value if isinstance(value,Decision) else from_fact(f,Fact('human:'+str(f.id),[f.label],str(value),'human',f.section))
-                    self.human_answers[(self.step,key(f))]=answers[f.id]
-                else:self.declined.add((self.step,key(f)))
+                if value is None:
+                    self.declined.add((self.step,key(f)));continue
+                if isinstance(value,Decision):
+                    answers[f.id]=value;self.human_answers[(self.step,key(f))]=value;continue
+                fact=value if isinstance(value,Fact) else Fact('human:'+repr((self.step,key(f))),[f.label],str(value),'human')
+                local=not entity_scope(f.section) and (len(norm(f.label).split())<3 or needs_entity_binding(f.label,f.section,f.help))
+                ident=(self.step,key(f)) if local else (norm(f.label),entity_scope(f.section))
+                fact.id='human:'+hashlib.sha256(repr(ident).encode()).hexdigest()[:24]
+                fact.section=f.section if entity_scope(f.section) else ''
+                if local:fact.target_key=key(f)
+                self.session_fact_steps[fact.id]=self.step if local else None
+                if not fact.reference_date:fact.reference_date=self.narrative_sources.get('today','')
+                self.session_facts[fact.id]=fact
+                if fact.instructions:
+                    rules.append(f);continue
+                answers[f.id]=from_fact(f,fact)
+                self.human_answers[(self.step,key(f))]=answers[f.id]
+            if rules:
+                # One bounded source-aware pass applies new instructions now.
+                # A rule is never typed into a field or treated as a skip.
+                answers.update(self.plan(rules,allow_human=False))
         return answers
 
     def fill(self,page,files=None,max_rounds=12,advance_pages=True,errors=()):
@@ -355,7 +374,8 @@ class PlannedFiller:
                             if role not in files and not f.required:role=None
                             decisions[f.id]=Decision(role,'document role')
                     # Parent controls first; always refresh the inventory after each mutation.
-                    order=sorted(todo,key=lambda f:(0 if norm(f.label) in ('country','how did you hear about this position') else 1,f.id))
+                    conditionals={f.id for f in todo if unlisted_school(f,view,self.facts) is not None}
+                    order=sorted(todo,key=lambda f:(2 if f.id in conditionals else 0 if norm(f.label) in ('country','how did you hear about this position') else 1,f.id))
                     changed=False
                     for old in order:
                         fresh=live.current()

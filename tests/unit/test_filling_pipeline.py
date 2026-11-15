@@ -351,3 +351,192 @@ def test_writer_packet_receives_the_complete_available_catalogue():
     packet=field_packet(field)
     assert packet['options']==field.options and packet['options_total']==351
     assert packet['options_state']=='complete'
+
+
+def test_general_experience_is_not_a_technology_duration():
+    fact=Fact('years',['Years of relevant experience'],'2.4','applicant/experience')
+    field=forms.Field(id=0,kind='text',label='How many years of experience do you have with C++?')
+    assert not route(field,[fact]).fact_ids
+    assert resolve_routed(field,[fact]) is None
+    explicit=Fact('cpp',['Years of experience with C++'],'3','applicant/qualified')
+    assert resolve_routed(field,[fact,explicit]).value=='3'
+    field.label='How many years of industry experience do you have?'
+    assert resolve_routed(field,[fact]).value=='2.4'
+
+
+def test_clearance_levels_and_history_do_not_borrow_a_different_predicate():
+    field=forms.Field(id=0,kind='radio',label='Are you eligible to obtain a TS/SCI clearance?',options=['Yes','No'])
+    fact=Fact('secret',['Are you eligible to obtain a Secret clearance?'],'Yes','applicant/clearance')
+    assert not route(field,[fact]).fact_ids
+    assert resolve_routed(field,[fact]).value is None
+    exact=Fact('ts',[field.label],'Yes','applicant/clearance')
+    assert resolve_routed(field,[fact,exact]).value=='Yes'
+    current=Fact('current',['Do you hold a security clearance?'],'No','applicant/clearance')
+    field.label='Have you ever held a security clearance?'
+    answer=resolve_routed(field,[current])
+    assert answer is None or answer.value is None
+
+
+def test_new_owner_rule_is_applied_in_the_same_planning_pass_without_literal_rule_text():
+    field=forms.Field(id=0,kind='text',label='What response should be entered?',required=True)
+    requests=[]
+    def answer(qs):
+        requests.append(qs)
+        return {'0':Fact('new-rule',[field.label],'','human',instructions='Use 42.')}
+    # prepare_sources intentionally rebuilds the source bank; session evidence
+    # must survive it, as it does in the real application adapter.
+    filler=PlannedFiller([],answer,prepare_sources=lambda _:[])
+    assert filler.plan([field])[0].value=='42'
+    assert len(requests)==1
+
+
+def test_literal_owner_answer_is_reused_on_the_next_step():
+    field=forms.Field(id=0,kind='text',label='Which professional conference did you attend?',required=True,identity='first')
+    asked=[]
+    filler=PlannedFiller([],lambda qs:asked.append(qs) or {'0':'Owner supplied conference'},prepare_sources=lambda _:[])
+    assert filler.plan([field])[0].value=='Owner supplied conference'
+    filler.step=2;field=replace(field,id=1,identity='second',section='Additional questions')
+    assert filler.plan([field])[1].value=='Owner supplied conference'
+    assert len(asked)==1
+
+
+def test_ambiguous_short_owner_answer_is_not_reused_for_another_control():
+    one=forms.Field(id=0,kind='text',label='Other',identity='first')
+    two=replace(one,id=1,identity='second')
+    answers=[]
+    def ask(qs):
+        answers.append(qs);return {str(qs[0]['id']):'First value'} if len(answers)==1 else {}
+    filler=PlannedFiller([],ask)
+    assert filler.plan([one])[0].value=='First value'
+    assert filler.plan([two])[1].value is None
+    assert len(answers)==2
+
+
+def test_reference_contact_and_language_remain_owned_by_the_reference():
+    data={'contact':[{'question':'Email','answer':'candidate@example.test'}],
+          'experience':[{'question':'Languages','answer':[{'language':'English'}]}],
+          'references':[{'question':'References','answer':[{'name':'Reference Owner','email':'reference@example.test','language':'French'}]}]}
+    facts=compile_facts(data,'')
+    email=forms.Field(id=0,kind='email',label='Email',section='Reference 1')
+    language=forms.Field(id=1,kind='select',label='Language',section='Reference 1',options=['English','French'])
+    assert resolve_routed(email,facts).value=='reference@example.test'
+    assert resolve_routed(language,facts).value=='French'
+
+
+def test_supervisor_contact_cannot_use_the_applicants_email():
+    field=forms.Field(id=0,kind='email',label='Supervisor email',section='Additional questions')
+    fact=Fact('self',['Email'],'candidate@example.test','applicant/contact')
+    assert route(field,[fact]).fact_ids==[]
+    assert resolve_routed(field,[fact]) is None
+
+
+def test_own_initialism_and_type_inside_parentheses_is_the_same_institution():
+    name='Vellore Institute of Technology'
+    assert forms.identity_option(name,[name+' (VIT University)'])==name+' (VIT University)'
+    assert forms.identity_option(name,[name+' (VIT Competitor)']) is None
+    assert forms.identity_option('Arizona State University',['Arizona State University (West Campus)']) is None
+
+
+def test_explicit_other_readback_is_valid_but_never_aliases_a_real_name():
+    assert forms.same_value('Other','Other','combobox','School')
+    assert not forms.same_value('Example University','Other','combobox','School')
+
+
+def test_strict_institution_filling_rejects_an_unapproved_parenthesized_branch(world):
+    world.setup('<label for=s>School</label><select id=s><option>Arizona State University (West Campus)</option></select>')
+    world.page.goto('https://fixture.test/apply');view=forms.read_page(world.page)
+    with pytest.raises(forms.FillError):forms.fill_field(world.page,view,view.fields[0],'Arizona State University',{},strict=True)
+    assert choice(view.fields[0],['Arizona State University']) is None
+
+
+def test_legacy_school_condition_is_evaluated_after_all_rows_are_filled(world):
+    from jobagent.steps import apply as A
+    world.setup('<h2>Education</h2><label for=school>School</label><select id=school><option selected>Other</option></select>'
+                '<h2>Additional questions</h2><label for=unlisted>If you did not see your university listed, please give its name</label><input id=unlisted>')
+    world.page.goto('https://fixture.test/apply');ctx={'_applicant':{'education':[{'question':'Degrees','answer':[{'school':['Example University','Other']}]}]}}
+    done={};view=A._reconcile_unlisted_school(world.page,forms.read_page(world.page),ctx,done,1,{},lambda _:None)
+    assert world.page.locator('#unlisted').input_value()=='Example University'
+    assert next(iter(done.values()))['source']=='applicant'
+
+
+def test_application_adapter_accepts_boolean_and_multiple_choice_json_answers(world):
+    from test_filling_strategy import SourceModel
+    from jobagent.steps import apply as A
+    world.setup('<label for=p>Do you prefer shift work?</label><select id=p required><option disabled selected>Choose</option><option>Yes</option><option>No</option></select>'
+                '<fieldset><legend>Which technical topics do you prefer?</legend><label><input type=checkbox name=topics value=Backend>Backend</label><label><input type=checkbox name=topics value=Infrastructure>Infrastructure</label></fieldset><button>Apply</button>')
+    class Human:
+        calls=0
+        def ask(self,prompt,**kwargs):
+            self.calls+=1;qs=json.loads(prompt.split('\n',1)[1])
+            return json.dumps({str(q['id']):True if q['kind']=='select' else ['Backend','Infrastructure'] for q in qs})
+    human=Human();result=A.run(world.page,world.job,'fixture',model=SourceModel(),hitl=human,filling_strategy='experimental',log=lambda _:None)
+    assert result['ready_to_submit'] and human.calls==1
+    assert world.page.locator('#p').input_value()=='Yes'
+    assert world.page.locator('input:checked').count()==2
+
+
+def test_application_adapter_applies_a_new_rule_without_a_second_run(world):
+    from test_filling_strategy import SourceModel
+    from jobagent.steps import apply as A
+    world.setup('<label for=x>What response should be entered?</label><input id=x required><button>Apply</button>')
+    class Human:
+        calls=0
+        def ask(self,prompt,**kwargs):
+            self.calls+=1;qs=json.loads(prompt.split('\n',1)[1]);return json.dumps({str(qs[0]['id']):'rule: Use 42.'})
+    human=Human();result=A.run(world.page,world.job,'fixture',model=SourceModel(),hitl=human,filling_strategy='experimental',log=lambda _:None)
+    assert result['ready_to_submit'] and human.calls==1
+    assert world.page.locator('#x').input_value()=='42'
+
+
+def test_reference_country_and_job_title_cannot_read_the_applicants_sources():
+    data={'address':[{'question':'Current address','answer':{'country':'United States'}}],
+          'experience':[{'question':'Work history','answer':[{'title':'Applicant title'}]}],
+          'references':[{'question':'References','answer':[{'name':'Reference Owner','title':'Reference title','company':'Reference company','country':'Canada'}]}]}
+    facts=compile_facts(data,'')
+    country=forms.Field(id=0,kind='select',label='Country where you reside',section='Reference 1',options=['United States','Canada'])
+    title=forms.Field(id=1,kind='text',label='Current job title',section='Reference 1')
+    company=forms.Field(id=2,kind='text',label='Current employer',section='Reference 1')
+    assert resolve_routed(country,facts).value=='Canada'
+    assert resolve_routed(title,facts).value=='Reference title'
+    assert resolve_routed(company,facts).value=='Reference company'
+
+
+def test_current_residence_does_not_answer_historical_residency():
+    facts=compile_facts({'address':[{'question':'Current address','answer':{'state':'Arizona'}}]},'')
+    field=forms.Field(id=0,kind='radio',label='Have you ever been a resident of California?',options=['Yes','No'])
+    assert resolve_routed(field,facts).value is None
+    explicit=Fact('owner-history',[field.label],'Yes','applicant/history')
+    assert resolve_routed(field,[*facts,explicit]).value=='Yes'
+
+
+def test_posting_specific_owner_answer_wins_over_an_older_address():
+    from jobagent.filling.routing import answer_sheet_facts
+    field=forms.Field(id=0,kind='radio',label='Are you a resident of California?',options=['Yes','No'])
+    facts=compile_facts({'address':[{'question':'Current address','answer':{'state':'Arizona'}}]},'')
+    facts+=answer_sheet_facts('| 1 | Are you a resident of California? | Yes |')
+    assert PlannedFiller(facts,no_questions).plan([field])[0].value=='Yes'
+
+
+def test_long_institution_question_does_not_reuse_another_wizard_entity():
+    field=forms.Field(id=0,kind='text',label='Which university did you attend?',identity='reused-node')
+    calls=[]
+    def ask(qs):
+        calls.append(qs);return {'0':'First University' if len(calls)==1 else 'Second University'}
+    filler=PlannedFiller([],ask)
+    assert filler.plan([field])[0].value=='First University'
+    filler.step=2
+    assert filler.plan([field])[0].value=='Second University'
+    assert len(calls)==2
+
+
+def test_entity_literal_is_not_saved_as_an_unscoped_learned_contact(world):
+    from test_filling_strategy import SourceModel
+    from jobagent.steps import apply as A
+    from jobagent.tools import learned
+    world.setup('<label for=x>Institution</label><input id=x required><button>Apply</button>')
+    class Human:
+        def ask(self,prompt,**kwargs):
+            q=json.loads(prompt.split('\n',1)[1])[0];return json.dumps({str(q['id']):'Example University'})
+    result=A.run(world.page,world.job,'fixture',model=SourceModel(),hitl=Human(),filling_strategy='experimental',log=lambda _:None)
+    assert result['ready_to_submit']
+    assert not any(e['question']=='Institution' for e in learned.load())
