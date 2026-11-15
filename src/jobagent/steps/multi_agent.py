@@ -32,7 +32,7 @@ from jobagent.clock import with_today
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
 from jobagent.steps import ats as A
-from jobagent.tools import ats_sites, github, layout
+from jobagent.tools import ats_sites, bundle, github, layout
 from jobagent.tools import projects as P
 from jobagent.tools import tailor as T
 from jobagent.tools.vault import open_vault
@@ -46,7 +46,7 @@ AGENTS = ("experience", "projects", "skills", "summary")
 # requirement list into a ~5-line Summary and ignored the length limit in every validator pass.
 DEFAULT_MODELS = {"experience": "devstral2-123b", "projects": "gpt-oss-120b", "skills": "glm-5-3-flash",
                   "summary": "devstral2-123b", "router": "glm-5-3"}
-SITES = tuple(x for x in ats_sites.DEFAULT_SITES if x not in ats_sites.BUDGET_SITES)
+SITES = ats_sites.DEFAULT_SITES
 # 3 validator fix passes and 3 ATS rounds after the first score (5 and 5 until 2026-11-08: the user asked for 3)
 LAYOUT_PASSES, ATS_ROUNDS, TARGET = 3, 3, 90.0
 BLANK_HARD_PT = 24  # more free height than this (about 2 lines) at the bottom disqualifies a version
@@ -70,7 +70,7 @@ class SkillsOut(BaseModel):
 
 
 class SummaryOut(BaseModel):
-    summary: str = Field(max_length=800, description="Plain text, 2-3 complete sentences, <= 450 characters")
+    summary: str = Field(max_length=T.SUMMARY_MAX, description=f"Plain text, 2-3 complete sentences, at most {T.SUMMARY_TARGET} characters")
 
 
 class ProjectSwap(BaseModel):
@@ -117,9 +117,9 @@ PROJECTS_EDIT_PROMPT = """You are the PROJECTS agent of a resume team. Do what T
 - rewrite a paragraph in place (`projects`: 1-based number under PROJECTS and the new paragraph), or
 - replace a weaker project with a better CANDIDATE repo (`swaps`: the number to replace and a full entry for the
   candidate: repo full_name exactly as listed, title, stack, paragraph, short).
-Each paragraph: exactly 3 sentences, 300-420 characters: the problem, the system built (stack named), the wow factor
+Each paragraph: exactly 3 sentences, {PMIN}-{PMAX} characters: the problem, the system built (stack named), the wow factor
 (a result or scale). The title is a real project name, never the bare repo slug. Use the posting's keywords the TASKS
-ask for. No dashes as punctuation; "by N%". Never invent degrees, employers or dates."""
+ask for. No dashes as punctuation; "by N%". Never invent degrees, employers or dates.""".replace("{PMIN}", str(T.PARAGRAPH_MIN)).replace("{PMAX}", str(T.PARAGRAPH_MAX))
 
 REVIEW_PROMPT = """You are the VALIDATOR of a resume team. Check the CURRENT RESUME for this posting the way a hiring
 manager would and report only real problems, each for the agent that owns that section:
@@ -157,6 +157,7 @@ class State(TypedDict, total=False):
     layout_issues: list
     reviewed: bool
     hard: list
+    budget_feedback: dict            # initial limited-site feedback retained during unlimited-site refinements
     history: Annotated[list, operator.add]
 
 
@@ -232,6 +233,7 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
         T.apply_repair(g, outs["experience"])
     elif outs.get("experience") is not None:
         g.roles = [T.FillRole(role=i, bullets=getattr(outs["experience"], f"role_{i}")) for i in range(len(r.roles))]
+    T.normalize_originals(r, g)                      # F18: a claimed `original` that is not the template's text is new text
     if outs.get("skills") is not None:
         g.skills = outs["skills"].skills
     if outs.get("summary") is not None and 80 <= len(outs["summary"].summary) <= 600:
@@ -366,10 +368,11 @@ def check_layout(state: State) -> dict:
         tasks["experience"].append(f"The LaTeX failed to compile ({err}); write plain text only.")
     if pages and pages > 1:
         tasks["experience"].append(f"The resume is {pages} pages; it must be one: shorten every bullet to one line "
-                                   "(<= 110 characters) and drop the least relevant bullet of the longest role.")
+                                   f"(about {T.BULLET_TARGET} characters, at most {T.BULLET_MAX}) and drop the least relevant bullet of the longest role.")
         tasks["skills"].append("The resume overflows one page: at most 2 tools per term, merge near-duplicates.")
     tasks["experience"] += T.duplicates(r, f) + T.quality(r, jd, f)
-    uncovered = T.fill_checks(r, jd, f)[0]
+    slots = len(r.roles) * T.MAX_BULLETS          # the most bullets the page layout allows (F18)
+    uncovered = T.fill_checks(r, jd, f, slots)[0]
     if uncovered:
         tasks["experience"].append(f"REQUIRED JD item indices not covered by any NEW bullet: {uncovered}.")
     tasks["summary"] += summary_issues(f.summary, bool(pages and pages > 1))
@@ -410,7 +413,7 @@ def check_layout(state: State) -> dict:
                     f"per role) to {[f'role_{e.role} ({len(e.bullets)} now)' for e in thin]}, preferring the candidate's "
                     f"own template bullets that fit the posting: {spare}. Keep every REQUIRED item covered.")
     if st and st["kept"] - len(st["short"]) < min(2, len(st["ranked"])):
-        tasks["summary"].append("Projects are squeezed to short forms: shorten the Summary to at most 300 characters.")
+        tasks["summary"].append(f"Projects are squeezed to short forms: shorten the Summary to at most {T.SUMMARY_TIGHT} characters.")
         tasks["skills"].append("Projects are squeezed to short forms: keep every category to one line.")
     if st and st["kept"] < min(3, len(st["ranked"])):
         tasks["projects"].append(f"Only {st['kept']} project(s) fit: make every paragraph 300-340 characters so "
@@ -443,7 +446,7 @@ def check_layout(state: State) -> dict:
             "reviewed": reviewed}
 
 
-SUMMARY_MAX = 450
+SUMMARY_MAX = T.SUMMARY_MAX          # one definition (tools/tailor.py) for the schema, the prompts and this check (F18)
 
 
 def summary_issues(summary: str, overflow: bool) -> list[str]:
@@ -454,9 +457,9 @@ def summary_issues(summary: str, overflow: bool) -> list[str]:
     sentences = [x for x in re.split(r"(?<=[.!?])\s+", summary.strip()) if x]
     if len(summary) > SUMMARY_MAX or len(sentences) > 3:
         out.append(f"The Summary is {len(summary)} characters / {len(sentences)} sentences: rewrite it in 2-3 "
-                   f"sentences, at most {SUMMARY_MAX - 50} characters.")
-    elif overflow and len(summary) > 330:
-        out.append("The page overflows: shorten the Summary to at most 300 characters.")
+                   f"sentences, at most {T.SUMMARY_TARGET} characters (never over {SUMMARY_MAX}).")
+    elif overflow and len(summary) > T.SUMMARY_TIGHT + 30:
+        out.append(f"The page overflows: shorten the Summary to at most {T.SUMMARY_TIGHT} characters.")
     years = T.declared_claims().get("years_experience")
     claimed = [int(n) for n in re.findall(r"(\d+)\+?\s*(?:years?|yrs)", summary, re.I)]
     if years and any(n > years for n in claimed):
@@ -531,20 +534,45 @@ def score(state: State) -> dict:
         log(f"ats round {rnd}: page not valid ({pages} pages {err}); rolled back to the best version")
         return _rollback(state, "UNDONE: the edit broke the one-page layout; keep lines short") if best else \
             {"ats_round": rnd + 1, "last": "the page overflowed: shorten bullets"}
-    ev = A.evaluate(job_dir, jd, ctx["jd_text"], rnd, ctx["sites"], log)
-    missing_sites = [x for x in ctx["sites"] if x not in ev["scores"]]
-    if missing_sites:  # a checker failed: once more, else the round doesn't count (no average over fewer sites)
+    budget_sites = tuple(name for name in ctx["sites"] if name in ats_sites.BUDGET_SITES)
+    first_score = best is None
+    sites = tuple(name for name in ctx["sites"] if first_score or name not in budget_sites)
+    ev = A.evaluate(job_dir, jd, ctx["jd_text"], rnd, sites, log)
+    required = [name for name in sites if name not in ats_sites.OPTIONAL_SITES]
+
+    missing_sites = [name for name in required if name not in ev["completed"]]
+
+    if missing_sites:
         again = A.evaluate(job_dir, jd, ctx["jd_text"], rnd, tuple(missing_sites), log)
-        ev["scores"].update(again["scores"]); ev["missing"].update(again["missing"]); ev["advice"] += again["advice"]
-        missing_sites = [x for x in ctx["sites"] if x not in ev["scores"]]
+        ev["scores"].update(again["scores"])
+        ev["missing"].update(again["missing"])
+
+        for key in ("advice", "template", "keep", "completed"):
+            ev[key] += again[key]
+        ev.setdefault("advice_by_site", {}).update(again.get("advice_by_site", {}))
+
+        missing_sites = [name for name in required if name not in ev["completed"]]
+
     if missing_sites:
         log(f"ats round {rnd}: {missing_sites} failed twice; this round doesn't count")
-        return _rollback(state, "a checker failed; the same version will be rescored") if best else \
-            {"ats_round": rnd + 1, "last": ""}
-    avg = A.average(ev["scores"])
+        if best:
+            return _rollback(state, "a checker failed; the same version will be rescored")
+        return {"ats_round": rnd + 1, "last": ""}
+    budget_feedback = state.get("budget_feedback", {})
+    if first_score:
+        budget_feedback = {
+            "missing": {name: ev["missing"].get(name, []) for name in budget_sites},
+            "advice": [a for name in budget_sites for a in ev.get("advice_by_site", {}).get(name, [])],
+            "scores": {name: value for name, value in ev["scores"].items() if name in budget_sites},
+        }
+    else:
+        ev["missing"].update(budget_feedback.get("missing", {}))
+        ev["advice"] = list(dict.fromkeys(ev["advice"] + budget_feedback.get("advice", [])))
+    # Compare revisions using the same unlimited scorers; a budget score belongs to its original PDF.
+    avg = A.average({name: value for name, value in ev["scores"].items() if name not in budget_sites})
     n_layout = len(layout.check(job_dir / "resume.pdf").issues)
     hard = hard_issues(ctx, f)
-    log(f"ats round {rnd}: average {avg} {ev['scores']}, layout issues {n_layout}, hard issues {hard}")
+    log(f"ats round {rnd}: unlimited-site comparison average {avg} {ev['scores']}, layout issues {n_layout}, hard issues {hard}")
     if best:
         better = (len(hard) < len(best["hard"]) or
                   (len(hard) == len(best["hard"]) and
@@ -556,19 +584,28 @@ def score(state: State) -> dict:
     proj = job_dir / "projects.json"
     new_best = {"avg": avg, "scores": ev["scores"], "f": f.model_copy(deep=True), "layout": n_layout, "hard": hard,
                 "tex": (job_dir / "resume.tex").read_text(), "pdf": (job_dir / "resume.pdf").read_bytes(),
-                "projects": proj.read_text() if proj.exists() else None, "ev": ev}
+                "projects": proj.read_text() if proj.exists() else None, "filled": f.model_dump_json(indent=1) if hasattr(f, "model_dump_json") else None, "ev": ev}
     last = f"KEPT: the scores are {ev['scores']} (average {avg})" if best else ""
     return {"best": new_best, "scores": ev["scores"], "ats_round": rnd + 1, "last": last,
+            "budget_feedback": budget_feedback,
             "history": [f"ats {avg}"]}
+
+
+def _version_files(best: dict) -> dict:
+    """A kept version as the bundle of files that describe it: its source, PDF, projects layout and structure. A version that
+    had no projects layout means NO such file (a later attempt's must not survive a rollback to it)."""
+    files = {"resume.tex": best["tex"], "resume.pdf": best["pdf"], "projects.json": best.get("projects")}
+    if best.get("filled"):
+        files["filled.json"] = best["filled"]
+    elif hasattr(best.get("f"), "model_dump_json"):
+        files["filled.json"] = best["f"].model_dump_json(indent=1)
+    return files
 
 
 def _rollback(state: State, why: str, ev: dict | None = None) -> dict:
     ctx, best = state["ctx"], state["best"]
     job_dir = ctx["job_dir"]
-    (job_dir / "resume.tex").write_text(best["tex"])
-    (job_dir / "resume.pdf").write_bytes(best["pdf"])
-    if best["projects"] is not None:
-        (job_dir / "projects.json").write_text(best["projects"])
+    bundle.publish(job_dir, _version_files(best))          # the whole version, or nothing (F25)
     out = {"f": best["f"].model_copy(deep=True), "ats_round": state.get("ats_round", 0) + 1, "last": why,
            "history": ["rollback"]}
     if ev:  # the rejected version's findings still tell the agents what's missing
@@ -580,7 +617,10 @@ def after_score(state: State) -> str:
     best = state.get("best")
     if not state["ctx"]["sites"] and best:  # dry run (no ATS sites): the drafted, layout-checked page is the result
         return "done"
-    if best and best["avg"] >= TARGET and not best["hard"] or state.get("ats_round", 0) > ATS_ROUNDS:
+    estimated_scores = {**state.get("budget_feedback", {}).get("scores", {}),
+                        **(best["scores"] if best else {})}
+    estimate = ats_sites.score_summary(estimated_scores, state["ctx"]["sites"])["average"]
+    if (best and estimate is not None and estimate >= TARGET and not best["hard"]) or state.get("ats_round", 0) > ATS_ROUNDS:
         return "done"
     return "route"
 
@@ -589,7 +629,7 @@ def route(state: State) -> dict:
     """ATS validator's router: missing keywords and advice -> tasks per agent."""
     ctx, best = state["ctx"], state.get("best")
     if not best:  # nothing scored yet: the page never fit
-        return {"tasks": {"experience": ["The resume overflows one page: every bullet to one line (<= 110 characters), "
+        return {"tasks": {"experience": [f"The resume overflows one page: every bullet to one line (about {T.BULLET_TARGET} characters), "
                                          "drop the least relevant bullet of the longest role."],
                           "projects": ["The resume overflows one page: make every paragraph 300-350 characters."]},
                 "layout_pass": 0}
@@ -610,7 +650,7 @@ def route(state: State) -> dict:
         tasks = {a: [f"Work in what fits your section: {missing}; advice: {ev['advice']}"] for a in AGENTS}
     for h in best.get("hard", []):  # page problems the kept version still has
         if h.startswith("only "):  # projects squeezed to short forms: the Summary and skills give the room back
-            tasks.setdefault("summary", []).append(f"Page problem: {h}. Shorten the Summary to at most 300 characters.")
+            tasks.setdefault("summary", []).append(f"Page problem: {h}. Shorten the Summary to at most {T.SUMMARY_TIGHT} characters.")
             tasks.setdefault("skills", []).append(f"Page problem: {h}. Keep every category to one line.")
             continue
         agent = "projects" if "project" in h or "blank" in h else "skills" if "skills" in h else "experience"
@@ -639,7 +679,14 @@ def build_graph():
 
 def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> dict:  # noqa: C901
     """One job through the agent graph; leaves the best one-page version in job_dir."""
+    if sites and all(name in ats_sites.FEEDBACK_ONLY_SITES for name in sites):
+        raise ValueError("The ATS improvement loop requires at least one numeric checker alongside SkillsFirst's written feedback.")
+    if sites and not any(name not in ats_sites.BUDGET_SITES and name not in ats_sites.FEEDBACK_ONLY_SITES
+                         for name in sites):
+        raise ValueError("The multi-agent loop needs an unlimited numeric checker alongside limited-credit sites.")
     s = get_settings()
+    from jobagent.tools import documents
+    documents.begin(job_dir)       # fail closed: an in-progress record replaces the manifest before anything is generated
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
     ctx = {"job_dir": job_dir, "jd": jd, "company": (s.state_dir / "companies" / f"{slug}.md").read_text(),
            "r": T.parse((s.data_dir / "templates" / "resume.tex").read_text()),
@@ -648,16 +695,31 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> d
     final = build_graph().invoke({"ctx": ctx, "history": []}, {"recursion_limit": 200})
     best = final.get("best")
     if best:
-        (job_dir / "resume.tex").write_text(best["tex"])
-        (job_dir / "resume.pdf").write_bytes(best["pdf"])
-        (job_dir / "filled.json").write_text(best["f"].model_dump_json(indent=1))
+        bundle.publish(job_dir, _version_files(best))      # source, PDF, projects layout and structure: one version (F25)
+        budget = tuple(name for name in sites if name in ats_sites.BUDGET_SITES)
+        if budget:
+            final_ev = A.evaluate(job_dir, jd, ctx["jd_text"], final.get("ats_round", 0) + 1, budget, log)
+            best["scores"] = {**{name: value for name, value in best["scores"].items() if name not in budget},
+                              **final_ev["scores"]}
+    if not best:                    # no valid best version: whatever the graph left behind is not a resume
+        (job_dir / "resume.pdf").unlink(missing_ok=True)
     lay = layout.check(job_dir / "resume.pdf").issues if best else []
     hard = best.get("hard", []) if best else []
+    claims = documents.claims_from_filled(best["f"]) if best else []
     hist = [h for h in final.get("history", []) if h.startswith("ats ")]
-    return {"average": best["avg"] if best else None, "scores": best["scores"] if best else {},
-            "history": [float(h.split()[1]) for h in hist], "reached": bool(best and best["avg"] >= TARGET),
+    summary = ats_sites.write_summary(job_dir, best["scores"] if best else {}, sites)
+    avg = summary["average"]
+    return {"average": avg, "scores": summary["scores"],
+            "average_sites": summary["sites"], "average_missing": summary["missing"],
+            "average_complete": summary["complete"],
+            "history": [float(h.split()[1]) for h in hist], "history_metric": "unlimited-site comparison",
+            "reached": bool(best and avg is not None and avg >= TARGET),
             "pages": layout.page_count(job_dir / "resume.pdf") if best else None, "layout_issues": lay,
-            "hard_issues": hard,
+            "hard_issues": hard, "claims_issues": claims,
+            "coverage_limited": (T.feasibility(ctx["r"], ctx["jd"], len(ctx["r"].roles) * T.MAX_BULLETS)
+                                 if best and ctx.get("r") is not None and ctx.get("jd") is not None else []),
+            "produced": bool(best),
+            "failure": None if best else "no valid best version: every attempt failed to produce a one-page resume",
             "steps": final.get("history", [])}
 
 

@@ -1,8 +1,34 @@
 """Step 10 pure logic: merging the sites' missing keywords, the advice pass, the upload file name."""
 
 from jobagent.steps import ats
+from jobagent.state import JobDescription
 from jobagent.tools import ats_sites
 from jobagent.tools import tailor as T
+
+
+def test_written_feedback_completes_a_site_without_a_numeric_score(tmp_path, monkeypatch):
+    results = [
+        ats_sites.SiteScore(
+            "skillsfirst", None, True,
+            breakdown={"feedback_only": True},
+            advice=["Explain the measurable impact of existing projects"],
+        ),
+        ats_sites.SiteScore("hireflow", 80.0, True),
+        ats_sites.SiteScore("jobalytics", None, False, breakdown={"error": "offline"}),
+    ]
+    monkeypatch.setattr(ats_sites, "score_all", lambda *args, **kwargs: results)
+    recorded = []
+    monkeypatch.setattr(ats_sites, "record", lambda *args: recorded.append(args))
+
+    feedback = ats.evaluate(
+        tmp_path, JobDescription(title="Engineer", company="Acme"), "job description", 0,
+        ("skillsfirst", "hireflow", "jobalytics"),
+    )
+
+    assert feedback["completed"] == ["skillsfirst", "hireflow"]
+    assert feedback["scores"] == {"hireflow": 80.0}
+    assert feedback["advice"] == results[0].advice
+    assert len(recorded) == 3
 
 
 def _filled():
@@ -34,7 +60,7 @@ def test_advice_pass_rewrites_summary_only_when_sane():
     new = "Software engineer who partners with security and product teams on fraud detection in Python and Kafka."
     assert T.apply_keyword_pass(f, T.KeywordPass(summary=new)).summary == new
     assert T.apply_keyword_pass(f, T.KeywordPass(summary="")).summary == f.summary
-    assert T.apply_keyword_pass(f, T.KeywordPass(summary="x" * 600)).summary == f.summary
+    assert T.apply_keyword_pass(f, T.KeywordPass.model_construct(summary="x" * 600)).summary == f.summary      # past the schema (F18): the guard still holds
 
 
 def test_keyword_prompt_includes_advice_and_summary(monkeypatch):

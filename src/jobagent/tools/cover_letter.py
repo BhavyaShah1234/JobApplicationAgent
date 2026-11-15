@@ -156,6 +156,8 @@ def header_matches(letter_template: str, resume_tex: str) -> bool:
 
 def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int = 3, log=print) -> dict:
     """cover_letter.tex/.pdf in job_dir from its resume.tex; returns a small report for changes.md."""
+    for stale in ("cover_letter.pdf", "cover_letter.tex"):     # an earlier letter must not pass as this one
+        (job_dir / stale).unlink(missing_ok=True)
     resume_tex = (job_dir / "resume.tex").read_text()
     resume = resume_text(resume_tex)
     template = template_path().read_text()
@@ -182,6 +184,11 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
     if best is None:
         raise RuntimeError("every cover letter round failed")
     letter, issues, tex = best
-    compile_pdf(tex, job_dir, name="cover_letter")  # the best round, not necessarily the last
-    return {"letter": letter, "issues": issues, "words": sum(len(p.text.split()) for p in letter.paragraphs),
+    pages, err = compile_pdf(tex, job_dir, name="cover_letter")  # the best round, not necessarily the last
+    if err:
+        issues = [i for i in issues if not i.startswith("LaTeX error")] + [f"LaTeX error: {err}"]
+        (job_dir / "cover_letter.pdf").unlink(missing_ok=True)
+    elif pages and pages > 1 and not any("pages; it must be one" in i for i in issues):
+        issues = issues + [f"{pages} pages; it must be one"]
+    return {"valid": not issues and pages == 1, "pages": pages, "letter": letter, "issues": issues, "words": sum(len(p.text.split()) for p in letter.paragraphs),
             "header_matches_resume": header_matches(template, resume_tex), "template": template_path().name}
