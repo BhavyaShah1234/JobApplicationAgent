@@ -66,8 +66,14 @@ class Hitl:
         """Block until the user answers (or `done_when()` turns true). Returns the answer ("" if auto-resolved)."""
         req = Request(id=uuid.uuid4().hex[:8], prompt=prompt, secret=secret, default=default, vault_target=vault_target)
         _write_atomic(self.pending / f"{req.id}.json", json.dumps(asdict(req)))
-        hint = "jobagent hitl answer " + req.id + ("" if secret else " '<answer>'")
-        self.notify(f"[HITL {req.id}] {prompt}" + (f" (default: {default})" if default else "") + f"\n  → answer with: {hint}")
+        from jobagent.log import host_command
+        # the form you can paste on the host; a secret is typed at a hidden prompt, so that command needs stdin and a terminal
+        hint = host_command(["jobagent", "hitl", "answer", req.id] + ([] if secret else ["<answer>"]), interactive=secret)
+        try:
+            self.notify(f"[HITL {req.id}] {prompt}" + (f" (default: {default})" if default else "") + f"\n  → answer with: {hint}")
+        except Exception as exc:                          # the question stays answerable even when showing it failed
+            import sys
+            print(f"hitl: could not show question {req.id} ({type(exc).__name__}: {exc}); answer with: {hint}", file=sys.stderr)
         deadline = None if timeout_s is None else time.monotonic() + timeout_s
         try:
             while True:

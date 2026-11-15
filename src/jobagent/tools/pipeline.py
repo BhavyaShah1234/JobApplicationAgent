@@ -45,6 +45,25 @@ class Pipeline:
         except (click.exceptions.Exit, typer.Exit) as exc:
             return exc.exit_code
 
+    def _eligibility(self, d, row, ignored):
+        """Screen the posting's hard requirements (citizenship, clearance, sponsorship) against the candidate's own file before any
+        document or form work is spent. `blocked` stops the job as needs_review with the quoted sentence (override per posting with
+        --ignore-eligibility; the queue never overrides); `review` is logged and recorded and the job continues."""
+        from jobagent.tools import applicant, eligibility, jobqueue
+        text = (d / "jd.txt").read_text() if (d / "jd.txt").exists() else ""
+        verdict = eligibility.screen(text, applicant.eligibility_facts())
+        (d / "eligibility.json").write_text(json.dumps({"level": verdict.level, "reasons": verdict.reasons, "ignored": bool(ignored)}, indent=1))
+        if verdict.level == "ok":
+            return None
+        note = "eligibility: " + verdict.text()
+        if verdict.level == "review" or ignored:
+            self.log(f"pipeline: eligibility {verdict.level}{' (overridden for this posting)' if ignored else ''}: {verdict.text()}")
+            return None
+        jobqueue.mark(self.conn, row["url"], "needs_review", note[:400])
+        self.log(f"pipeline: stopped before any document or form work: {note}")
+        self.log("pipeline: apply anyway with --ignore-eligibility if you know better")
+        return PipelineResult("needs_review", str(d), 4, note)
+
     def _posting(self, url):
         from jobagent import db
         return db.job_for_urls(self.conn, url)
@@ -54,7 +73,7 @@ class Pipeline:
         return (self.settings.outputs_dir / _slug(row["company"] or "unknown") / str(row["job_id"] or "")).resolve()
 
     def run(self, url, *, through="apply", browser_mode="docker", allow_desktop_submit=False, force=False, no_ats=False,
-            filling_strategy=None):
+            filling_strategy=None, ignore_eligibility=False):
         from jobagent.tools import bundle
         if through not in {"scrape", "tailor", "apply", "submit"}:
             raise ValueError("through must be scrape, tailor, apply or submit")
@@ -65,9 +84,9 @@ class Pipeline:
             filling_strategy=select_strategy(filling_strategy)
         root = (self.settings.state_dir / "workflows" / hashlib.sha256(url.encode()).hexdigest()[:24]).resolve()
         with bundle.job_lock(root, "pipeline"):
-            return self._run(url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy)
+            return self._run(url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy, ignore_eligibility)
 
-    def _run(self, url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy=None):
+    def _run(self, url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy=None, ignore_eligibility=False):
         from jobagent.tools import research, places
         from jobagent.tools.queue_runner import outcome_of_apply, fresh_result
         wf = W.Workflow(root)
@@ -98,6 +117,9 @@ class Pipeline:
         current.save()
         if through == "scrape":
             return PipelineResult("scraped", str(d))
+        stop = self._eligibility(d, row, ignore_eligibility)
+        if stop is not None:
+            return stop
         company = row["company"]
         slug = research.slug(company)
         source = json.loads((d / "jd.json").read_text())

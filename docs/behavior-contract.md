@@ -1,6 +1,6 @@
 # Behavior contract (current; dated decisions override the original plan)
 
-Last updated 2026-11-15. Each line is something the agent does or never does, whatever a step's code or a model says.
+Last updated 2026-11-15 (step 16 additions: eligibility screen, pacing, review queue). Each line is something the agent does or never does, whatever a step's code or a model says.
 
 **Never**
 - Submit an application without the candidate's typed `approve` for THAT application at its review prompt (in every browser mode; desktop submit also needs `--allow-desktop-submit`). Filling, queueing and running a pipeline stop at the review screen.
@@ -9,6 +9,8 @@ Last updated 2026-11-15. Each line is something the agent does or never does, wh
 - Substitute a similarly named school, employer or person; only an exact name, a corporate suffix, the organisation's own initialism, or an alias the candidate listed in `applicant.yaml` counts.
 - Read, keep or delete mail that is not tied to an application or an agent-owned domain; the mailbox is shared with personal mail. Outcome sync is read-only.
 - Reset an existing portal account's password, or create a duplicate account to work around a rejected login.
+- Spend document or form work on a posting whose hard requirements (U.S. citizenship, a clearance, no sponsorship) your own file says you do not meet: it stops as `needs_review` with the quoted sentence; `--ignore-eligibility` overrides it for one posting, the queue never does, and an unknown fact asks rather than blocks.
+- Send one employer a stream of applications: the queue paces per company (default 2 per 7 days); an explicit URL is never blocked.
 - Put secrets, the contacts CSV, state, outputs or `.env` into a commit or an image.
 
 **Always**

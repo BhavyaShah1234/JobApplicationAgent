@@ -1,0 +1,4 @@
+# Queue and pacing (0 turns pacing off).
+# pacing_max_per_company: 2
+# pacing_window_days: 7
+# queue_lease_seconds: 900

@@ -1,6 +1,7 @@
 """CLI for step 14: `jobagent discover` (company names / CSV -> queued roles) and `jobagent queue` (look, decide, run)."""
 
 import typer
+from jobagent.log import runlog
 from rich.table import Table
 
 
@@ -33,7 +34,7 @@ def register(app: typer.Typer, console) -> None:
         if not companies:
             console.print("[red]discover: no company names to look up[/]")
             raise typer.Exit(1)
-        log = lambda m: console.print(m, highlight=False)  # noqa: E731
+        log = runlog("discover")
         results = discovery.discover_many(companies, log=log, refresh=refresh_careers, only_us=not all_countries,
                                           judge=None if no_judge else "model", limit=limit or None)
         table = Table(title=f"{len(results)} company(ies)")
@@ -126,4 +127,4 @@ def register(app: typer.Typer, console) -> None:
 
         conn = db.connect()
         run_queue(conn, through=through, limit=limit, company=company, outputs_dir=get_settings().outputs_dir,
-                  slug_of=_slug, log=lambda m: console.print(m, highlight=False), browser_mode=browser_mode)
+                  slug_of=_slug, log=runlog("queue-run"), browser_mode=browser_mode)

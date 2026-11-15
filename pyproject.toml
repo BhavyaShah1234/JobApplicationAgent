@@ -33,7 +33,7 @@ dev = [
 ]
 
 [project.scripts]
-jobagent = "jobagent.main:app"
+jobagent = "jobagent.main:cli"
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -50,5 +50,7 @@ exclude-newer = "2026-10-05T00:00:00Z"
 testpaths = ["tests"]
 markers = [
     "e2e: end-to-end test that needs the running harness container and network",
+    "browser: drives a real headless Chrome (slow); see tests/conftest.py",
+    "simulation: statistical calibration / null-world simulation (slow); see tests/conftest.py",
 ]
 addopts = "-m 'not e2e' -p no:cacheprovider"

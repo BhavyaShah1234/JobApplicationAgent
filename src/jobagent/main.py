@@ -4,12 +4,13 @@ import contextlib
 import json
 
 import typer
+from jobagent.log import runlog
 from rich.console import Console
 from rich.table import Table
 
 from jobagent.tools.availability import EXIT_UNAVAILABLE
 
-app = typer.Typer(no_args_is_help=True, help="Job application agent + harness.")
+app = typer.Typer(no_args_is_help=True, help="Job application agent + harness.", pretty_exceptions_enable=False)
 step_app = typer.Typer(no_args_is_help=True, help="Run a single workflow step on its own.")
 vault_app = typer.Typer(no_args_is_help=True, help="Inspect the encrypted credential vault.")
 app.add_typer(step_app, name="step")
@@ -24,6 +25,10 @@ cli_discovery.register(app, console)  # step 14: discover, queue
 from jobagent import cli_outcomes  # noqa: E402
 
 cli_outcomes.register(app, console)  # step 15: sync-inbox, outcomes
+
+from jobagent import cli_config  # noqa: E402
+
+cli_config.register(app, console)  # step 21: config show
 
 
 @app.command("desktop-probe")
@@ -72,7 +77,7 @@ def step_gmail(
     """Step 1: set up the agent's Gmail account, app password and inbox access (idempotent)."""
     from jobagent.steps.gmail import setup
 
-    setup(existing_email=existing, log=lambda m: console.print(m, highlight=False))
+    setup(existing_email=existing, log=runlog("step-gmail"))
     console.print("[green]Gmail account ready.[/]")
 
 
@@ -89,7 +94,7 @@ def step_gmail_check() -> None:
         console.print(f"[red]gmail not set up (status={entry.get('status')!r}); run `jobagent step gmail`[/]")
         raise typer.Exit(1)
     failed = False
-    log = lambda m: console.print(m, highlight=False)  # noqa: E731
+    log = runlog("step-gmail-check")
     for name, fn in (("imap/smtp", lambda: check_imap_roundtrip(vault)),
                      ("shared-inbox guard", lambda: check_ownership_guard(vault)),
                      ("browser session", lambda: check_browser_session(get_settings(), vault, log=log))):
@@ -109,7 +114,7 @@ def step_browser_check() -> None:
     from jobagent.steps.browser import check
 
     failed = False
-    for name, ok, detail in check(log=lambda m: console.print(m, highlight=False)):
+    for name, ok, detail in check(log=runlog("step-browser-check")):
         failed |= not ok
         console.print(f"{'[green]PASS[/]' if ok else '[red]FAIL[/]'} {name}: {detail}", highlight=False)
     if failed:
@@ -122,7 +127,7 @@ def step_overleaf() -> None:
     from jobagent.steps.overleaf import setup
 
     try:
-        setup(log=lambda m: console.print(m, highlight=False))
+        setup(log=runlog("step-overleaf"))
     except Exception as e:  # optional step: report, don't break the rest of the agent
         console.print(f"[yellow]Overleaf unavailable: {type(e).__name__}: {e}[/]")
         raise typer.Exit(1)
@@ -135,7 +140,7 @@ def step_overleaf_check() -> None:
     from jobagent.steps.overleaf import check
 
     failed = False
-    for name, ok, detail in check(log=lambda m: console.print(m, highlight=False)):
+    for name, ok, detail in check(log=runlog("step-overleaf-check")):
         failed |= not ok
         console.print(f"{'[green]PASS[/]' if ok else '[red]FAIL[/]'} {name}: {detail}", highlight=False)
     if failed:
@@ -148,7 +153,7 @@ def step_github() -> None:
     from jobagent.steps.github import setup
 
     try:
-        user = setup(log=lambda m: console.print(m, highlight=False))
+        user = setup(log=runlog("step-github"))
     except Exception as e:  # optional step: report, don't break the rest of the agent
         console.print(f"[yellow]GitHub unavailable: {type(e).__name__}: {e}[/]")
         raise typer.Exit(1)
@@ -161,7 +166,7 @@ def step_github_check() -> None:
     from jobagent.steps.github import check
 
     failed = False
-    for name, ok, detail in check(log=lambda m: console.print(m, highlight=False)):
+    for name, ok, detail in check(log=runlog("step-github-check")):
         failed |= not ok
         console.print(f"{'[green]PASS[/]' if ok else '[red]FAIL[/]'} {name}: {detail}", highlight=False)
     if failed:
@@ -242,7 +247,7 @@ def scrape_cmd(
     if not targets:
         console.print("[red]give at least one URL or --file[/]")
         raise typer.Exit(1)
-    log = lambda m: console.print(m, highlight=False)  # noqa: E731
+    log = runlog("scrape")
     t0 = time.monotonic()
     items = scrape_many(targets, open_hitl(log), workers=workers, refresh=refresh, log=log)
     table, failed = _scrape_table(items, f"{len(items)} posting(s) in {time.monotonic() - t0:.0f}s ({workers} workers)")
@@ -398,7 +403,7 @@ def tailor_cmd(
     from jobagent.steps.tailor import cover_letter, main
 
     _stop_if_unavailable(job_dir, "tailor")
-    log = lambda m: console.print(m, highlight=False)
+    log = runlog("tailor")
     from jobagent.tools import documents
 
     s = get_settings()
@@ -465,24 +470,62 @@ def tailor_cmd(
 
 @app.command("run")
 def run_pipeline_cmd(
-    url: str = typer.Argument(..., help="Posting URL to take through the shared in-process workflow."),
-    through: str = typer.Option("apply", help="scrape, tailor, apply or submit; submit still requires review approval."),
+    inputs: list[str] = typer.Argument(..., help="Job URLs, company names (comma lists ok) and/or CSV/XLSX files, in any mix."),
+    through: str = typer.Option("apply", help="scrape, tailor, apply or submit; submit still requires review approval (job URLs only)."),
+    limit: int = typer.Option(5, help="For company names and files: at most N queued jobs are worked in this run."),
     browser_mode: str = typer.Option("docker", help="docker, desktop, or auto (filling only)."),
     allow_desktop_submit: bool = typer.Option(False, "--allow-desktop-submit"),
     force: bool = typer.Option(False, help="Refresh input stages and regenerate documents."),
     no_ats: bool = typer.Option(False, "--no-ats", help="Skip ATS scans while generating documents; document validity still gates submission."),
     filling_strategy: str = typer.Option(None, help="original or experimental; default FILLING_STRATEGY/experimental."),
+    ignore_eligibility: bool = typer.Option(False, "--ignore-eligibility", help="Go on although the posting's hard requirements "
+        "(U.S. citizenship, a clearance, no sponsorship) conflict with your file. The queue never does this."),
 ) -> None:
-    from jobagent.tools.pipeline import Pipeline
+    """Take every input through the shared workflow: a job URL directly, company names and files through discovery and the queue (US-only,
+    role-matched, paced per company). Stops at the review screen; sending needs your typed `approve` per application (`review-queue`)."""
+    from rich.table import Table
+
+    from jobagent.tools import multi_input
+    log = runlog("run")
     try:
-        result = Pipeline(log=lambda m: console.print(m, highlight=False)).run(
-            url, through=through, browser_mode=browser_mode, allow_desktop_submit=allow_desktop_submit, force=force, no_ats=no_ats,
-            filling_strategy=filling_strategy)
+        rows = multi_input.run_inputs(inputs, through=through, limit=limit, log=log, browser_mode=browser_mode,
+                                      allow_desktop_submit=allow_desktop_submit, force=force, no_ats=no_ats,
+                                      filling_strategy=filling_strategy, ignore_eligibility=ignore_eligibility)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
-    console.print(f"run: {result.state}; {result.job_dir}; {result.note}", highlight=False)
-    if result.code:
-        raise typer.Exit(result.code)
+    table = Table(title="run: what happened to each input")
+    for col in ("input", "kind", "state", "note"):
+        table.add_column(col)
+    for r in rows:
+        table.add_row(r.input[:60], r.kind, r.state, r.note[:100])
+    console.print(table)
+    if code := multi_input.exit_code(rows):
+        raise typer.Exit(code)
+
+
+@app.command("review-queue")
+def review_queue_cmd() -> None:
+    """Applications filled to their review screen and waiting for YOUR decision, oldest first, with how ready each is and the command
+    that opens its review. Nothing is approved or sent from here; every submission still needs your typed `approve` for that application."""
+    from rich.table import Table
+
+    from jobagent import db
+    from jobagent.tools import review_queue
+
+    rows = review_queue.waiting(db.connect())
+    if not rows:
+        console.print("review-queue: nothing is waiting for you")
+        return
+    table = Table(title=f"{len(rows)} application(s) waiting for your decision")
+    for col in ("id", "company", "title", "ready", "waiting h", "blockers", "open its review"):
+        table.add_column(col)
+    for r in rows:
+        table.add_row(str(r["id"]), (r["company"] or "")[:22], (r["title"] or "")[:34], "[green]yes[/]" if r["ready"] else "[yellow]no[/]",
+                      "-" if r["age_hours"] is None else f"{r['age_hours']:.0f}", str(len(r["blockers"])), r["review_command"])
+    console.print(table)
+    for r in rows:
+        for b in r["blockers"][:3]:
+            console.print(f"  [yellow]{r['company']}: {b[:140]}[/]", highlight=False)
 
 
 @app.command("workflow")
@@ -553,7 +596,7 @@ def cover_letter_cmd(
     d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
     s = get_settings()
     documents.begin_rewrite(d)           # fail closed BEFORE the old letter is replaced
-    cl = cover_letter(job_dir, company, log=lambda m: console.print(m, highlight=False))
+    cl = cover_letter(job_dir, company, log=runlog("cover-letter"))
     console.print(f"cover letter: {cl['words']} words, {len(cl['issues'])} issue(s)", highlight=False)
     res = documents.refresh(d, s.ats_shortfall, s.ats_target, letter=cl)
     if res:
@@ -580,7 +623,7 @@ def ats_cmd(
     selected = tuple(site) if site else ats_sites.DEFAULT_SITES
     results = ats_sites.score_all(d / "resume.pdf", (d / "jd.txt").read_text(), title=jd.title or "",
                                  sites=selected, company=jd.company,
-                                 log=lambda m: console.print(m, highlight=False))
+                                 log=runlog("ats"))
     for s in results:
         ats_sites.record(d, s.site, 0, s.score, s.missing, s.to_dict())
         status = s.score if s.score is not None else (
@@ -638,7 +681,7 @@ def ats_loop_cmd(
     s = get_settings()
     documents.begin_rewrite(d)           # fail closed BEFORE the loop touches the resume; a failed rewrite stays blocked
     run(job_dir, company, target, sites=tuple(site) if site else ats_sites.DEFAULT_SITES,
-        log=lambda m: console.print(m, highlight=False))
+        log=runlog("ats-loop"))
     if res := documents.refresh(d, s.ats_shortfall, s.ats_target):    # the loop rewrote the resume: validate what is on disk now
         _print_documents(res)
         if code := documents.exit_code(res):                          # an invalid build is a failed command, not just a printout
@@ -657,7 +700,7 @@ def model_experiment_cmd(
 
     pairs = [tuple(j.rsplit(":", 1)) for j in jobs]
     root = run(pairs, list(model) if model else None, workers, target,
-               log=lambda m: console.print(m, highlight=False))
+               log=runlog("model-experiment"))
     console.print(f"results: {root / 'results.md'}", highlight=False)
 
 
@@ -676,7 +719,7 @@ def multi_agent_cmd(
     models = {k: same_model for k in DEFAULT_MODELS} if same_model else {}
     models.update(dict(x.split("=", 1) for x in role or []))
     run([tuple(j.rsplit(":", 1)) for j in jobs], models, () if no_ats else SITES,
-        log=lambda m: console.print(m, highlight=False))
+        log=runlog("multi-agent"))
 
 
 @app.command("portal-login")
@@ -691,7 +734,7 @@ def portal_login_cmd(
     from jobagent.tools.portal_auth import ensure_account
     from jobagent.tools.vault import open_vault
 
-    log = lambda m: console.print(m, highlight=False)
+    log = runlog("portal-login")
     vault = open_vault()
     email = (vault.get("gmail") or {})["email"]
     with open_inbox() as inbox, persistent_context() as ctx:
@@ -708,7 +751,7 @@ def portal_logout_cmd(url: str = typer.Argument(..., help="A posting or career-s
     from jobagent.tools.portal_auth import sign_out
     from jobagent.tools.vault import open_vault
 
-    log = lambda m: console.print(m, highlight=False)
+    log = runlog("portal-logout")
     email = (open_vault().get("gmail") or {})["email"]
     with open_inbox() as inbox, persistent_context() as ctx:
         ok = sign_out(ctx.pages[0], url, open_vault(), inbox, open_hitl(log), email, log=log)
@@ -750,7 +793,7 @@ def apply_cmd(
     _stop_if_unavailable(job_dir, "apply")
     _stop_if_documents_invalid(job_dir, "apply")
     _, wf = _lock_job(ctx, job_dir, "apply")
-    log = lambda m: console.print(m, highlight=False)
+    log = runlog("apply")
     if (wf.stage("apply") or {}).get("status") == "interrupted":
         log("apply: an earlier run was interrupted; the page is reopened and read again (filling never sends)")
     wf.mark("apply", "running")
@@ -834,7 +877,7 @@ def submit_cmd(
     _stop_if_unavailable(job_dir, "submit")
     _stop_if_documents_invalid(job_dir, "submit")
     _, wf = _lock_job(ctx, job_dir, "submit")
-    log = lambda m: console.print(m, highlight=False)  # noqa: E731
+    log = runlog("submit")
     if (wf.stage("submit") or {}).get("status") == "interrupted":
         # not replayed blindly: the submission attempts (guard above) decide what is safe; this only says why a look is worthwhile
         log("submit: an earlier submit run ended before it finished; its submission attempts were checked above and nothing "
@@ -920,7 +963,7 @@ def locate_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<job-i
 
     from jobagent.tools.places import resolve_job
 
-    resolve_job(Path(job_dir), company, log=lambda m: console.print(m, highlight=False))
+    resolve_job(Path(job_dir), company, log=runlog("locate"))
 
 
 @app.command("learned")
@@ -949,7 +992,7 @@ def portal_reset_cmd(url: str = typer.Argument(..., help="A career-site URL on t
     from jobagent.tools.portal_auth import reset_once
     from jobagent.tools.vault import open_vault
 
-    log = lambda m: console.print(m, highlight=False)
+    log = runlog("portal-reset")
     vault = open_vault()
     email = (vault.get("gmail") or {})["email"]
     with open_inbox() as inbox, persistent_context() as ctx:
@@ -974,7 +1017,7 @@ def research_cmd(
         console.print("[red]give at least one company or --file[/]")
         raise typer.Exit(1)
     t0 = time.monotonic()
-    results = research_many(names, workers=workers, refresh=refresh, log=lambda m: console.print(m, highlight=False))
+    results = research_many(names, workers=workers, refresh=refresh, log=runlog("research"))
     table, failed = _research_table(results, f"{len(names)} compan(ies) in {time.monotonic() - t0:.0f}s")
     console.print(table)
     if failed:
@@ -991,7 +1034,7 @@ def step_tailor_check(
     from jobagent.steps.tailor import check
 
     failed = False
-    for name, ok, detail in check(_read_urls([], file), workers, log=lambda m: console.print(m, highlight=False)):
+    for name, ok, detail in check(_read_urls([], file), workers, log=runlog("step-tailor-check")):
         failed |= not ok
         console.print(f"{'[green]PASS[/]' if ok else '[red]FAIL[/]'} {name}: {detail}", highlight=False)
     if failed:
@@ -1025,7 +1068,7 @@ def bootstrap() -> None:
     """Global default action: check/repair the harness and accounts (resumes after a crash)."""
     from jobagent.graph.bootstrap import run
 
-    _print_bootstrap(run(log=lambda m: console.print(m, highlight=False)))
+    _print_bootstrap(run(log=runlog("bootstrap")))
 
 
 @step_app.command("bootstrap-check")
@@ -1073,7 +1116,7 @@ def browser_google_login() -> None:
     from jobagent.tools.hitl import open_hitl
     from jobagent.tools.vault import open_vault
 
-    log = lambda m: console.print(m, highlight=False)  # noqa: E731
+    log = runlog("browser-google-login")
     state = google_login(open_vault(), open_hitl(log), log)
     if state != "ok":
         console.print("[red]the agent's browser is still signed out (Google may have rejected the session)[/]")
@@ -1087,7 +1130,7 @@ def browser_warm_up(minutes: float = typer.Option(5, help="How long to browse.")
     from jobagent.steps.browser import warm_up
     from jobagent.tools.hitl import open_hitl
 
-    log = lambda m: console.print(m, highlight=False)  # noqa: E731
+    log = runlog("browser-warm-up")
     warm_up(minutes, open_hitl(log), log)
 
 
@@ -1272,5 +1315,11 @@ def report_capability(name: str, why: str, install_hint: str = "") -> None:
     console.print("recorded" if added else "already reported")
 
 
+def cli() -> None:
+    """The `jobagent` command: the typer app, with a failure ending as one red line and a trace file instead of a traceback."""
+    from jobagent.log import run_cli
+    run_cli(app)
+
+
 if __name__ == "__main__":
-    app()
+    cli()

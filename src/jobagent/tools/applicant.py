@@ -31,6 +31,43 @@ def load() -> dict:
     return data
 
 
+def eligibility_facts(data: dict | None = None) -> dict:
+    """What the candidate's own file says about eligibility, for the posting screen: {us_citizen, permanent_resident, authorized,
+    needs_sponsorship, clearance, citizenship}. A value the file does not give is None (unknown, never guessed)."""
+    data = load() if data is None else data
+
+    def yes_no(v):
+        s = str(v).strip().lower() if v is not None else ""
+        return True if s in ("yes", "y", "true") else False if s in ("no", "n", "false") else None
+
+    facts = {"us_citizen": None, "permanent_resident": False, "authorized": None, "needs_sponsorship": None, "clearance": None,
+             "citizenship": ""}
+    for _, e in entries(data):
+        q = (e.get("question") or "").lower()
+        a = e.get("answer")
+        if "authorized to work" in q and facts["authorized"] is None:
+            facts["authorized"] = yes_no(a)
+        elif "sponsorship" in q and "require" in q:
+            v = yes_no(a)
+            if v is not None:
+                facts["needs_sponsorship"] = True if v or facts["needs_sponsorship"] else False
+        elif "clearance" in q:
+            facts["clearance"] = str(a or "").strip() or None
+        elif "citizenship" in q or "visa status" in q:
+            if isinstance(a, dict):
+                cit, visa = str(a.get("citizenship") or "").strip(), str(a.get("visa_status") or "").lower()
+                if cit:
+                    facts["citizenship"] = cit
+                    facts["us_citizen"] = cit.lower() in ("us", "u.s.", "usa", "u.s.a.", "united states", "united states of america",
+                                                          "american", "us citizen", "u.s. citizen")
+                if re.search(r"permanent resident|green card|\blpr\b", visa):
+                    facts["permanent_resident"] = True
+            elif isinstance(a, str) and a.strip():
+                facts["citizenship"] = a.strip()
+                facts["us_citizen"] = a.strip().lower() in ("us", "usa", "united states", "u.s.", "american")
+    return facts
+
+
 def identity_aliases(data: dict | None = None) -> dict[str, list[str]]:
     """{a school's / employer's real name: [the other forms the candidate has APPROVED for it]} from every record in the file that
     has an `aliases:` list beside a `school`, `institution`, `company` or `employer` name. Only what the candidate wrote counts:

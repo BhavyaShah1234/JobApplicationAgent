@@ -1,0 +1,4 @@
+# Advisory learning switches (off by default).
+# learning_use_site_mix: false
+# learning_use_tailoring_hints: false
+# learning_use_lessons: false

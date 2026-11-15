@@ -1,15 +1,62 @@
 """Runtime settings, read from environment / .env (see .env.example)."""
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+
+# Behaviour you may want to change without touching code lives in config/<concern>.yaml (step 21); precedence, highest first:
+# environment variable > .env > config/*.yaml > the default in this class. Paths, secrets and the display are environment-only.
+CONFIG_FILES = ("models", "forms", "ats", "browser", "queue", "learning", "logging")
+CONCERN = {                      # which file each setting belongs to
+    "models": ["openai_base_url", "ollama_base_url", "model_planner", "model_vision", "model_fast", "model_embed", "model_writer",
+               "fallback_planner", "fallback_vision", "fallback_fast", "fallback_embed", "llm_max_retries", "llm_timeout_s",
+               "llm_call_deadline_s", "llm_max_calls", "llm_rate_retries"],
+    "forms": ["filling_strategy", "apply_max_pages"],
+    "ats": ["ats_shortfall", "ats_target"],
+    "browser": ["chrome_channel", "headless"],
+    "queue": ["pacing_max_per_company", "pacing_window_days", "queue_lease_seconds"],
+    "learning": ["learning_use_site_mix", "learning_use_tailoring_hints", "learning_use_lessons"],
+    "logging": ["log_level"],
+}
+
+
+class _ConcernYaml(PydanticBaseSettingsSource):
+    """config/<concern>.yaml, accepting only the keys listed for that concern in CONCERN: paths, credentials, the display and keys that
+    belong to another file are not read from YAML at all (`describe` reports them as rejected)."""
+
+    def get_field_value(self, field, field_name):                  # required by the base class; __call__ does the work
+        return None, field_name, False
+
+    def __call__(self) -> dict:
+        import yaml
+        out: dict = {}
+        for name in CONFIG_FILES:
+            f = config_dir() / f"{name}.yaml"
+            if f.is_file():
+                data = yaml.safe_load(f.read_text()) or {}
+                if not isinstance(data, dict):
+                    raise ValueError(f"{f}: must be a mapping of setting: value")
+                out.update({k: v for k, v in data.items() if k in CONCERN[name]})
+        return out
+
+
+def config_dir() -> Path:
+    """Where the config/*.yaml files are: $CONFIG_DIR, else /app/config in the container, else ./config."""
+    if os.environ.get("CONFIG_DIR"):
+        return Path(os.environ["CONFIG_DIR"])
+    return Path("/app/config") if Path("/app/config").is_dir() else Path("config")
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @classmethod
+    def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
+        return (init_settings, env_settings, dotenv_settings, _ConcernYaml(settings_cls), file_secret_settings)
 
     # The user's local time: "today", "present" and "latest" are judged in this zone (America/Phoenix = MST, no DST)
     timezone: str = "America/Phoenix"
@@ -39,8 +86,8 @@ class Settings(BaseSettings):
     # F05: what an ATS shortfall does to a valid resume. "warn" (default): the application may proceed, the review packet says the
     # average is below the target (or unscored); "block": no application is filled until the target is met. Invalid documents
     # (missing, not compiled, not one page, unresolved hard findings) always block, whatever this says.
-    ats_shortfall: str = "warn"
-    ats_target: float = 90.0
+    ats_shortfall: Literal["warn", "block"] = "warn"
+    ats_target: float = Field(default=90.0, ge=0, le=100)
 
     # Step 15 learning is advisory: each lever stays off until the candidate switches it on (LEARNING_USE_SITE_MIX=true ...)
     learning_use_site_mix: bool = False          # drop checker sites whose scores have been shown to carry no signal
@@ -52,13 +99,19 @@ class Settings(BaseSettings):
     fallback_embed: str = "nomic-embed-text"
 
     # Retry policy for Voyager (429 token budget / 503 capacity)
-    llm_max_retries: int = 4
-    llm_timeout_s: float = 600.0
+    llm_max_retries: int = Field(default=4, ge=0, le=20)
+    llm_timeout_s: float = Field(default=600.0, gt=0)
     # F19: bounds on one `structured_invoke` (across all its methods and retries): wall-clock seconds, calls, and how many times
     # a rate limit / capacity error is waited out before the call gives up
-    llm_call_deadline_s: float = 900.0
-    llm_max_calls: int = 8
-    llm_rate_retries: int = 3
+    llm_call_deadline_s: float = Field(default=900.0, gt=0)
+    llm_max_calls: int = Field(default=8, ge=1, le=100)
+    llm_rate_retries: int = Field(default=3, ge=0, le=20)
+    # Per-company pacing for the queue (tools/pacing.py): at most this many applications started or sent per company in the window; 0 = off
+    pacing_max_per_company: int = Field(default=2, ge=0)
+    pacing_window_days: int = Field(default=7, ge=1, le=365)
+    queue_lease_seconds: int = Field(default=900, ge=30)               # how long a claimed queue job stays its runner's without a heartbeat (tools/jobqueue.py)
+    apply_max_pages: int = Field(default=15, ge=1, le=60)                    # the most wizard pages `apply` walks through before it stops
+    log_level: Literal["normal", "quiet"] = "normal"       # quiet hides progress detail on screen (the log file keeps everything)
 
     # Credential vault (Fernet key, urlsafe base64 of 32 bytes)
     vault_key: SecretStr = SecretStr("")
@@ -84,3 +137,37 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def describe(settings: Settings | None = None) -> list[dict]:
+    """Every setting in config/*.yaml's scope with its effective value and where it came from (env | .env | yaml:<file> | default),
+    plus any key in a yaml file that names no setting (`source` = 'unknown key')."""
+    import yaml
+    s = settings or get_settings()
+    dotenv = {}
+    if Path(".env").is_file():
+        for line in Path(".env").read_text().splitlines():
+            if "=" in line and not line.lstrip().startswith("#"):
+                k, v = line.split("=", 1)
+                dotenv[k.strip().upper()] = v.strip()
+    in_yaml: dict[str, str] = {}
+    unknown: list[dict] = []
+    for name in CONFIG_FILES:
+        f = config_dir() / f"{name}.yaml"
+        if f.is_file():
+            for key in (yaml.safe_load(f.read_text()) or {}):
+                if key in CONCERN[name]:
+                    in_yaml[key] = f"yaml:{name}.yaml"
+                elif key in Settings.model_fields or key in {v.alias for v in Settings.model_fields.values() if v.alias}:
+                    unknown.append({"concern": name, "key": key, "value": "", "source": "rejected: environment-only or belongs in another file"})
+                else:
+                    unknown.append({"concern": name, "key": key, "value": "", "source": "unknown key (ignored)"})
+    rows = []
+    for concern, keys in CONCERN.items():
+        for key in keys:
+            if key not in Settings.model_fields:
+                continue
+            up = key.upper()
+            source = "env" if up in os.environ else ".env" if up in dotenv else in_yaml.get(key, "default")
+            rows.append({"concern": concern, "key": key, "value": getattr(s, key), "source": source})
+    return rows + unknown

@@ -50,7 +50,8 @@ class _FallbackNotice(BaseCallbackHandler):
     def on_chat_model_start(self, serialized, messages, **kwargs) -> None:
         name = (serialized or {}).get("kwargs", {}).get("model", "?")
         FALLBACKS.append({"provider": "ollama", "model": name})
-        print(f"[llm] Voyager unavailable; falling back to local Ollama model {name}", file=sys.stderr, flush=True)
+        from jobagent.log import default
+        default().warn(f"Voyager unavailable; this call falls back to the local Ollama model {name}")      # one yellow line
 
 
 # every fallback taken in this process (provider, model): `structured(...)` / `chat(...)` records here; the writers never fall back

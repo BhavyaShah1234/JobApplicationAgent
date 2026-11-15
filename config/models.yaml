@@ -1,0 +1,4 @@
+# Models and LLM call limits. Environment variables and .env override anything here (see: jobagent config show).
+# model_writer: devstral2-123b
+# llm_max_retries: 4
+# llm_timeout_s: 600

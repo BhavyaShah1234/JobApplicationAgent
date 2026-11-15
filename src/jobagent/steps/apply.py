@@ -1603,7 +1603,8 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
            "checkpoint": checkpoint, 'out_dir': out_dir}
     known, errors, page_no, start = None, [], 0, 0
     if _filling_metrics is not None:_filling_metrics.begin()
-    for _ in range(MAX_PAGES + 3):
+    from jobagent.config import get_settings
+    for _ in range(get_settings().apply_max_pages + 3):
         challenge.guard(page)
         view = forms.read_page(page)
         if known is None:  # a new page (not a retry of a refused one)

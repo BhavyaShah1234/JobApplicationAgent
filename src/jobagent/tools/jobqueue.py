@@ -26,7 +26,16 @@ from jobagent.tools.matching import Match
 
 TRACKING = re.compile(r"(?i)^(utm_.*|gclid|fbclid|mc_[a-z]+|ref|referrer|source|src|trk|trackingid|gh_src|lever-source.*)$")
 OPEN = ("queued", "needs_review", "skipped")  # statuses a new discovery may still change
-LEASE_S = 900                                  # a claim lasts this long unless its owner renews it
+def _lease_default() -> int:
+    """queue_lease_seconds from config/queue.yaml (default 900); a broken config must not stop the queue module importing."""
+    try:
+        from jobagent.config import get_settings
+        return get_settings().queue_lease_seconds
+    except Exception:
+        return 900
+
+
+LEASE_S = _lease_default()                     # a claim lasts this long unless its owner renews it
 
 
 @dataclass
@@ -120,9 +129,12 @@ def worker_id() -> str:
 
 
 def claim(conn: sqlite3.Connection, worker: str, company: str | None = None, lease_s: int = LEASE_S,
-          now: datetime | None = None) -> sqlite3.Row | None:
+          now: datetime | None = None, exclude: tuple[str, ...] | list[str] = (), companies: tuple[str, ...] | None = None,
+          pace: tuple[int, int] | None = None) -> sqlite3.Row | None:
     """Atomically take the best queued job for `worker`: choose it and mark it running in ONE write transaction, so two
-    runners cannot take the same job. None when nothing is queued."""
+    runners cannot take the same job. None when nothing is queued. `companies` (slugs) limits the choice to those companies;
+    `pace` = (max applications per company, window days) is applied INSIDE the transaction, counting the applications already
+    started and the jobs other runners are working right now, so two runners cannot both take the last slot of one company."""
     now = now or datetime.now(UTC)
     if conn.in_transaction:
         conn.commit()                                      # BEGIN IMMEDIATE cannot nest inside the caller's open transaction
@@ -131,9 +143,21 @@ def claim(conn: sqlite3.Connection, worker: str, company: str | None = None, lea
     if company:
         sql += " AND company_slug = ?"
         args.append(slug(company))
-    sql += " ORDER BY COALESCE(match_score, 0) DESC, id LIMIT 1"
+    if exclude:                                        # companies at their pacing limit (tools/pacing.py)
+        sql += f" AND COALESCE(company_slug, '') NOT IN ({','.join('?' * len(exclude))})"
+        args += list(exclude)
+    if companies is not None:
+        sql += f" AND COALESCE(company_slug, '') IN ({','.join('?' * len(companies)) or 'NULL'})"
+        args += list(companies)
     conn.execute("BEGIN IMMEDIATE")                       # takes the write lock before reading: the choice cannot go stale
     try:
+        if pace:
+            from jobagent.tools import pacing
+            full = tuple(pacing.excluded(conn, pace[0], pace[1], now, active=True))
+            if full:
+                sql += f" AND COALESCE(company_slug, '') NOT IN ({','.join('?' * len(full))})"
+                args += list(full)
+        sql += " ORDER BY COALESCE(match_score, 0) DESC, id LIMIT 1"
         row = conn.execute(sql, args).fetchone()
         if row is None:
             conn.execute("COMMIT")

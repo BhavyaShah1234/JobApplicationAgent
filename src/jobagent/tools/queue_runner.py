@@ -102,8 +102,11 @@ class Heartbeat:
 
 def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: str, limit: int, company: str | None, outputs_dir: Path,
               slug_of: Callable[[str], str], log: Callable[[str], None], worker: str | None = None, lease_s: int = Q.LEASE_S,
-              connect: Callable | None = None, browser_mode: str = "docker", pipeline=None) -> int:
-    """Claim and run up to `limit` queued jobs; returns how many were taken through `through`. `step(cmd)` runs one
+              connect: Callable | None = None, browser_mode: str = "docker", pipeline=None, companies: tuple[str, ...] | None = None,
+              pipeline_options: dict | None = None, results: list | None = None) -> int:
+    """Claim and run up to `limit` queued jobs; returns how many were taken through `through` WITHOUT failing. `companies` (slugs)
+    restricts the claims to those companies; `pipeline_options` (force, no_ats, filling_strategy) reach `Pipeline.run`; when `results`
+    is a list, one dict per job (url, company, state, code, note) is appended to it. `step(cmd)` runs one
     `jobagent` command and returns its exit code. `browser_mode` (docker | desktop | auto) is passed to `apply` (F14); the queue
     never submits, so there is no submit mode here."""
     from jobagent import db
@@ -117,8 +120,19 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
     if back:
         log(f"queue: {back} job(s) whose runner is gone put back in the queue")
     done = taken = 0
+    from jobagent.config import get_settings
+    from jobagent.tools import pacing
+    s = get_settings()
+    announced: set[str] = set()
     while taken < limit:
-        row = Q.claim(conn, worker, company, lease_s)
+        paced = pacing.excluded(conn, s.pacing_max_per_company, s.pacing_window_days)
+        for slug_, n in paced.items():
+            if slug_ not in announced:
+                announced.add(slug_)
+                log(f"queue: pacing: {slug_} already has {n} application(s) in the last {s.pacing_window_days} days "
+                    f"(limit {s.pacing_max_per_company}); its other jobs wait")
+        row = Q.claim(conn, worker, company, lease_s, exclude=tuple(paced), companies=companies,
+                      pace=(s.pacing_max_per_company, s.pacing_window_days))
         if row is None:
             break
         taken += 1
@@ -135,13 +149,20 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
 
         with Heartbeat(url, worker, lease_s, max(lease_s / 3, 1), connect):
             if pipeline is not None:
+                opts = {k: v for k, v in (pipeline_options or {}).items() if k in ("force", "no_ats", "filling_strategy")}
                 try:
-                    result = pipeline.run(url, through=through, browser_mode=browser_mode)
+                    result = pipeline.run(url, through=through, browser_mode=browser_mode, **opts)
                 except Exception as exc:
                     fin("failed", f"pipeline: {type(exc).__name__}: {str(exc)[:200]}")
+                    if results is not None:
+                        results.append({"url": url, "company": row["company"], "state": "failed", "code": 1,
+                                        "note": f"{type(exc).__name__}: {str(exc)[:120]}"})
                     continue
                 fin(result.state, result.note)
-                done += 1
+                if results is not None:
+                    results.append({"url": url, "company": row["company"], "state": result.state, "code": result.code or 0, "note": result.note or ""})
+                if not (result.code or result.state in ("failed", "blocked", "needs_review", "unavailable")):
+                    done += 1
                 continue
             code = step(["scrape", url])
             now = conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
