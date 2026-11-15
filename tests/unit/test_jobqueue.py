@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from jobagent import db
 from jobagent.tools import jobqueue as Q
 from jobagent.tools.locations import Decision
@@ -45,10 +46,13 @@ def test_a_job_past_the_queue_is_never_overwritten_and_a_killed_run_resumes(tmp_
     c = db.connect(tmp_path / "jobs.sqlite")
     Q.enqueue(c, listing(), QUEUED, US)
     url = Q.canonical_url(listing().url)
-    Q.mark(c, url, "running")
+    me = Q.worker_id()
+    assert Q.claim(c, me)["url"] == url
     assert Q.enqueue(c, listing(), SKIPPED, US) == "unchanged"
     assert c.execute("SELECT status FROM jobs WHERE url = ?", (url,)).fetchone()[0] == "running"
-    assert Q.requeue_stale(c) == 1  # the runner was killed
+    assert Q.requeue_stale(c) == 0                      # F13: this runner is alive and its lease is current: its work is not reset
+    later = datetime.now(UTC) + timedelta(seconds=Q.LEASE_S + 5)
+    assert Q.requeue_stale(c, now=later) == 1           # the runner was killed: its lease ran out
     assert [r["url"] for r in Q.pending(c)] == [url]
     Q.mark(c, url, "scraped")
     assert Q.pending(c) == [] and Q.requeue_stale(c) == 0

@@ -17,7 +17,7 @@ from jobagent.tools import careers as careers_mod
 from jobagent.tools import jobqueue, listings as listings_mod, locations, matching
 
 MAX_SEMANTIC = 400   # non-matching titles embedded per company (the rest are skipped, said in the log)
-MAX_JUDGE = 80       # model-judged listings per company (the rest keep the regex / embedding prior)
+MAX_JUDGE = 80       # model-judged listings per company (the rest are NOT auto-validated: they go to needs_review)
 
 
 @dataclass
@@ -28,6 +28,7 @@ class Result:
     listings: int = 0
     counts: dict = field(default_factory=dict)
     note: str = ""            # blocked / no careers page / error
+    budget: dict = field(default_factory=dict)   # what was actually spent and what was left unevaluated (see discover)
     queued: list = field(default_factory=list)   # (title, location, url, role, score)
 
 
@@ -66,39 +67,59 @@ def discover(company: str, config: dict | None = None, conn=None, log=print, ref
             f" ({res.careers_url}, found by {res.how})")
         decisions = {i: (locations.classify(x.locations, x.title, snippet=x.snippet, judge=location_judge) if only_us else None)
                      for i, x in enumerate(items)}
-        # embeddings: one batched pass over the titles no pattern hits (and the role descriptions)
-        embed_fn = None
+        # embeddings: one batched pass over the titles no pattern hits (and the role descriptions), within the budget
+        embed_fn, embed_note = None, ""
+        stats: dict = {}
         if embed is not None and config.get("roles"):
             base = matching.model_embed() if embed == "model" else embed
             todo = [matching.semantic_text(x.title, x.snippet) for i, x in enumerate(items)
                     if not (decisions[i] and decisions[i].verdict == "non_us")
                     and matching.regex_stage(x.title, config) == ("ok", [])]
-            if len(todo) > MAX_SEMANTIC:
-                log(f"discover: {company}: {len(todo)} titles match no pattern; embedding the first {MAX_SEMANTIC}")
-                todo = todo[:MAX_SEMANTIC]
+            unique = list(dict.fromkeys(todo))
+            capped = unique[:MAX_SEMANTIC]
+            if len(unique) > MAX_SEMANTIC:
+                log(f"discover: {company}: {len(unique)} titles match no pattern; embedding only the first {MAX_SEMANTIC}, "
+                    f"the other {len(unique) - MAX_SEMANTIC} are left unevaluated (recorded as skipped, not embedded on demand)")
             try:
-                embed_fn = matching.precomputed(todo + matching.role_texts(config), base) if todo else None
+                embed_fn = matching.precomputed(capped + matching.role_texts(config), base, stats=stats) if capped else None
             except Exception as e:
-                log(f"discover: {company}: embeddings failed ({type(e).__name__}); regex matches only")
+                embed_note = f"embeddings failed ({type(e).__name__})"
+                log(f"discover: {company}: {embed_note}; titles that match no pattern are not evaluated")
+        res.budget = {"embedding_cap": MAX_SEMANTIC, "embedding_texts": stats.get("embedded", 0),
+                      "embedding_calls": stats.get("calls", 0), "judge_cap": MAX_JUDGE, "judged": 0,
+                      "judge_failed": 0, "judge_skipped_budget": 0, "unevaluated_semantic": 0}
         judge_fn = matching.model_judge(load_preferences()) if judge == "model" else judge
-        judged = 0
         for i, x in enumerate(items):
             loc = decisions[i]
             if loc is not None and loc.verdict == "non_us":
                 m = matching.Match("skipped", "none", reason="not evaluated (outside the United States)")
             else:
-                use = judge_fn if judged < MAX_JUDGE else None
+                budget_left = res.budget["judged"] < MAX_JUDGE
+                use = judge_fn if (judge_fn is not None and budget_left) else None
+                why = "" if judge_fn is None else ("" if budget_left else "judge budget reached")   # no judge by choice: no reason
                 try:
-                    m = matching.match_listing(x.title, x.snippet, config, embed_fn, use)
-                except Exception as e:  # a judge or embedding error on one listing keeps the prior, not the run
-                    m = matching.match_listing(x.title, x.snippet, config, None, None)
-                    log(f"discover: {company}: judge failed on {x.title[:40]!r} ({type(e).__name__}); prior kept")
-                if use is not None and m.stage in ("judge",):
-                    judged += 1
+                    m = matching.match_listing(x.title, x.snippet, config, embed_fn, use, degraded=why)
+                    if use is not None:
+                        res.budget["judged"] += 1
+                except Exception as e:  # the judge failed on one listing: NOT validated, so it is reviewed, never auto-queued
+                    m = matching.match_listing(x.title, x.snippet, config, embed_fn, None, degraded=f"judge failed: {type(e).__name__}")
+                    res.budget["judge_failed"] += 1
+                    log(f"discover: {company}: judge failed on {x.title[:40]!r} ({type(e).__name__}); sent to review, not queued")
+                if why:
+                    res.budget["judge_skipped_budget"] += 1
+                if m.detail.get("degraded") == "embedding budget":
+                    res.budget["unevaluated_semantic"] += 1
+                elif embed_note and m.verdict == "skipped" and m.stage == "none" and m.reason.startswith("no target role fits"):
+                    res.budget["unevaluated_semantic"] += 1       # the semantic check could not run: say so, do not imply "no fit"
+                    m = matching.Match("skipped", "none", reason=f"not evaluated ({embed_note})", detail={"degraded": embed_note})
             outcome = jobqueue.enqueue(conn, x, m, loc)
             res.counts[outcome] = res.counts.get(outcome, 0) + 1
             if outcome == "queued":
                 res.queued.append((x.title, "; ".join(x.locations), x.url, m.role_id, m.score))
+        b_ = res.budget
+        log(f"discover: {company}: budget used: {b_['embedding_texts']}/{b_['embedding_cap']} embeddings in {b_['embedding_calls']} call(s), "
+            f"{b_['judged']}/{b_['judge_cap']} judgments; {b_['judge_failed']} judge failure(s), {b_['judge_skipped_budget']} candidate(s) over the "
+            f"judge budget and {b_['unevaluated_semantic']} left unevaluated - none of them auto-queued")
         log(f"discover: {company}: " + ", ".join(f"{n} {k}" for k, n in sorted(res.counts.items())))
     except Exception as e:
         res.note = f"error: {type(e).__name__}: {str(e)[:150]}"

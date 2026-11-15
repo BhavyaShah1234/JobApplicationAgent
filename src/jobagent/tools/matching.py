@@ -87,19 +87,31 @@ def role_texts(config: dict) -> list[str]:
     return [f"{r.get('title', '')}: {r['description']}" for r in config.get("roles", []) if r.get("description")]
 
 
-def precomputed(texts: list[str], embed, batch: int = 64):
+class BudgetExceeded(Exception):
+    """An embedding was needed that the configured budget does not cover."""
+
+
+def precomputed(texts: list[str], embed, batch: int = 64, cap: int | None = None, stats: dict | None = None):
     """An `embed(list[str])` that answers from one batched pass over `texts` (listings and role descriptions), so a
-    company's hundreds of titles cost a few embedding calls instead of one per listing."""
+    company's hundreds of titles cost a few embedding calls instead of one per listing. The budget is enforced at execution
+    time, not only when planning: `cap` is the most texts ever embedded, and a text outside the precomputed set is NEVER
+    embedded on demand - asking for it raises BudgetExceeded. `stats` (if given) records the calls and texts actually used."""
+    stats = stats if stats is not None else {}
+    stats.update(calls=0, embedded=0, cap=cap)
     vectors: dict[str, list[float]] = {}
     todo = list(dict.fromkeys(t for t in texts if t))
+    if cap is not None and len(todo) > cap:
+        raise BudgetExceeded(f"{len(todo)} texts exceed the budget of {cap}")
     for i in range(0, len(todo), batch):
         chunk = todo[i:i + batch]
+        stats["calls"] += 1
+        stats["embedded"] += len(chunk)
         vectors.update(zip(chunk, embed(chunk)))
 
     def lookup(items: list[str]) -> list[list[float]]:
         missing = [t for t in items if t not in vectors]
         if missing:
-            vectors.update(zip(missing, embed(missing)))
+            raise BudgetExceeded(f"{len(missing)} text(s) were not in the budgeted batch")
         return [vectors[t] for t in items]
     return lookup
 
@@ -112,9 +124,12 @@ def decide(confidence: float, match: bool) -> str:
     return "skipped"
 
 
-def match_listing(title: str, snippet: str, config: dict, embed=None, judge=None) -> Match:
+def match_listing(title: str, snippet: str, config: dict, embed=None, judge=None, degraded: str = "") -> Match:
     """The three stages for one listing. `judge(title, snippet, role, prior) -> (match, confidence, reason)` is the
-    model call; with no judge a regex hit is queued at the prior's confidence 0.7 and a semantic one is reviewed."""
+    model call. With NO judge by the user's choice (`--no-judge`, `degraded` empty) a regex hit is queued at the prior's
+    confidence 0.7 and a semantic one is reviewed. When the judge could not run - it failed, or its budget is spent
+    (`degraded` says why) - nothing is auto-validated: a regex or semantic candidate goes to `needs_review`, marked as not
+    validated, never to the queue."""
     status, hit = regex_stage(title, config)
     if status == "excluded":
         return Match("skipped", "excluded", reason="the title matches an exclude pattern")
@@ -122,12 +137,20 @@ def match_listing(title: str, snippet: str, config: dict, embed=None, judge=None
     if hit:
         role, stage, sim = hit[0], "regex", 1.0
     elif embed is not None:
-        cand, sim = semantic_stage(semantic_text(title, snippet), config, embed)
+        try:
+            cand, sim = semantic_stage(semantic_text(title, snippet), config, embed)
+        except BudgetExceeded:
+            return Match("skipped", "none", reason="not evaluated (the embedding budget was reached)",
+                         detail={"degraded": "embedding budget"})
         if cand is not None and sim >= float(config.get("semantic_threshold", DEFAULT_THRESHOLD)):
             role, stage = cand, "semantic"
     if role is None:
         return Match("skipped", "none", score=round(sim, 3), reason="no target role fits this title")
     if judge is None:
+        if degraded:
+            return Match("needs_review", stage, role["id"], round(sim, 3) if stage == "semantic" else ACCEPT,
+                         f"{stage} match to {role.get('title', role['id'])}; NOT validated by the judge ({degraded})",
+                         {"degraded": degraded})
         verdict = "queued" if stage == "regex" else "needs_review"
         return Match(verdict, stage, role["id"], round(sim, 3) if stage == "semantic" else ACCEPT,
                      f"{stage} match to {role.get('title', role['id'])}")

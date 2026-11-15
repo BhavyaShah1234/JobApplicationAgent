@@ -1,10 +1,10 @@
 """CLI for step 14: `jobagent discover` (company names / CSV -> queued roles) and `jobagent queue` (look, decide, run)."""
 
-import subprocess
-import sys
-
 import typer
 from rich.table import Table
+
+
+from jobagent.tools.queue_runner import apply_outcome  # noqa: E402,F401  (kept here: the queue's exit-code fallback)
 
 
 def register(app: typer.Typer, console) -> None:
@@ -105,51 +105,25 @@ def register(app: typer.Typer, console) -> None:
                                                     "apply (+ fill the form to its review screen; never submits)."),
         limit: int = typer.Option(5, help="At most N jobs in this run."),
         company: str = typer.Option(None, "--company", "-c"),
+        browser_mode: str = typer.Option("docker", help="Browser for the apply step: docker, desktop or auto. The queue never "
+                                                        "submits, whatever the mode."),
     ) -> None:
         """Take queued roles one at a time through the existing steps. A job closed or blocked is recorded and the
         next one starts; a run killed midway resumes (its `running` job goes back to the queue)."""
         if through not in {"scrape", "tailor", "apply"}:
             raise typer.BadParameter("through must be scrape, tailor or apply")
+        from jobagent.tools.session import check_mode
+        try:
+            check_mode(browser_mode, submitting=False)
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from e
         from jobagent import db
         from jobagent.config import get_settings
         from jobagent.tools import jobqueue as Q
         from jobagent.tools.scrape import _slug
 
+        from jobagent.tools.queue_runner import run_queue
+
         conn = db.connect()
-        back = Q.requeue_stale(conn)
-        if back:
-            console.print(f"queue: {back} interrupted job(s) put back in the queue")
-        py = [sys.executable, "-m", "jobagent.main"]
-
-        def step(cmd: list[str]) -> int:
-            console.print("[cyan]$ " + " ".join(["jobagent", *cmd]) + "[/]", highlight=False)
-            return subprocess.run([*py, *cmd]).returncode
-
-        done = 0
-        for row in Q.pending(conn, "queued", company, limit):
-            url = row["url"]
-            console.print(f"[bold]queue: {row['company']} - {row['title']}[/]", highlight=False)
-            Q.mark(conn, url, "running")
-            code = step(["scrape", url])
-            now = conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
-            if code == 3:
-                console.print(f"[yellow]queue: {now['status']}: {now['notes']}[/]", highlight=False)
-                continue
-            if code != 0:
-                Q.mark(conn, url, "failed", "scrape failed")
-                continue
-            Q.mark(conn, url, "scraped")
-            job_dir = get_settings().outputs_dir / _slug(now["company"] or row["company"]) / now["job_id"]
-            rel = f"outputs/{job_dir.parent.name}/{job_dir.name}"
-            co = Q.slug(now["company"] or row["company"])
-            if through != "scrape":
-                if step(["research", now["company"] or row["company"]]) != 0 or step(["tailor", rel, co]) != 0:
-                    Q.mark(conn, url, "failed", "research or tailor failed")
-                    continue
-                Q.mark(conn, url, "tailored")
-            if through == "apply":
-                code = step(["apply", rel, co])
-                Q.mark(conn, url, "filled" if code == 0 else "blocked" if code == 3 else "failed",
-                       "" if code == 0 else f"apply exited {code}")
-            done += 1
-        console.print(f"queue: {done} job(s) taken through `{through}`", highlight=False)
+        run_queue(conn, through=through, limit=limit, company=company, outputs_dir=get_settings().outputs_dir,
+                  slug_of=_slug, log=lambda m: console.print(m, highlight=False), browser_mode=browser_mode)
