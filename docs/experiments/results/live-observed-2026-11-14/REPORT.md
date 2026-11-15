@@ -21,8 +21,8 @@ Failed, stopped or incorrectly filled arms are not completed speed comparisons.
 | Portal / application | Original active seconds | Experimental active seconds | Avoidable questions, original / experimental | Independent result |
 |---|---:|---:|---:|---|
 | Ashby / OpenAI | 96.8 | 101.9 | 0 / 2 | Both blocked from readiness by duplicate Resume references despite visibly filled required controls. |
-| Greenhouse / Stripe US | Missing after operator stop | 647.9 | 0 / 9 | Original searched a university in Degree after upload-induced renumbering; stopped. Experimental selected the right controls but blocked upload verification and omitted the second education row. |
-| Lever / Palantir US | 182.4 | 214.8 | 1 / 6 | Experimental falsely claimed ready. Original correctly chose non-California residency and left missing clearance eligibility blank, but also selected unsupported external sharing; not ready. |
+| Greenhouse / Stripe US | Missing after operator stop | 647.9 | 0 / 7 | Original searched a university in Degree after upload-induced renumbering; stopped. Experimental selected the right controls but blocked upload verification and omitted the second education row. |
+| Lever / Palantir US | 182.4 | 214.8 | 1 / 5 | Experimental falsely claimed ready. Original correctly chose non-California residency and left missing clearance eligibility blank, but also selected unsupported external sharing; not ready. |
 
 There are **zero independently correct, completed pairs** in this follow-up. Do not compute
 a median completed-pair speed improvement from these unequal outcomes. Experimental
@@ -39,12 +39,14 @@ failed requests; writer starts include failed invocations.
 failed diagnostic, including raw/adjusted active time, elapsed filling time,
 observation overhead, question waiting, prompt events, logical questions, writer
 starts/tokens, record counts and independent grades. The three experimental v2
-arms asked **17 avoidable logical questions in four prompt events**. Original
+arms asked **14 avoidable logical questions and three genuine optional unknowns in four prompt events**. Original
 asked **one avoidable and one necessary logical question in two prompt events**;
 the genuine eligibility question was left unanswered. These totals describe
-incomplete workloads, not success-adjusted rates. Experimental's zero necessary
-questions is not a success: it supplied unsupported answers instead of asking
-about clearance eligibility and external sharing.
+incomplete workloads, not success-adjusted rates. The three necessary experimental questions were optional unknowns. It still
+supplied unsupported answers instead of asking the two important missing
+questions about clearance eligibility and external sharing. Reviewed classifications
+supersede initial control-event labels; private classification-review files retain
+the reasons for the optional-question corrections.
 
 Lever experimental elapsed filling time was 371.6 seconds, with 85.0 seconds
 of question waiting and 71.8 seconds of visual observation. Original elapsed
@@ -68,8 +70,11 @@ whole Lever questions to establish which radio choice belonged to each question.
 
 When the agent asked about an answer already in the frozen sources, Codex supplied
 it through the normal question interface. Those answers count as **avoidable
-assists**, even when they are grouped into one prompt or include skipping an
-optional unknown field. They are not autonomous resolutions. Missing owner facts
+assists**, even when grouped into one prompt. They are not autonomous resolutions.
+Three optional unknowns (SAT score, conference history and name pronunciation)
+were left blank and counted as genuine missing facts, not avoidable source
+resolution failures. The inapplicable missing-school field was a separate
+avoidable prompt because the listed school was available. Missing owner facts
 are classified separately. The independently asked external-sharing question is separate from the engine
 prompt counts; neither engine requested that missing permission.
 
@@ -149,7 +154,7 @@ regression expectations for seven open findings. The priorities are:
 2. Rebind original actions after DOM changes, including upload-related renumbering.
 3. Reconcile upload triggers/schema/native inputs and retain owned acknowledgements.
 4. Recover styled question/section text and preserve repeating education entities.
-5. Resolve known rules and skip optional unknowns without avoidable prompts.
+5. Resolve known rules and define when to ask or skip optional unknowns.
 6. Enforce explicit writing constraints independently of factual grounding.
 7. Preserve telemetry and bound cancellation across browser/model waits.
 

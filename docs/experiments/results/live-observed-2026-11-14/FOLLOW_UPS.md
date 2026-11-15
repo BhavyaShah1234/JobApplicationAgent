@@ -132,10 +132,11 @@ Evidence: `greenhouse-experimental-v2/education-section-dom.json`,
 - [ ] Complete source resolution, authorized date rendering and optional-field handling.
 
 After the control fixes, Ashby still asked for the rule-backed start date and
-technical domain. Greenhouse asked nine avoidable questions, including known
-education/current employment and optional unknown/inapplicable fields. Lever
-asked for known language, preferred name, university, completed years and the
-clock-backed signature date; optional pronunciation could have stayed empty.
+technical domain. Greenhouse asked seven avoidable questions about known
+education/current employment and an inapplicable missing-school field, plus two
+genuine optional unknowns. Lever asked five avoidable questions for known
+language, preferred name, university, completed years and the clock-backed
+signature date, plus the genuinely unknown optional pronunciation.
 Count logical questions, not just batches.
 
 Review `filling/facts.py`, `filling/adapter.py` and `filling/planned.py`. Honor
@@ -143,8 +144,10 @@ explicit owner rules with the actual control's cardinality and temporal context.
 The exact-date guard must admit dates explicitly authorized by a today/weekday
 rule and trusted clock while continuing to reject invented dates from
 month-only history. Integer-year rendering must preserve the supported meaning,
-not round up experience. Optional unknown fields should be left for review
-without an obligatory prompt unless the owner explicitly requests otherwise.
+not round up experience. Make the ask-or-skip policy for optional unknowns explicit. Questions about
+genuinely missing optional facts are not known-source resolution failures;
+the reviewed metrics classify them separately. Inapplicable conditional fields
+can be left blank from the known condition without asking again.
 
 Investigate the exact mapping/rejection path before adding more synonyms.
 Improve private diagnostics so the chosen evidence, rendered proposal and

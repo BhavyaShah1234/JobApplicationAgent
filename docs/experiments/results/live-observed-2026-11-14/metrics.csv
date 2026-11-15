@@ -3,6 +3,6 @@ ashby-experimental-v1,pre-fix diagnostic,TrialStopped,False,False,469.89,5.589,4
 ashby-experimental-v2,8866ff9,blocked,False,False,194.536,6.59,187.942,151.937,50.075,101.862,36.005,1,2,2,0,2,0,50176,22,1,21,20,False,False
 ashby-original-v2,8866ff9,review,False,False,171.641,5.65,165.99,165.99,69.161,96.829,0,0,0,0,0,2,0,36017,22,1,22,20,False,False
 greenhouse-original-v2,8866ff9,operator_stopped,False,False,,,,,73.937,,,0,0,0,0,2,0,,37,1,0,,False,True
-greenhouse-experimental-v2,8866ff9,blocked,False,False,851.142,5.392,845.726,786.718,138.78,647.938,59.008,1,9,9,0,5,1,102298,37,1,36,32,False,False
-lever-experimental-v2,8866ff9,review,True,False,379.55,7.918,371.627,286.607,71.836,214.771,85.02,2,6,6,0,3,0,79540,28,1,30,29,True,False
+greenhouse-experimental-v2,8866ff9,blocked,False,False,851.142,5.392,845.726,786.718,138.78,647.938,59.008,1,9,7,2,5,1,102298,37,1,36,32,False,False
+lever-experimental-v2,8866ff9,review,True,False,379.55,7.918,371.627,286.607,71.836,214.771,85.02,2,6,5,1,3,0,79540,28,1,30,29,True,False
 lever-original-v2,8866ff9,review,False,False,504.283,8.687,495.594,255.543,73.186,182.357,240.052,2,2,1,1,4,0,66855,28,1,29,27,False,False
