@@ -1,0 +1,7 @@
+arm,adjusted_active_s,writer_callback_wall_s,other_active_s,writer_starts,failed_writer_s,completed_correctly
+ashby-experimental-v2,101.862,61.854,40.008,2,0,False
+ashby-original-v2,96.829,75.859,20.97,2,0,False
+greenhouse-original-v2,,138.289,,2,0,False
+greenhouse-experimental-v2,647.938,469.491,178.447,5,300.191,False
+lever-experimental-v2,214.771,153.005,61.766,3,0,False
+lever-original-v2,182.357,153.071,29.286,4,0,False

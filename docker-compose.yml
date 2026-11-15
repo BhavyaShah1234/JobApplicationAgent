@@ -17,6 +17,7 @@ services:
       - ./data:/app/data
       - ./state:/app/state
       - ./outputs:/app/outputs
+      - ./asu_contacts.csv:/app/data/asu_contacts.csv:ro
     stdin_open: true
     tty: true
     restart: unless-stopped

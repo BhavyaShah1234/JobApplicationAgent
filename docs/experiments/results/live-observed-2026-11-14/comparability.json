@@ -1,0 +1,26 @@
+{
+  "ashby": {
+    "identical_input_hashes": true,
+    "identical_source_hashes": true,
+    "identical_initial_controls_and_values": true,
+    "pages_seen_original": 1,
+    "pages_seen_experimental": 1,
+    "correct_completed_pair": false
+  },
+  "greenhouse": {
+    "identical_input_hashes": true,
+    "identical_source_hashes": true,
+    "identical_initial_controls_and_values": true,
+    "pages_seen_original": 1,
+    "pages_seen_experimental": 1,
+    "correct_completed_pair": false
+  },
+  "lever": {
+    "identical_input_hashes": true,
+    "identical_source_hashes": true,
+    "identical_initial_controls_and_values": true,
+    "pages_seen_original": 1,
+    "pages_seen_experimental": 1,
+    "correct_completed_pair": false
+  }
+}

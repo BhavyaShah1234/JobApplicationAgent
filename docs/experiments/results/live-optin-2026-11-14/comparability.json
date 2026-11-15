@@ -1,0 +1,26 @@
+{
+  "Greenhouse": {
+    "input_hashes_equal": true,
+    "production_source_hashes_equal": true,
+    "initial_schema_equal": true,
+    "initial_values_equal": true
+  },
+  "Ashby": {
+    "input_hashes_equal": true,
+    "production_source_hashes_equal": true,
+    "initial_schema_equal": true,
+    "initial_values_equal": true
+  },
+  "Workday": {
+    "input_hashes_equal": true,
+    "production_source_hashes_equal": true,
+    "initial_schema_equal": true,
+    "initial_values_equal": false
+  },
+  "Custom": {
+    "input_hashes_equal": true,
+    "production_source_hashes_equal": true,
+    "initial_schema_equal": true,
+    "initial_values_equal": true
+  }
+}
