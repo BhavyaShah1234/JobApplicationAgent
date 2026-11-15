@@ -1,0 +1,69 @@
+{
+  "scope": "Local synthetic DOM probes, no portal navigation, no provider requests, no production code edits. These are implementation diagnostics, not production speed comparisons.",
+  "source_sha256": {
+    "src/jobagent/tools/forms.py": "d2f451cad1d4517ed69221c1a6136cbe4b8d5e617b6bffc35eb0942d19cbd21d",
+    "src/jobagent/filling/planned.py": "96cd0d719ec46f60bae2fd17f8085f551bdff3e89be50f979b1d7e721a4aefb2",
+    "src/jobagent/filling/facts.py": "aa33a9f18a67f7c854ea0f55713863f1aa1cba44f4195bdea011ed99f6dd17cf",
+    "src/jobagent/filling/adapter.py": "d8a989b0774b94abd37a36c0572310b82a7dece65afaf652ec95eca113e13722",
+    "src/jobagent/llm.py": "576d5041f4862ac46e4e871c2f33e9ac8599060a76ff40615d2d5da4335a35ae",
+    "src/jobagent/steps/apply.py": "9b72bfb3106ce38e882b4eb27f76898c6c7a05c942597298fa2b7523ae14ad61"
+  },
+  "probes": [
+    {
+      "name": "native-option-truncation",
+      "actual_enabled_options": 351,
+      "reader_options": 300,
+      "known_target_exists_in_native": true,
+      "resolved_known_value": null
+    },
+    {
+      "name": "language-scope",
+      "known_language_facts": 3,
+      "allowed_facts_for_supplementary_language_question": 0,
+      "compiler_assigned_section": "Languages 1"
+    },
+    {
+      "name": "combobox-option-validation",
+      "offered": [
+        "Remote",
+        "Office"
+      ],
+      "choice_returned_unoffered_value": "Invented option"
+    },
+    {
+      "name": "experimental-simple-text-execution",
+      "text_fields": 20,
+      "full_page_reads": 45,
+      "discovery_inventory_calls": 2,
+      "model_calls": 0,
+      "elapsed_s": 5.655,
+      "read_page_s": 1.782
+    },
+    {
+      "name": "original-simple-text-execution",
+      "text_fields": 20,
+      "full_page_reads": 4,
+      "elapsed_s": 4.19,
+      "read_page_s": 0.214,
+      "note": "Planner/checker replaced with precomputed source answers to isolate executor; other original steps retained."
+    },
+    {
+      "name": "experimental-conditional-control",
+      "known_comboboxes": 3,
+      "new_text_fields": 1,
+      "dropdown_open_counts": [
+        3,
+        3,
+        3
+      ],
+      "option_discovery_passes": 2,
+      "second_pass_already_filled_values": [
+        "Yes",
+        "Yes",
+        "Yes"
+      ],
+      "model_calls": 0,
+      "elapsed_s": 13.124
+    }
+  ]
+}

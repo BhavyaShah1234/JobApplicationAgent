@@ -145,6 +145,15 @@ checks initially failed because their fixture file was absent from that snapshot
 they passed when rerun with the fixture alongside the newest regressions and
 observer checks: 21 checks passed. These counts overlap and must not be summed.
 
+## Subsequent implementation audit
+
+[IMPLEMENTATION_AUDIT.md](IMPLEMENTATION_AUDIT.md) separates flaws in this implementation
+from the proposed workflow. It verifies partial/truncated options, missing explicit
+source routing, excessive DOM/menu work, a structured-output configuration difference
+between engines and the existing default's page-batched planning. It also reconstructs
+writer versus other active time from the retained logs. These diagnostics do not
+change the historical live measurements or make failed drafts successful.
+
 ## Corrections required before another promotion attempt
 
 [FOLLOW_UPS.md](FOLLOW_UPS.md) gives evidence, affected components, reasons and

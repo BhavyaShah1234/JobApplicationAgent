@@ -4,6 +4,10 @@ These items remain open. The measured runtime is commit `8866ff9`. Fixes made
 later must not be attributed to these measurements. Private evidence is under
 `outputs/verification/live-observed-2026-11-14/` in the main checkout.
 
+The [implementation audit](IMPLEMENTATION_AUDIT.md) adds reproduced option-coverage,
+source-scoping and repeated-discovery findings, plus the timing/protocol controls
+needed for the next comparison.
+
 ## V01 — Critical: a verified value can contradict its cited source
 
 - [ ] Correct source binding and purpose-specific consent validation before promotion.
