@@ -139,7 +139,8 @@ def test_a_required_select_left_at_its_prompt_is_a_blocker_not_ready():
         blockers = A.blockers_of([entry])
         assert blockers and "required" in blockers[0] and "left empty" in blockers[0]
         ok = forms.Field(id=2, kind="select", label="x", required=True, value="Email")
-        assert A.outcome_of({**entry, "answered": True}, ok) == "verified"                # a legitimately prefilled value still counts
+        assert A.outcome_of({**entry, "answered": True}, ok) == "unverified prefill"
+        assert A.outcome_of({**entry, "answered": True, "verified": True}, ok) == "verified"
     finally:
         browser.close()
         pw.stop()
@@ -257,7 +258,8 @@ def test_real_prefilled_choices_and_generic_prompts_keep_working():
         assert not forms.has_value(fields["Reach"])                                              # the generic prompt, as before
         assert forms.has_value(fields["Day"]) and fields["Day"].value == "Monday"                # a disabled option that is NOT selected changes nothing
         entry = {"page": 1, "label": "Plan", "required": True, "filled": "", "answer": "", "verified": False, "answered": True}
-        assert A.outcome_of(entry, fields["Plan"]) == "verified"
+        assert A.outcome_of(entry, fields["Plan"]) == "unverified prefill"
+        assert A.outcome_of({**entry,'verified':True}, fields["Plan"]) == "verified"
     finally:
         browser.close()
         pw.stop()

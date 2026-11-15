@@ -17,20 +17,31 @@ for(let i=0;i<roots.length;i++) for(const e of roots[i].querySelectorAll('*')) {
 }'''
 
 
-def extract(data, source, depth=0):
+def extract(data, source, depth=0, inherited_condition=None, section=''):
     if depth > 12:
         return []
     out=[]
     if isinstance(data, dict):
+        condition=data.get('condition',inherited_condition)
+        if condition is not None and condition!='' and not condition:condition={'expression':condition}
+        if inherited_condition is not None and condition!=inherited_condition:
+            condition={'parent':inherited_condition,'own':condition}
+        section=str(data.get('section') or section)
         label=data.get('label') or data.get('question')
         kind=data.get('type') or data.get('controlType')
         if isinstance(label,str) and isinstance(kind,str):
             out.append({'label':label[:300],'type':kind[:80], 'source':source,
                         'required':bool(data.get('required')), 'visible':False,
-                        'condition':data.get('condition'), 'potential':True})
-        for value in list(data.values())[:300]:out.extend(extract(value,source,depth+1))
+                        'condition':condition, 'potential':True,
+                        'applicable':data.get('applicable') is True,
+                        'section':section,
+                        'options':data.get('options') if isinstance(data.get('options'),list) and all(isinstance(x,str) for x in data['options']) else [],
+                        'schema_id':str(data.get('id') or data.get('name') or ''),
+                        'format':str(data.get('format') or '')})
+        for name,value in list(data.items())[:300]:
+            if name!='condition':out.extend(extract(value,source,depth+1,condition,section))
     elif isinstance(data,list):
-        for value in data[:300]:out.extend(extract(value,source,depth+1))
+        for value in data[:300]:out.extend(extract(value,source,depth+1,inherited_condition,section))
     return out
 
 
@@ -46,7 +57,7 @@ class Discovery:
         kind=response.headers.get('content-type','')
         if 'json' not in kind and 'javascript' not in kind:return
         length=response.headers.get('content-length')
-        if not length or not length.isdigit() or int(length)>100000:return
+        if length and (not length.isdigit() or int(length)>100000):return
         self.responses+=1
         try:
             self.parse(response.text(), 'delivered JSON' if 'json' in kind else 'loaded JavaScript')

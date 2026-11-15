@@ -17,6 +17,9 @@ class Fact:
     source: str
     section: str = ''
     variants: list[str] = field(default_factory=list)
+    instructions: str = ''
+    record: bool = False
+    tools: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -28,7 +31,14 @@ class Decision:
 
 
 def key(f):
-    return (f.frame, f.section, f.label, f.kind, f.slot)
+    return (getattr(f,'frame_identity','') or f.frame, getattr(f, 'identity', '') or (f.section, f.label, f.slot), f.kind,
+            '' if f.kind=='file' else norm(f.label), entity_scope(f.section))
+
+
+def owner_only(f):
+    """A resume establishes experience, not preferences, consent or sensitive history."""
+    return bool(re.search(r'(?i)enjoy|prefer|desired|would you like|consent|agree|acknowledg|convict|felony|misdemeanor|'
+                          r'citizen|sponsor|disab|medical|dismiss|religio|faith|gender|sexual|ethnic|\brace\b', f.label))
 
 
 ENTITY_HEADER = re.compile(r'^(?:(?:previous|prior|past)\s*)?(work\s*experience|employment(?:\s*history)?|professional\s*experience|education|academic(?:\s*(?:history|qualifications))?|references?|referrals?)\s*(?:entry\s*)?(\d+)?$')
@@ -74,6 +84,10 @@ def percent_range(text):
 def choice(f, values):
     if f.kind not in ('select', 'combobox', 'radio', 'buttons', 'checkboxes'):
         return values[0]
+    if f.kind=='checkboxes' or f.multiple:
+        parts=[x.strip() for x in values[0].split(';') if x.strip()]
+        picks=[forms.strict_option(x,f.options) for x in parts]
+        if parts and all(x is not None for x in picks):return '; '.join(picks)
     for value in values:
         hit = forms.strict_option(value, f.options)
         if hit is not None:
@@ -82,11 +96,21 @@ def choice(f, values):
         if norm(value) in ('yes','no'):
             hits=[o for o in f.options if re.match(r'^'+norm(value)+r'\b',norm(o))]
             if len(hits)==1:return hits[0]
+        if not forms.is_identity(f.label):
+            # Country phone selectors decorate the same country with its dial code.
+            hits=[o for o in f.options if norm(re.sub(r'\s*\(?\+\d+\)?\s*$', '', o))==norm(value)]
+            if len(hits)==1:return hits[0]
         for canonical,alternates in forms._SYNONYMS.items():
             group={norm(x) for x in (canonical,*alternates)}
             if norm(value) in group:
                 hits=[o for o in f.options if norm(o) in group]
                 if len(hits)==1:return hits[0]
+    if not forms.is_identity(f.label) and re.search(r'(?i)gpa|grade point|years?',f.label) and re.fullmatch(r'\d+(?:\.\d+)?',values[0]):
+        number=float(values[0]);hits=[]
+        for option in f.options:
+            span=re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*',option)
+            if span and float(span[1])<=number<=float(span[2]):hits.append(option)
+        if len(hits)==1:return hits[0]
     target=percent_range(values[0])
     if target:
         hits=[o for o in f.options if percent_range(o)==target or
@@ -99,22 +123,37 @@ def choice(f, values):
 
 
 def from_fact(f, fact):
+    if fact.instructions:
+        # Only unconditional literal rules can bypass the source-aware planner.
+        literal=re.fullmatch(r'(?is)\s*(?:use|enter|answer)\s+["\']?([^\n]+?)["\']?\.?\s*', fact.instructions)
+        clear=re.fullmatch(r'(?is)\s*(?:leave|keep)\s+(?:it\s+)?(?:blank|empty)\.?\s*', fact.instructions)
+        if clear:return Decision('',fact.source,fact.id)
+        if not literal or re.search(r'(?i)\b(if|unless|when|jd|resume|otherwise|posting)\b', literal[1]):
+            return Decision(None,fact.source,fact.id,'conditional source rule requires validation')
+        text=literal[1].strip().strip('"\'')
+        quoted=bool(re.search(r'(?s)["\'].*["\']',fact.instructions))
+        numeric=bool(re.fullmatch(r'[$£€]?\d+(?:[.,/]\d+)*(?:\s*[-–]\s*[$£€]?\d+(?:[.,/]\d+)*)?',text))
+        if not (quoted or numeric or text==fact.value or forms.strict_option(text,f.options) is not None):
+            return Decision(None,fact.source,fact.id,'source rule requires validation')
+        fact=Fact(fact.id,fact.aliases,text,fact.source,fact.section,fact.variants)
     value=choice(f,[fact.value,*fact.variants])
     format_hint=(f.format or '').upper()
     needs_day=f.kind=='date' or 'DD' in format_hint
     needs_month_year='MM' in format_hint and ('YY' in format_hint)
-    if needs_day or needs_month_year:
+    if needs_day or needs_month_year or format_hint in ('YYYY','YY'):
         parsed=None
         for fmt in ('%Y-%m-%d','%m/%d/%Y','%B %d, %Y'):
             try:parsed=datetime.strptime(fact.value,fmt);break
             except ValueError:pass
         if parsed is None and not needs_day:
-            for fmt in ('%Y-%m','%m/%Y','%B %Y','%b %Y'):
+            for fmt in ('%Y-%m','%m/%Y','%B %Y','%b %Y','%Y'):
                 try:parsed=datetime.strptime(fact.value,fmt);break
                 except ValueError:pass
+            if needs_month_year and re.fullmatch(r'\d{4}',fact.value):parsed=None
         if parsed is None:return Decision(None,fact.source,fact.id,'exact day missing from source' if needs_day else 'month/year unavailable')
-        if needs_day:value=parsed.strftime('%Y-%m-%d' if f.kind=='date' or format_hint.startswith('YYYY') else '%m/%d/%Y')
-        else:value=parsed.strftime('%Y-%m' if format_hint.startswith('YYYY') else '%m/%Y')
+        template='YYYY-MM-DD' if f.kind=='date' else format_hint
+        tokens={'YYYY':f'{parsed.year:04d}','YY':f'{parsed.year%100:02d}','MM':f'{parsed.month:02d}','DD':f'{parsed.day:02d}'}
+        value=re.sub(r'YYYY|YY|MM|DD',lambda m:tokens[m[0]],template)
     return Decision(value,fact.source,fact.id,'' if value is not None else 'source value not offered')
 
 
@@ -122,7 +161,7 @@ def resolve(f, facts):
     label=re.sub(r'(?i)\((?:optional|if applicable)\)', '', f.label).strip()
     suffix=' '.join(f.options)
     if suffix and label.endswith(suffix):label=label[:-len(suffix)].strip()
-    matches = [x for x in facts if norm(label) in map(norm, x.aliases)
+    matches = [x for x in facts if not x.record and norm(label) in map(norm, x.aliases)
                and scope_allows(f,x)]
     human=[x for x in matches if x.source=='human']
     if len(human)==1:matches=human
@@ -133,7 +172,7 @@ def resolve(f, facts):
 
 
 def compile_facts(data, raw_jd):
-    """Conservative mappings; unrecognized structured entries remain available to model mapping."""
+    """Keep complete source records and conditional rules available to the planner."""
     from jobagent.tools.applicant import entries
     facts = []
     component_aliases = {
@@ -145,35 +184,57 @@ def compile_facts(data, raw_jd):
         'Preferred name': {'first': ['Preferred first name'], 'last': ['Preferred last name'],
                            'full': ['Preferred name', 'Preferred full name']},
         'Phone': {'number': ['Phone', 'Primary Phone', 'Phone Number'],
-                  'extension': ['Phone Extension'], 'device_type': ['Phone Device Type']},
+                  'extension': ['Phone Extension'], 'device_type': ['Phone Device Type'],
+                  'country':['Phone Country'], 'country_code':['Phone Country Code','Dial Code']},
     }
     for section, entry in entries(data):
         value = entry.get('answer'); q = entry['question']; source = f'applicant/{section}/{q}/answer'
+        tools=entry.get('tools') or []
+        if isinstance(tools,str):tools=[tools]
+        tools=[str(x) for x in tools]
         if isinstance(value, dict):
+            import json
+            facts.append(Fact(source,[q],json.dumps(value,ensure_ascii=False),source,instructions=entry.get('instructions',''),record=True,tools=tools))
             if q=='Legal name' and value.get('first') and value.get('last'):
                 full=' '.join(str(value[k]).strip() for k in ('first','middle','last') if value.get(k))
                 facts.append(Fact(source+'/full',['Name','Full Name','Legal Name'],full,source))
-            for component, aliases in component_aliases.get(q, {}).items():
-                if component in value:
-                    facts.append(Fact(source+'/'+component, aliases, str(value[component]), source+'/'+component))
-        elif isinstance(value,list) and all(isinstance(x,dict) for x in value):
+            for component in value:
+                aliases=component_aliases.get(q, {}).get(component,[f'{q} {component.replace("_"," ")}'])
+                v=value[component]
+                if isinstance(v,(str,bool,int,float)):
+                    facts.append(Fact(source+'/'+component, aliases, str(v), source+'/'+component,
+                                      instructions=entry.get('instructions',''),tools=tools))
+        elif isinstance(value,list) and value and all(isinstance(x,dict) for x in value):
             for i,row in enumerate(value,1):
                 group='Education' if q=='Degrees' else 'Work Experience' if q=='Work history' else q
                 aliases={'school':['School','University','Institute'], 'degree':['Degree'], 'field':['Field of Study','Major'],
                          'from':['From Date','Start Date'], 'start':['From Date','Start Date'],
                          'end':['End Date'], 'to':['End Date'], 'company':['Company Name','Employer'], 'title':['Job Title'],
+                         'current':['Current','Currently work here','I currently work here','Current position'],
+                         'description':['Description','Responsibilities','Role Description'], 'gpa':['GPA','Grade Point Average'],
                          'city':['City'], 'state':['State','Province'], 'country':['Country']}
-                for component,names in aliases.items():
+                import json
+                facts.append(Fact(source+f'/{i-1}',[q],json.dumps(row,ensure_ascii=False),source+f'/{i-1}',f'{group} {i}',
+                                  instructions=entry.get('instructions',''),record=True,tools=tools))
+                for component in row:
+                    names=aliases.get(component,[component.replace('_',' ')])
                     v=row.get(component)
+                    if isinstance(v,list) and component not in ('school','degree','field'):continue
                     variants=v if isinstance(v,list) else [v]
                     if variants and isinstance(variants[0],(str,int,float)):
                         facts.append(Fact(source+f'/{i-1}/{component}',names,str(variants[0]),source+f'/{i-1}/{component}',
-                                          f'{group} {i}',[str(x) for x in variants[1:]]))
-        elif isinstance(value, (str, bool, int, float)) and value != '' and not entry.get('instructions'):
+                                          f'{group} {i}',[str(x) for x in variants[1:]],instructions=entry.get('instructions',''),tools=tools))
+        elif isinstance(value,list) and (value or entry.get('instructions')):
+            import json
+            facts.append(Fact(source,[q,*entry.get('seen',[])],json.dumps(value,ensure_ascii=False),source,
+                              instructions=entry.get('instructions',''),record=True,tools=tools))
+        elif isinstance(value, (str, bool, int, float)) or (value is None and entry.get('instructions')):
             # A saved literal can be conditional (e.g. "Yes only if the resume
             # lists an honour"). Let the common source checker apply that rule.
-            val = ('Yes' if value else 'No') if isinstance(value, bool) else str(value)
-            facts.append(Fact(source, [q, *entry.get('seen', [])], val, source))
+            val = ('Yes' if value else 'No') if isinstance(value, bool) else '' if value is None else str(value)
+            # An empty default is unknown; an explicit clear rule is evidence of a blank.
+            if val or entry.get('instructions'):
+                facts.append(Fact(source, [q, *entry.get('seen', [])], val, source,instructions=entry.get('instructions',''),tools=tools))
     # Only invoke this owner's explicit JD-dependent travel rule when present.
     travel_rule = next((e for _, e in entries(data) if e['question'] == 'Willing to travel?' and e.get('instructions')), None)
     if travel_rule:

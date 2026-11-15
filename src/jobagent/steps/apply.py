@@ -552,6 +552,12 @@ def in_applicant(value: str, data: dict) -> bool:
 
 def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, model, log) -> None:
     """A second look at the plan: answers a file doesn't really support are corrected or go to the candidate."""
+    from jobagent.filling.facts import owner_only,compile_facts,resolve as resolve_fact
+    for f in fields:
+        a=answers.get(f.id)
+        if a and owner_only(f) and a.source in ('resume','jd','company','written','already_filled','none'):
+            answers[f.id]=a.model_copy(update={'value':'','ask_human':True,
+                'flag':(a.flag+' explicit owner answer required for preference, consent or sensitive history').strip()})
     rows = [f"{f.brief()}\n    PLANNED value={a.value!r} source={a.source} why={a.why!r}"
             for f in fields if (a := answers.get(f.id)) and a.value and a.source not in ("human", "learned", "lookup")
             and f.kind != "file"]
@@ -569,27 +575,31 @@ def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, mode
         out = llm.structured_invoke(model, schema, [SystemMessage(CHECK_PROMPT), HumanMessage(
             files + "\n\n== PLANNED ANSWERS ==\n" + "\n".join(rows))], first="function_calling", log=log)
     except Exception as e:
-        log(f"apply: plan check failed ({type(e).__name__}); keeping the plan")
+        log(f"apply: plan check failed ({type(e).__name__}); unvalidated answers require review")
+        for f in checked:
+            a=answers[f.id]
+            answers[f.id]=a.model_copy(update={'value':'','ask_human':True,
+                'flag':(a.flag+' source checker unavailable').strip()})
         return
     data = ctx.get("_applicant") or {}
+    source_facts=compile_facts(data,ctx.get('_jd_text',''))
     h = hints(fields, ctx.get("_jd", {}).get("company", ""), data, related=False)  # the file must really say it
     for c in [getattr(out, f'field_{f.id}').model_copy(update={'id':f.id}) for f in checked]:
         a = answers.get(c.id)
         if a is None or c.supported:
             continue
         f = next((x for x in fields if x.id == c.id), None)
-        sheet = ctx.get("ANSWERS_FOR_THIS_APPLICATION", "")
         instr = h.get(c.id, "")
         # instructions are support only for choices that do not depend on facts outside the applicant's file: an instruction that
         # points at the posting ("use the JD's percentage"), or a question about WHICH institution, must be validated against that
         # source, not waved through because an instruction exists (F29/F30)
-        instruction_ok = "instructions=" in instr and not re.search(r"(?i)\b(jd|job description|posting|listing)\b", instr) \
+        bound=resolve_fact(f,source_facts) if f else None
+        if a.source == "applicant" and bound and bound.value is not None and forms.same_value(bound.value,a.value,f.kind):
+            continue  # the answer to THIS question is explicit, unconditional and rendered correctly
+        jd_rule = "instructions=" in instr and re.search(r"(?i)\b(jd|job description|posting|listing)\b", instr) \
             and not (f and forms.is_identity(f.label))
-        if a.source == "applicant" and (in_applicant(a.value, data) or instruction_ok
-                                        or (len(a.value) > 1 and a.value.lower() in sheet.lower())):
-            continue  # the file does say it (one of an answer's variants), or its instructions give it
-        if a.source == "applicant" and "instructions=" in instr and not instruction_ok and c.value and not c.ask_human \
-                and f and f.options and forms.match_option(c.value, f.options)[0] is not None:
+        if a.source == "applicant" and jd_rule and c.value and not c.ask_human \
+                and f and f.options and forms.strict_option(c.value, f.options) is not None:
             # an instruction that points at the posting was followed with a value the posting contradicts: the checker read the
             # posting and names the option that means its value
             log(f"  check: [{c.id}] {a.value[:40]!r} -> {c.value[:40]!r} (the posting says otherwise)")
@@ -601,9 +611,10 @@ def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, mode
             answers[c.id] = a.model_copy(update={"ask_human": True, "value": "",
                                                  "flag": (a.flag + f" planned {a.value[:40]!r}").strip()})
             continue
-        if c.value and f and f.options and forms.match_option(c.value, f.options)[0] is None:
+        if c.value and f and f.options and forms.strict_option(c.value, f.options) is None:
             # a "correction" that isn't an offered option is no fix
-            answers[c.id] = a.model_copy(update={"flag": (a.flag + f" check suggests {c.value[:60]!r}").strip()})
+            answers[c.id] = a.model_copy(update={"value":"", "ask_human":True,
+                "flag": (a.flag + f" check suggests unavailable {c.value[:60]!r}").strip()})
             continue
         if c.value and not c.ask_human and c.value.strip().lower() not in ("ask_human", "ask human", "none"):
             log(f"  check: [{c.id}] {a.value[:40]!r} -> {c.value[:40]!r}")
@@ -1032,14 +1043,14 @@ def outcome_of(e: dict, f) -> str:
     if e.get("clear"):
         return "verified" if e["verified"] else "failed"
     if forms.has_value(f):
-        return "verified"                       # the page already had a value (prefilled); a choice showing its prompt has none
+        return "verified" if e.get('verified') else "unverified prefill"
     if not e.get("answered", True):
         return "unplanned" if e["required"] else "unplanned (optional)"
     return "unanswered (required)" if e["required"] else "left empty (optional)"
 
 
 BLOCKING = {"unplanned": "no answer was planned", "unanswered (required)": "left empty", "failed": "could not be filled",
-            "mismatch": "the page shows a different value"}
+            "mismatch": "the page shows a different value", "unverified prefill": "prefilled value has no verification"}
 
 
 def blockers_of(record: list[dict]) -> list[str]:
@@ -1278,11 +1289,11 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
             f.value = e["readback"]
         want = e["filled"] or e["answer"]
         if f is None:
-            e["verified"] = not want
+            e["verified"] = False
         elif e.get("clear"):
             e["verified"] = not f.value and not e["required"]
         elif not want:
-            e["verified"] = not e["required"] or forms.has_value(f)
+            e["verified"] = False  # a nonempty prefill alone is not source verification
         else:
             e["verified"] = forms.same_value(want, f.value, e["kind"])
         e["outcome"] = outcome_of(e, f)
@@ -1381,7 +1392,18 @@ def _guarded_run(page: Page, job_dir: str | Path, company: str, *args, **kwargs)
     with challenge.session(page, kwargs.get('hitl'), ready, out, kwargs.get('log', print),
                            kwargs.pop('browser_policy', None), kwargs.pop('desktop_fallback', False)):
         try:
-            return _run(page, job_dir, company, *args, **kwargs)
+            from jobagent.filling import select_strategy
+            from jobagent.filling.discovery import Discovery
+            discovery=Discovery(page) if select_strategy(kwargs.get('filling_strategy'),resume_job=job_dir)=='experimental' else None
+            if discovery:page._jobagent_discovery=discovery
+            try:
+                return _run(page, job_dir, company, *args, **kwargs)
+            finally:
+                for proof in getattr(page,'_jobagent_upload_proofs',[]):proof.close()
+                if hasattr(page,'_jobagent_upload_proofs'):del page._jobagent_upload_proofs
+                if discovery:
+                    discovery.close()
+                    del page._jobagent_discovery
         except availability.Unavailable as exc:
             checkpoint = out / "checkpoint.json"
             result = json.loads(checkpoint.read_text()) if checkpoint.exists() else {"fields": [], "pages": []}

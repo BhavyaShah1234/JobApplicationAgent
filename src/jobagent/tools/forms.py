@@ -112,7 +112,8 @@ FIELDS_JS = r"""(start) => {
   const section = e => {
     // the nearest heading above the field (e.g. "Work Experience 2", "Voluntary Self-Identification")
     // headings only: a legend is a field's own label (Workday's "To*" date), not a section
-    const hs = all('h1, h2, h3, h4, h5, [role=heading]').filter(vis);
+    const hs = all('h1, h2, h3, h4, h5, [role=heading]').filter(h => vis(h)
+      && !h.closest('[role=dialog],[role=listbox],[role=menu],[class*=datepicker i],[class*=calendar i]'));
     let best = '';
     const ae = anchor(e);
     for (const h of hs) { if (anchor(h).compareDocumentPosition(ae) & Node.DOCUMENT_POSITION_FOLLOWING) best = clean(h.innerText); }
@@ -120,6 +121,27 @@ FIELDS_JS = r"""(start) => {
   // a required marker is "*" or a lookalike (Lever uses U+2731), at the end of the caption or followed by a space
   const required = (e, q) => e.required || e.getAttribute('aria-required') === 'true'
       || /[*✱∗＊⁎]\s*$|[*✱∗＊⁎]\s|\(required\)/i.test(q);
+  // Capture identity in the same DOM snapshot as the question and value.
+  // Extra per-field browser round trips make remote desktop filling costly.
+  const registry=window.__jobagentFieldNodes ||= {ids:new WeakMap(),next:0,
+    epoch:crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`};
+  const identity=e=>{
+    const r=registry, root=e.getRootNode();
+    if(!r.ids.has(e))r.ids.set(e,++r.next);
+    if(root!==document && !r.ids.has(root))r.ids.set(root,++r.next);
+    const prefix=root===document ? '' : 'root:'+r.ids.get(root)+':';
+    const path=e.closest('[data-field-path],[data-field-entry-id]');
+    const own=path && (path.getAttribute('data-field-path')||path.getAttribute('data-field-entry-id'));
+    const unique=(attr,val)=>val && [...root.querySelectorAll('['+attr+']')].filter(x=>x.getAttribute(attr)===val).length===1;
+    if(unique('id',e.id))return prefix+'id:'+e.id;
+    if(own && [...root.querySelectorAll('input,select,textarea,[role=combobox]')].filter(x=>{
+      const p=x.closest('[data-field-path],[data-field-entry-id]');
+      return p && (p.getAttribute('data-field-path')||p.getAttribute('data-field-entry-id'))===own &&
+        (x.name||x.type||x.tagName)===(e.name||e.type||e.tagName);
+    }).length===1)return prefix+'path:'+own+':'+(e.name||e.type||e.tagName);
+    if(unique('name',e.name))return prefix+'name:'+e.name;
+    return 'node:'+r.epoch+':'+r.ids.get(e);
+  };
   const out = []; let n = start; const seen = new Set(); let shadowFields = 0;
   const add = (e, f) => {
     // Legacy SuccessFactors uses a region/div masthead rather than a header tag.
@@ -128,6 +150,10 @@ FIELDS_JS = r"""(start) => {
     e.setAttribute('data-jf', String(n));
     if (e.getRootNode() instanceof ShadowRoot) shadowFields++;
     f.id = n++;
+    f.identity=identity(e);
+    f.frame_identity=registry.epoch;
+    f.invalid=e.getAttribute('aria-invalid')==='true' || !!(e.validity && !e.validity.valid);
+    if(!f.format && /\b(MM|YYYY|YY|DD)\b/i.test(e.placeholder||''))f.format=e.placeholder;
     f.section = section(e);
 
     const box = e.closest(
@@ -331,6 +357,9 @@ class Field:
     slot: int = 0   # for uploads: which of several same-named uploads in this frame (DOM order); 0 for the first
     prompt: bool = False   # a select whose selected option is itself a prompt (disabled / hidden / marked placeholder), not an answer
     linked: bool = False   # an upload's native input that a lazy trigger's own click opened (carries that trigger's caption)
+    identity: str = ''     # optional stable identity assigned by the experimental reader
+    frame_identity: str = ''
+    invalid: bool = False
 
     def brief(self) -> str:
         opts = ""
@@ -479,7 +508,8 @@ def read_page(page: Page) -> PageView:
                                 value=x.get("value") or "", options=x.get("options") or [], section=x.get("section", ""),
                                 frame=k, multiple=bool(x.get("multiple")), accept=x.get("accept", ""),
                                 maxlength=x.get("maxlength"), format=x.get("format", ""), help=x.get("help", ""),
-                                linked=bool(x.get("linked")), prompt=bool(x.get("prompt"))))
+                                linked=bool(x.get("linked")), prompt=bool(x.get("prompt")),
+                                identity=x.get('identity',''),frame_identity=x.get('frame_identity',''),invalid=bool(x.get('invalid'))))
         adds += [{**a, "frame": k} for a in snap.get("adds", [])]
         buttons += snap["buttons"]
         errors += snap["errors"]
@@ -893,7 +923,7 @@ def close_option(answer: str, options: list[str]) -> str | None:
 
 
 def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[str, str], tie_break=None,
-               strict: bool = False, close: bool = False) -> str:
+               strict: bool = False, close: bool = False, before_upload=None, upload_confirmation=None) -> str:
     """Put `answer` into the field. Returns what was chosen (the option text for choice fields)."""
     from jobagent.tools import challenge
     if challenge.guard(page):
@@ -910,7 +940,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         # an index from the earlier read could now name another widget's. The widget is identified by its own caption (and slot);
         # if that is not exactly one control now, nothing is attached.
         live = read_page(page)
-        same = [g for g in live.fields if g.kind == "file" and g.label == f.label and g.slot == f.slot]
+        same = [g for g in live.fields if g.kind == "file" and g.frame==f.frame and g.label == f.label and g.slot == f.slot]
         if len(same) != 1:
             raise FillError(f"the upload {f.label[:60]!r} is not exactly one control on the page now ({len(same)}); not attaching "
                             f"{name} to a control that might be another widget")
@@ -945,20 +975,27 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 page.remove_listener('filechooser', listener)
                 shadow_locator(frame, '[data-jf-upload-existing]').evaluate_all(
                     "es=>es.forEach(e=>e.removeAttribute('data-jf-upload-existing'))")
+        # Retain the resolved node. A Locator can wait 30 seconds for a replaced
+        # input on every poll; an ElementHandle can inspect its disconnected
+        # node immediately. Choosers already provide an ElementHandle.
+        native=loc.element_handle(timeout=1200) if hasattr(loc,'element_handle') else loc
+        if native is None:raise FillError('The resolved file input disappeared before upload')
+        if before_upload:before_upload(native)
         for _ in range(2):  # the upload counts once the page shows the file's name
             if getattr(getattr(page, 'context', None), 'jobagent_policy', None):
                 # The agent runs in Docker but Chrome runs on the host. Transfer bytes;
                 # a Docker /app path is not a file path on the desktop browser's host.
                 import mimetypes
                 from pathlib import Path
-                loc.set_input_files({'name': name, 'mimeType': mimetypes.guess_type(path)[0] or 'application/octet-stream',
-                                     'buffer': Path(path).read_bytes()})
+                native.set_input_files({'name': name, 'mimeType': mimetypes.guess_type(path)[0] or 'application/octet-stream',
+                                     'buffer': Path(path).read_bytes()},timeout=8000)
             else:
-                loc.set_input_files(path)
+                native.set_input_files(path,timeout=8000)
             for _ in range(10):
                 page.wait_for_timeout(2000)
+                if upload_confirmation and upload_confirmation():return path
                 try:
-                    if loc.evaluate('e=>e.isConnected') and name in loc.evaluate('e=>[...(e.files||[])].map(f=>f.name)'):   # a detached input holds the file for nobody
+                    if native.evaluate('e=>e.isConnected') and name in native.evaluate('e=>[...(e.files||[])].map(f=>f.name)'):   # a detached input holds the file for nobody
                         return path
                 except Exception:
                     pass  # some uploaders replace their native input after accepting the file
@@ -1011,7 +1048,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             for variant in variants:
                 try:
                     return fill_field(page, view, f, variant, files, None if close_only else tie_break,
-                                      close=close_only)
+                                      close=close_only, strict=strict)
                 except Exception as e:
                     errors.append(f"{variant}: {str(e)[:60]}")
                     page.keyboard.press("Escape")
@@ -1034,7 +1071,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         page.keyboard.type(answer, delay=60)
         return answer
     if f.kind == "select":
-        opt = close_option(answer, f.options) if close and not is_identity(f.label) else _choose(f.label, answer, f.options, tie_break)
+        opt = strict_option(answer, f.options) if strict else close_option(answer, f.options) if close and not is_identity(f.label) else _choose(f.label, answer, f.options, tie_break)
         if opt is None:
             raise FillError(f"{answer!r} isn't offered as such")
         loc.select_option(label=opt, timeout=8000)
@@ -1073,7 +1110,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 lab.click(timeout=8000)
         return "; ".join(chosen)
     if f.kind == "combobox":
-        if f.value and not strict and loc.get_attribute("data-uxi-widget-type") == "selectinput":
+        if f.value and loc.get_attribute("data-uxi-widget-type") == "selectinput":
             # a single-choice Workday picker that already holds something else (an earlier run's pick): its chip
             # sits over the input, so remove it before choosing
             box = loc.locator("xpath=ancestor::*[@data-automation-id='multiSelectContainer'][1]")

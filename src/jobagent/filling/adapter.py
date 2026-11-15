@@ -2,7 +2,7 @@
 import json
 import hashlib
 from pathlib import Path
-from .facts import compile_facts,Decision,key
+from .facts import compile_facts,Decision,Fact,key,norm,entity_scope
 from .planned import PlannedFiller,read_view
 
 
@@ -27,6 +27,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         count=sum(upload_identity(view,g)==ident for g in view.fields if g.kind=='file')
         previous=documents.get(ident,{})
         documents[ident]={'role':role,'label':previous.get('label',field.label),
+                          'field_key':key(field), 'identity':field.identity,
                           'ambiguous':previous.get('ambiguous',False) or count!=1 or
                           previous.get('role',role)!=role}
 
@@ -35,28 +36,43 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         if env.get('out_dir') and not ctx.get('_application_address') and any(
                 e.get('question') in {'Current address','Current location (city)'} for _,e in matches.values()):
             application_address.prepare(ctx,env['out_dir'],model,log)
-        return compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''))
+        facts=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''))
+        if ctx.get('_application_address'):
+            for fact in facts:
+                if any('/'+q+'/answer' in fact.source for q in ('Current address','Current location (city)')):
+                    fact.instructions=''  # the address policy has already resolved this application-local fact
+        return facts+list(ctx.get('_experimental_learned_facts',{}).values())
 
     def sources(fields,decisions):
         if not fields:return {}
-        matches=A.match_entries(fields,ctx.get('_jd',{}).get('company',''),ctx.get('_applicant') or {})
-        eligible=[f for f in fields if f.id in matches and
-                  (matches[f.id][1].get('instructions') or matches[f.id][1].get('answer') not in (None,''))]
-        answers={f.id:A.Answer(id=f.id,value='',source='none',ask_human=True) for f in fields}
-        if eligible:
-            visible=read_view(page)
-            proposed,_=A.plan(eligible,ctx,model,log,filled=[f for f in visible.fields if f.id not in {g.id for g in eligible}])
-            A.enforce(eligible,proposed,ctx,log);A.check(eligible,proposed,ctx,model,log)
-            A.apply_variants(eligible,proposed,ctx,log);A.enforce(eligible,proposed,ctx,log)
-            A.resolve(eligible,proposed,ctx,model,{},log)
-            answers.update(proposed)
-        # Same saved-answer retrieval as the original method, without one-question-at-a-time HITL.
-        A.consult_learned(fields,answers,ctx,model,log)
-        updates={f.id:Decision(a.value,'validated '+a.source,reason=a.why)
-                 for f in fields if (a:=answers.get(f.id)) and not a.ask_human and not a.lookup and a.value}
-        for f in eligible:
-            if f.id not in updates:updates[f.id]=Decision(None,reason='source check requires owner')
-        return updates
+        # Retrieve evidence, not free-form answers from a second planner. A
+        # company-specific literal must never become another company's policy.
+        company=norm(ctx.get('_jd',{}).get('company',''))
+        company_keys={company.replace(' ',''),norm(env.get('company','')).replace(' ','')}
+        company_keys.discard('')
+        if '_experimental_learned_entries' not in ctx:ctx['_experimental_learned_entries']=learned.load()
+        stored=ctx['_experimental_learned_entries']
+        eligible=[e for e in stored if norm(e.get('company','')).replace(' ','') in company_keys|{'any'}]
+        cache=ctx.setdefault('_experimental_learned_retrieval',{})
+        known=ctx.setdefault('_experimental_learned_facts',{})
+        for f in fields:
+            if entity_scope(f.section):continue  # old learned rows have no entity identifier
+            if norm(f.label) not in cache:
+                exact=[e for e in eligible if norm(f.label) in [norm(x) for x in [e['question'],*(e.get('seen') or [])]]]
+                cache[norm(f.label)]=exact[:3] or learned.relevant(f.label,company,entries=[
+                    {**e,'company':'any' if e.get('company')=='any' else company} for e in eligible])
+            for entry in cache[norm(f.label)]:
+                value=entry.get('answer')
+                if value is None and not entry.get('instructions'):continue
+                value=('Yes' if value else 'No') if isinstance(value,bool) else '' if value is None else str(value)
+                ident='learned:'+str(entry.get('company',''))+':'+entry['question']
+                fact=Fact(ident,[entry['question'],*(entry.get('seen') or [])],value,ident,
+                          instructions=entry.get('instructions',''))
+                known[ident]=fact
+        filler=ctx['_experimental_filler']
+        existing={fact.id for fact in filler.facts}
+        filler.facts.extend(fact for ident,fact in known.items() if ident not in existing)
+        return {}
 
     def ask(questions):
         hitl=env.get('hitl')
@@ -91,8 +107,10 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
     if filler.step!=page_no:
         filler.cache={};filler.step=page_no;filler.failures={}
     filler.upload_observer=observe_upload
+    from jobagent.tools import lookup
+    filler.lookup_resolver=lookup.run
     try:
-        result=filler.fill(page,files,advance_pages=False)
+        result=filler.fill(page,files,advance_pages=False,errors=errors)
     except Exception as exc:
         from jobagent.tools.challenge import Blocked
         if isinstance(exc,Blocked):raise
@@ -104,28 +122,40 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
     if not view.fields and not record:
         result.update(state='blocked',blockers=['no application fields discovered'])
     for f in view.fields:
-        entry=next((e for e in reversed(history) if e.get('frame')==f.frame and e['label']==f.label and e.get('slot')==f.slot),None)
+        entry=next((e for e in reversed(history) if e.get('step')==page_no and
+                    e.get('field_key')==key(f)),None)
         if entry is None:entry={}
-        success=entry.get('outcome')=='verified'
+        proof=filler.upload_proofs.get((page_no,key(f))) if f.kind=='file' else None
+        success=entry.get('outcome')=='verified' and not f.invalid and (proof.verify() if proof else forms.same_value(entry.get('readback',''),f.value,f.kind))
         value=entry.get('answer','')
         known_blank=success and value=='' and not f.required
         row={'page':page_no,'section':f.section,'label':f.label,'kind':f.kind,'required':f.required,
+             'identity':f.identity,'field_key':key(f),'fact_id':entry.get('fact_id',''),
              'options':f.options[:60],'before':entry.get('before',f.value),'answer':value,'why':'experimental source-backed plan',
              'source':entry.get('source','none'),'flag':'' if success else 'not verified by experimental filler' if f.required else '',
              'filled':files.get(value,'') if f.kind=='file' and success else entry.get('chosen','') if success else '',
              'error':entry.get('error',''),'answered':success,'frame':f.frame,'slot':f.slot,'clear':known_blank,
-             'readback':f.value,'verified':success,'held_file_sha256':entry.get('held_file_sha256')}
+             'readback':f.value,'verified':success,'held_file_sha256':entry.get('held_file_sha256'),
+             'upload_verification':entry.get('upload_verification')}
         row['outcome']=A.outcome_of(row,f)
-        record.append(row);done[A._key(f)]=row
+        record.append(row);done[key(f)]=row
     # A widget can disappear after dispatch, and its native required marker may
     # be absent even when the visible form requires a resume. Neither situation
     # makes a provided, recognised document optional to our verification.
     document_blockers=[]
     for ident,doc in documents.items():
         role=doc['role'];label=doc['label']
-        matches=[done[A._key(f)] for f in view.fields if f.kind=='file' and upload_identity(view,f)==ident]
+        matches=[done[key(f)] for f in view.fields if f.kind=='file' and f.identity==doc['identity']]
         row=matches[0] if len(matches)==1 else {}
+        proof=filler.upload_proofs.get((page_no,doc['field_key']))
+        if not matches and not doc['ambiguous'] and proof and proof.verify():
+            entry=next((e for e in reversed(history) if e.get('step')==page_no and e.get('identity')==doc['identity'] and e.get('outcome')=='verified'),{})
+            if entry:
+                row={**entry,'page':page_no,'verified':True,'filled':files[role],'answered':True,
+                     'options':[],'why':'matched dispatched bytes and acknowledgement in the same widget','source':'document role','flag':'','error':''}
+                record.append(row)
         if not (not doc['ambiguous'] and row.get('verified') and row.get('answer')==role and
+                proof and proof.verify() and
                 row.get('held_file_sha256')==hashlib.sha256(Path(files[role]).read_bytes()).hexdigest()):
             document_blockers.append(f'{label}: provided {role} upload is not verified')
     if document_blockers:

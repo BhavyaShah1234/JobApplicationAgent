@@ -178,13 +178,22 @@ def test_the_checker_validates_a_jd_dependent_answer_against_the_posting_it_is_g
     assert ans[1].value == "Travel - 30% or less" and "corrected by the check" in ans[1].flag   # the instruction did not wave it through
 
 
-def test_an_instruction_that_does_not_point_at_the_posting_still_counts_as_support(monkeypatch):
+def test_vague_nickname_instruction_without_the_nickname_is_not_support(monkeypatch):
     f = forms.Field(id=1, kind="select", label="Preferred name", options=["Bo", "Bob"])
     data = {"Names": [{"question": "Preferred name", "instructions": "Use my nickname."}]}
     ans = {1: A.Answer(id=1, value="Bo", source="applicant")}
     monkeypatch.setattr(llm, "structured_invoke", lambda *a, **k: SimpleNamespace(field_1=A.Check(id=1, supported=False, ask_human=True)))
     A.check([f], ans, {"_applicant": data, "_jd": {}, "JD": "", "_jd_text": ""}, object(), lambda m: None)
-    assert ans[1].value == "Bo"
+    assert ans[1].value == "" and ans[1].ask_human
+
+
+def test_an_explicit_literal_owner_rule_still_counts_as_support(monkeypatch):
+    f = forms.Field(id=1, kind="select", label="Preferred name", options=["Bo", "Bob"])
+    data = {"Names": [{"question": "Preferred name", "instructions": 'Use "Bo".'}]}
+    ans = {1: A.Answer(id=1, value="Bo", source="applicant")}
+    monkeypatch.setattr(llm, "structured_invoke", lambda *a, **k: SimpleNamespace(field_1=A.Check(id=1, supported=False, ask_human=True)))
+    A.check([f], ans, {"_applicant": data}, object(), lambda m: None)
+    assert ans[1].value == "Bo" and not ans[1].ask_human
 
 
 BRACKETS = ["Travel - 10% or less", "30%-50%", "50% or more"]

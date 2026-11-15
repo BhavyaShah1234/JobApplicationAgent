@@ -111,8 +111,8 @@ FILE_BYTES_JS = """async (sel) => {
 
 def _attachments(page: Page, view: forms.PageView, records: list[dict]) -> list[dict]:
     """What each upload control holds RIGHT NOW, read from the browser: the name, size and SHA-256 of the bytes of every
-    file in its native input. A control whose input is gone (a widget that shows only a file name) cannot be read: a file
-    name shown there is recorded as `unverified`, with no hash, never attributed another file's bytes."""
+    file in its native input. A control whose input is gone needs a live captured-dispatch proof tied to the same widget.
+    Otherwise its file name is recorded as `unverified`, never attributed another file's bytes."""
     import base64
     out = []
     for f in view.fields:
@@ -143,11 +143,24 @@ def _attachments(page: Page, view: forms.PageView, records: list[dict]) -> list[
     for w in forms.widget_uploads(page, view, records):   # uploads with no native input left: they stay in the inventory
         out.append({"frame": None, "slot": None, "label": w["label"], "files": None, "observed": w["observed"] or "",
                     "unverified": f"only the name is shown: {w['observed']}" if w["observed"] else "no attachment shown"})
+    # The opt-in filler can retain the ACTUAL dispatched File after an uploader
+    # clears its input. Revalidate its bytes and owned-widget acknowledgement
+    # now; never substitute the job-folder file or trust a recorded hash alone.
+    for proof in getattr(page,'_jobagent_upload_proofs',[]):
+        bound=[r for r in records if r.get('identity')==getattr(proof,'identity',None)
+               and (r.get('field_key') or [None])[0]==getattr(proof,'frame',None)
+               and r.get('held_file_sha256')==proof.expected and r.get('verified')]
+        if len(bound)!=1 or not proof.verify():continue
+        matches=[a for a in out if a['label']==bound[0]['label']]
+        if len(matches)!=1 or matches[0].get('files'):continue
+        matches[0].update(files=[{'name':proof.name,'size':proof.size,'sha256':proof.expected,
+                                 'verification':proof.method}])
+        matches[0].pop('unverified',None)
     return sorted(out, key=lambda d: (-1 if d["frame"] is None else d["frame"], d["slot"] or 0, d["label"]))
 
 
 _RECORD_KEYS = ("page", "section", "kind", "label", "required", "answer", "filled", "readback", "verified", "outcome", "source",
-                "flag", "error", "frame", "slot")
+                "flag", "error", "frame", "slot", "identity", "field_key", "fact_id", "upload_verification", "held_file_sha256")
 
 
 def _reviewed(records: list[dict]) -> list[dict]:
@@ -172,7 +185,8 @@ def freeze_payload(page: Page, view: forms.PageView, records: list[dict] = (), j
         verification outcome and provenance. Earlier pages are not on the final screen but are part of the application;
       * `screen`: every field the final screen shows now, with its value as read now;
       * `attachments`: for every upload control the hash of the bytes the browser holds in it (not of a same-named
-        job-folder file); an upload widget with no native input is listed with the file name it shows and no hash.
+        job-folder file), or a live captured-dispatch proof with current widget acknowledgement. Without either,
+        an upload widget with no native input is listed with the file name it shows and no hash.
     Returns (sha256 of all three, payload). Any changed answer, value, file name or byte changes the hash."""
     screen = sorted(({"frame": f.frame, "kind": f.kind, "label": f.label, "value": "[redacted]" if f.kind == "password" else f.value,
                       "provenance": "read on the final screen"} for f in view.fields),

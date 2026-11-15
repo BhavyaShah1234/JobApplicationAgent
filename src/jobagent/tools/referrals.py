@@ -85,11 +85,13 @@ def _answer(value: str, flag: str = "") -> dict:
     }
 
 
-def _referral_option(options: list[str]) -> str:
+def _referral_option(options: list[str], company: str = '') -> str:
     ranked = []
 
     for index, option in enumerate(options):
         leaf = option.rsplit(" > ", 1)[-1].casefold().strip()
+        if company:
+            leaf=re.sub(r'^'+re.escape(company.casefold())+r'\s+', '', leaf)
 
         if re.search(
             r"\bnon[- ]?employee\b|\bnot\s+referred\b|"
@@ -156,7 +158,7 @@ def answer_for(field, contact: dict, company: str = "") -> dict | None:
         "select", "combobox", "radio", "buttons", "checkboxes",
     ):
         if field.options:
-            option = _referral_option(field.options)
+            option = _referral_option(field.options, company)
             return _answer(
                 option,
                 "" if option else "no employee-referral option found",
