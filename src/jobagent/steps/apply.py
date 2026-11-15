@@ -582,7 +582,7 @@ def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, mode
                 'flag':(a.flag+' source checker unavailable').strip()})
         return
     data = ctx.get("_applicant") or {}
-    source_facts=compile_facts(data,ctx.get('_jd_text',''))
+    source_facts=compile_facts(data,ctx.get('_jd_text',''),ctx.get('TODAY',''))
     h = hints(fields, ctx.get("_jd", {}).get("company", ""), data, related=False)  # the file must really say it
     for c in [getattr(out, f'field_{f.id}').model_copy(update={'id':f.id}) for f in checked]:
         a = answers.get(c.id)
@@ -799,8 +799,15 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
     contact = ctx.get("REFERRAL")
     contact = contact if isinstance(contact, dict) else {}
     company = ctx.get("_jd", {}).get("company", "")
+    from jobagent.filling.facts import compile_facts,resolve as resolve_fact
+    evidence=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''),ctx.get('TODAY',''))
 
     for field in todo:
+        bound=resolve_fact(field,evidence)
+        previous=answers.get(field.id)
+        if bound.reason=='current OR future sponsorship' and bound.value is not None and not (
+                previous and previous.source in ('human','learned')):
+            answers[field.id]=Answer(id=field.id,value=bound.value,source='applicant',why=bound.reason)
         decision = referrals.answer_for(field, contact, company)
 
         if decision is not None:

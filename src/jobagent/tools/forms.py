@@ -10,6 +10,7 @@ filling. Submit buttons are never clicked here.
 
 import json
 import re
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -119,8 +120,23 @@ FIELDS_JS = r"""(start) => {
     for (const h of hs) { if (anchor(h).compareDocumentPosition(ae) & Node.DOCUMENT_POSITION_FOLLOWING) best = clean(h.innerText); }
     return best.slice(0, 80); };
   // a required marker is "*" or a lookalike (Lever uses U+2731), at the end of the caption or followed by a space
-  const required = (e, q) => e.required || e.getAttribute('aria-required') === 'true'
-      || /[*✱∗＊⁎]\s*$|[*✱∗＊⁎]\s|\(required\)/i.test(q);
+  const star = q => /[*✱∗＊⁎]\s*$|[*✱∗＊⁎]\s|\(required\)/i.test(q||'');
+  const required = (e, q) => {
+    if(e.required || e.getAttribute('aria-required')==='true' || star(q))return true;
+    const box=e.closest('[data-field-path],[data-field-entry-id],fieldset,[class*=fieldEntry i]') || e.parentElement;
+    const labels=[...(e.labels||[]),...(box ? box.querySelectorAll('legend,label') : [])];
+    return labels.some(l=>{
+      const target=l.htmlFor && l.getRootNode().getElementById(l.htmlFor);
+      const bare=s=>clean(s).replace(/[*✱∗＊⁎]\s*$/,'').trim();
+      const header=!l.querySelector('input,select,textarea') && bare(l.textContent)===bare(q) &&
+        (!target || target===e || target.contains(e));
+      if(l.contains(e) || (l.htmlFor && e.id && l.htmlFor===e.id) ||
+          header || (box && box.querySelectorAll('input:not([type=hidden]),select,textarea,[role=combobox],[aria-haspopup=listbox]').length<=1)){
+        return star(l.textContent) || star(getComputedStyle(l,'::after').content.replace(/["']/g,''));
+      }
+      return false;
+    });
+  };
   // Capture identity in the same DOM snapshot as the question and value.
   // Extra per-field browser round trips make remote desktop filling costly.
   const registry=window.__jobagentFieldNodes ||= {ids:new WeakMap(),next:0,
@@ -153,6 +169,10 @@ FIELDS_JS = r"""(start) => {
     f.identity=identity(e);
     f.frame_identity=registry.epoch;
     f.invalid=e.getAttribute('aria-invalid')==='true' || !!(e.validity && !e.validity.valid);
+    f.required=!!f.required || required(e,f.label);
+    f.calendar=e.type!=='date' && e.tagName==='INPUT' &&
+      (!!e.closest('.react-datepicker-wrapper,[data-datepicker]') || /(?:^|[\s_-])(?:datepicker|date-picker|input[-_]date|date[-_]input)(?:[\s_-]|$)/i.test(e.className||''));
+    if(f.calendar && !f.format)f.format='YYYY-MM-DD';
     if(!f.format && /\b(MM|YYYY|YY|DD)\b/i.test(e.placeholder||''))f.format=e.placeholder;
     f.section = section(e);
 
@@ -360,6 +380,7 @@ class Field:
     identity: str = ''     # optional stable identity assigned by the experimental reader
     frame_identity: str = ''
     invalid: bool = False
+    calendar: bool = False
 
     def brief(self) -> str:
         opts = ""
@@ -509,7 +530,8 @@ def read_page(page: Page) -> PageView:
                                 frame=k, multiple=bool(x.get("multiple")), accept=x.get("accept", ""),
                                 maxlength=x.get("maxlength"), format=x.get("format", ""), help=x.get("help", ""),
                                 linked=bool(x.get("linked")), prompt=bool(x.get("prompt")),
-                                identity=x.get('identity',''),frame_identity=x.get('frame_identity',''),invalid=bool(x.get('invalid'))))
+                                identity=x.get('identity',''),frame_identity=x.get('frame_identity',''),invalid=bool(x.get('invalid')),
+                                calendar=bool(x.get('calendar'))))
         adds += [{**a, "frame": k} for a in snap.get("adds", [])]
         buttons += snap["buttons"]
         errors += snap["errors"]
@@ -819,6 +841,58 @@ def best_place(answer: str, suggestions: list[str]) -> str | None:
     return (us or same_city or [None])[0]
 
 
+def strict_place(answer: str, suggestions: list[str]) -> str | None:
+    """Render one known city/state; never choose a nearest or different place."""
+    bits=[_norm(x) for x in answer.split(',') if x.strip()]
+    if len(bits)<2:return None
+    codes=set(US_STATES.values())
+    states={US_STATES.get(x,x) for x in bits[1:] if x in US_STATES or x in codes}
+    if len(states)!=1:return None
+    hits=[]
+    for item in suggestions:
+        parts=[_norm(x) for x in item.split(',') if x.strip()]
+        if not parts or parts[0]!=bits[0]:continue
+        given={US_STATES.get(x,x) for x in parts[1:] if x in US_STATES or x in codes}
+        if given!=states:continue
+        countries=[x for x in parts[1:] if x not in US_STATES and x not in codes]
+        if any(x not in ('us','usa','united states','united states of america') for x in countries):continue
+        hits.append(item)
+    return hits[0] if len(hits)==1 else None
+
+
+def fill_calendar(page,view,f,answer):
+    """Choose an exact accessible date, then verify the displayed calendar value."""
+    try:target=datetime.strptime(answer,'%Y-%m-%d')
+    except ValueError:raise FillError('A calendar needs a source-backed YYYY-MM-DD date')
+    loc=locate(view,f);frame=view.frames[f.frame]
+    loc.click(timeout=8000)
+    date_name=re.compile(rf'\b{target:%B}\s+{target.day}(?:st|nd|rd|th)?(?:,\s*|\s+){target.year}\b',re.I)
+    for _ in range(36):
+        cell=frame.get_by_role('option',name=date_name).filter(visible=True)
+        if not cell.count():cell=frame.get_by_role('button',name=date_name).filter(visible=True)
+        if not cell.count():cell=shadow_locator(frame,f'[data-date="{answer}"], [datetime="{answer}"]').filter(visible=True)
+        if cell.count()==1:
+            cell.click(timeout=8000);page.keyboard.press('Escape');loc.blur()
+            shown=loc.input_value()
+            for fmt in ('%m/%d/%Y','%Y-%m-%d','%B %d, %Y','%b %d, %Y'):
+                try:
+                    if datetime.strptime(shown,fmt).date()==target.date():return shown
+                except ValueError:pass
+            raise FillError('The calendar did not retain the selected date')
+        popup=shadow_locator(frame,'.react-datepicker, [role=dialog]:has([role=grid])').filter(visible=True)
+        if popup.count()!=1:break
+        heading=popup.inner_text()
+        month=re.search(r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b',heading)
+        if not month:break
+        current=datetime.strptime(month[0],'%B %Y')
+        direction='Next' if (target.year,target.month)>(current.year,current.month) else 'Previous'
+        nav=popup.get_by_role('button',name=re.compile(rf'{direction}.*month',re.I)).filter(visible=True)
+        if nav.count()!=1:break
+        nav.click(timeout=3000);page.wait_for_timeout(100)
+    page.keyboard.press('Escape')
+    raise FillError('No unique accessible day for the source-backed date')
+
+
 def locate(view: PageView, f: Field):
     return field_element(view.frames[f.frame], f'[data-jf="{f.id}"]')
 
@@ -1008,6 +1082,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                     return path
         raise FillError(f"{name} was attached but the page never showed it")
     loc.scroll_into_view_if_needed(timeout=5000)
+    if f.calendar:return fill_calendar(page,view,f,answer)
     if f.kind == "text" and loc.evaluate("e => /location|city|place|autocomplete/i.test([e.name, e.id, e.className, "
                                          "e.getAttribute('data-qa')].join(' ')) || !!e.getAttribute('aria-autocomplete')"):
         # a place box that keeps only a picked suggestion (Lever's "Current location"): type the city, pick it
@@ -1133,7 +1208,8 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 has_text=re.compile(rf"^\s*{re.escape(first)}\s*$")).first.click(timeout=8000)
             page.wait_for_timeout(1200)
             opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
-        pick = (lambda ans, o: (strict_option(ans, o), 0)) if strict else \
+        geographic=bool(re.search(r'(?i)location|\bcity\b|where.*located',f.label)) and not is_identity(f.label)
+        pick = (lambda ans, o: (strict_option(ans, o) or (strict_place(ans,o) if geographic else None), 0)) if strict else \
             (lambda ans, o: (identity_option(ans, o, person=bool(PERSON_Q.search(f.label))), 0)) if is_identity(f.label) else \
             (lambda ans, o: (close_option(ans, o), 0)) if close else match_option
         opt, _ = pick(answer, opts) if opts else (None, 0)

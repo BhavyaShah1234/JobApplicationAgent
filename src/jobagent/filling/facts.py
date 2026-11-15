@@ -1,7 +1,7 @@
 """Evidence-bound resolution: models may select facts, never manufacture factual values."""
 from dataclasses import dataclass, field
 import re
-from datetime import datetime
+from datetime import datetime,timedelta
 from jobagent.tools import forms
 
 
@@ -20,6 +20,7 @@ class Fact:
     instructions: str = ''
     record: bool = False
     tools: list[str] = field(default_factory=list)
+    reference_date: str = ''
 
 
 @dataclass
@@ -88,6 +89,10 @@ def choice(f, values):
         parts=[x.strip() for x in values[0].split(';') if x.strip()]
         picks=[forms.strict_option(x,f.options) for x in parts]
         if parts and all(x is not None for x in picks):return '; '.join(picks)
+    if 'veteran' in norm(f.label) and norm(values[0]) in ('not a veteran','not veteran'):
+        hits=[o for o in f.options if re.search(r'(?i)\bnot (?:a )?protected veteran\b',o)
+              and not re.search(r'(?i)decline|prefer not',o)]
+        if len(hits)==1:return hits[0]
     for value in values:
         hit = forms.strict_option(value, f.options)
         if hit is not None:
@@ -124,6 +129,16 @@ def choice(f, values):
 
 def from_fact(f, fact):
     if fact.instructions:
+        weekday=re.search(r'(?i)\b(?:coming|next)\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b',fact.instructions)
+        if weekday and fact.reference_date and not re.search(r'(?i)\bif\b|\bunless\b',fact.instructions):
+            if f.kind in ('select','combobox','radio','buttons','checkboxes') and not f.calendar and re.search(r'(?i)\bin a list\b.*\bimmediately\b',fact.instructions):
+                rendered=choice(f,['immediately'])
+                if rendered is not None:return Decision(rendered,fact.source,fact.id,'explicit list fallback in owner rule')
+            else:
+                today=datetime.strptime(fact.reference_date,'%Y-%m-%d')
+                day=['monday','tuesday','wednesday','thursday','friday','saturday','sunday'].index(weekday[1].lower())
+                value=(today+timedelta(days=(day-today.weekday())%7 or 7)).strftime('%Y-%m-%d')
+                return from_fact(f,Fact(fact.id,fact.aliases,value,fact.source+'; clock '+fact.reference_date,fact.section,fact.variants))
         # Only unconditional literal rules can bypass the source-aware planner.
         literal=re.fullmatch(r'(?is)\s*(?:use|enter|answer)\s+["\']?([^\n]+?)["\']?\.?\s*', fact.instructions)
         clear=re.fullmatch(r'(?is)\s*(?:leave|keep)\s+(?:it\s+)?(?:blank|empty)\.?\s*', fact.instructions)
@@ -158,6 +173,22 @@ def from_fact(f, fact):
 
 
 def resolve(f, facts):
+    # A combined sponsorship question is an OR, not a synonym of the current-
+    # sponsorship question. A negative answer requires both timeframes to be No.
+    q=norm(f.label)
+    if 'sponsor' in q and 'now' in q and 'future' in q and 'or' in q.split() and not re.search(r'\bnot\b|\bwithout\b',q):
+        timed={'now':[],'future':[]}
+        for fact in facts:
+            name=norm(fact.aliases[0]) if fact.aliases else ''
+            if fact.record or fact.instructions or 'sponsor' not in name:continue
+            if not fact.source.startswith(('applicant','learned:','human')):continue
+            if 'future' in name:timed['future'].append(fact)
+            elif 'now' in name:timed['now'].append(fact)
+        if all(len(timed[t])==1 and norm(timed[t][0].value) in ('yes','no','true','false') for t in timed):
+            bound=[timed[t][0] for t in timed]
+            value='Yes' if any(norm(x.value) in ('yes','true') for x in bound) else 'No'
+            return Decision(choice(f,[value]),'; '.join(x.source for x in bound),','.join(x.id for x in bound),'current OR future sponsorship')
+        return Decision(None,reason='missing sponsorship timeframe evidence')
     label=re.sub(r'(?i)\((?:optional|if applicable)\)', '', f.label).strip()
     suffix=' '.join(f.options)
     if suffix and label.endswith(suffix):label=label[:-len(suffix)].strip()
@@ -171,7 +202,7 @@ def resolve(f, facts):
     return from_fact(f,fact)
 
 
-def compile_facts(data, raw_jd):
+def compile_facts(data, raw_jd, reference_date=''):
     """Keep complete source records and conditional rules available to the planner."""
     from jobagent.tools.applicant import entries
     facts = []
@@ -248,4 +279,5 @@ def compile_facts(data, raw_jd):
             facts.append(Fact('travel.fallback',['Willingness to travel','Percentage of travel'],'100%',
                               'applicant travel instruction; original jd.txt searched in full'))
 
+    for fact in facts:fact.reference_date=reference_date
     return facts

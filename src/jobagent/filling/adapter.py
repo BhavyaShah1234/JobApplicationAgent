@@ -36,7 +36,10 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         if env.get('out_dir') and not ctx.get('_application_address') and any(
                 e.get('question') in {'Current address','Current location (city)'} for _,e in matches.values()):
             application_address.prepare(ctx,env['out_dir'],model,log)
-        facts=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''))
+        facts=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''),ctx.get('TODAY',''))
+        sheet=ctx.get('ANSWERS_FOR_THIS_APPLICATION','')
+        if sheet and sheet.strip()!='(none)':
+            facts.append(Fact('application.answers',[],sheet,'applicant/application/answers.md',record=True))
         if ctx.get('_application_address'):
             for fact in facts:
                 if any('/'+q+'/answer' in fact.source for q in ('Current address','Current location (city)')):
@@ -101,7 +104,8 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
     if filler is None:
         filler=PlannedFiller([],ask,model,
             {k:v for k,v in [('resume',ctx.get('RESUME','')),('jd',ctx.get('_jd_text','')),
-                            ('company',ctx.get('COMPANY','')),('cover_letter',ctx.get('COVER_LETTER',''))] if v},
+                            ('company',ctx.get('COMPANY','')),('cover_letter',ctx.get('COVER_LETTER','')),
+                            ('today',ctx.get('TODAY','')),('date_facts',ctx.get('DATE_FACTS',''))] if v},
             {'company':ctx.get('_jd',{}).get('company',''),'contact':ctx.get('REFERRAL',{})},sources,prepare)
         ctx['_experimental_filler']=filler
     if filler.step!=page_no:

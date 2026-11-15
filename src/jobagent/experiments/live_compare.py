@@ -85,7 +85,21 @@ class VisualObserver:
         n=len(self.events)+1;folder=self.root/'visual';folder.mkdir(exist_ok=True)
         data={'id':n,'event':event,'detail':detail or {},'url':page.url,'frames':[]}
         try:
-            page.screenshot(path=str(folder/f'{n:04d}.png'),full_page=True,timeout=15000)
+            page.screenshot(path=str(folder/f'{n:04d}.png'),full_page=event!='field-action',timeout=15000)
+            if event=='field-action' and 'control_id' in data['detail']:
+                try:
+                    info=data['detail'];frame=next(f for f in page.frames if f.url==info['frame_url'])
+                    rect=frame.locator(f'[data-jf="{info["control_id"]}"]').first.evaluate('''e=>{
+                        const box=e.closest('[data-field-path],[data-field-entry-id],fieldset,.form-field,.form-group')||e.parentElement||e;
+                        const r=box.getBoundingClientRect();return {x:Math.max(0,r.x+scrollX-10),y:Math.max(0,r.y+scrollY-20),
+                            width:Math.min(1100,r.width+20),height:Math.min(1200,r.height+40),scale:1};}''')
+                    session=page.context.new_cdp_session(frame)
+                    try:
+                        import base64
+                        captured=session.send('Page.captureScreenshot',{'format':'png','captureBeyondViewport':True,'clip':rect})
+                        (folder/f'{n:04d}.field.png').write_bytes(base64.b64decode(captured['data']))
+                    finally:session.detach()
+                except Exception as exc:data['field_capture_error']=type(exc).__name__
             for i,frame in enumerate(page.frames):
                 try:
                     controls=frame.locator('input:not([type=password]),select,textarea,[role=combobox]').evaluate_all('''es=>es.map(e=>({
@@ -201,11 +215,14 @@ def main():
     if args.observe:
         fill_field=forms.fill_field
         def observed_fill(page,view,field,answer,files,*a,**kw):
-            detail={'label':field.label,'kind':field.kind,'section':field.section,'intended':answer}
+            detail={'label':field.label,'kind':field.kind,'section':field.section,
+                    'control_id':field.id,'frame_url':view.frames[field.frame].url,
+                    'intended':'[redacted]' if field.kind=='password' else answer}
             try:
-                chosen=fill_field(page,view,field,answer,files,*a,**kw);detail['chosen']=chosen;return chosen
+                chosen=fill_field(page,view,field,answer,files,*a,**kw)
+                detail['chosen']='[redacted]' if field.kind=='password' else chosen;return chosen
             except BaseException as exc:
-                detail['error']=f'{type(exc).__name__}: {str(exc)[:200]}';raise
+                detail['error']=type(exc).__name__ if field.kind=='password' else f'{type(exc).__name__}: {str(exc)[:200]}';raise
             finally:observer.snapshot(page,'field-action',detail)
         forms.fill_field=observed_fill
     blocked=[]
