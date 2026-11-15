@@ -34,6 +34,7 @@ from jobagent.state import JobDescription
 from jobagent.steps import ats as A
 from jobagent.tools import ats_sites, bundle, github, layout
 from jobagent.tools import projects as P
+from jobagent.tools import skillgraph as SG
 from jobagent.tools import tailor as T
 from jobagent.tools.vault import open_vault
 
@@ -166,6 +167,8 @@ def _context(ctx: dict, f: T.Filled | None, project_state: str | None) -> str:
     r = ctx["r"]
     parts = [T.facts_block(), "TEMPLATE SKILLS (the candidate's own): " +
              "; ".join(f"{c}: {T.to_plain(v)}" for c, v in r.skills)]
+    if hint := SG.hint_text(ctx.get("graph")).strip():
+        parts.append(hint)
     if f is not None:
         lines = []
         for e in f.roles:
@@ -236,6 +239,9 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
     T.normalize_originals(r, g)                      # F18: a claimed `original` that is not the template's text is new text
     if outs.get("skills") is not None:
         g.skills = outs["skills"].skills
+        g.skills, dropped = SG.drop_forbidden(g.skills, ctx.get("graph"))      # related skills you do not have are never added
+        if dropped:
+            ctx["log"](f"  skills: removed related skill(s) not in your files: {', '.join(dropped)}")
     if outs.get("summary") is not None and 80 <= len(outs["summary"].summary) <= 600:
         g.summary = outs["summary"].summary
     if outs.get("projects") is not None:
@@ -391,6 +397,7 @@ def check_layout(state: State) -> dict:
         used = " ".join(x for sl in f.skills for x in sl.render()).lower()
         pool = [t.strip() for _, items in r.skills for t in T.to_plain(items).split(",")
                 if t.strip() and t.strip().lower() not in used][:15]
+        pool += [x["skill"] for x in (ctx.get("graph") or {}).get("owned", []) if x["skill"].lower() not in used and x["skill"] not in pool][:6]
         if lay.short_skills:
             room = {k: f"about {round((1 - v) * 115)} more characters" for k, v in lay.skill_fill.items() if v < 0.85}
             tasks["skills"].append(f"Each category's last line should be full. Room left: {room}. Fill it with relevant "
@@ -692,6 +699,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> d
            "r": T.parse((s.data_dir / "templates" / "resume.tex").read_text()),
            "jd_text": (job_dir / "jd.txt").read_text() if (job_dir / "jd.txt").exists() else "",
            "models": models, "log": log, "sites": sites}
+    ctx["graph"] = SG.for_tailor(job_dir, jd, ctx["r"])               # related skills (step 4c); {} when off or empty
     final = build_graph().invoke({"ctx": ctx, "history": []}, {"recursion_limit": 200})
     best = final.get("best")
     if best:

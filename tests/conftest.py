@@ -10,11 +10,14 @@ A test is `browser` when its module (or a test module it imports) uses Playwrigh
 population of 250+ applications or loops over many simulated worlds; `@pytest.mark.browser` / `@pytest.mark.simulation` mark one by
 hand. No test is skipped by this: the markers only let you choose, and tests/unit/test_test_tiers.py checks the rules.
 """
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
+# the skill graph asks a model for every new posting; tests that are not about it must never reach one
+os.environ.setdefault("SKILLS_USE_GRAPH", "false")
 sys.path.insert(0, str(Path(__file__).parent))
 import tiers  # noqa: E402
 

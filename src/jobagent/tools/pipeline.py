@@ -72,6 +72,28 @@ class Pipeline:
         from jobagent.tools.scrape import _slug
         return (self.settings.outputs_dir / _slug(row["company"] or "unknown") / str(row["job_id"] or "")).resolve()
 
+    def _skill_graph(self, d, row) -> None:
+        """Add this posting to the skill graph (step 4c). The graph never stops a run: any failure is one line in the log."""
+        try:
+            if not self.settings.skills_use_graph:
+                return
+            from jobagent.tools import matching, skillgraph as SG
+            jd = json.loads((d / "jd.json").read_text())
+            rid = (row["role_id"] if "role_id" in row.keys() and row["role_id"] else "")
+            if not rid:
+                return
+            g = SG.load(self.settings)
+            if SG.jd_key(jd) in g.postings:
+                return
+            before = g.content_hash()
+            titles = {r["id"]: r.get("title", "") for r in matching.load_roles().get("roles", [])}
+            res = SG.ingest(g, jd, rid, embed=SG.default_embed(self.settings), role_title=titles.get(rid, ""),
+                            duty_threshold=self.settings.skills_duty_merge, skill_threshold=self.settings.skills_skill_merge)
+            if SG.save(g, f"posting {jd.get('company', '')} - {jd.get('title', '')}", before, self.settings) and res["added_skills"]:
+                self.log(f"skills: {len(res['added_skills'])} new skill(s) added to the graph")
+        except Exception as exc:
+            self.log(f"skills: graph not updated ({type(exc).__name__}: {str(exc)[:100]})")
+
     def run(self, url, *, through="apply", browser_mode="docker", allow_desktop_submit=False, force=False, no_ats=False,
             filling_strategy=None, ignore_eligibility=False):
         from jobagent.tools import bundle
@@ -115,6 +137,7 @@ class Pipeline:
         current = W.Workflow(d)
         current.data["stages"]["scrape"] = wf.stage("scrape")
         current.save()
+        self._skill_graph(d, row)
         if through == "scrape":
             return PipelineResult("scraped", str(d))
         stop = self._eligibility(d, row, ignore_eligibility)

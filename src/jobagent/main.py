@@ -30,6 +30,10 @@ from jobagent import cli_config  # noqa: E402
 
 cli_config.register(app, console)  # step 21: config show
 
+from jobagent import cli_skills  # noqa: E402
+
+cli_skills.register(app, console)  # step 4c: skills build, sync, show, ...
+
 
 @app.command("desktop-probe")
 def desktop_probe_cmd(

@@ -332,6 +332,11 @@ def review_text(job_dir: Path, result: dict, jd: dict, ats: str) -> str:
                   f"{cell(e.get('flag') or e.get('error') or 'not confirmed on the page')} |" for e in flagged]
         lines.append("")
     lines += documents_section(job_dir)
+    try:
+        from jobagent.tools import skillgraph
+        lines += skillgraph.review_lines(job_dir)
+    except Exception:
+        pass
     lines += ["## Every field", "", "| Page | Field | Value | Source |", "|---|---|---|---|"]
     lines += [f"| {e['page']} | {cell(e['label'][:70])} | {cell(e.get('readback', ''))} | {e.get('source', '')} |"
               for e in fields]

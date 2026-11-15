@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 # Behaviour you may want to change without touching code lives in config/<concern>.yaml (step 21); precedence, highest first:
 # environment variable > .env > config/*.yaml > the default in this class. Paths, secrets and the display are environment-only.
-CONFIG_FILES = ("models", "forms", "ats", "browser", "queue", "learning", "logging")
+CONFIG_FILES = ("models", "forms", "ats", "browser", "queue", "learning", "logging", "skills")
 CONCERN = {                      # which file each setting belongs to
     "models": ["openai_base_url", "ollama_base_url", "model_planner", "model_vision", "model_fast", "model_embed", "model_writer",
                "fallback_planner", "fallback_vision", "fallback_fast", "fallback_embed", "llm_max_retries", "llm_timeout_s",
@@ -21,6 +21,7 @@ CONCERN = {                      # which file each setting belongs to
     "queue": ["pacing_max_per_company", "pacing_window_days", "queue_lease_seconds"],
     "learning": ["learning_use_site_mix", "learning_use_tailoring_hints", "learning_use_lessons"],
     "logging": ["log_level"],
+    "skills": ["skills_use_graph", "skills_max_neighbours", "skills_duty_merge", "skills_skill_merge"],
 }
 
 
@@ -111,6 +112,10 @@ class Settings(BaseSettings):
     pacing_window_days: int = Field(default=7, ge=1, le=365)
     queue_lease_seconds: int = Field(default=900, ge=30)               # how long a claimed queue job stays its runner's without a heartbeat (tools/jobqueue.py)
     apply_max_pages: int = Field(default=15, ge=1, le=60)                    # the most wizard pages `apply` walks through before it stops
+    skills_use_graph: bool = True                          # step 4c: neighbouring skills the candidate owns may fill spare room on the resume
+    skills_max_neighbours: int = Field(default=6, ge=1, le=20)
+    skills_duty_merge: float = Field(default=0.85, gt=0, le=1)
+    skills_skill_merge: float = Field(default=0.9, gt=0, le=1)
     log_level: Literal["normal", "quiet"] = "normal"       # quiet hides progress detail on screen (the log file keeps everything)
 
     # Credential vault (Fernet key, urlsafe base64 of 32 bytes)

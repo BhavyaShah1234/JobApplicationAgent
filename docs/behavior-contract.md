@@ -20,3 +20,5 @@ Last updated 2026-11-15 (step 16 additions: eligibility screen, pacing, review q
 - Keep generated documents valid (one page, hard and claims checks) and tied to the posting they were built for.
 
 **Learning is advisory.** Recommendations appear only at declared looks (100, 200, 400, 800, 1600 resolved applications); behavior switches are off by default; the site-mix switch is unsupported.
+
+**Related skills.** The skill graph may put a skill on the resume only when your own files already show you have it; skills it finds that your files do not show are listed for you and never added.
