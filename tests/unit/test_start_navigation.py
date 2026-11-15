@@ -212,7 +212,8 @@ def test_successfactors_exception_refuses_custom_candidate_fields_and_extra_hand
     assert not state["opened"] and not state["sent"]
 
 
-def test_desktop_startup_runs_guarded_navigation_even_when_listing_has_a_utility_field(tmp_path, monkeypatch):
+@pytest.mark.parametrize("strategy", ["original", "experimental"])
+def test_desktop_startup_runs_guarded_navigation_even_when_listing_has_a_utility_field(tmp_path, monkeypatch, strategy):
     class ReachedForm(Exception):
         pass
     monkeypatch.setattr(A, "context", lambda *a: {"_jd": {"apply_url": SF_URL}})
@@ -223,6 +224,8 @@ def test_desktop_startup_runs_guarded_navigation_even_when_listing_has_a_utility
         assert page.evaluate("!!window.opened")
         raise ReachedForm()
     monkeypatch.setattr(A, "fill_page", filled)
+    from jobagent.filling import adapter
+    monkeypatch.setattr(adapter, "fill_page", filled)
     with sync_playwright() as pw:
         b = pw.chromium.launch(channel="chrome", headless=True)
         page = b.new_page()
@@ -231,7 +234,7 @@ def test_desktop_startup_runs_guarded_navigation_even_when_listing_has_a_utility
         real_wait = page.wait_for_timeout
         page.wait_for_timeout = lambda ms: real_wait(min(ms, 50))
         with pytest.raises(ReachedForm):
-            A._run(page, tmp_path, "fixture", model=object(), already_open=True)
+            A._run(page, tmp_path, "fixture", model=object(), already_open=True, filling_strategy=strategy)
         assert not page.evaluate("!!window.sent")
         b.close()
 

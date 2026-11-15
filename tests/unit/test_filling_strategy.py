@@ -15,11 +15,14 @@ from jobagent.tools import forms,shadow
 
 def test_default_and_recorded_strategy_are_explicit(monkeypatch,tmp_path):
     monkeypatch.delenv('FILLING_STRATEGY',raising=False);get_settings.cache_clear()
-    assert Settings(_env_file=None).filling_strategy=='original'
-    assert select_strategy()=='original'
+    assert Settings(_env_file=None).filling_strategy=='experimental'
+    assert select_strategy()=='experimental'
     (tmp_path/'application').mkdir();(tmp_path/'application/application.json').write_text('{"filling_strategy":"experimental"}')
     assert select_strategy(resume_job=tmp_path)=='experimental'
     assert select_strategy('original',resume_job=tmp_path)=='original'
+    (tmp_path/'application/application.json').write_text('{"filling_strategy":"original"}')
+    assert select_strategy(resume_job=tmp_path)=='original'
+    assert select_strategy('experimental',resume_job=tmp_path)=='experimental'
     with pytest.raises(ValueError):select_strategy('mystery')
     get_settings.cache_clear()
 
@@ -85,14 +88,14 @@ CONTACT=('<label for=f>Given Name</label><input id=f required><label for=l>Famil
          '<label for=e>Email</label><input id=e type=email required><button type=button onclick="window.sent=true">Apply</button>')
 
 
-@pytest.mark.parametrize('resume',[False,True])
-def test_optin_runs_inside_real_workflow_and_preserves_approval_boundary(world,monkeypatch,resume):
+@pytest.mark.parametrize('mode',['explicit','resume','default'])
+def test_planned_runs_inside_real_workflow_and_preserves_approval_boundary(world,monkeypatch,mode):
     world.setup(CONTACT)
-    if resume:
+    if mode=='resume':
         (world.job/'application').mkdir()
         (world.job/'application/application.json').write_text('{"filling_strategy":"experimental"}')
     monkeypatch.setattr(A,'fill_page',lambda *a,**k:pytest.fail('original filler must not run'))
-    result=A.run(world.page,world.job,'fixture',model=SourceModel(),filling_strategy=None if resume else 'experimental',log=lambda _:None)
+    result=A.run(world.page,world.job,'fixture',model=SourceModel(),filling_strategy='experimental' if mode=='explicit' else None,log=lambda _:None)
     assert result['ready_to_submit'] and result['filling_strategy']=='experimental'
     assert result['verified']==3 and result['filling_metrics']['writer_model_starts']==0
     assert all(f['outcome']=='verified' for f in result['fields'])

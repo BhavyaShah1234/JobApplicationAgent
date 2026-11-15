@@ -1,0 +1,278 @@
+{
+  "cohort": "post-VPN real Voyager live drafts",
+  "runtime_commit": "7a623ec",
+  "source_snapshot": "/tmp/fill-fast-v26",
+  "pairs": [
+    {
+      "portal": "Ashby",
+      "original": {
+        "arm": "ashby-original-v3",
+        "ready": true,
+        "source_audit_passed": true,
+        "active_s": 99.32517281200853,
+        "active_including_observation_s": 120.25534233901999,
+        "inspection_and_screenshot_s": 20.930169527011458,
+        "human_wait_s": 0,
+        "setup_s": 5.75300660598441,
+        "elapsed_total_s": 126.01305688900175,
+        "prompt_events": 0,
+        "avoidable_questions": 0,
+        "necessary_questions": 0,
+        "writer_model_starts": 2,
+        "writer_tokens_reported": 35558,
+        "experimental_dom_reads": null,
+        "failed_experimental_writes": null,
+        "unverified_required_records": 0,
+        "browser_submission_blocks": []
+      },
+      "experimental": {
+        "arm": "ashby-experimental-v3",
+        "ready": true,
+        "source_audit_passed": true,
+        "active_s": 18.967975051986286,
+        "active_including_observation_s": 63.372041958995396,
+        "inspection_and_screenshot_s": 44.40406690700911,
+        "human_wait_s": 0,
+        "setup_s": 5.774103698000545,
+        "elapsed_total_s": 69.15291532600531,
+        "prompt_events": 0,
+        "avoidable_questions": 0,
+        "necessary_questions": 0,
+        "writer_model_starts": 2,
+        "writer_tokens_reported": 10244,
+        "experimental_dom_reads": 4,
+        "failed_experimental_writes": 0,
+        "unverified_required_records": 0,
+        "browser_submission_blocks": []
+      },
+      "comparability": {
+        "same_source": true,
+        "same_inputs": true,
+        "same_initial_fields_and_values": true
+      },
+      "active_reduction_percent": 80.90315424078172
+    },
+    {
+      "portal": "Greenhouse",
+      "original": {
+        "arm": "greenhouse-original-v3",
+        "ready": true,
+        "source_audit_passed": true,
+        "active_s": 223.0630765480164,
+        "active_including_observation_s": 260.0803454950219,
+        "inspection_and_screenshot_s": 37.017268947005505,
+        "human_wait_s": 47.00789375699242,
+        "setup_s": 5.6616997130040545,
+        "elapsed_total_s": 312.7570908389753,
+        "prompt_events": 1,
+        "avoidable_questions": 1,
+        "necessary_questions": 0,
+        "writer_model_starts": 4,
+        "writer_tokens_reported": 77245,
+        "experimental_dom_reads": null,
+        "failed_experimental_writes": null,
+        "unverified_required_records": 0,
+        "browser_submission_blocks": []
+      },
+      "experimental": {
+        "arm": "greenhouse-experimental-v3",
+        "ready": true,
+        "source_audit_passed": true,
+        "active_s": 49.46771771798376,
+        "active_including_observation_s": 80.77101597498404,
+        "inspection_and_screenshot_s": 31.30329825700028,
+        "human_wait_s": 22.003307551000034,
+        "setup_s": 6.027402567997342,
+        "elapsed_total_s": 108.81044504401507,
+        "prompt_events": 1,
+        "avoidable_questions": 0,
+        "necessary_questions": 2,
+        "writer_model_starts": 2,
+        "writer_tokens_reported": 14339,
+        "experimental_dom_reads": 28,
+        "failed_experimental_writes": 0,
+        "unverified_required_records": 0,
+        "browser_submission_blocks": []
+      },
+      "comparability": {
+        "same_source": true,
+        "same_inputs": true,
+        "same_initial_fields_and_values": true
+      },
+      "active_reduction_percent": 77.82343968194334
+    },
+    {
+      "portal": "Lever",
+      "original": {
+        "arm": "lever-original-v2",
+        "ready": true,
+        "source_audit_passed": true,
+        "active_s": 105.94848370397813,
+        "active_including_observation_s": 155.61054516700096,
+        "inspection_and_screenshot_s": 49.66206146302284,
+        "human_wait_s": 0,
+        "setup_s": 5.856749340018723,
+        "elapsed_total_s": 161.47335904999636,
+        "prompt_events": 0,
+        "avoidable_questions": 0,
+        "necessary_questions": 0,
+        "writer_model_starts": 4,
+        "writer_tokens_reported": 47397,
+        "experimental_dom_reads": null,
+        "failed_experimental_writes": null,
+        "unverified_required_records": 0,
+        "browser_submission_blocks": []
+      },
+      "experimental": {
+        "arm": "lever-experimental-v2",
+        "ready": true,
+        "source_audit_passed": true,
+        "active_s": 22.84689116899972,
+        "active_including_observation_s": 51.9653010389884,
+        "inspection_and_screenshot_s": 29.11840986998868,
+        "human_wait_s": 0,
+        "setup_s": 6.748385581013281,
+        "elapsed_total_s": 58.719723828020506,
+        "prompt_events": 0,
+        "avoidable_questions": 0,
+        "necessary_questions": 0,
+        "writer_model_starts": 4,
+        "writer_tokens_reported": 15238,
+        "experimental_dom_reads": 5,
+        "failed_experimental_writes": 0,
+        "unverified_required_records": 0,
+        "browser_submission_blocks": []
+      },
+      "comparability": {
+        "same_source": true,
+        "same_inputs": true,
+        "same_initial_fields_and_values": true
+      },
+      "active_reduction_percent": 78.4358488481682
+    }
+  ],
+  "source_fingerprint": "33b00f182a44d2a9b6696925fa3c71ce3edb44235340b6a1510513f2017fcb30",
+  "median_original_active_s": 105.94848370397813,
+  "median_experimental_active_s": 22.84689116899972,
+  "median_active_reduction_percent": 78.4358488481682,
+  "median_paired_reduction_percent": 78.4358488481682,
+  "avoidable_original": 1,
+  "avoidable_experimental": 0,
+  "genuine_optional_experimental": 2,
+  "rollout_gate_passed": true,
+  "limitations": [
+    "One completed final pair per portal; no confidence interval or universal-portal claim.",
+    "Public single-page portals with dynamic fields; no Workday/account-creation/desktop-fallback or submission claim.",
+    "Address preparation, account setup and document generation excluded.",
+    "Active time excludes human waiting and gated observation; raw active and wall time retained.",
+    "Writer counts exclude embeddings and internal SDK retries.",
+    "Earlier failed/superseded attempts retained below and excluded from final-version paired estimates."
+  ],
+  "all_post_vpn_attempts": [
+    {
+      "arm": "ashby-experimental-v1",
+      "ready": true,
+      "audit_passed": true,
+      "active_s": 18.53616154397605,
+      "final_cohort": false
+    },
+    {
+      "arm": "ashby-experimental-v2",
+      "ready": true,
+      "audit_passed": true,
+      "active_s": 18.94207651601755,
+      "final_cohort": false
+    },
+    {
+      "arm": "ashby-experimental-v3",
+      "ready": true,
+      "audit_passed": true,
+      "active_s": 18.967975051986286,
+      "final_cohort": true
+    },
+    {
+      "arm": "ashby-original-v1",
+      "ready": true,
+      "audit_passed": true,
+      "active_s": 99.9055294090067,
+      "final_cohort": false
+    },
+    {
+      "arm": "ashby-original-v2",
+      "ready": true,
+      "audit_passed": true,
+      "active_s": 98.71908359901863,
+      "final_cohort": false
+    },
+    {
+      "arm": "ashby-original-v3",
+      "ready": true,
+      "audit_passed": true,
+      "active_s": 99.32517281200853,
+      "final_cohort": true
+    },
+    {
+      "arm": "greenhouse-experimental-v1",
+      "ready": true,
+      "audit_passed": true,
+      "active_s": 50.30491182996775,
+      "final_cohort": false
+    },
+    {
+      "arm": "greenhouse-experimental-v2",
+      "ready": true,
+      "audit_passed": true,
+      "active_s": 49.925022803014144,
+      "final_cohort": false
+    },
+    {
+      "arm": "greenhouse-experimental-v3",
+      "ready": true,
+      "audit_passed": true,
+      "active_s": 49.46771771798376,
+      "final_cohort": true
+    },
+    {
+      "arm": "greenhouse-original-v1",
+      "ready": true,
+      "audit_passed": false,
+      "active_s": 245.44210524702794,
+      "final_cohort": false
+    },
+    {
+      "arm": "greenhouse-original-v2",
+      "ready": true,
+      "audit_passed": true,
+      "active_s": 252.01803105897852,
+      "final_cohort": false
+    },
+    {
+      "arm": "greenhouse-original-v3",
+      "ready": true,
+      "audit_passed": true,
+      "active_s": 223.0630765480164,
+      "final_cohort": true
+    },
+    {
+      "arm": "lever-experimental-v2",
+      "ready": true,
+      "audit_passed": true,
+      "active_s": 22.84689116899972,
+      "final_cohort": true
+    },
+    {
+      "arm": "lever-original-v1",
+      "ready": true,
+      "audit_passed": false,
+      "active_s": 110.37525033197016,
+      "final_cohort": false
+    },
+    {
+      "arm": "lever-original-v2",
+      "ready": true,
+      "audit_passed": true,
+      "active_s": 105.94848370397813,
+      "final_cohort": true
+    }
+  ]
+}

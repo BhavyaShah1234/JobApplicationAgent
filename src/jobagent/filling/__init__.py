@@ -1,4 +1,4 @@
-"""Selectable form filling; experimental execution is explicit until the live gate passes."""
+"""Source-routed form filling by default, with explicit strategy selection and resume continuity."""
 import json
 from pathlib import Path
 

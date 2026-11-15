@@ -471,7 +471,7 @@ def run_pipeline_cmd(
     allow_desktop_submit: bool = typer.Option(False, "--allow-desktop-submit"),
     force: bool = typer.Option(False, help="Refresh input stages and regenerate documents."),
     no_ats: bool = typer.Option(False, "--no-ats", help="Skip ATS scans while generating documents; document validity still gates submission."),
-    filling_strategy: str = typer.Option(None, help="original or experimental; default FILLING_STRATEGY/original."),
+    filling_strategy: str = typer.Option(None, help="original or experimental; default FILLING_STRATEGY/experimental."),
 ) -> None:
     from jobagent.tools.pipeline import Pipeline
     try:
@@ -724,7 +724,7 @@ def apply_cmd(
     ask_minutes: float = typer.Option(30, help="How long to wait for your answer to a question (then it's left for review)."),
     model: str = typer.Option(None, help="Voyager model that plans the answers (default: the writer model)."),
     browser_mode: str = typer.Option('docker', help="docker, desktop, or auto (Docker then desktop on a challenge block)."),
-    filling_strategy: str = typer.Option(None, help="original or experimental; default FILLING_STRATEGY/original."),
+    filling_strategy: str = typer.Option(None, help="original or experimental; default FILLING_STRATEGY/experimental."),
     desktop_allow_origin: list[str] = typer.Option(None, "--desktop-allow-origin",
         help="Additional trusted application/login HTTPS origin; repeat for extra origins."),
 ) -> None:

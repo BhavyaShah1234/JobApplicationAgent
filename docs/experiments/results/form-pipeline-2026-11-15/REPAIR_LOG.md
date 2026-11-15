@@ -1,8 +1,8 @@
 # Form-planning repair and watched validation — 2026-11-15
 
-Status: implementation and validation in progress. Experimental remains opt-in. No application submissions are authorized by this comparison or performed by its harness.
+Status: identified repairs validated; the source-routed strategy is now the default for new applications after the post-VPN rollout gate passed. No application submissions are authorized by this comparison or performed by its harness.
 
-This follow-up retains the failed November 14 cohort and all subsequent diagnostic attempts. No speed claim or promotion follows from a partial, source-incorrect, assisted, or merely `ready` run.
+This follow-up retains the failed November 14 cohort and all subsequent diagnostic attempts. No speed claim or promotion follows from a partial, source-incorrect, unclassified-assistance, or merely `ready` run.
 
 ## Implementation changes being validated
 
@@ -80,3 +80,10 @@ The v24 broader check caught a second regression after 117 passes: a saved conta
 
 
 The next watched baseline (Lever original on v25) left an unverified HTTP resume-parser prefill in Other website despite a canonical HTTPS owner source. It is rejected under the same standard as the earlier experimental smoke; required fields and upload alone are insufficient. Original enforcement now resolves this website family from its owner source, so the value is actually written and verified. The new regression plus related original/website checks passed (5 tests, 4.62 seconds). Experimental execution is unchanged by this baseline-only enforcement repair. The final matched cohort is restarted on v26, retaining all earlier attempts; its six runs use one source snapshot.
+
+
+## Completed rollout
+
+The [final watched post-VPN report](../form-pipeline-vpn-2026-11-15/REPORT.md) records six source-correct drafts on one runtime version across three portal families: median active filling 105.95 seconds original versus 22.85 seconds source-routed (78.44% lower), avoidable questions 1 versus 0, and no submissions. Two genuinely missing optional questions remained blank. All previous attempts and rejected readiness claims remain recorded.
+
+New applications now use source-routed filling by default; existing recorded strategies and explicit overrides are preserved. The post-default broader check passed 334 tests and exposed five tests that implicitly selected the changed default while mocking only the old planner. Those fixtures were corrected, without changing runtime behavior: the planner/default rerun passed 25 tests and the complete navigation file passed 28, including both strategies. Counts overlap and are not added.

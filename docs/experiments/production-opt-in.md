@@ -1,7 +1,8 @@
-# Opt-in field planning
+# Source-routed field planning
 
-New applications use the existing filler. To try the staged discovery, source resolution,
-batched questions and verified filling method:
+New applications use staged discovery, source resolution, batched questions and verified
+filling by default. The [post-VPN three-portal comparison](results/form-pipeline-vpn-2026-11-15/REPORT.md)
+passed the rollout gate on November 15, 2026. These explicit commands select the same method:
 
 ```sh
 jobagent apply outputs/COMPANY/JOB_ID COMPANY --filling-strategy experimental
@@ -10,7 +11,7 @@ jobagent run POSTING_URL --filling-strategy experimental
 
 `submit` accepts the same option. Submission still uses the existing review, approval and
 submission checks. Setting `FILLING_STRATEGY=experimental` selects it for new runs;
-`original` is the default. An application's recorded strategy is retained on resume unless
+`experimental` is the default. An application's recorded strategy is retained on resume unless
 explicitly overridden. A failed experimental fill blocks; it does not silently change engines.
 
 The runtime is in `jobagent.filling`; it does not import the experiment harness. Both
@@ -23,14 +24,14 @@ or wizard pages expose more controls. It cannot inspect unrequested server-side 
 The [four-portal live pilot](results/live-optin-2026-11-14/REPORT.md) did not meet the
 promotion gate. The recorded choice-rendering, source-binding and field-identity
 failures motivated the regression fixes below. Those fixes do not change the historical
-measurements. Keep it opt-in until a fresh live comparison passes; the original method
-also produced an unsupported preference in that pilot.
+measurements. The later post-VPN cohort linked above passed after the recorded repairs;
+the original method also produced an unsupported preference in that pilot.
 
 The subsequent [watched three-portal follow-up](results/live-observed-2026-11-14/REPORT.md)
 also failed promotion. It caught a false readiness claim, wrong residency,
 unsupported external sharing in both engines, upload verification failures and
-stale original control handles. [Open corrections](results/live-observed-2026-11-14/FOLLOW_UPS.md)
-remain; neither an observed attachment nor a verified readback proves that the
+stale original control handles. [Recorded corrections](results/live-observed-2026-11-14/FOLLOW_UPS.md)
+are retained as historical findings; the current repairs and validation are linked above; neither an observed attachment nor a verified readback proves that the
 answer is supported for the right question or consent purpose.
 
 `application.json` records `filling_strategy` and `filling_metrics`. Active filling time
@@ -59,8 +60,9 @@ three portal families, no fabricated answers or false readiness, no required-fie
 correctness/completion regression, at least 30% lower median active filling time and at
 least 50% fewer avoidable assists. If the original needs none, the experimental method
 must also need none. Include all attempted portal outcomes in the decision. This is a
-small rollout gate, not proof that every future portal will work. Until that gate passes,
-retain the original default and both explicit strategy choices.
+small rollout gate, not proof that every future portal will work. It passed in the linked
+post-VPN cohort. Keep both explicit strategy choices for comparison and rollback, and
+preserve recorded strategies when resuming existing drafts.
 
 Private screenshots, resumes, prompts and answers stay in ignored `outputs/verification`.
 Only redacted measurements and findings belong in Git.

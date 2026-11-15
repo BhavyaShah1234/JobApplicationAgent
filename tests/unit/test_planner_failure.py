@@ -62,7 +62,9 @@ def run_review(page, tmp_path, monkeypatch, at_review=None):
     job.mkdir(parents=True)
     monkeypatch.setattr(A, "context", lambda job_dir, company: {"_jd": JD, "_applicant": {}})
     monkeypatch.setattr(A, "_start", lambda page, url, *a, **k: forms.read_page(page))
-    res = A._run(page, job, "Acme", log=lambda m: None, model=object(), hitl=None, at_review=at_review)
+    # These tests replace A.plan/check/resolve: they intentionally exercise the original engine.
+    res = A._run(page, job, "Acme", log=lambda m: None, model=object(), hitl=None, at_review=at_review,
+                 filling_strategy="original")
     return res, job
 
 

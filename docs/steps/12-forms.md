@@ -18,6 +18,16 @@ value the page shows, its source, read back OK or not, flags), `application.json
 
 ## How it works
 
+New applications use source-routed planning by default (`FILLING_STRATEGY=experimental`).
+The agent inventories reachable fields and actual choices, creates known repeated entries,
+classifies each question and routes its evidence, resolves exact facts locally, batches
+remaining generation and missing-answer questions, then fills and verifies. Newly revealed
+controls repeat that process. Existing drafts retain their recorded strategy; an explicit
+`--filling-strategy` overrides it. See [the current strategy guide](../experiments/production-opt-in.md)
+and [the watched Voyager comparison](../experiments/results/form-pipeline-vpn-2026-11-15/REPORT.md).
+
+The following diagram describes the original strategy, retained as an explicit comparison option.
+
 ```mermaid
 flowchart TD
     J[/"Job folder: jd.json, resume, cover letter"/] --> S["Open the posting; click Apply / Apply Manually;<br/>sign in with step 11 in the same browser when asked"]
@@ -36,7 +46,7 @@ flowchart TD
 
 ## Where answers come from
 
-One file, `data/applicant.yaml` (template: `data/applicant.example.yaml`), holds every answer. It was built from the
+Owner answers and policies live in `data/applicant.yaml` (template: `data/applicant.example.yaml`). It was built from the
 unique questions the three test portals asked (Workday: Adobe, 59 fields; Greenhouse: DoorDash, 31; Lever: Palantir,
 24 -> 97 distinct labels -> 55 questions) and replaces `personal_info.yaml`, `qa_bank.yaml`, `learned_answers.yaml`
 and the form parts of `preferences.yaml`. Each entry has `question`, `seen` (the wordings portals use), `answer`,
@@ -44,7 +54,7 @@ and the form parts of `preferences.yaml`. Each entry has `question`, `seen` (the
 education, experience, employer history, preferences, sourcing, written answers, consents, self-identification,
 documents, and `learned` (answers given on the spot, appended by the agent with company, portal and date).
 
-`apply.hints` matches each form label to its entry (a short wording must equal the label; a long one may be worded
+The original strategy's `apply.hints` matches each form label to its entry (a short wording must equal the label; a long one may be worded
 differently or be part of a longer label; fields inside a Work Experience / Education entry go to "Work history" /
 "Degrees") and shows the entry next to the field: 122 of the 128 test fields match (the rest are upload boxes,
 handled by code, and unlabelled boxes). The experience answers (work history with each role's bullets, current company,
@@ -71,11 +81,11 @@ questions do not run this lookup.
 | A field's matching `qa_bank` / learned entry is shown next to it (fuzzy match on the wording) | `apply.hints` |
 | Dates are worked out by code (a degree that ended in May 2026 is "graduated" on 2026-11-03), so ranges are compared, not guessed | `apply.date_facts` |
 | The checker sends assumed answers (a consent never given, an eligibility, a language) to the candidate; it can't swap the candidate's own file for the resume, and its corrections must be real options | `apply.check` |
-| Questions asked on the spot: required fields and company-specific choices; an optional text box with no data stays empty; the answer is appended to `applicant.yaml` `learned` | `apply.resolve`, `applicant.learn` |
-| Self-identification `personal_info` doesn't cover: "I don't wish to answer" | `apply.PROMPT` |
-| Marketing / SMS / talent-community: declined; consents needed to apply: agreed | `apply.PROMPT`, `qa_bank.yaml` |
+| The default strategy batches missing answers, including optional questions. Skipped optional answers stay blank. General learned answers/rules keep company scope; entity-specific literals stay bound to their record or step | `filling.planned`, `filling.adapter`, `learned.add` |
+| Self-identification requires the owner's answer; an unsupported optional answer stays unresolved or is skipped by the owner | `filling.facts.owner_only`, `filling.routing` |
+| Consent and sensitive-history questions require evidence for that exact purpose; required status or an unrelated consent does not authorize agreement | `filling.routing`, `filling.facts.owner_only` |
 | Entries are added only for work experience / education, or a section `personal_info` has data for (no blank Certifications entry) | `apply.ENTRY_OK`, `apply._has_data` |
-| A required field left empty is asked about after the page is filled, only if still shown (a current job's To date disappears) | `apply.fill_page` |
+| Missing answers are batched before filling; newly revealed fields are inventoried and resolved next. A failed required field blocks readiness | `filling.planned`, `filling.live_view` |
 | A value is only "verified" when the page shows it after filling (dates by digits, phones by digits, pickers by their chosen items) | `forms.same_value` |
 
 ## Results (2026-11-03)
