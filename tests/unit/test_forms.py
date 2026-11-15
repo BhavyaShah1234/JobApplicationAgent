@@ -112,22 +112,22 @@ def test_own_site_option_and_applicant_variants():
         == "Adobe Source > Adobe.com"
     assert own_site_option(["Palantir Event", "Palantir Website", "Referral"], "Palantir Technologies") == "Palantir Website"
     data = {"education": [{"question": "Degrees", "answer": [{"degree": ["Master of Science", "MS"], "gpa": "4.0"}]}]}
-    assert in_applicant("Masters", data) and in_applicant("4.0", data) and not in_applicant("3.57", data)
+    assert in_applicant("Masters", data) and in_applicant("4.0", data) and not in_applicant("3.91", data)
 
 
 def test_range_options_and_variant_read_back():
     from jobagent.tools.forms import in_range
     assert in_range("3.75+", 4.0) and in_range("3.4 - 3.70", 3.5) and in_range("Below 3.4", 3.0)
-    assert not in_range("3.4 - 3.70", 4.0) and not in_range("Below 3.4", 3.57)
+    assert not in_range("3.4 - 3.70", 4.0) and not in_range("Below 3.4", 4.0)
     assert same_value("AI and Robotics | Robotics", "Robotics", "combobox")
     assert not same_value("Arizona State University - Tempe | Arizona State University", "Arizona State University - West", "combobox")
 
 
-def test_address_lookups_are_never_used(monkeypatch):
+def test_unprepared_addresses_are_blocked_and_referral_policy_is_applied(monkeypatch):
     from jobagent.steps.apply import Answer, enforce
     from jobagent.tools.forms import Field
     ctx = {"_applicant": {"address": [{"question": "Current address", "answer": {"line1": "", "city": ""}}]},
-           "REFERRAL": "none", "_jd": {"company": "Adobe"}}
+           "REFERRAL": {}, "_jd": {"company": "Adobe"}}
     fields = [Field(id=1, kind="text", label="Address Line 1"), Field(id=2, kind="text", label="City"),
               Field(id=3, kind="combobox", label="How Did You Hear About Us?*",
                     options=["Job Board > LinkedIn", "Adobe Source > Adobe.com", "Referral"])]
@@ -137,11 +137,52 @@ def test_address_lookups_are_never_used(monkeypatch):
     enforce(fields, answers, ctx, lambda m: None)
     assert answers[1].value == "" and answers[1].lookup == "" and answers[1].ask_human
     assert answers[2].value == "" and answers[2].ask_human
-    assert answers[3].value == "" and answers[3].ask_human  # no referrer on file: the candidate says how
-    ctx["REFERRAL"] = "Jane Doe (jane@adobe.com), who agreed to refer the candidate"
+    assert answers[3].value == "Referral" and not answers[3].ask_human
+    ctx["REFERRAL"] = {"name": "Jane Doe", "email": "jane@adobe.com"}
     answers[3] = Answer(id=3, value="Referral", source="applicant")
     enforce(fields, answers, ctx, lambda m: None)
-    assert answers[3].value == "Referral"  # a referrer on file: the referral option stands
+    assert answers[3].value == "Referral"
+
+
+def test_repair_pass_clears_address_line_2_restored_by_portal(monkeypatch):
+    from jobagent.steps import apply as A
+    from jobagent.tools import forms
+
+    field = forms.Field(
+        id=1, kind="text", label="Address Line 2", value="Suite 99",
+    )
+    view = forms.PageView(
+        fields=[field], buttons=[], errors=[], headings=[], frames={},
+    )
+    monkeypatch.setattr(forms, "read_page", lambda page: view)
+    filled = []
+
+    def fill(page, current_view, current_field, answer, files, tie):
+        filled.append(answer)
+        current_field.value = answer
+        return answer
+
+    monkeypatch.setattr(forms, "fill_field", fill)
+    known = {A._key(field): {
+        "page": 1,
+        "label": field.label,
+        "kind": field.kind,
+        "required": False,
+        "filled": "",
+        "answer": "",
+        "clear": True,
+        "verified": True,
+    }}
+    record = []
+
+    A.fill_page(
+        object(), {}, {}, None, lambda message: None,
+        record, page_no=1, known=known,
+    )
+
+    assert filled == [""]
+    assert field.value == ""
+    assert record[0]["verified"]
 
 
 def test_skill_names_match_strictly():

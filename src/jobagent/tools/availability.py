@@ -95,12 +95,44 @@ def from_status(status: int | None, url: str = "") -> Unavailable | None:
     return None
 
 
+def carvana_empty_form(page) -> Unavailable | None:
+    """A cached Carvana description may outlive its Greenhouse posting and have no questions."""
+    import json
+    import httpx
+    from urllib.parse import parse_qs, urlsplit
+
+    url = page.url
+    parsed = urlsplit(url)
+    if parsed.hostname not in {"carvana.com", "www.carvana.com"} or parsed.path != "/careers/apply":
+        return None
+    job_id = parse_qs(parsed.query).get("gh_jid", [""])[0]
+    if not job_id.isdecimal():
+        return None
+    try:
+        node = page.locator("#__NEXT_DATA__")
+        if not node.count():
+            return None
+        job = json.loads(node.text_content())["props"]["pageProps"]["jobData"]
+        if str(job.get("id")) != job_id or job.get("questions") != []:
+            return None
+        response = httpx.get(f"https://boards-api.greenhouse.io/v1/boards/carvana/jobs/{job_id}",
+                             params={"questions": "true"}, timeout=10, follow_redirects=False)
+        if response.status_code == 404 and response.json().get("error") == "Job not found":
+            return Unavailable("not_found", f"Greenhouse job {job_id} answered HTTP 404 (Job not found); "
+                               "Carvana's cached description has no application questions", url)
+    except Exception:
+        return None  # an incomplete page, rate limit or network failure does not establish closure
+    return None
+
+
 def check_page(page, response=None, posting: dict | None = None) -> Unavailable | None:
     """All signals for a loaded Playwright page (the goto response and JSON-LD when the caller has them)."""
     url = page.url
     if response is not None and (u := from_status(response.status, url)):
         return u
     if u := from_jsonld(posting, url):
+        return u
+    if u := carvana_empty_form(page):
         return u
     try:
         text = page.inner_text("body", timeout=5000)
@@ -128,7 +160,19 @@ def known(url: str, conn=None) -> Unavailable | None:
     """The reason recorded for this posting by an earlier step, if it was found unavailable."""
     from jobagent import db
 
-    row = (conn or db.connect()).execute("SELECT status, notes FROM jobs WHERE url = ?", (url,)).fetchone()
+    conn = conn or db.connect()
+    # an application of ours that was sent (or may have been) beats everything: never offer the posting again
+    app = conn.execute("SELECT state, job_dir FROM applications WHERE url = ? AND state IN "
+                       "('submission_in_progress', 'submission_unknown', 'submitted', 'confirmed') ORDER BY id DESC",
+                       (url,)).fetchone()
+    if app:
+        if app["state"] in ("submitted", "confirmed"):
+            return Unavailable("already_applied", f"our application ({app['job_dir']}) is {app['state']}", url)
+        return Unavailable("already_applied", f"our application ({app['job_dir']}) may have been sent and is not settled: "
+                           f"run `jobagent confirm {app['job_dir']}`", url)
+    row = conn.execute("SELECT status, notes FROM jobs WHERE url = ?", (url,)).fetchone()
+    if row and row["status"] == "applied":
+        return Unavailable("already_applied", "recorded as applied", url)
     if row and row["status"] in ("closed", "already_applied"):
         kind, _, reason = (row["notes"] or f"{row['status']}: ").partition(": ")
         return Unavailable(kind or row["status"], reason or "recorded earlier", url)

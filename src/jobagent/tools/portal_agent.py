@@ -19,6 +19,7 @@ from playwright.sync_api import Page
 from pydantic import BaseModel, Field
 
 from jobagent import llm
+from jobagent.tools import verification
 from jobagent.tools import challenge
 
 MAX_STEPS = 30
@@ -37,7 +38,9 @@ SNAPSHOT_JS = r"""() => {
     const t = (e.getAttribute('type') || '').toLowerCase();
     if (t === 'hidden') return;
     out.push({tag: e.tagName.toLowerCase(), type: t, label: label(e).slice(0, 80),
-              checked: e.checked === true, value_set: !!(e.value && t !== 'checkbox' && t !== 'radio' && t !== 'submit')});
+              checked: e.checked === true, value_set: !!(e.value && t !== 'checkbox' && t !== 'radio' && t !== 'submit'),
+              options: e.tagName === 'SELECT' ? [...e.options].map(o => o.text.trim()).filter(Boolean).slice(0, 40) : null,
+              chosen: e.tagName === 'SELECT' && e.selectedIndex >= 0 ? e.options[e.selectedIndex].text.trim() : null});
   });
   const text = [...document.querySelectorAll('h1, h2, h3, [role=alert], [aria-live], .error, [class*=error i], ' +
       '[id*=error i], [data-testid*=error i], [class*=hint i], [class*=helper i], [id*=hint i], p')]
@@ -128,11 +131,42 @@ def snapshot(page: Page) -> tuple[str, list]:
         kept.append((n, f))
         items = "\n".join(f"  [{i}] {x['tag']}{'/' + x['type'] if x['type'] else ''} \"{x['label']}\""
                           f"{' (checked)' if x['checked'] else ''}{' (filled)' if x['value_set'] else ''}"
+                          + (f" CHOICES={x['options']} (use action select with one of them; now: {x['chosen']!r})" if x.get("options") else "")
                           for i, x in enumerate(snap["items"]))
         parts.append(f"FRAME {n} {f.url[:100]}\nTEXT: {snap['text']}\nELEMENTS:\n{items}")
         if snap.get("pw", 0) >= 2:
             parts.append("NEW_PASSWORD_FORM")  # marker for the code: a set/confirm-password form is showing
     return "\n\n".join(parts), dict(kept)
+
+
+REJECTED = re.compile(r"(?i)wrong (username|email|e-mail) or password|incorrect (username|email|password)|"
+                      r"invalid (username|email|credentials|password)|invalid email address or password")
+ACCOUNT_EXISTS = re.compile(r"(?i)already (exists?|registered|in use|have an account|been taken)|account (with this email )?exists|"
+                            r"email (address )?(is )?(already )?(taken|in use|registered)")
+NAV_REGISTER = re.compile(r"(?i)create (an? )?(new )?account|new (user|account)|sign\s?up|register")
+NAV_LOGIN = re.compile(r"(?i)^(sign|log)\s?in$|already (have|registered)|existing (user|account)|back to (sign|log)\s?in")
+MAX_TOGGLES = 4
+
+
+def is_registration(view: str) -> bool:
+    """Is a NEW account (or a new password) being set up on this page, as opposed to signing in to an existing one? A set/confirm
+    password pair, a 'confirm password' field, or name fields beside a password field. A sign-in page that merely LINKS to
+    'Create account' is not one (F27)."""
+    elements = view.split("ELEMENTS:", 1)[-1]
+    return "NEW_PASSWORD_FORM" in view or bool(re.search(r"(?i)(confirm|re-?enter|retype|repeat)\W+(new\W+)?password", elements)) or (
+        bool(re.search(r"(?i)\b(first|last|given|family)\s*name\b", elements)) and bool(re.search(r"(?i)password", elements)))
+
+
+def _settle_unknown(page: Page, seconds: int = 20):
+    """An 'unknown' challenge is a page that is blank, loading or mid-navigation, not a puzzle: wait for it to become an ordinary page
+    (or a real challenge) before anyone is asked for help."""
+    c = challenge.detect(page)
+    for _ in range(seconds):
+        if c is None or c.kind != "unknown":
+            return c
+        page.wait_for_timeout(1000)
+        c = challenge.detect(page)
+    return c
 
 
 def _target(frames: dict, a: AuthAction):
@@ -147,16 +181,45 @@ def _target(frames: dict, a: AuthAction):
 def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, model: str | None = None,
         notes: list[str] = (), goal: str = "sign_in") -> dict:
     """Drive the portal until signed in (or no account needed). Returns {"state", "registered", "verified_mail",
-    "steps": [what was done]}."""
+    "steps": [what was done]}. Requests that send data (POST and the like) are watched so that a rejected login is counted only
+    against a real credential submission."""
+    posts: list[dict] = []
+    secrets = [s for s in (values.get("PASSWORD"), values.get("ALT_PASSWORD")) if s]
+
+    def listener(r) -> None:
+        """Remember data-sending requests and ONLY whether each carried the password (never the password or the body)."""
+        if r.method in ("GET", "HEAD", "OPTIONS"):
+            return
+        try:
+            body = r.post_data or ""
+        except Exception:
+            body = ""
+        from urllib.parse import quote, quote_plus
+        carries = any(s in body or quote(s, safe="") in body or quote_plus(s) in body for s in secrets)
+        posts.append({"credentials": carries})
+    page.on("request", listener)
+    try:
+        return _run(page, url, values, inbox, hitl, host, log, model, notes, goal, posts)
+    finally:
+        page.remove_listener("request", listener)
+
+
+SUBMIT_LABEL = re.compile(r"(?i)\b(sign\s?in|log\s?in|login|submit|continue|next|verify|proceed|go)\b")
+NOT_A_SUBMIT = re.compile(r"(?i)\b(show|hide|reveal|toggle|eye|visible|view|forgot|reset|create|register|sign\s?up|cancel|back|help)\b")
+
+
+def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model, notes, goal, posts: list) -> dict:
     agent = llm.writer(3000, timeout=240, model=model)
     history: list[str] = []
     state = {"state": "failed", "registered": False, "verified_mail": False, "steps": history}
+    code_mail, accepted_mail = None, None      # the candidate whose code {CODE} holds / the one the site was seen to accept
     since = datetime.now(UTC)
     code, challenges, repeats, last_action, pw_submitted, wrong_pw = "", 0, 0, None, False, 0
     state["alt_password_used"] = False
+    login_candidate, register_attempted, toggles, last_nav = None, False, 0, None
     for step in range(MAX_STEPS):
         page.wait_for_timeout(2500)
-        if (c := challenge.detect(page)) is not None:
+        if (c := _settle_unknown(page)) is not None:
             # A puzzle can close by itself (timeout) without being solved; then the next submit brings a new one.
             # So the user says when it's solved, and a puzzle that keeps coming back stops the run.
             challenges += 1
@@ -181,14 +244,32 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
                 break
             continue
         view, frames = snapshot(page)
-        if re.search(r"(?i)wrong (username|email|e-mail) or password|incorrect (username|email|password)|"
-                     r"invalid (username|email|credentials|password)", view.split("ELEMENTS:")[0]):
+        shown_text = view.split("ELEMENTS:")[0]
+        if login_candidate is not None:
+            cand, login_candidate = login_candidate, None
+            # a request is evidence of a credential submission only if IT CARRIED THE CREDENTIALS: analytics, autosave and other page
+            # traffic proves nothing about authentication, whatever its response
+            request_seen = any(q["credentials"] for q in posts[cand["posts"]:])
+            # ONE rejection per genuine credential submission: a credential-bearing request, or (when the site hides its traffic, e.g.
+            # hashing in the page) a submit action made while no error was showing; an error already on the page counts again only
+            # when a credential-bearing request proves a new attempt reached the server
+            genuine = request_seen or (cand["submit_like"] and not cand["banner_before"])
+        else:
+            genuine = False
+        if REJECTED.search(shown_text) and genuine:
             wrong_pw += 1
             if wrong_pw >= 2 and "PASSWORD REJECTED" not in " ".join(history[-2:]):
                 history.append("PASSWORD REJECTED twice: never type a password again here (lockout risk). If the "
                                "site offers Continue with Google use it; if not visible, go back to the first "
                                "sign-in page (an Edit / Back link) where it is shown; otherwise answer failed")
                 log(f"portal {host}: the password was rejected twice; no more password attempts")
+        if register_attempted and ACCOUNT_EXISTS.search(shown_text) and wrong_pw >= 1:
+            state["state"] = "failed"
+            state["reason"] = (f"an account for {values.get('EMAIL', 'this email')} already exists but the shared password was rejected, "
+                               "so its credentials are unknown: the candidate must sign in or reset it (not done automatically)")
+            history.append(state["reason"])
+            log(f"portal {host}: {state['reason']}")
+            break
         if "NEW_PASSWORD_FORM" in view and pw_submitted and not state["alt_password_used"]:
             # the same set-password form came back after {PASSWORD} was submitted: the site refused it
             history.append("the site did NOT accept {PASSWORD} (the new-password form came back): fill "
@@ -250,12 +331,17 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
             if v.link and (a.action == "link_sent" or not v.code):
                 page.goto(v.link, wait_until="domcontentloaded")
                 history.append("opened the emailed confirmation link")
+                if verification.outcome(page, None, settle_s=6, email=values.get("EMAIL", "")) == "accepted":
+                    accepted_mail = mail        # this very link, seen to work
             else:
                 code = v.code or ""
+                code_mail = mail                # selected, not used: a newer candidate supersedes it
                 history.append("the emailed code is now available as {CODE}")
-            inbox.consume_and_trash(mail, "portal_verify")
-            state["verified_mail"] = True
-            log(f"portal {host}: verification mail used and trashed ({mail.subject!r})")
+            log(f"portal {host}: verification mail found ({mail.subject!r}); it is trashed only if the site accepts it")
+            continue
+        if a.action == "wait":                  # the page is loading or answering: look again (bounded by MAX_STEPS)
+            history.append("waited for the page")
+            page.wait_for_timeout(1500)
             continue
         key = (a.action, a.frame, a.element, a.value)
         repeats = repeats + 1 if key == last_action else 0
@@ -281,9 +367,21 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
                        a.value)  # one digit of a code split over several boxes (0-based)
         for k, v in {**values, "CODE": code}.items():
             value = value.replace("{" + k + "}", v or "")
-        if a.action == "fill" and "PASSWORD}" in a.value and wrong_pw >= 2 and goal == "sign_in":
-            history.append("refused: the password was already rejected twice (lockout risk)")
+        if a.action == "fill" and "PASSWORD}" in a.value and wrong_pw >= 2 and goal == "sign_in" and not is_registration(view):
+            # the ban protects LOGIN attempts against an existing account; setting a new password on a registration form is not one
+            history.append("refused: the password was already rejected twice on sign-in (lockout risk); on a create-account form "
+                           "it may still be used to set a NEW password")
             continue
+        if a.action == "fill" and loc.evaluate("e => e.tagName") == "SELECT":
+            # a native list is chosen from, not typed into (e.g. a phone country code): pick the matching option
+            from jobagent.tools import forms
+            options = loc.evaluate("e => [...e.options].map(o => o.text.trim()).filter(Boolean)")
+            opt, _ = forms.match_option(value, options)
+            if opt is None:
+                history.append(f"refused: \"{_label(frames, a)}\" is a list; use action select with one of {options[:20]}")
+                continue
+            a = a.model_copy(update={"action": "select", "value": opt})
+            value = opt
         if a.action == "fill" and not a.value and (loc.input_value() if loc.evaluate("e => 'value' in e") else ""):
             history.append(f"refused: an empty fill would clear \"{_label(frames, a)}\"; click the button instead")
             continue
@@ -291,6 +389,28 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
             history.append(f"refused: {a.value} may only go into a password field, not \"{_label(frames, a)}\"; "
                            "submit the email first if no password field is shown")
             continue
+        if a.action == "click":
+            nav_label = _label(frames, a)
+            pw_just_typed = any("{PASSWORD}" in h for h in history[-3:] if h.startswith("fill"))
+            nav = "register" if NAV_REGISTER.search(nav_label) else "login" if NAV_LOGIN.search(nav_label.strip()) else None
+            if nav and not pw_just_typed:
+                toggles += nav != last_nav and last_nav is not None
+                last_nav = nav
+                if toggles > MAX_TOGGLES:
+                    state["state"] = "failed"
+                    state["reason"] = ("the portal keeps alternating between its sign-in and create-account forms without getting "
+                                       "anywhere: the account's status is unclear, so the candidate needs to look at it")
+                    history.append(state["reason"])
+                    log(f"portal {host}: {state['reason']}")
+                    break
+        if a.action in ("click", "press_enter") and any("{PASSWORD}" in h for h in history[-3:] if h.startswith("fill")):
+            if is_registration(view):
+                register_attempted = True
+            else:
+                label_now = _label(frames, a) if a.action == "click" else ""
+                login_candidate = {"posts": len(posts), "banner_before": bool(REJECTED.search(shown_text)),
+                                   "submit_like": a.action == "press_enter" or (
+                                       bool(SUBMIT_LABEL.search(label_now)) and not NOT_A_SUBMIT.search(label_now))}
         try:
             if a.action == "fill" and code and value == code and loc.get_attribute("maxlength") == "1":
                 # a code split over one-character boxes: type it; such boxes move to the next box by themselves
@@ -324,6 +444,11 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
                 else:
                     page.keyboard.press("Enter")
                     history.append("submitted the code (Enter)")
+                # this candidate's code was entered: it counts only if the site is then seen to accept it
+                if verification.outcome(page, lambda: loc.is_visible(), settle_s=6, email=values.get("EMAIL", "")) == "accepted":
+                    accepted_mail = code_mail
+                else:
+                    history.append("the site did not accept that code yet")
         except Exception as e:
             history.append(f"{a.action} failed: {type(e).__name__}: {str(e)[:80]}")
         finally:
@@ -332,6 +457,13 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
                                          ".forEach(e => e.removeAttribute('data-agent-target'))")
             except Exception:
                 pass
+    if accepted_mail is not None and state["state"] == "signed_in":
+        # only the one candidate whose code or link the site was seen to accept becomes the agent's; a superseded, rejected
+        # or unused candidate does not, however the run eventually signed in
+        inbox.mark_used(accepted_mail, f"{host} accepted it and the account is signed in")
+        cleanup = inbox.consume_and_trash(accepted_mail, "portal_verify")
+        state["verified_mail"] = cleanup.ok
+        log(f"portal {host}: verification mail accepted by the site; cleanup {cleanup.status} ({accepted_mail.subject!r})")
     return state
 
 

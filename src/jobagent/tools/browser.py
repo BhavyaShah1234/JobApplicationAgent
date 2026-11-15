@@ -101,6 +101,74 @@ def persistent_context(settings: Settings | None = None) -> Iterator[BrowserCont
 
 
 @contextmanager
+def application_context(mode, url, settings=None, *, related_urls=()):
+    """Docker by default; opt-in desktop uses the host broker and the same Voyager application code."""
+    if mode == 'docker':
+        with persistent_context(settings) as ctx:
+            yield ctx
+        return
+    if mode != 'desktop':
+        raise ValueError('Unknown browser mode')
+    import socket
+    import json
+    from jobagent.tools import desktop_browser
+    if not desktop_browser.allowed(url):
+        raise ValueError('Desktop applications require a public HTTPS URL')
+    s = settings or get_settings()
+    with browser_lock(s):
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(25)
+            path = s.state_dir / desktop_browser.ROOT / 'bridge.sock'
+            if not path.exists():
+                path = s.state_dir / 'carvana-desktop' / 'bridge.sock'  # updated legacy serve command
+            try:
+                client.connect(str(path))
+            except OSError as exc:
+                raise RuntimeError('Start the host desktop bridge: PYTHONPATH=src python3 -m '
+                                   'jobagent.tools.desktop_browser serve') from exc
+            client.sendall((json.dumps({'action':'open','protocol':desktop_browser.PROTOCOL,'url':url})+'\n').encode())
+            reply = json.loads(client.makefile('rb').readline(8192))
+        if reply.get('ok') and reply.get('protocol') != desktop_browser.PROTOCOL:
+            raise RuntimeError('Restart the updated host desktop bridge: PYTHONPATH=src python3 -m '
+                               'jobagent.tools.desktop_browser serve')
+        if not reply.get('ok') or reply.get('protocol') != desktop_browser.PROTOCOL or \
+                type(reply.get('port')) is not int or not 1024 <= reply['port'] <= 65535 or reply.get('url') != url:
+            raise RuntimeError(reply.get('error', 'Desktop bridge identity mismatch'))
+        with sync_playwright() as pw:
+            browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{reply['port']}")
+            fresh = bool(reply.get('fresh', False))
+            deadline = time.monotonic()+15
+            while True:
+                pages = [p for c in browser.contexts for p in c.pages]
+                if len(pages) == 1 and desktop_browser.allowed(pages[0].url):
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Dedicated application tab missing or ambiguous')
+                time.sleep(.25)
+            page = pages[0]
+            ctx = page.context
+            from jobagent.tools.shadow import install
+            install(pw, ctx)
+            from jobagent.tools.challenge import Blocked
+            if not desktop_browser.public_destination(url):
+                raise Blocked('The requested application URL is not a public HTTPS destination')
+            try:                                              # the browser target this lease is bound to
+                target_id = ctx.new_cdp_session(page).send('Target.getTargetInfo')['targetInfo']['targetId']
+            except Exception as exc:
+                raise Blocked('The identity of the application tab could not be verified; application stopped') from exc
+            if not reply.get('guarded'):                      # not started through the public-only proxy: not trusted
+                raise Blocked('This desktop browser was started without the public-only network proxy; stop it and restart '
+                              'the host desktop bridge (PYTHONPATH=src python3 -m jobagent.tools.desktop_browser serve)')
+            policy = desktop_browser.Scope(ctx, page, url, related_urls, fresh=fresh,
+                                           store=desktop_browser.agent_profile_root(path.parent, url) / 'approved.json',
+                                           target_id=target_id)
+            policy(page)
+            ctx.jobagent_policy = policy
+            ctx.jobagent_page = page
+            yield ctx  # disconnect only; leave the dedicated browser available for human review
+
+
+@contextmanager
 def _persistent_context(s: Settings) -> Iterator[BrowserContext]:
     clear_stale_lock(s.chrome_profile_dir)
     with sync_playwright() as pw:
@@ -120,6 +188,8 @@ def _persistent_context(s: Settings) -> Iterator[BrowserContext]:
                 "--disable-background-timer-throttling",
             ],
         )
+        from jobagent.tools.shadow import install
+        install(pw, ctx)
         # The initial blank tab of a headful persistent context reports a bogus window size under
         # Xvfb (outerHeight < innerHeight) and can't be screenshotted; replace it with a fresh tab.
         stale = [p for p in ctx.pages if p.url == "about:blank"]

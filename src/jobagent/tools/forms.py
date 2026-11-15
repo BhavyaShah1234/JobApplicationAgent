@@ -8,11 +8,16 @@ matched to the page's own options (rapidfuzz, then a model tie-break); every val
 filling. Submit buttons are never clicked here.
 """
 
+import json
 import re
-from dataclasses import dataclass, field
+from datetime import datetime
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from urllib.parse import urlsplit
 
 from playwright.sync_api import Frame, Page
 from rapidfuzz import fuzz, process
+from jobagent.tools.shadow import locator as shadow_locator, field_element
 
 CAPTCHA_FRAME = re.compile(r"(?i)hcaptcha|recaptcha|google\.com/recaptcha|challenges\.cloudflare|arkoselabs|funcaptcha")
 
@@ -29,11 +34,31 @@ FIELDS_JS = r"""(start) => {
       const s = getComputedStyle(a); if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false; }
     return true; };
   const clean = t => (t || '').replace(/\s+/g, ' ').trim();
-  const byIds = ids => clean((ids || '').split(/\s+/).map(i => document.getElementById(i))
-      .filter(Boolean).map(x => x.innerText || x.textContent).join(' '));
-  const ownText = e => { const l = e.closest('label'); return l ? clean(l.innerText) : ''; };
+  const caption = e => {
+    // Read the original nodes: detached clones lose CSS visibility and expose
+    // hidden loading/error text. Exclude option subtrees before walking text.
+    const text=(n,root=false)=>{
+      if(n.nodeType===Node.TEXT_NODE)return n.textContent;
+      if(n.nodeType!==Node.ELEMENT_NODE)return '';
+      if(!root && n.matches('select,[role=listbox],[role=option]'))return '';
+      const style=getComputedStyle(n);
+      if(!root && (n.hidden || style.display==='none' || style.visibility==='hidden'))return '';
+      return [...n.childNodes].map(c=>text(c)).join(' ');
+    };
+    return clean(text(e,true));
+  };
+  // F17: author roots, including closed roots recovered through the DOM protocol, share the same reader.
+  const roots = [];
+  const walk = r => { roots.push(r); for (const h of r.querySelectorAll('*')) {
+    const s=h.shadowRoot || window.__jobagentClosedRoots?.get(h); if(s)walk(s); } };
+  walk(document);
+  const all = sel => roots.flatMap(r => [...r.querySelectorAll(sel)]);
+  const anchor = e => { let x = e; while (x.getRootNode() instanceof ShadowRoot) x = x.getRootNode().host; return x; };
+  const byIds = (ids, ctx) => clean((ids || '').split(/\s+/).map(i => (ctx ? ctx.getRootNode() : document).getElementById(i))
+      .filter(Boolean).map(x => caption(x)).join(' '));
+  const ownText = e => { const l = e.closest('label'); return l ? caption(l) : ''; };
   // a widget's own caption, never the question (Carvana's "SELECT ANSWER" / "SELECT ALL THAT APPLY" boxes)
-  const GENERIC = /^(select( an?)?( answer| option| one| all that apply)?|choose( one| an option)?|please (select|choose)( one)?|-+ ?select ?-+|-+)$/i;
+  const GENERIC = /^(type your response|type here|enter (your )?answer|select( an?)?( answer| option| one| all that apply)?|choose( one| an option)?|please (select|choose)( one)?|-+ ?select ?-+|-+)$/i;
   const CONTROLS = 'input:not([type=hidden]), select, textarea, [role=combobox], [aria-haspopup=listbox]';
   const before = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
   const nearLabel = e => {
@@ -44,7 +69,7 @@ FIELDS_JS = r"""(start) => {
           && !GENERIC.test(clean(l.innerText)));
       if (!ls.length) continue;
       const l = ls[ls.length - 1];
-      const f = l.getAttribute('for'); const tgt = f && document.getElementById(f);
+      const f = l.getAttribute('for'); const tgt = f && e.getRootNode().getElementById(f);
       if (tgt && tgt !== e && !tgt.contains(e) && !e.contains(tgt)) return '';
       const between = [...a.querySelectorAll(CONTROLS)].some(c => c !== e && !c.contains(e) && !e.contains(c)
           && before(l, c) && before(c, e) && vis(c));
@@ -55,17 +80,22 @@ FIELDS_JS = r"""(start) => {
     // Workday: the form field's own label (a list button's aria-label holds its value: "Select One Required")
     const ff = e.closest('[data-automation-id^=formField-]');
     const fl = ff && ff.querySelector(':scope > label, :scope > legend, :scope > fieldset > legend, label');
-    if (fl && clean(fl.innerText)) return clean(fl.innerText).slice(0, 300);
-    let t = byIds(e.getAttribute('aria-labelledby'));
-    if (!t && e.id) { const l = document.querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) t = clean(l.innerText); }
+    if (fl && caption(fl)) return caption(fl).slice(0, 300);
+    let t = byIds(e.getAttribute('aria-labelledby'), e);
+    if (!t && e.id) { const l = e.getRootNode().querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) t = caption(l); }
     if (!t) t = clean(e.getAttribute('aria-label'));
-    if (!t) { const l = e.closest('label'); if (l) t = clean(l.innerText); }
+    if (!t) { const l = e.closest('label'); if (l) t = caption(l); }
     if (!t) {
       // Ashby and similar: the question is the first label of the field's block, the input itself has none
       const fc = e.closest('[data-field-path], [data-field-entry-id]');
       const l = fc && [...fc.querySelectorAll('label, legend')].find(x => !x.contains(e) && clean(x.innerText));
-      if (l) t = clean(l.innerText); }
-    if (!t) { const fs = e.closest('fieldset'); const lg = fs && fs.querySelector('legend'); if (lg) t = clean(lg.innerText); }
+      if (l) t = caption(l); }
+    if (!t) { const fs = e.closest('fieldset'); const lg = fs && fs.querySelector('legend'); if (lg) t = caption(lg); }
+    if (!t || GENERIC.test(t)) {
+      const block=e.closest('.application-question,[data-field-path],[data-field-entry-id]');
+      const title=block && block.querySelector('.application-label,[class*=question-title],legend');
+      if(title)t=caption(title);
+    }
     if (!t || GENERIC.test(t)) t = nearLabel(e) || (GENERIC.test(t) ? '' : t);
     if (!t) { const p = clean(e.placeholder || e.getAttribute('title') || ''); if (!GENERIC.test(p)) t = p; }
     if (!t) t = around(e, ownOf(e)).replace(/^(select all that apply|select( an?)?( answer| option| one)?)\b\s*/i, '');
@@ -76,8 +106,8 @@ FIELDS_JS = r"""(start) => {
     // (Lever and many custom forms put it in a sibling div, not a label)
     let a = e.parentElement;
     for (let k = 0; a && k < 6; k++, a = a.parentElement) {
-      let x = clean(a.innerText);
-      for (const o of own) if (o) x = x.split(o).join(' ');
+      let x = caption(a);
+      for (const o of own) if (o && own.length<100) x = x.split(o).join(' ');
       x = clean(x);
       if (x.length > 1 && x.length < 400) return x;
       if (x.length >= 400) break; }
@@ -85,31 +115,122 @@ FIELDS_JS = r"""(start) => {
   const groupQuestion = (e, name) => {
     // radio / checkbox groups: the group's legend or aria label, else the container text before the options
     if (e.closest('[data-automation-id^=formField-]')) return question(e);  // Workday: the form field's label
-    const blk = e.closest('[data-field-path], fieldset');
+    const blk = e.closest('[data-field-path], fieldset, .application-question');
+    if (blk?.querySelector(':scope > .application-label'))return caption(blk.querySelector(':scope > .application-label'));
     if (blk) {  // the block's own question: a label that isn't one of the boxes' labels
       const ids = new Set([...blk.querySelectorAll('input')].map(b => b.id).filter(Boolean));
       const q = [...blk.querySelectorAll('label, legend')].find(l => !ids.has(l.getAttribute('for')) && !l.querySelector('input') && clean(l.innerText));
       if (q) return clean(q.innerText).slice(0, 300); }
     const g = e.closest('fieldset, [role=radiogroup], [role=group]');
     if (g) { const lg = g.querySelector('legend');
-      const t = (lg && clean(lg.innerText)) || byIds(g.getAttribute('aria-labelledby')) || clean(g.getAttribute('aria-label'));
+      const t = (lg && clean(lg.innerText)) || byIds(g.getAttribute('aria-labelledby'), g) || clean(g.getAttribute('aria-label'));
       if (t) return t.slice(0, 300); }
-    const labels = [...document.querySelectorAll(`input[name="${CSS.escape(name)}"]`)].map(b => {
-      const l = b.closest('label') || (b.id && document.querySelector(`label[for="${CSS.escape(b.id)}"]`));
+    const labels = [...e.getRootNode().querySelectorAll(`input[name="${CSS.escape(name)}"]`)].map(b => {
+      const l = b.closest('label') || (b.id && b.getRootNode().querySelector(`label[for="${CSS.escape(b.id)}"]`));
       return l ? clean(l.innerText) : clean(b.value); });
     return (around(e, labels) || question(e)).slice(0, 300); };
   const section = e => {
     // the nearest heading above the field (e.g. "Work Experience 2", "Voluntary Self-Identification")
     // headings only: a legend is a field's own label (Workday's "To*" date), not a section
-    const hs = [...document.querySelectorAll('h1, h2, h3, h4, h5, [role=heading]')].filter(vis);
+    const hs = all('h1, h2, h3, h4, h5, [role=heading], [class*=header] > p, [class*=title] > p').filter(h => vis(h)
+      && (/^H[1-5]$/.test(h.tagName) || h.getAttribute('role')==='heading' || /^(education|work experience|employment history|languages)(?: \d+)?$/i.test(clean(h.innerText)))
+      && !h.closest('[role=dialog],[role=listbox],[role=menu],[class*=datepicker i],[class*=calendar i]'));
     let best = '';
-    for (const h of hs) { if (h.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING) best = clean(h.innerText); }
+    const ae = anchor(e);
+    for (const h of hs) {
+      if(h.tagName==='P' && !h.parentElement?.parentElement?.contains(e))continue;
+      if (anchor(h).compareDocumentPosition(ae) & Node.DOCUMENT_POSITION_FOLLOWING) best = clean(h.innerText);
+    }
+    if(/^education$/i.test(best)) {
+      const index=(e.id||'').match(/--(\d+)$/);
+      if(index)return 'Education '+(Number(index[1])+1);
+      return 'Education 1';
+    }
+    const education=e.closest('[class*=education--entry],[class*=education-entry], [data-education-index]');
+    if(education && /^education$/i.test(best)) {
+      const peers=all('[class*=education--entry],[class*=education-entry],[data-education-index]');
+      return 'Education '+(peers.indexOf(education)+1);
+    }
     return best.slice(0, 80); };
-  const required = (e, q) => e.required || e.getAttribute('aria-required') === 'true' || /\*\s*$|\*\s|\(required\)/i.test(q);
-  const out = []; let n = start; const seen = new Set();
-  const add = (e, f) => { e.setAttribute('data-jf', String(n)); f.id = n++; f.section = section(e); out.push(f); };
+  // a required marker is "*" or a lookalike (Lever uses U+2731), at the end of the caption or followed by a space
+  const star = q => /[*✱∗＊⁎]\s*$|[*✱∗＊⁎]\s|\(required\)/i.test(q||'');
+  const required = (e, q) => {
+    if(e.required || e.getAttribute('aria-required')==='true' || star(q))return true;
+    const box=e.closest('[data-field-path],[data-field-entry-id],fieldset,[class*=fieldEntry i]') || e.parentElement;
+    const labels=[...(e.labels||[]),...(box ? box.querySelectorAll('legend,label') : [])];
+    return labels.some(l=>{
+      const target=l.htmlFor && l.getRootNode().getElementById(l.htmlFor);
+      const bare=s=>clean(s).replace(/[*✱∗＊⁎]\s*$/,'').trim();
+      const header=!l.querySelector('input,select,textarea') && bare(l.textContent)===bare(q) &&
+        (!target || target===e || target.contains(e));
+      if(l.contains(e) || (l.htmlFor && e.id && l.htmlFor===e.id) ||
+          header || (box && box.querySelectorAll('input:not([type=hidden]),select,textarea,[role=combobox],[aria-haspopup=listbox]').length<=1)){
+        return star(l.textContent) || star(getComputedStyle(l,'::after').content.replace(/["']/g,''));
+      }
+      return false;
+    });
+  };
+  // Capture identity in the same DOM snapshot as the question and value.
+  // Extra per-field browser round trips make remote desktop filling costly.
+  const registry=window.__jobagentFieldNodes ||= {ids:new WeakMap(),next:0,
+    epoch:crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`};
+  const identity=e=>{
+    const r=registry, root=e.getRootNode();
+    if(!r.ids.has(e))r.ids.set(e,++r.next);
+    if(root!==document && !r.ids.has(root))r.ids.set(root,++r.next);
+    const prefix=root===document ? '' : 'root:'+r.ids.get(root)+':';
+    const path=e.closest('[data-field-path],[data-field-entry-id]');
+    const own=path && (path.getAttribute('data-field-path')||path.getAttribute('data-field-entry-id'));
+    const unique=(attr,val)=>val && [...root.querySelectorAll('['+attr+']')].filter(x=>x.getAttribute(attr)===val).length===1;
+    if(unique('id',e.id))return prefix+'id:'+e.id;
+    if(own && [...root.querySelectorAll('input,select,textarea,[role=combobox]')].filter(x=>{
+      const p=x.closest('[data-field-path],[data-field-entry-id]');
+      return p && (p.getAttribute('data-field-path')||p.getAttribute('data-field-entry-id'))===own &&
+        (x.name||x.type||x.tagName)===(e.name||e.type||e.tagName);
+    }).length===1)return prefix+'path:'+own+':'+(e.name||e.type||e.tagName);
+    if(unique('name',e.name))return prefix+'name:'+e.name;
+    return 'node:'+r.epoch+':'+r.ids.get(e);
+  };
+  const out = []; let n = start; const seen = new Set(); let shadowFields = 0;
+  const add = (e, f) => {
+    // Legacy SuccessFactors uses a region/div masthead rather than a header tag.
+    // Its Language picker is navigation, not a candidate question.
+    if (e.closest('#headerNavBar, #rcmCareerLangDropDown')) return;
+    e.setAttribute('data-jf', String(n));
+    if (e.getRootNode() instanceof ShadowRoot) shadowFields++;
+    f.id = n++;
+    f.identity=identity(e);
+    f.frame_identity=registry.epoch;
+    f.locator_ref=registry.epoch+':'+f.identity;
+    e.setAttribute('data-jf-ref',f.locator_ref);
+    f.invalid=e.getAttribute('aria-invalid')==='true' || !!(e.validity && !e.validity.valid);
+    f.required=!!f.required || required(e,f.label);
+    f.calendar=e.type!=='date' && e.tagName==='INPUT' &&
+      (!!e.closest('.react-datepicker-wrapper,[data-datepicker]') || /(?:^|[\s_-])(?:datepicker|date-picker|input[-_]date|date[-_]input)(?:[\s_-]|$)/i.test(e.className||''));
+    if(f.calendar && !f.format)f.format='YYYY-MM-DD';
+    if(!f.format && /\b(MM|YYYY|YY|DD)\b/i.test(e.placeholder||''))f.format=e.placeholder;
+    f.section = section(e);
+
+    const box = e.closest(
+      '[data-field-path], [data-field-entry-id], ' +
+      '[data-automation-id^="formField-"], ' +
+      '.form-group, .form-field, [class*="formcontrol" i]'
+    ) || e.parentElement;
+
+    const hints = box ? [...box.querySelectorAll(
+      'small, p, [class*="description" i], [class*="helper" i], ' +
+      '[class*="hint" i], [id*="description" i], [id*="helper" i]'
+    )].filter(vis).map(x => x.innerText || x.textContent) : [];
+
+    f.help = clean([
+      byIds(e.getAttribute('aria-describedby'), e),
+      ...hints
+    ].join(' ')).slice(0, 1200);
+
+    out.push(f);
+  };
   // choice buttons: a question answered by pressing one of a few buttons (Ashby's Yes / No: aria-pressed)
-  for (const g of new Set([...document.querySelectorAll('button[aria-pressed]')].map(b => b.parentElement))) {
+  for (const g of new Set(all('button[aria-pressed]').map(b => b.parentElement))) {
     const btns = [...g.querySelectorAll(':scope > button[aria-pressed]')];
     if (btns.length < 2 || !vis(g) || !shown(g) || g.hasAttribute('data-jf')) continue;
     const blk = g.closest('[data-field-path], [data-field-entry-id], fieldset') || g.parentElement;
@@ -122,8 +243,18 @@ FIELDS_JS = r"""(start) => {
             value: btns.filter(b => b.getAttribute('aria-pressed') === 'true').map(b => clean(b.innerText)).join('; ')});
     btns.forEach(b => b.setAttribute('data-jf', String(n - 1)));
   }
-  const ctl = 'input, select, textarea, [role=combobox], button[aria-haspopup=listbox], [role=checkbox], [role=radio], [role=spinbutton]';
-  for (const e of document.querySelectorAll(ctl)) {
+  // Accessible custom radio controls do not always contain native inputs.
+  for (const g of all('[role=radiogroup]')) {
+    const radios = [...g.querySelectorAll('[role=radio]')].filter(e => e.tagName !== 'INPUT' && vis(e) && shown(e));
+    if (!radios.length || g.querySelector('input[type=radio]') || !shown(g)) continue;
+    const q = byIds(g.getAttribute('aria-labelledby'), g) || clean(g.getAttribute('aria-label')) || question(g);
+    const opts = radios.map(e => clean(e.getAttribute('aria-label') || e.innerText));
+    add(g, {kind:'radio',label:q,required:required(g,q),options:opts,
+      value:opts.filter((o,k) => radios[k].getAttribute('aria-checked') === 'true').join('; ')});
+    radios.forEach((e,k) => {e.setAttribute('data-jf',String(n-1));e.setAttribute('data-jf-opt',String(k));});
+  }
+  const ctl = 'input, select, textarea, [contenteditable=true], [role=textbox], [role=combobox], button[aria-haspopup=listbox], [role=checkbox], [role=radio], [role=spinbutton]';
+  for (const e of all(ctl)) {
     const t = (e.getAttribute('type') || '').toLowerCase();
     if (t === 'hidden' || t === 'submit' || t === 'image' || t === 'reset' || e.disabled) continue;
     if (t === 'button' && e.getAttribute('aria-haspopup') !== 'listbox') continue;
@@ -145,40 +276,47 @@ FIELDS_JS = r"""(start) => {
       // file inputs are often hidden behind an "Attach" button: count them when their container shows
       const box = e.closest('div, section, fieldset') || e.parentElement;
       if (!box || !vis(box) || !shown(box)) continue;
-      // the upload's own caption ("Resume/CV*", "Cover Letter"): the nearest container text that isn't just buttons
+      // The caption is the upload's OWN explicit label first (`label[for]`, aria, a wrapping label), then the text of the nearest
+      // container that holds THIS upload alone and is short (usually the wrapping label itself). A container that also holds another
+      // upload, or is long, adds nothing: on a flat page it is the whole body, whose text names the other documents too, and used to
+      // make a Resume input read "... Cover Letter ...", so that the cover-letter file went into both.
+      const own = question(e);
       let cap = '';
       for (let a = e.parentElement, k = 0; a && k < 5 && !cap; a = a.parentElement, k++) {
+        if ([...a.querySelectorAll('input[type=file]')].some(x => x !== e)) break;
         const x = clean(a.innerText).replace(/\b(attach|dropbox|google drive|enter manually|upload|or drag and drop( here)?|browse)\b/gi, '').replace(/[,|]/g, ' ').trim();
-        if (x.length > 2) cap = clean(x).slice(0, 120); }
-      const q = [question(e), cap, e.id || e.name].filter(t => t && !/^attach$/i.test(t)).join(' / ');
-      add(e, {kind: 'file', label: q, required: required(e, cap),
+        if (x.length > 2 && x.length <= 120) cap = clean(x); }
+      const q = e.getAttribute('data-jf-upload-label') || [own, cap, e.id || e.name].filter(t => t && !/^attach$/i.test(t)).join(' / ');
+      add(e, {kind: 'file', label: q, required: required(e, q),   // the question's own marker counts, not only the caption's
               // only files really attached: the box's caption ("ATTACH RESUME/CV") is not a value
               value: e.files && e.files.length ? [...e.files].map(f => f.name).join(', ') : '',
-              accept: e.getAttribute('accept') || ''});
+              accept: e.getAttribute('accept') || '',
+              // set by the click that opened this input from a lazy trigger: it is that trigger's own native control
+              linked: !!e.getAttribute('data-jf-upload-label')});
       continue; }
     // a react-select input shrinks to nothing once a value is chosen: its control box is what shows
     const isCombo = (e.getAttribute('role') || '').toLowerCase() === 'combobox';
-    const seenBox = isCombo ? (e.closest('[class*=control i], [class*=container i]') || e.parentElement) : e;
+    const seenBox = isCombo ? (e.closest('[class*=control i], [class*=container i]') || e.parentElement || e) : e;
     if (!vis(seenBox) && !(t === 'radio' || t === 'checkbox')) continue;
     if ((t === 'radio' || t === 'checkbox') && !vis(e)) {
       // custom-styled boxes hide the input itself; its label must show
-      const l = e.closest('label') || (e.id && document.querySelector(`label[for="${CSS.escape(e.id)}"]`));
+      const l = e.closest('label') || (e.id && e.getRootNode().querySelector(`label[for="${CSS.escape(e.id)}"]`));
       if (!l || !vis(l)) continue; }
     if (!shown(seenBox) && !(t === 'radio' || t === 'checkbox')) continue;
     if (e.closest('[data-jf-skip], header, nav, [role=banner], [data-automation-id=navigationContainer]')) continue;
     if (e.closest('[data-automation-id=promptOption], [data-automation-id=activeListContainer], [role=option]')) continue;  // inside an open option list
     // a group is the boxes sharing a name inside one question (Workday repeats a name in every work-experience entry)
-    const scope = e.closest('fieldset, [role=group], [role=radiogroup], [data-automation-id^=formField-]') || document;
+    const scope = e.closest('fieldset, [role=group], [role=radiogroup], [data-automation-id^=formField-], .application-question') || e.getRootNode();
     const sameName = t === 'radio' || t === 'checkbox' ? [...scope.querySelectorAll(`input[type=${t}][name="${CSS.escape(e.name || '')}"]`)] : [];
     if (e.hasAttribute('data-jf')) continue;  // already part of a group
     // one question's checkboxes, each with its own name: a Workday form field, an Ashby field block, a fieldset
-    const qBlock = t === 'checkbox' ? e.closest('[data-automation-id^=formField-], [data-field-path], fieldset') : null;
+    const qBlock = t === 'checkbox' ? e.closest('[data-automation-id^=formField-], [data-field-path], fieldset, .application-question') : null;
     const ffBoxes = qBlock ? [...qBlock.querySelectorAll('input[type=checkbox]')] : [];
     if (t === 'radio' || (t === 'checkbox' && ((e.name && sameName.length > 1) || ffBoxes.length > 1))) {
       // Workday lists one question's checkboxes under one form field, each with its own name
       const boxes = ffBoxes.length > 1 ? ffBoxes : (e.name ? sameName : [e]);
       const opts = boxes.map(b => { let l = ownText(b);
-        if (!l && b.id) { const x = document.querySelector(`label[for="${CSS.escape(b.id)}"]`); if (x) l = clean(x.innerText); }
+        if (!l && b.id) { const x = b.getRootNode().querySelector(`label[for="${CSS.escape(b.id)}"]`); if (x) l = clean(x.innerText); }
         return l || clean(b.getAttribute('aria-label')) || b.value; });
       const q = groupQuestion(e, e.name);
       boxes.forEach((b, k) => b.setAttribute('data-jf-opt', String(k)));
@@ -199,35 +337,71 @@ FIELDS_JS = r"""(start) => {
       add(e, {kind: 'checkbox', label: q, required: required(e, q), value: on ? 'checked' : ''}); continue; }
     if (role === 'radio') continue;  // ARIA radio groups are rare on forms; left to the page model
     if (e.tagName === 'SELECT') {
-      const opts = [...e.options].map(o => clean(o.text)).filter(Boolean);
-      add(e, {kind: 'select', label: q, required: required(e, q), options: opts.slice(0, 300), multiple: e.multiple,
-              value: e.selectedIndex >= 0 && e.value ? clean(e.options[e.selectedIndex].text) : ''}); continue; }
+      const opts = [...e.options].filter(o => !o.disabled && !o.hidden).map(o => clean(o.text)).filter(Boolean);   // a disabled prompt is not a choice
+      add(e, {kind: 'select', label: q, required: required(e, q), options: opts, option_values: [...e.options].filter(o=>!o.disabled&&!o.hidden&&clean(o.text)).map(o=>o.value), options_state:'complete', multiple: e.multiple,
+              value: e.selectedIndex >= 0 && e.value ? clean(e.options[e.selectedIndex].text) : '',
+              // The selected option's own evidence that it is a PROMPT and not an answer: a disabled option is never submitted, a hidden
+              // one is not offered, and a `data-placeholder` / placeholder-labelled one says so. A longer, question-specific prompt
+              // ("Select your preferred contact method") cannot be recognised by its words, so the control says it here.
+              prompt: e.selectedIndex >= 0 && (e.options[e.selectedIndex].disabled || e.options[e.selectedIndex].hidden
+                  || e.options[e.selectedIndex].hasAttribute('data-placeholder') || e.options[e.selectedIndex].getAttribute('value') === 'placeholder'
+                  || (e.options[e.selectedIndex].parentElement.tagName === 'OPTGROUP' && e.options[e.selectedIndex].parentElement.disabled))}); continue; }
     if (role === 'combobox' || e.getAttribute('aria-haspopup') === 'listbox' || e.getAttribute('aria-autocomplete')) {
       const box = e.closest('[class*=control i]') || (e.parentElement && e.parentElement.closest('[data-automation-id]')) || e.parentElement;
       const shownValue = e.tagName === 'BUTTON' ? clean(e.innerText).replace(/^(select all that apply|select( an?)?( answer| option| one)?)\b\s*/i, '') :
           clean((box && box.querySelector('[class*=singleValue i], [class*=single-value i], [class*=multiValue i], [data-automation-id=selectedItem]') || {}).innerText || e.value || '');
       add(e, {kind: 'combobox', label: q, required: required(e, q), value: /^select one$|^select\.\.\.$/i.test(shownValue) ? '' : shownValue}); continue; }
-    if (role === 'spinbutton' || e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') {
-      const kind = e.tagName === 'TEXTAREA' ? 'textarea' : (role === 'spinbutton' ? 'spin' : (t || 'text'));
+    if (role === 'spinbutton' || role === 'textbox' || e.isContentEditable || e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') {
+      const kind = e.tagName === 'TEXTAREA' || e.getAttribute('aria-multiline') === 'true' ? 'textarea' : (role === 'spinbutton' ? 'spin' : (t || 'text'));
       if (/search/i.test(t) || /^search/i.test(q)) continue;
-      add(e, {kind, label: q, required: required(e, q), value: e.value || '', maxlength: e.maxLength > 0 ? e.maxLength : null});
+      add(e, {kind, label: q, required: required(e, q), value: e.isContentEditable ? clean(e.innerText) : (e.value || ''), maxlength: e.maxLength > 0 ? e.maxLength : null});
     }
   }
-  const buttons = [...document.querySelectorAll('button, [role=button], input[type=submit], a[href]')]
+  const buttons = all('button, [role=button], input[type=submit], a[href]')
       .filter(b => vis(b) && shown(b) && !b.disabled && !b.hasAttribute('data-jf'))
       .map(b => clean(b.innerText || b.value || b.getAttribute('aria-label'))).filter(t => t && t.length < 60);
   // "Add" / "Add Another" buttons (Workday work experience, education, languages): the planner may ask for entries
   const adds = [];
-  for (const b of document.querySelectorAll('button, [role=button]')) {
+  for (const b of all('button, [role=button]')) {
     const tx = clean(b.innerText || b.getAttribute('aria-label'));
     if (!/^add( another)?\b/i.test(tx) || !vis(b) || !shown(b) || tx.length > 40) continue;
     b.setAttribute('data-jf-add', String(adds.length));
-    adds.push({id: adds.length, text: tx, section: section(b) || clean(b.getAttribute('aria-label'))}); }
-  const errors = [...document.querySelectorAll('[role=alert], [aria-invalid=true], [class*=error i], [id*=error i], [data-automation-id*=error i]')]
+    let ownedSection=section(b) || clean(b.getAttribute('aria-label'));
+    // A shared Add another toolbar may sit outside the entry header's owner.
+    // Associate it with the nearest ancestor containing only one entity group.
+    for(let owner=b.parentElement;owner && !owner.matches('form,body,html');owner=owner.parentElement){
+      const ids=new Set([...owner.querySelectorAll('[data-jf]')].map(e=>Number(e.getAttribute('data-jf'))));
+      const fields=out.filter(f=>ids.has(f.id));
+      if(!fields.length)continue;
+      const groups=fields.map(f=>(f.section||'').match(/^(Education|Work Experience|Employment History)(?: \d+)?$/i)?.[1]);
+      if(groups.every(Boolean) && new Set(groups.map(x=>x.toLowerCase())).size===1)ownedSection=groups[0];
+      break;
+    }
+    adds.push({id: adds.length, text: tx, section: ownedSection}); }
+  const errors = all('[role=alert], [aria-invalid=true], [class*=error i], [id*=error i], [data-automation-id*=error i]')
       .filter(vis).map(e => clean(e.innerText)).filter(t => t && t.length < 300);
-  const headings = [...document.querySelectorAll('h1, h2, h3, [data-automation-id=pageHeader], [aria-current=step]')]
+  const headings = all('h1, h2, h3, [data-automation-id=pageHeader], [aria-current=step]')
       .filter(vis).map(h => clean(h.innerText)).filter(Boolean).slice(0, 8);
-  return {fields: out, next: n, adds, buttons: [...new Set(buttons)].slice(0, 60), errors: [...new Set(errors)].slice(0, 20), headings};
+  // Upload controls may mount a native input only after a button is clicked.
+  for (const button of all('button,[role=button],a')) {      // legacy portals use links: "Click here to attach your Resume"
+    const text = clean(button.innerText || button.getAttribute('aria-label'));
+    if (!/^((click here to )?(choose (a )?file|browse( files)?|upload( (a |your )?(file|resume|cv|cover letter|document|attachment))?|attach( (a |your )?(file|resume|cv|cover letter|document|attachment))?))$/i.test(text)
+        || !vis(button) || !shown(button) || button.hasAttribute('data-jf')) continue;
+    const box = button.closest('[data-field-path],[data-field-entry-id]') || button.closest('[class*=upload i],fieldset,.form-group,.form-field') || button.parentElement;
+    if (!box || box.querySelector('input[type=file]')) continue;
+    const label = box.querySelector('label,legend');
+    const caption = (label && clean(label.innerText)) || question(button) || text;
+    add(button, {kind:'file',label:caption,required:required(button,caption),value:'',accept:''});
+  }
+  // a visible custom element with no light children and no open shadow root: its content, if any, is in a closed shadow root
+  // (or drawn some other way) and cannot be read here. Reported, never guessed.
+  const opaque = [];
+  for (const h of all('*')) {
+    if (!h.tagName.includes('-') || h.shadowRoot || window.__jobagentClosedRoots?.get(h) || h.children.length || clean(h.textContent) || !vis(h) || !shown(h)) continue;
+    const r = h.getBoundingClientRect();
+    if (r.width >= 120 && r.height >= 24) opaque.push(h.tagName.toLowerCase());
+  }
+  return {shadowRoots: roots.length - 1, shadowFields, opaque: [...new Set(opaque)].slice(0, 10), fields: out, next: n, adds, buttons: [...new Set(buttons)].slice(0, 60), errors: [...new Set(errors)].slice(0, 20), headings};
 }"""
 
 
@@ -245,6 +419,17 @@ class Field:
     accept: str = ""
     maxlength: int | None = None
     format: str = ""
+    help: str = ""
+    slot: int = 0   # for uploads: which of several same-named uploads in this frame (DOM order); 0 for the first
+    prompt: bool = False   # a select whose selected option is itself a prompt (disabled / hidden / marked placeholder), not an answer
+    linked: bool = False   # an upload's native input that a lazy trigger's own click opened (carries that trigger's caption)
+    identity: str = ''     # optional stable identity assigned by the experimental reader
+    frame_identity: str = ''
+    invalid: bool = False
+    calendar: bool = False
+    locator_ref: str = ''
+    options_state: str = 'complete'
+    option_values: list[str] = field(default_factory=list)
 
     def brief(self) -> str:
         opts = ""
@@ -255,7 +440,34 @@ class Field:
                 f"{f' section=\"{self.section}\"' if self.section else ''}{opts}"
                 f"{f' current=\"{self.value[:80]}\"' if self.value else ''}"
                 f"{f' maxlength={self.maxlength}' if self.maxlength else ''}"
-                f"{f' format={self.format}' if self.format else ''}")
+                f"{f' format={self.format}' if self.format else ''}"
+                f"{f' help={self.help[:600]!r}' if self.help else ''}")
+
+
+@dataclass
+class Coverage:
+    """How much of the page the reader actually inspected (F17). A page whose every discovered field verified is NOT
+    thereby fully read: a frame that could not be read, or a region the reader cannot see into, may hold more controls."""
+    frames_read: int = 0
+    unreadable: list = field(default_factory=list)        # [{"url": ..., "reason": ...}] frames whose controls could not be read
+    challenge_frames: list = field(default_factory=list)  # human-check frames, left to the person on purpose
+    shadow_roots: int = 0                                 # open and recovered closed author roots read
+    shadow_fields: int = 0                                # fields found inside them
+    opaque: list = field(default_factory=list)            # custom elements whose content cannot be read (closed shadow roots)
+
+    @property
+    def complete(self) -> bool:
+        return not self.unreadable and not self.opaque
+
+    def problems(self) -> list[str]:
+        out = [f"a frame could not be read ({u['url']}: {u['reason']})" for u in self.unreadable]
+        out += [f"a region the reader cannot see into (custom element <{tag}>): any controls inside need a person or an adapter"
+                for tag in self.opaque]
+        return out
+
+    def summary(self) -> dict:
+        return {"complete": self.complete, "frames_read": self.frames_read, "problems": self.problems(),
+                "challenge_frames": self.challenge_frames, "shadow_roots": self.shadow_roots, "shadow_fields": self.shadow_fields}
 
 
 @dataclass
@@ -266,11 +478,34 @@ class PageView:
     headings: list[str]
     frames: dict[int, Frame]
     adds: list[dict] = field(default_factory=list)
+    coverage: Coverage = field(default_factory=Coverage)
+
+
+READABLE_FRAME = ("http", "about:srcdoc", "about:blank", "data:", "blob:")
+
+
+def classify_frames(page: Page) -> tuple[list[Frame], list[Frame]]:
+    """(frames to read, human-check frames). Embedded documents without an address of their own (srcdoc, blank, data:) are
+    read too; only challenge widgets are left out - the person solves those."""
+    read, challenge = [page.main_frame], []
+    for f in page.frames:
+        if f == page.main_frame:
+            continue
+        if CAPTCHA_FRAME.search(f.url):
+            challenge.append(f)
+        elif f.url.startswith(READABLE_FRAME):
+            read.append(f)
+    return read, challenge
 
 
 def frames_of(page: Page) -> list[Frame]:
-    return [page.main_frame] + [f for f in page.frames if f != page.main_frame and f.url.startswith("http")
-                                and not CAPTCHA_FRAME.search(f.url)]
+    return classify_frames(page)[0]
+
+
+def _where(url: str) -> str:
+    """A frame's address without its query or fragment (they can carry tokens)."""
+    p = urlsplit(url or "")
+    return f"{p.scheme}://{p.netloc}{p.path}"[:120] if p.netloc else (url or "")[:40]
 
 
 # a text box's character counter is not part of its question, and it changes as the box fills
@@ -283,29 +518,90 @@ def clean_label(label: str) -> str:
     return COUNTER.sub("", label or "").strip()
 
 
+PLACEHOLDER_VALUE = re.compile(r"(?i)^\s*[-\u2013\u2014 ]*(please\s+)?(select|choose|pick)\b[^a-z0-9]*(an?\s+)?(one|option|answer|value|item)?[^a-z0-9]*[-\u2013\u2014 ]*$")
+
+
+def has_value(f: "Field") -> bool:
+    """Does the field hold a real answer? A choice field showing its own prompt ("Choose", "-- Select --", "Please select one") holds
+    none: that is the empty state of the control, not a prefilled value, and must never count as an answer or as verified (F-exp)."""
+    if not f.value or f.prompt:
+        return False          # a prompt the control itself marks (disabled / hidden / placeholder option) is never an answer
+    return not (f.kind in ("select", "combobox", "radio", "buttons", "checkboxes") and PLACEHOLDER_VALUE.match(f.value))
+
+
+def merge_linked_uploads(fields: list) -> list:
+    """F28: a native input that a lazy trigger's own click opened and the page kept (outside the widget, hidden) is the SAME upload as
+    its trigger, not a second one. Merged only on that explicit association (`linked`) and only when exactly one trigger carries the
+    caption; with two same-caption triggers which one it belongs to is not known, so nothing is merged. Distinct widgets stay distinct."""
+    triggers: dict[tuple, int] = {}
+    for g in fields:
+        if g.kind == "file" and not g.linked:
+            triggers[(g.frame, g.label)] = triggers.get((g.frame, g.label), 0) + 1
+    return [g for g in fields if not (g.kind == "file" and g.linked and triggers.get((g.frame, g.label)) == 1)]
+
+
 def read_page(page: Page) -> PageView:
-    """Every visible field on the page and in its iframes, numbered across frames."""
+    """Every visible field on the page and in its iframes, numbered across frames, plus how much of the page was read."""
     fields, buttons, errors, headings, frames, n, adds = [], [], [], [], {}, 0, []
-    for k, f in enumerate(frames_of(page)):
-        try:
-            f.evaluate("() => document.querySelectorAll('[data-jf], [data-jf-opt], [data-jf-add]').forEach(e => "
-                       "{e.removeAttribute('data-jf'); e.removeAttribute('data-jf-opt'); e.removeAttribute('data-jf-add')})")
-            snap = f.evaluate(FIELDS_JS, n)
-        except Exception:
+    cov = Coverage()
+    read, challenge = classify_frames(page)
+    cov.challenge_frames = [_where(f.url) for f in challenge]
+    for k, f in enumerate(read):
+        snap, last = None, None
+        for attempt in range(2):                   # a frame in the middle of navigation answers on the second try
+            try:
+                if hasattr(getattr(page, 'context', None), 'new_cdp_session'):
+                    from jobagent.tools.shadow import prepare
+                    prepare(f)
+                f.evaluate("() => { const w = r => { r.querySelectorAll('[data-jf], [data-jf-opt], [data-jf-add]').forEach(e => "
+                           "{e.removeAttribute('data-jf'); e.removeAttribute('data-jf-opt'); e.removeAttribute('data-jf-add')}); "
+                           "r.querySelectorAll('*').forEach(h => { const s=h.shadowRoot||window.__jobagentClosedRoots?.get(h); if(s)w(s); }); }; w(document); }")
+                snap = f.evaluate(FIELDS_JS, n)
+                break
+            except Exception as exc:
+                last = exc
+                if f.is_detached():
+                    break
+                page.wait_for_timeout(300)
+        if snap is None:
+            if not f.is_detached():                # a frame that is gone is not unread content; one that fails is
+                cov.unreadable.append({"url": _where(f.url), "reason": f"{type(last).__name__}: {str(last)[:100]}"})
             continue
         frames[k] = f
+        cov.frames_read += 1
+        cov.shadow_roots += snap.get("shadowRoots", 0)
+        cov.shadow_fields += snap.get("shadowFields", 0)
+        cov.opaque += [x for x in snap.get("opaque", []) if x not in cov.opaque]
         n = snap["next"]
         for x in snap["fields"]:
             fields.append(Field(id=x["id"], kind=x["kind"], label=clean_label(x["label"]), required=bool(x.get("required")),
                                 value=x.get("value") or "", options=x.get("options") or [], section=x.get("section", ""),
                                 frame=k, multiple=bool(x.get("multiple")), accept=x.get("accept", ""),
-                                maxlength=x.get("maxlength"), format=x.get("format", "")))
+                                maxlength=x.get("maxlength"), format=x.get("format", ""), help=x.get("help", ""),
+                                linked=bool(x.get("linked")), prompt=bool(x.get("prompt")),
+                                identity=x.get('identity',''),frame_identity=x.get('frame_identity',''),invalid=bool(x.get('invalid')),
+                                calendar=bool(x.get('calendar')),locator_ref=x.get('locator_ref',''),
+                                options_state=x.get('options_state','partial' if x['kind']=='combobox' else 'complete'),
+                                option_values=x.get('option_values',[])))
         adds += [{**a, "frame": k} for a in snap.get("adds", [])]
         buttons += snap["buttons"]
         errors += snap["errors"]
         headings += snap["headings"]
+    fields = merge_linked_uploads(fields)
+    # Unique questions without author IDs can survive a React node replacement.
+    # Keep locator_ref tied to the actual node; identity is only for planning/audit.
+    for g in fields:
+        if g.kind!='file' and g.identity.startswith('node:'):
+            signature=(g.frame,g.kind,_norm(g.label),_norm(g.section))
+            if sum((x.frame,x.kind,_norm(x.label),_norm(x.section))==signature for x in fields)==1:
+                g.identity='question:'+repr(signature[1:])
+    seen: dict[tuple, int] = {}
+    for g in fields:                      # uploads often share a native name ("file"): number them so none is lost
+        if g.kind == "file":
+            k2 = (g.frame, g.label.rsplit(" / ", 1)[-1])
+            g.slot, seen[k2] = seen.get(k2, 0), seen.get(k2, 0) + 1
     return PageView(fields, list(dict.fromkeys(buttons)), list(dict.fromkeys(errors)), list(dict.fromkeys(headings)),
-                    frames, adds)
+                    frames, adds, cov)
 
 
 # --- option matching ------------------------------------------------------------------------------------------------
@@ -328,12 +624,152 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s+.]", " ", s.lower())).strip()
 
 
+# --- numeric ranges: matched by meaning, never by spelling (F30) -----------------------------------------------------------
+
+_N = r"(\d+(?:\.\d+)?)"
+_LOW = r"(?:or less|or fewer|or under|and under|and below|or lower|or below)"
+_HIGH = r"(?:or more|or greater|or higher|and above|and over|or above|\+)"
+
+
+def parse_interval(text: str) -> tuple[float, float] | None:
+    """The interval of percentages a phrase means: "30% or less" -> (0, 30), "up to 25%" -> (0, 25), "50% or more" -> (50, 100),
+    "10-25%" -> (10, 25), "30%" -> (30, 30). None when the phrase holds no percentage or range."""
+    s = (text or "").lower().replace("\u2013", "-").replace("\u2014", "-")
+    # comparison symbols first: they must keep their meaning, never be dropped into an exact point (F30). A strict bound excludes
+    # its own value, an inclusive one keeps it.
+    s = s.replace("\u2264", "<=").replace("\u2265", ">=").replace("=<", "<=").replace("=>", ">=")
+    eps = 1e-6
+    if m := re.search(rf"<=\s*{_N}", s):
+        return 0.0, float(m.group(1))
+    if m := re.search(rf"<\s*{_N}", s):
+        return 0.0, float(m.group(1)) - eps
+    if m := re.search(rf">=\s*{_N}", s):
+        return float(m.group(1)), 100.0
+    if m := re.search(rf">\s*{_N}", s):
+        return float(m.group(1)) + eps, 100.0
+    if m := re.search(rf"between\s*{_N}\s*%?\s*(?:and|to|-)\s*{_N}\s*%", s):
+        return float(m.group(1)), float(m.group(2))
+    if re.search(r"[~\u2248]|\b(approx\w*|about|around|roughly|circa|nearly|almost)\b", s) and re.search(r"\d\s*%", s):
+        return None                                   # an approximation is not an interval this code can place: a person decides
+    if m := re.search(rf"{_N}\s*%?\s*(?:-|to)\s*{_N}\s*%", s):
+        return float(m.group(1)), float(m.group(2))
+    if m := re.search(rf"{_N}\s*%?\s*{_LOW}", s) or re.search(rf"(?:up to|less than|no more than|under|at most|maximum of|max)\s*{_N}\s*%", s):
+        return 0.0, float(m.group(1))
+    if m := re.search(rf"{_N}\s*%?\s*{_HIGH}", s) or re.search(rf"(?:at least|more than|over|minimum of|min)\s*{_N}\s*%", s):
+        return float(m.group(1)), 100.0
+    if m := re.search(rf"{_N}\s*%", s):
+        return float(m.group(1)), float(m.group(1))
+    return None
+
+
+def interval_option(answer: str, options: list[str]) -> tuple[str | None, bool]:
+    """(the option whose bracket CONTAINS the answer's interval, the tightest one; whether this was a numeric-range question at
+    all). A numeric question never falls back to spelling similarity: "30% or less" is not "50% or more"."""
+    want = parse_interval(answer)
+    ranges = [(o, parse_interval(o)) for o in options]
+    ranges = [(o, r) for o, r in ranges if r is not None]
+    if want is None:
+        # a percentage the code cannot interpret (an approximation, an odd comparator) against options that ARE ranges: no guess,
+        # no spelling similarity - the field is left for the candidate
+        return None, bool(ranges) and bool(re.search(r"\d\s*%", answer or ""))
+    if not ranges:
+        return None, False
+    fits = [(r[1] - r[0], o) for o, r in ranges if r[0] <= want[0] and want[1] <= r[1]]
+    return (min(fits)[1] if fits else None), True
+
+
+# --- factual identities: a school, an employer, a person (F29) --------------------------------------------------------------
+
+IDENTITY_Q = re.compile(r"(?i)\b(schools?|universit(?:y|ies)|colleges?|institutions?|institutes?|alma mater|employers?|company name|organi[sz]ations?|"
+                        r"referr\w* (name|employee)|employee name|supervisor|reference name)\b")
+OTHER_OPTION = re.compile(r"(?i)^\s*(other|not listed|my (school|institution|employer) is not listed|none of the above)\b")
+
+
+def is_identity(question: str) -> bool:
+    """Is this question asking WHICH institution / employer / person? Those are facts: a similarly spelled neighbour is a
+    different thing, so they are never matched by spelling similarity."""
+    return bool(IDENTITY_Q.search(question or ""))
+
+
+PERSON_Q = re.compile(r"(?i)\b(referr\w* (name|employee)|employee name|supervisor|reference name|manager name)\b")
+_CORP_SUFFIX = re.compile(r"(?i)^[\s.,]*((inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|company|gmbh|plc|lp|llp)\b[\s.,]*)+$")
+_STOP = {"of", "the", "and", "for", "at", "in"}
+_TYPE_WORD = re.compile(r"(?i)^\s*(university|college|institute|school|inc\.?|llc|ltd\.?|corp\.?|company|co\.?)?\s*$")
+
+# Aliases the CANDIDATE has approved: {normalised real name: [other forms the same institution / employer is listed under]}. Filled by
+# the application step from the applicant file (an entry's `aliases:` list). Nothing else makes two different names one identity.
+APPROVED_ALIASES: dict[str, list[str]] = {}
+
+
+def set_approved_aliases(mapping: dict[str, list[str]] | None) -> None:
+    APPROVED_ALIASES.clear()
+    for name, forms_ in (mapping or {}).items():
+        APPROVED_ALIASES[_norm(name)] = [x for x in forms_ if x]
+
+
+def _initialism(name: str) -> str:
+    return "".join(w[0] for w in re.findall(r"[A-Za-z]+", name) if w.lower() not in _STOP).upper()
+
+
+def _justified_extension(short: str, long: str) -> bool:
+    """Is `long` the same organisation as `short` by a JUSTIFIED, mechanical transformation? Only (1) a corporate suffix ("Acme
+    Robotics" / "Acme Robotics, Inc."), or (2) its OWN initialism in parentheses, optionally followed by the type word ("Arizona
+    State University" / "Arizona State University (ASU)", "Vellore Institute of Technology (VIT) University"). Punctuation does not
+    make an extension the same organisation: "Acme Robotics - Competitor", "Acme Robotics (Competitor)" and "Acme Robotics,
+    Competitor" are different identities. Campus or branch forms are accepted only as approved aliases."""
+    s, lg = short.strip(), long.strip()
+    if not lg.lower().startswith(s.lower()) or len(lg) == len(s):
+        return False
+    rest = lg[len(s):]
+    if _CORP_SUFFIX.match(rest):
+        return True
+    m = re.match(r"^\s*\(([^()]+)\)(.*)$", rest)
+    if not m:return False
+    inside=m.group(1).replace('.', '').strip();initial=_initialism(s)
+    return bool(initial and inside.upper().startswith(initial) and
+                _TYPE_WORD.fullmatch(inside[len(initial):]) and _TYPE_WORD.fullmatch(m.group(2)))
+
+
+def identity_option(answer: str, options: list[str], person: bool = False) -> str | None:
+    """The option that IS this institution / employer / person: the same name (case and punctuation aside); for an organisation also
+    a mechanical variant (`_justified_extension`, in either direction) or a form the candidate has approved as an alias
+    (`APPROVED_ALIASES`). Never merely a similar name, a longer one, or one with something after a dash or comma: "Arizona State
+    University" is not "Adams State University", "Jane Doe" is not "Jane Doe Jr", "Acme Robotics" is not "Acme Robotics -
+    Competitor". A PERSON must match exactly."""
+    a = _norm(answer)
+    if not a:
+        return None
+    pool = [o for o in options if o and not OTHER_OPTION.match(o) and not re.match(r"(?i)^\s*(select|choose|--|please select)\b", o)]
+    for o in pool:
+        if _norm(o) == a:
+            return o
+    if person:
+        return None
+    approved = {_norm(x) for x in APPROVED_ALIASES.get(a, [])}
+    for o in pool:
+        if _norm(o) in approved or _justified_extension(answer, o) or _justified_extension(o, answer):
+            return o
+    return None
+
+
+
+def literal_identity_option(answer,options,person=False):
+    """An explicit Other choice is valid; it never aliases a named institution."""
+    if OTHER_OPTION.match(answer or ''):
+        hits=[o for o in options if _norm(o)==_norm(answer)]
+        return hits[0] if len(hits)==1 else None
+    return identity_option(answer,options,person=person)
+
+
 def match_option(answer: str, options: list[str], cutoff: int = 80) -> tuple[str | None, int]:
     """The page option that means `answer` (e.g. "USA" -> "United States of America"); (None, best score) when no
     option is close enough for code to decide."""
     opts = [o for o in options if o and not re.match(r"(?i)^\s*(select|choose|--|please select)\b.*", o)]
     if not answer or not opts:
         return None, 0
+    picked, numeric = interval_option(answer, opts)
+    if numeric:
+        return (picked, 97) if picked else (None, 0)         # a percentage question is answered by meaning or not at all
     a = _norm(answer)
     for o in opts:  # exact (normalized) first
         if _norm(o) == a:
@@ -403,8 +839,11 @@ def in_range(option: str, x: float) -> bool:
     return False
 
 
-def same_value(want: str, got: str, kind: str) -> bool:
+def same_value(want: str, got: str, kind: str, question: str = "") -> bool:
     """The page shows the value that was meant (read-back check)."""
+    if kind in ('combobox','select','radio','buttons') and is_identity(question):
+        return any(_norm(v)==_norm(got) or identity_option(v.strip(),[got],person=bool(PERSON_Q.search(question))) is not None
+                   for v in want.split(' | ') if v.strip())
     if " | " in want:
         # one of the candidate's wordings exactly: "Arizona State University" is not "Arizona State University - West"
         g = _norm(got)
@@ -431,7 +870,7 @@ def same_value(want: str, got: str, kind: str) -> bool:
 
 # --- comboboxes ------------------------------------------------------------------------------------------------------
 
-OPTIONS_JS = r"""() => [...new Set([...document.querySelectorAll('[role=option], [role=menuitem], [data-automation-id=promptOption]')]
+OPTIONS_JS = r"""() => [...new Set([...(window.__jobagentAll ? window.__jobagentAll('[role=option], [role=menuitem], [data-automation-id=promptOption]') : document.querySelectorAll('[role=option], [role=menuitem], [data-automation-id=promptOption]'))]
   .filter(e => { const r = e.getBoundingClientRect(); return r.width > 1 && r.height > 1
                  && !e.closest('[data-automation-id=selectedItemList], [data-automation-id=selectedItem]'); })
   .map(e => (e.innerText || e.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean))]"""
@@ -475,33 +914,95 @@ def best_place(answer: str, suggestions: list[str]) -> str | None:
     return (us or same_city or [None])[0]
 
 
+def strict_place(answer: str, suggestions: list[str]) -> str | None:
+    """Render one known city/state; never choose a nearest or different place."""
+    bits=[_norm(x) for x in answer.split(',') if x.strip()]
+    if len(bits)<2:return None
+    codes=set(US_STATES.values())
+    states={US_STATES.get(x,x) for x in bits[1:] if x in US_STATES or x in codes}
+    if len(states)!=1:return None
+    hits=[]
+    for item in suggestions:
+        parts=[_norm(x) for x in item.split(',') if x.strip()]
+        if not parts or parts[0]!=bits[0]:continue
+        given={US_STATES.get(x,x) for x in parts[1:] if x in US_STATES or x in codes}
+        if given!=states:continue
+        countries=[x for x in parts[1:] if x not in US_STATES and x not in codes]
+        if any(x not in ('us','usa','united states','united states of america') for x in countries):continue
+        hits.append(item)
+    return hits[0] if len(hits)==1 else None
+
+
+def fill_calendar(page,view,f,answer):
+    """Choose an exact accessible date, then verify the displayed calendar value."""
+    try:target=datetime.strptime(answer,'%Y-%m-%d')
+    except ValueError:raise FillError('A calendar needs a source-backed YYYY-MM-DD date')
+    loc=locate(view,f);frame=view.frames[f.frame]
+    loc.click(timeout=8000)
+    date_name=re.compile(rf'\b{target:%B}\s+{target.day}(?:st|nd|rd|th)?(?:,\s*|\s+){target.year}\b',re.I)
+    for _ in range(36):
+        cell=frame.get_by_role('option',name=date_name).filter(visible=True)
+        if not cell.count():cell=frame.get_by_role('button',name=date_name).filter(visible=True)
+        if not cell.count():cell=shadow_locator(frame,f'[data-date="{answer}"], [datetime="{answer}"]').filter(visible=True)
+        if cell.count()==1:
+            cell.click(timeout=8000);page.keyboard.press('Escape');loc.blur()
+            shown=loc.input_value()
+            for fmt in ('%m/%d/%Y','%Y-%m-%d','%B %d, %Y','%b %d, %Y'):
+                try:
+                    if datetime.strptime(shown,fmt).date()==target.date():return shown
+                except ValueError:pass
+            raise FillError('The calendar did not retain the selected date')
+        popup=shadow_locator(frame,'.react-datepicker, [role=dialog]:has([role=grid])').filter(visible=True)
+        if popup.count()!=1:break
+        heading=popup.inner_text()
+        month=re.search(r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})\b',heading)
+        if not month:break
+        current=datetime.strptime(month[0],'%B %Y')
+        direction='Next' if (target.year,target.month)>(current.year,current.month) else 'Previous'
+        nav=popup.get_by_role('button',name=re.compile(rf'{direction}.*month',re.I)).filter(visible=True)
+        if nav.count()!=1:break
+        nav.click(timeout=3000);page.wait_for_timeout(100)
+    page.keyboard.press('Escape')
+    raise FillError('No unique accessible day for the source-backed date')
+
+
 def locate(view: PageView, f: Field):
-    return view.frames[f.frame].locator(f'[data-jf="{f.id}"]').first
+    selector=f'[data-jf-ref={json.dumps(f.locator_ref)}]' if f.locator_ref else f'[data-jf="{f.id}"]'
+    loc=field_element(view.frames[f.frame],selector)
+    if f.locator_ref and hasattr(loc,'count') and loc.count()!=1:
+        raise FillError('The captured control is not exactly one control now; refresh the form')
+    return loc
 
 
 def _open_options(frame: Frame, loc, page: Page) -> list[str]:
     loc.scroll_into_view_if_needed(timeout=5000)
     loc.click(timeout=8000)
-    page.wait_for_timeout(700)
+    try:
+        # Other closed pickers can retain hidden option nodes. Wait for actual
+        # visible choices from this opening, not merely any option in the DOM.
+        frame.wait_for_function("pattern => {const skip=new RegExp(pattern,'i');return ("+OPTIONS_JS+")().some(t=>!skip.test(t));}",
+                                arg=_NO_OPTIONS.pattern.removeprefix('(?i)'),timeout=1500)
+    except Exception:pass
     return [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
 
 
-def discover_options(page: Page, view: PageView, log=print) -> None:
+def discover_options(page: Page, view: PageView, log=print, *, fields=None) -> None:
     """Open each combobox once to read its options (react-select and Workday lists render them only when open).
     A search box with no list until something is typed keeps no options (the answer is typed then)."""
-    for f in view.fields:
+    for f in (view.fields if fields is None else fields):
         if f.kind != "combobox" or f.options:
             continue
         try:
             loc = locate(view, f)
-            f.options = _open_options(view.frames[f.frame], loc, page)[:300]
+            f.options = _open_options(view.frames[f.frame], loc, page)
+            f.options_state = 'partial'
             if loc.get_attribute("data-uxi-widget-type") == "selectinput" and len(f.options) <= 15:
                 f.options = _expand_categories(page, view.frames[f.frame], loc, f.options)
         except Exception as e:
             log(f"forms: options of \"{f.label[:50]}\" unreadable: {type(e).__name__}")
         finally:
             page.keyboard.press("Escape")
-            page.wait_for_timeout(200)
+            page.wait_for_timeout(30)
 
 
 def _expand_categories(page: Page, frame: Frame, loc, top: list[str]) -> list[str]:
@@ -511,7 +1012,7 @@ def _expand_categories(page: Page, frame: Frame, loc, top: list[str]) -> list[st
         try:
             page.keyboard.press("Escape")
             _open_options(frame, loc, page)
-            frame.locator("[role=option], [data-automation-id=promptOption]").filter(
+            shadow_locator(frame, "[role=option], [data-automation-id=promptOption]").filter(
                 has_text=re.compile(rf"^\s*{re.escape(cat)}\s*$")).first.click(timeout=5000)
             page.wait_for_timeout(1000)
             chosen = loc.evaluate("e => [...(e.closest('[data-automation-id=multiSelectContainer]') || e.parentElement)"
@@ -537,8 +1038,17 @@ class FillError(RuntimeError):
 
 
 def _choose(question: str, answer: str, options: list[str], tie_break) -> str:
+    if is_identity(question):
+        # a fact about WHO: the named institution or nothing; the "Other" choice (whose name the form then asks for) when the list
+        # lacks it; never a neighbour that merely looks alike, and never a model's idea of "closest" (F29)
+        opt = identity_option(answer, options, person=bool(PERSON_Q.search(question or "")))
+        if opt is None:
+            opt = next((o for o in options if OTHER_OPTION.match(o or "")), None)
+        if opt is None:
+            raise FillError(f"{answer!r} is not offered, and the list has no Other choice; options: {options[:8]}: needs the candidate")
+        return opt
     opt, score = match_option(answer, options)
-    if opt is None and tie_break and options:
+    if opt is None and tie_break and options and parse_interval(answer) is None:
         opt = tie_break(question, answer, options)
     if opt is None:
         raise FillError(f"no option matches {answer!r} (best score {score}); options: {options[:12]}")
@@ -570,20 +1080,90 @@ def close_option(answer: str, options: list[str]) -> str | None:
 
 
 def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[str, str], tie_break=None,
-               strict: bool = False, close: bool = False) -> str:
+               strict: bool = False, close: bool = False, before_upload=None, upload_confirmation=None, alternatives=()) -> str:
     """Put `answer` into the field. Returns what was chosen (the option text for choice fields)."""
+    from jobagent.tools import challenge
+    if challenge.guard(page):
+        view = read_page(page)
+        matches = [g for g in view.fields if g.label == f.label and g.kind == f.kind]
+        if len(matches) != 1:
+            raise challenge.Blocked("Form changed after verification; field requires review")
+        f = matches[0]
     frame, loc = view.frames[f.frame], locate(view, f)
+    tagged=loc.get_attribute('data-jf')
+    if tagged is not None and tagged.isdigit() and int(tagged)!=f.id:f=replace(f,id=int(tagged))
     if f.kind == "file":
         path = files.get(answer) or answer
         name = path.rsplit("/", 1)[-1]
-        for _ in range(2):  # the upload counts once the page shows the file's name
-            loc.set_input_files(path)
-            for _ in range(10):
-                page.wait_for_timeout(2000)
-                if any(name in fr.locator("body").inner_text(timeout=5000) for fr in view.frames.values()):
-                    return path
+        # Resolve THIS widget again at action time (F28): a page that re-rendered since it was read has renumbered its controls, and
+        # an index from the earlier read could now name another widget's. The widget is identified by its own caption (and slot);
+        # if that is not exactly one control now, nothing is attached.
+        live = read_page(page)
+        same = [g for g in live.fields if g.kind == "file" and g.frame==f.frame and g.label == f.label and g.slot == f.slot]
+        if len(same) != 1:
+            raise FillError(f"the upload {f.label[:60]!r} is not exactly one control on the page now ({len(same)}); not attaching "
+                            f"{name} to a control that might be another widget")
+        f, view = same[0], live
+        frame, loc = view.frames[f.frame], locate(view, f)
+        if before_upload is None:
+            from jobagent.filling.uploads import UploadProof
+            proof=UploadProof(path,loc);proof.identity=f.identity;proof.frame=f.frame_identity
+            proofs=getattr(page,'_jobagent_upload_proofs',None)
+            if proofs is None:proofs=[];page._jobagent_upload_proofs=proofs
+            proofs.append(proof);before_upload=proof.bind;upload_confirmation=proof.verify
+        if loc.evaluate("e => e.tagName !== 'INPUT'"):
+            # Associate the clicked control with its chooser/new input, without assuming a caption or input ID.
+            choosers = []
+            listener = lambda chooser: choosers.append(chooser)
+            shadow_locator(frame, 'input[type=file]').evaluate_all(
+                "es=>es.forEach(e=>e.setAttribute('data-jf-upload-existing','1'))")
+            page.on('filechooser', listener)
+            try:
+                loc.click(timeout=8000)
+                fresh = shadow_locator(frame, 'input[type=file]:not([data-jf-upload-existing])')
+                for _ in range(16):
+                    if choosers or fresh.count():
+                        break
+                    page.wait_for_timeout(500)
+                inside = [fresh.nth(i) for i in range(fresh.count())
+                          if loc.evaluate("(btn, el) => { const box = btn.closest('fieldset,[data-field-path],[data-field-entry-id],"
+                                          "[class*=upload i],.form-group,.form-field') || btn.parentElement; return !!box && box.contains(el); }",
+                                          fresh.nth(i).element_handle())]
+                if choosers:                      # the file chooser this very click opened: tied to this widget by the click itself
+                    loc = choosers[0].element
+                elif len(inside) == 1:            # a new input that appeared INSIDE this widget's own boundary
+                    loc = inside[0]
+                else:
+                    raise FillError('Upload button did not expose one identifiable file input inside its own widget')
+                loc.evaluate("(e,label)=>e.setAttribute('data-jf-upload-label',label)", f.label)
+            finally:
+                page.remove_listener('filechooser', listener)
+                shadow_locator(frame, '[data-jf-upload-existing]').evaluate_all(
+                    "es=>es.forEach(e=>e.removeAttribute('data-jf-upload-existing'))")
+        # Retain the resolved node. A Locator can wait 30 seconds for a replaced
+        # input on every poll; an ElementHandle can inspect its disconnected
+        # node immediately. Choosers already provide an ElementHandle.
+        native=loc.element_handle(timeout=1200) if hasattr(loc,'element_handle') else loc
+        if native is None:raise FillError('The resolved file input disappeared before upload')
+        if before_upload:before_upload(native)
+        # Dispatch once. Poll owned evidence, not a filename elsewhere or a
+        # second upload of the same bytes while the first is still processing.
+        if getattr(getattr(page, 'context', None), 'jobagent_policy', None):
+            import mimetypes
+            native.set_input_files({'name':name,'mimeType':mimetypes.guess_type(path)[0] or 'application/octet-stream',
+                                   'buffer':Path(path).read_bytes()},timeout=8000)
+        else:native.set_input_files(path,timeout=8000)
+        for _ in range(60):
+            if upload_confirmation:
+                if upload_confirmation():return path
+            else:
+                try:
+                    if native.evaluate('e=>e.isConnected') and name in native.evaluate('e=>[...(e.files||[])].map(f=>f.name)'):return path
+                except Exception:pass
+            page.wait_for_timeout(500)
         raise FillError(f"{name} was attached but the page never showed it")
     loc.scroll_into_view_if_needed(timeout=5000)
+    if f.calendar:return fill_calendar(page,view,f,answer)
     if f.kind == "text" and loc.evaluate("e => /location|city|place|autocomplete/i.test([e.name, e.id, e.className, "
                                          "e.getAttribute('data-qa')].join(' ')) || !!e.getAttribute('aria-autocomplete')"):
         # a place box that keeps only a picked suggestion (Lever's "Current location"): type the city, pick it
@@ -593,7 +1173,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         page.wait_for_timeout(2500)
         pick = best_place(answer, frame.evaluate(SUGGEST_JS))
         if pick:
-            frame.locator(".dropdown-results > *, [class*=dropdown-location], .pac-item, [class*=suggestion i] li, "
+            shadow_locator(frame, ".dropdown-results > *, [class*=dropdown-location], .pac-item, [class*=suggestion i] li, "
                           "[class*=autocomplete i] li, [role=option]").filter(
                 has_text=re.compile(rf"^\s*{re.escape(pick)}\s*$")).first.click(timeout=8000)
             page.wait_for_timeout(800)
@@ -624,7 +1204,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             for variant in variants:
                 try:
                     return fill_field(page, view, f, variant, files, None if close_only else tie_break,
-                                      close=close_only)
+                                      close=close_only, strict=strict)
                 except Exception as e:
                     errors.append(f"{variant}: {str(e)[:60]}")
                     page.keyboard.press("Escape")
@@ -647,10 +1227,12 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         page.keyboard.type(answer, delay=60)
         return answer
     if f.kind == "select":
-        opt = close_option(answer, f.options) if close else _choose(f.label, answer, f.options, tie_break)
+        opt = (literal_identity_option(answer,f.options,person=bool(PERSON_Q.search(f.label))) if is_identity(f.label) else strict_option(answer,f.options)) if strict else close_option(answer, f.options) if close and not is_identity(f.label) else _choose(f.label, answer, f.options, tie_break)
         if opt is None:
             raise FillError(f"{answer!r} isn't offered as such")
-        loc.select_option(label=opt, timeout=8000)
+        values=[v for label,v in zip(f.options,f.option_values) if label==opt]
+        if values and len(set(values))!=1:raise FillError('The offered label identifies several distinct options')
+        loc.select_option(**({'value':values[0]} if values else {'label':opt}),timeout=8000)
         return opt
     if f.kind == "checkbox":
         want = _norm(answer) in ("checked", "yes", "true", "agree", "i agree", "accept")
@@ -658,15 +1240,15 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             loc.set_checked(want, timeout=8000)
         else:  # styled box: its label takes the click
             if loc.is_checked() != want:
-                frame.locator(f'label:has([data-jf="{f.id}"])').first.click(timeout=8000)
+                shadow_locator(frame, f'label:has([data-jf="{f.id}"])').first.click(timeout=8000)
         return "checked" if want else ""
     if f.kind == "buttons":  # press the button that is the answer (Ashby Yes / No)
         opt = close_option(answer, f.options) if close else _choose(f.label, answer, f.options, tie_break)
         if opt is None:
             raise FillError(f"{answer!r} isn't offered as such")
         k = f.options.index(opt)
-        frame.locator(f'[data-jf="{f.id}"][data-jf-opt="{k}"]').first.click(timeout=8000)
-        page.wait_for_timeout(500)
+        field_element(frame, f'[data-jf="{f.id}"][data-jf-opt="{k}"]').click(timeout=8000)
+        page.wait_for_timeout(50)
         return opt
     if f.kind in ("radio", "checkboxes"):
         wanted = [a.strip() for a in (answer.split(";") if f.kind == "checkboxes" else [answer]) if a.strip()]
@@ -674,7 +1256,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         if None in chosen:
             raise FillError(f"{answer!r} isn't offered as such")
         for k, o in enumerate(f.options):
-            box = frame.locator(f'[data-jf="{f.id}"][data-jf-opt="{k}"]').first
+            box = field_element(frame, f'[data-jf="{f.id}"][data-jf-opt="{k}"]')
             on = o in chosen
             if box.is_checked() == on or (f.kind == "radio" and not on):
                 continue
@@ -682,11 +1264,11 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 box.set_checked(on, timeout=4000)
             except Exception:  # hidden custom input: click its label
                 bid = box.get_attribute("id")
-                lab = frame.locator(f'label[for="{bid}"]').first if bid else frame.locator(f'label:has([data-jf-opt="{k}"][data-jf="{f.id}"])').first
+                lab = shadow_locator(frame, f'label[for="{bid}"]').first if bid else shadow_locator(frame, f'label:has([data-jf-opt="{k}"][data-jf="{f.id}"])').first
                 lab.click(timeout=8000)
         return "; ".join(chosen)
     if f.kind == "combobox":
-        if f.value and not strict and loc.get_attribute("data-uxi-widget-type") == "selectinput":
+        if f.value and loc.get_attribute("data-uxi-widget-type") == "selectinput":
             # a single-choice Workday picker that already holds something else (an earlier run's pick): its chip
             # sits over the input, so remove it before choosing
             box = loc.locator("xpath=ancestor::*[@data-automation-id='multiSelectContainer'][1]")
@@ -705,30 +1287,39 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             # "Category > meaning": open the category, then the entry that means the rest
             cat, answer = (x.strip() for x in answer.split(" > ", 1))
             first = _choose(f.label, cat, opts, tie_break)
-            frame.locator("[role=option], [data-automation-id=promptOption]").filter(
+            shadow_locator(frame, "[role=option], [data-automation-id=promptOption]").filter(
                 has_text=re.compile(rf"^\s*{re.escape(first)}\s*$")).first.click(timeout=8000)
             page.wait_for_timeout(1200)
             opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
-        pick = (lambda ans, o: (strict_option(ans, o), 0)) if strict else \
+        geographic=bool(re.search(r'(?i)location|\bcity\b|where.*located',f.label)) and not is_identity(f.label)
+        pick = (lambda ans, o: (literal_identity_option(ans, o, person=bool(PERSON_Q.search(f.label))), 0)) if is_identity(f.label) else \
+            (lambda ans, o: (strict_option(ans, o) or (strict_place(ans,o) if geographic else None), 0)) if strict else \
             (lambda ans, o: (close_option(ans, o), 0)) if close else match_option
-        opt, _ = pick(answer, opts) if opts else (None, 0)
+        candidates=list(dict.fromkeys([answer,*[str(a) for a in alternatives if a and not OTHER_OPTION.match(str(a))]]))
+        def offered(options):
+            return next((hit for candidate in candidates if (hit:=pick(candidate,options)[0]) is not None),None)
+        opt=offered(opts) if opts else None
         if opt is None and (loc.evaluate("e => e.tagName") == "INPUT"):
             # a search box: type the answer (or its first words) and pick from what the site suggests
-            for probe in dict.fromkeys([answer[:60], " ".join(answer.split()[:3]), answer.split()[0] if answer else ""]):
+            for probe in dict.fromkeys([*[a[:60] for a in candidates], " ".join(answer.split()[:3]), answer.split()[0] if answer else ""]):
                 if not probe:
                     continue
+                previous=frame.evaluate(OPTIONS_JS)
                 loc.fill("")
-                loc.type(probe, delay=40)
+                loc.type(probe, delay=0)
                 if loc.get_attribute("data-uxi-widget-type") == "selectinput":
                     loc.press("Enter")  # Workday searches on Enter
-                page.wait_for_timeout(1800)
+                try:
+                    frame.wait_for_function("before => {const choices=("+OPTIONS_JS+")();return choices.length && !choices.every(t=>/^loading/i.test(t)) && JSON.stringify(choices)!==JSON.stringify(before);}",
+                                            arg=previous,timeout=1800)
+                except Exception:pass
                 opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
                 if not opts and loc.get_attribute("data-uxi-widget-type") == "selectinput":
                     # Workday picks a search's only result by itself: no list, just the new chip
                     chips = loc.evaluate("e => [...(e.closest('[data-automation-id=multiSelectContainer]') || "
                                          "e.parentElement).querySelectorAll('[data-automation-id=selectedItem]')]"
                                          ".map(x => x.innerText.trim())")
-                    if chips and pick(answer, chips)[0]:
+                    if chips and offered(chips):
                         return chips[-1]
                     for _ in chips if not strict else []:  # it picked something else: undo
                         box = loc.locator("xpath=ancestor::*[@data-automation-id='multiSelectContainer'][1]")
@@ -736,9 +1327,14 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                         page.keyboard.press("Delete")
                         page.wait_for_timeout(500)
                 if opts:
-                    opt, _ = pick(answer, opts)
+                    opt=offered(opts)
                     if opt:
                         break
+        if opt is None and strict and is_identity(f.label):
+            fallback=next((str(a) for a in alternatives if OTHER_OPTION.match(str(a))),None)
+            if fallback:
+                page.keyboard.press('Escape')
+                return fill_field(page,view,f,fallback,files,strict=True)
         if opt is None and (strict or close):
             page.keyboard.press("Escape")
             raise FillError(f"{answer!r} isn't offered as such")
@@ -751,12 +1347,17 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 raise
         option = frame.get_by_role("option", name=opt, exact=True)
         if not option.count():
-            option = frame.locator("[role=option], [role=menuitem], [data-automation-id=promptOption]").filter(
+            option = shadow_locator(frame, "[role=option], [role=menuitem], [data-automation-id=promptOption]").filter(
                 has_text=re.compile(rf"^\s*{re.escape(opt)}\s*$"))
         try:
             option.first.click(timeout=8000)
         finally:
-            page.wait_for_timeout(1200)
+            page.wait_for_timeout(1200 if loc.get_attribute('data-uxi-widget-type')=='selectinput' else 50)
+        # Carvana's GPA multi-select keeps its options open after selection and
+        # intercepts the next field. Close its own trigger, without clicking elsewhere.
+        if (loc.get_attribute("id") or "").endswith("_multiselect") and shadow_locator(frame, '[role="option"]:visible').count():
+            loc.click(timeout=5000)
+            page.wait_for_timeout(300)
         if loc.get_attribute("data-uxi-widget-type") == "selectinput":
             # a Workday category ("Job Board") opens its own list ("LinkedIn", "Indeed"): pick again from that
             for _ in range(2):
@@ -766,7 +1367,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 if chosen or not sub:
                     break
                 pick = _choose(f.label, answer, sub, tie_break)
-                frame.locator("[role=option], [data-automation-id=promptOption]").filter(
+                shadow_locator(frame, "[role=option], [data-automation-id=promptOption]").filter(
                     has_text=re.compile(rf"^\s*{re.escape(pick)}\s*$")).first.click(timeout=8000)
                 page.wait_for_timeout(1200)
                 opt = f"{opt} > {pick}"
@@ -801,43 +1402,354 @@ def has_submit_input(page: Page) -> bool:
     check)."""
     for f in frames_of(page):
         try:
-            if f.locator(SUBMIT_INPUT).count():
+            if shadow_locator(f, SUBMIT_INPUT).count():
                 return True
         except Exception:
             continue
     return False
 
 
-def click_submit_input(page: Page) -> bool:
+class ClickOutcomeUnknown(RuntimeError):
+    """A click on the control that sends the application was started and did not report success. It may have been
+    delivered: the caller must treat the application as possibly sent."""
+
+
+def click_submit_input(page: Page, approval: SubmitApproval) -> bool:
     """Click the form's visible, unlabelled submit control (step 13, after the candidate's approve)."""
+    if not isinstance(approval, SubmitApproval):
+        raise TypeError("sending an application needs a SubmitApproval")
     for f in frames_of(page):
         try:
-            loc = f.locator(SUBMIT_INPUT).filter(visible=True)
-            if loc.count():
-                loc.first.click(timeout=10000, no_wait_after=True)
-                return True
+            loc = shadow_locator(f, SUBMIT_INPUT).filter(visible=True)
+            found = loc.count()
         except Exception:
-            continue
+            continue                                  # nothing was clicked: look in the next frame
+        if found:
+            approval.still_valid()                    # last check before the click is dispatched
+            try:
+                loc.first.click(timeout=10000, no_wait_after=True)
+            except Exception as e:                    # the click may have been delivered before this failed: never "no button"
+                raise ClickOutcomeUnknown(f"{type(e).__name__}: {str(e)[:200]}") from e
+            return True                               # and no other control or frame is tried after a click
     return False
 
 
-def click_button(page: Page, view: PageView, pattern: re.Pattern, allow_submit: bool = False) -> str | None:
-    """Click the first visible button whose text matches `pattern`; never one that sends the application."""
+# --- is a file attached NOW? (checked at approval, from the page itself, never from an earlier fill record) -------------------
+# Evidence belongs to ONE upload control. It is looked for only inside that control's own boundary: the smallest area
+# around it (or, when its input is gone, around its one unambiguous caption) that holds no other upload control, no other
+# field and no other upload's caption. A file name anywhere else on the page, in another widget, or in another frame is
+# not evidence for it; when the association cannot be established, the blocker stays.
+
+DOC_NAME = re.compile(r"[\w][\w .()\-]{0,80}\.(pdf|docx?|rtf|txt|odt|pages|png|jpe?g)\b", re.I)
+BOUNDARY_JS = """({sel, own, others, docRe}) => {
+  const norm = s => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+  const doc = new RegExp(docRe, 'i');
+  const docAll = new RegExp(docRe, 'gi');
+  const stop = ['FORM', 'BODY', 'MAIN', 'HTML', 'SECTION', 'ARTICLE'];
+  const el = sel ? document.querySelector(sel) : null;
+  let start = el;
+  if (!start) {   // the input is gone: its caption must be unique on the page (a file name is not a caption)
+    const hits = [...document.querySelectorAll('label, legend, span, div, p, h2, h3, h4, dt, li')].filter(e => {
+      const t = norm((e.innerText || '').replace(docAll, ' '));      // a file name beside a caption does not stop it being the caption
+      return t.length > 2 && t.length < 300 && own.some(c => t.includes(c)) && !others.some(c => c && t.includes(c)); });
+    const smallest = hits.filter(h => !hits.some(o => o !== h && h.contains(o)));
+    if (smallest.length !== 1) return {n: smallest.length, text: '', files: 0};
+    start = smallest[0];
+  }
+  const crowded = node => others.some(c => c && norm(node.innerText).includes(c))
+      || [...node.querySelectorAll('input[type=file], [data-jf]')].some(x => x !== el && !(el && el.contains(x)));
+  let a = start;
+  for (let k = 0; k < 4 && a.parentElement && !stop.includes(a.parentElement.tagName) && !crowded(a.parentElement); k++) a = a.parentElement;
+  return {n: 1, text: a.innerText || '', files: el && el.files ? el.files.length : 0};
+}"""
+
+
+def _captions(label: str) -> list[str]:
+    """The words an upload's caption goes by: the parts of the combined label that read like text, lower-cased."""
+    parts = [re.sub(r"\s+", " ", re.sub(r"[*✱∗＊⁎]|\(required\)|\b(attach|upload|browse|choose file)\b.*$", "", p,
+                   flags=re.I)).strip().lower() for p in label.split(" / ")[:2]]
+    return list(dict.fromkeys(p[:40] for p in parts if len(p) > 2))
+
+
+def attachment_evidence(page: Page, view: PageView, field: "Field | None", others: list[str], known: list[str] = (),
+                        label: str = "") -> str:
+    """What shows that THIS upload has a file: its own non-empty `files`, or a file name inside its own boundary (see
+    above). `field` is the live control (None when its input is gone: then `label` is its recorded label); `others` are
+    the captions of every other upload. A name in `known` only confirms evidence already inside the boundary."""
+    own = _captions(field.label if field is not None else label)
+    if field is None and not own:
+        return ""
+    arg = {"own": own, "others": [c for c in others if c and c not in own], "docRe": DOC_NAME.pattern}
+    if field is not None:
+        frame = view.frames.get(field.frame)
+        if frame is None:
+            return ""
+        try:
+            r = frame.evaluate(BOUNDARY_JS, {**arg, "sel": f'[data-jf="{field.id}"]'})
+        except Exception:
+            return ""
+        return _evidence_in(r, known)
+    found = []
+    for f in frames_of(page):
+        try:
+            r = f.evaluate(BOUNDARY_JS, {**arg, "sel": ""})
+        except Exception:
+            continue
+        if r["n"] > 0:
+            found.append(r)
+    if len(found) != 1 or found[0]["n"] != 1:    # not on the page, or on it more than once: the association is not established
+        return ""
+    return _evidence_in(found[0], known)
+
+
+def _evidence_in(r: dict, known) -> str:
+    if r.get("files"):
+        return "attached file"
+    if m := DOC_NAME.search(r.get("text") or ""):
+        return m.group(0)
+    return next((k for k in known if k and k in (r.get("text") or "")), "")
+
+
+def _ident(label: str) -> str:
+    """A control's identity as the page names it: the whole label (every caption and the native name), lower-cased, with
+    required marks and spacing removed. A position in the DOM is never part of it."""
+    return re.sub(r"\s+", " ", re.sub(r"[*\u2731\u2217\uff0a\u204e]|\(required\)", "", label, flags=re.I)).strip().lower()
+
+
+def _uploads(view: PageView, records: list[dict]) -> list[dict]:
+    """Every upload of the page: each live control, and each fill record that is provably none of them (see below)."""
+    ups: list[dict] = []
+    live: dict[tuple, list[dict]] = {}
+    for g in view.fields:
+        if g.kind == "file":
+            u = {"field": g, "label": g.label, "required": g.required}
+            ups.append(u)
+            live.setdefault((g.frame, _ident(g.label)), []).append(u)
+    recs: dict[tuple, list[dict]] = {}
+    for e in records:
+        if e.get("kind") == "file":
+            recs.setdefault((e.get("frame"), _ident(e["label"])), []).append(e)
+    for (frame, ident), rs in recs.items():
+        if frame is None:                        # a record without a position: look in every frame, same rule
+            cands = [u for (fr, i), us in live.items() if i == ident for u in us]
+            rs_all = [e for (fr2, i2), es in recs.items() if i2 == ident and fr2 is None for e in es]
+            joinable = len(cands) == 1 and len(rs_all) == 1
+        else:
+            cands = live.get((frame, ident), [])
+            joinable = bool(cands) and len(cands) == len(rs)
+        if joinable:
+            order = sorted(rs, key=lambda e: e.get("slot", 0))
+            for u, e in zip(cands, order):       # identical twins only: equal counts, so every record has a partner
+                u["required"] = u["required"] or bool(e.get("required"))
+                u.setdefault("filled", e.get("filled", ""))
+            continue
+        for e in rs:                             # not provably any live control: stays an upload of its own
+            ups.append({"field": None, "label": e["label"], "required": bool(e.get("required")), "filled": e.get("filled", "")})
+    return ups
+
+
+def upload_blockers(page: Page, view: PageView, records: list[dict], known: list[str] = ()) -> list[str]:
+    """Required uploads with no file attached right now, each judged on its own evidence. An earlier record that says
+    verified or failed is not trusted either way: a manual fix clears the blocker, a removed file raises it.
+
+    Every live upload is its own entry. A fill record is the same control as a live one only when frame and full label
+    match and that match is unambiguous (one record, one control; or equally many of each with identical labels).
+    Position (`slot`) is never proof: it only orders identical twins whose counts agree. A record that does not join
+    stays an upload of its own, with its own required flag, and is judged by the evidence at its one unambiguous
+    caption; so a different control that now occupies its old position can neither absorb nor clear it. When a record
+    joins, the stricter flag wins (required if either says required)."""
+    known = [k for k in known if k]
+    ups = _uploads(view, records)
+    caps = [_captions(u["label"]) for u in ups]
+    out = []
+    for i, u in enumerate(ups):
+        if not u["required"]:
+            continue
+        others = [c for j, cs in enumerate(caps) if j != i for c in cs]
+        names = known + ([Path(u["filled"]).name] if u.get("filled") else [])
+        if attachment_evidence(page, view, u["field"], others, names, u["label"]):
+            continue
+        what = (caps[i] or ["an upload"])[0]
+        out.append(f"{what}: required upload with no file attached" if u["field"] is not None
+                   else f"{what}: required upload, no attachment shown")
+    return out
+
+
+def _visible_buttons(view: PageView, text: str):
+    """Visible buttons / links named `text`, in every frame (innerText follows CSS text-transform: "APPLY", the
+    accessible name doesn't: "Apply")."""
+    name = re.compile(rf"^\s*{re.escape(text)}\s*$", re.I)
+    for frame in view.frames.values():
+        btn = frame.get_by_role("button", name=name)
+        if not btn.count():
+            btn = frame.get_by_role("link", name=name)
+        if not btn.count() and getattr(frame.page.context, 'jobagent_shadow_selectors', False):
+            btn = shadow_locator(frame, 'button, [role=button], a, [role=link]').filter(has_text=name)
+        btn = btn.filter(visible=True)
+        if btn.count():
+            yield btn.first
+
+
+def _press(page: Page, btn) -> None:
+    if getattr(page.context, 'jobagent_policy', None):
+        # Keep published application links in the dedicated tab, including embedded ATS links.
+        btn.evaluate("e=>{if(e.tagName==='A'&&e.target==='_blank')e.target='_self'}")
+    # don't wait for the navigation here (Lever's apply page can take longer than the click timeout);
+    # the next read of the page waits for it
+    btn.click(timeout=10000, no_wait_after=True)
+
+
+def click_button(page: Page, view: PageView, pattern: re.Pattern) -> str | None:
+    """Click the first visible button whose text matches `pattern`; never one that sends the application (`SUBMIT`)."""
+    from jobagent.tools import challenge
+    if challenge.guard(page):
+        view = read_page(page)
+    for text in view.buttons:
+        if not pattern.search(text) or SUBMIT.search(text):
+            continue
+        for btn in _visible_buttons(view, text):
+            _press(page, btn)
+            return text
+    return None
+
+
+# What a startup control can do. Its element type does not tell: a link, a type=button control or a button outside the
+# form can all submit through JavaScript (`form.requestSubmit()`), and a field can belong to a form without being inside
+# it (`form="id"`). So: (1) a control that belongs to a form with any visible fillable control (enumerated through
+# `form.elements`, which includes fields attached from outside) is that form's own control, whatever its type; (2) a real
+# link to another page is navigation, and is followed by loading its address, so no click handler runs.
+SENDS_FORM_JS = """e => {
+  const shown = x => { const r = x.getBoundingClientRect(); const s = getComputedStyle(x);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const form = e.form || e.closest('form');
+  const fillable = form ? [...form.elements].filter(c => /^(INPUT|SELECT|TEXTAREA)$/.test(c.tagName)
+      && !['hidden', 'submit', 'button', 'image', 'reset'].includes(c.type) && shown(c)).length : 0;
+  let href = '';
+  if (e.tagName === 'A' && e.getAttribute('href')) {
+    try {
+      const to = new URL(e.getAttribute('href'), location.href), here = new URL(location.href);
+      if (/^https?:$/.test(to.protocol) && to.origin + to.pathname + to.search !== here.origin + here.pathname + here.search)
+        href = to.href;
+    } catch (err) { href = ''; }
+  }
+  return {sends: !!(form && fillable > 0), fillable, href};
+}"""
+
+
+def _successfactors_listing_entry(page: Page, view: PageView, button, expected_url: str | None = None) -> bool:
+    """Recognise the CMS's listing-only entry button, without relaxing short-form protection.
+
+    SuccessFactors places its language picker and listing buttons inside a carrier form.
+    No candidate controls may exist, and the declared requisition must match the listing URL.
+    The caller has already refused a button whose native form contains fillable controls.
+    """
+    coverage = getattr(view, "coverage", None)
+    if not getattr(coverage, "complete", False) or not view.fields or any(
+            f.label.strip().lower() not in {"language", "select language"} for f in view.fields):
+        return False
+    return bool(button.evaluate(r"""(e, expected) => {
+      const u = new URL(location.href), seed = new URL(expected || location.href, location.href);
+      const form = e.closest('form'), code = (e.getAttribute('onclick') || '').trim();
+      if (form?.id !== 'careerform' || u.origin + u.pathname !== seed.origin + seed.pathname) return false;
+      const hidden = name => form.querySelector(`input[type=hidden][name="${name}"]`)?.value;
+      const ns = u.searchParams.get('career_ns') || hidden('career_ns');
+      const current = u.searchParams.get('career_job_req_id') || hidden('career_job_req_id');
+      const wanted = seed.searchParams.get('career_job_req_id');
+      if (ns !== 'job_listing' || seed.searchParams.get('career_ns') !== 'job_listing' || !wanted || current !== wanted) return false;
+      // One recognised call with literal arguments only; no arbitrary handler statements or expressions.
+      if (!/^checkDpcs2AndProceed\(\{[\s\w,:'"-]+\}\);\s*return false;?$/.test(code)) return false;
+      const req = code.match(/\bjobReqId\s*:\s*(\d+)\b/);
+      return !!req && req[1] === wanted &&
+        /\bevtSrc\s*:\s*['"]Apply['"]/.test(code);
+    }""", expected_url))
+
+
+def click_open_application(page: Page, view: PageView, pattern: re.Pattern, *, expected_url: str | None = None) -> str | None:
+    """Startup: open the application (Apply, Apply Manually, Continue application). Navigation only, and only what can be
+    established as navigation:
+    - a control that belongs to a form with fields to fill is that form's own control: never acted on here;
+    - a real link to another page is followed by loading its address (no click handler runs);
+    - any other control is clicked only while the page has no application fields at all (nothing for it to send);
+      with fields on the page it is left to the planner, the filler and the reviewed submission path (step 13)."""
+    from jobagent.tools import challenge
+    if challenge.guard(page):
+        view = read_page(page)
+    fields_on_page = bool(view.fields)
     for text in view.buttons:
         if not pattern.search(text):
             continue
-        if SUBMIT.search(text) and not allow_submit:
-            continue
-        # innerText follows CSS text-transform ("APPLY") while the accessible name doesn't ("Apply")
-        name = re.compile(rf"^\s*{re.escape(text)}\s*$", re.I)
-        for frame in view.frames.values():
-            btn = frame.get_by_role("button", name=name)
-            if not btn.count():
-                btn = frame.get_by_role("link", name=name)
-            btn = btn.filter(visible=True)
-            if btn.count():
-                # don't wait for the navigation here (Lever's apply page can take longer than the click timeout);
-                # the next read of the page waits for it
-                btn.first.click(timeout=10000, no_wait_after=True)
+        for btn in _visible_buttons(view, text):
+            try:
+                info = btn.evaluate(SENDS_FORM_JS)
+            except Exception:
+                continue                       # can't tell what it does: not an action startup may take
+            if info["sends"]:
+                continue
+            if info["href"]:
+                try:
+                    page.goto(info["href"], wait_until="domcontentloaded")
+                except Exception:
+                    continue
                 return text
+            if fields_on_page and not _successfactors_listing_entry(page, view, btn, expected_url):
+                continue
+            _press(page, btn)
+            return text
     return None
+
+
+# The one object that lets code click the button that sends an application. Only the reviewed submission path
+# (steps/submit.make_at_review, after the candidate answered 'approve' to that application's review prompt) makes one.
+_ISSUER = object()
+
+
+class SubmitApproval:
+    """The candidate's 'approve' for one application. `click_final_submit` and `click_submit_input` need it."""
+
+    def __init__(self, job_dir: str, request_id: str, _issuer=None, payload_sha: str = "", verify=None):
+        if _issuer is not _ISSUER:
+            raise TypeError("a SubmitApproval is issued by the reviewed submission path only")
+        self.job_dir, self.request_id = str(job_dir), request_id
+        self.payload_sha, self._verify = payload_sha, verify
+
+    def still_valid(self) -> None:
+        """Called by the sending helpers immediately before the click is dispatched, after any challenge wait or other
+        slow step: raises ApprovalInvalidated if the page or an attachment is no longer what the candidate approved."""
+        if self._verify is not None:
+            self._verify()
+
+
+class ApprovalInvalidated(RuntimeError):
+    """The page changed between the candidate's approval and the click. Nothing was dispatched: a fresh review is needed."""
+
+
+def click_final_submit(page: Page, view: PageView, pattern: re.Pattern, approval: SubmitApproval) -> str | None:
+    """Click the button that sends the application. Needs the candidate's approval object."""
+    if not isinstance(approval, SubmitApproval):
+        raise TypeError("sending an application needs a SubmitApproval")
+    from jobagent.tools import challenge
+    if challenge.guard(page):
+        view = read_page(page)
+    for text in view.buttons:
+        if not pattern.search(text):
+            continue
+        for btn in _visible_buttons(view, text):
+            approval.still_valid()                    # last check, after the challenge guard and the search: before the click
+            _press(page, btn)
+            return text
+    return None
+
+
+def widget_uploads(page: Page, view: PageView, records: list[dict]) -> list[dict]:
+    """The uploads that have no live file input any more (a widget that replaced its input with a file name, or a chooser
+    with no native input): each with its label and the file name seen inside its own boundary ('' when none is shown).
+    These can never be hashed, so the caller records them as unverified, but they must not vanish from the inventory."""
+    ups = _uploads(view, records)
+    caps = [_captions(u["label"]) for u in ups]
+    out = []
+    for i, u in enumerate(ups):
+        if u["field"] is not None:
+            continue
+        others = [c for j, cs in enumerate(caps) if j != i for c in cs]
+        out.append({"label": u["label"], "observed": attachment_evidence(page, view, None, others, [], u["label"])})
+    return out

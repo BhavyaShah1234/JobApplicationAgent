@@ -30,9 +30,9 @@ class FakeInbox:
     def __init__(self, mails):
         self.mails = mails
 
-    def wait_for(self, predicate, criteria, timeout_s=0, poll_s=0):
+    def wait_for(self, predicate, criteria, timeout_s=0, poll_s=0, header_filter=None):
         for m in self.mails:
-            if predicate(m):
+            if (header_filter is None or header_filter(m)) and predicate(m):
                 return m
         raise TimeoutError
 

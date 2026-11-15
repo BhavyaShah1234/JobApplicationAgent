@@ -73,6 +73,7 @@ def login_with_google(page: Page, email: str, hitl: Hitl, log=print, open_inbox=
                 (user := _user_on_page(page) or current_user(page)):
             if used_mail is not None:
                 with open_inbox() as inbox:
+                    inbox.mark_used(used_mail, "github accepted it: logged in")
                     inbox.consume_and_trash(used_mail, "github device verification")
             return f"logged in with Google as {user}"
         body = page.locator("body").inner_text(timeout=10_000)

@@ -49,4 +49,10 @@ def test_challenge_detection_on_fake_pages():
         for html in _NORMAL_PAGES:
             page.set_content(html)
             assert challenge.detect(page) is None, html
+        page.set_content('<p>Application form</p><div class="grecaptcha-badge" style="position:fixed;right:-186px;bottom:14px">'
+                         '<iframe title="reCAPTCHA" style="width:256px;height:60px" srcdoc="Branding"></iframe></div>')
+        assert challenge.detect(page) is None
+        page.set_content('<p>Application form</p><iframe title="reCAPTCHA" style="width:304px;height:78px" '
+                         'srcdoc="Human checkbox"></iframe>')
+        assert challenge.detect(page).kind == 'recaptcha'
         browser.close()

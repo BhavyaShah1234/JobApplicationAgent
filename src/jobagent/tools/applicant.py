@@ -31,6 +31,27 @@ def load() -> dict:
     return data
 
 
+def identity_aliases(data: dict | None = None) -> dict[str, list[str]]:
+    """{a school's / employer's real name: [the other forms the candidate has APPROVED for it]} from every record in the file that
+    has an `aliases:` list beside a `school`, `institution`, `company` or `employer` name. Only what the candidate wrote counts:
+    a campus form ("Arizona State University - Tempe") is the same institution only if it is listed here."""
+    data = load() if data is None else data
+    out: dict[str, list[str]] = {}
+
+    def walk(x) -> None:
+        if isinstance(x, dict):
+            name = next((x[k] for k in ("school", "institution", "university", "company", "employer") if isinstance(x.get(k), str) and x[k]), None)
+            if name and isinstance(x.get("aliases"), list):
+                out.setdefault(name, []).extend(str(a) for a in x["aliases"] if a)
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+    walk(data)
+    return out
+
+
 def entries(data: dict | None = None) -> list[tuple[str, dict]]:
     """(section, entry) for every question in the file, learned answers included."""
     data = load() if data is None else data

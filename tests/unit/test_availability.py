@@ -1,4 +1,9 @@
 from datetime import UTC, datetime
+import json
+from types import SimpleNamespace
+
+import httpx
+import pytest
 
 from jobagent import db
 from jobagent.tools import availability as A
@@ -65,3 +70,32 @@ def test_a_bot_check_that_keeps_coming_back_marks_the_job_blocked_not_closed(tmp
     assert gone.status == "blocked"
     A.mark("https://x/2", gone, conn)
     assert A.known("https://x/2", conn) is None  # a later run may try again (the site may let it through)
+
+
+@pytest.mark.parametrize('status,error,closed',[
+    (404,'Job not found',True),(404,'Board not found',False),(200,'',False),(503,'Job not found',False)])
+def test_cached_carvana_description_requires_confirmed_posting_removal(monkeypatch,status,error,closed):
+    job={'id':8063598,'questions':[]}
+    node=SimpleNamespace(count=lambda:1,text_content=lambda:json.dumps({'props':{'pageProps':{'jobData':job}}}))
+    page=SimpleNamespace(url='https://www.carvana.com/careers/apply?gh_jid=8063598',locator=lambda selector:node)
+    calls=[]
+    def get(url,**kwargs):
+        calls.append(url)
+        return httpx.Response(status,json={'error':error})
+    monkeypatch.setattr(httpx,'get',get)
+    gone=A.carvana_empty_form(page)
+    assert bool(gone)==closed
+    if gone:assert gone.kind=='not_found' and '8063598' in gone.reason
+    assert len(calls)==1
+    job['questions']=[{'label':'First name'}]
+    assert A.carvana_empty_form(page) is None
+    assert len(calls)==1
+
+
+def test_carvana_network_failure_is_not_a_closed_posting(monkeypatch):
+    node=SimpleNamespace(count=lambda:1,text_content=lambda:json.dumps(
+        {'props':{'pageProps':{'jobData':{'id':8063598,'questions':[]}}}}))
+    page=SimpleNamespace(url='https://www.carvana.com/careers/apply?gh_jid=8063598',locator=lambda selector:node)
+    def timeout(*a,**kw):raise httpx.ReadTimeout('network unavailable')
+    monkeypatch.setattr(httpx,'get',timeout)
+    assert A.carvana_empty_form(page) is None
