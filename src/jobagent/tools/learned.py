@@ -126,7 +126,7 @@ def _cos(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b)) / (na * nb) if na and nb else 0.0
 
 
-def relevant(label: str, company: str, k: int = 3, entries: list[dict] | None = None) -> list[dict]:
+def relevant(label: str, company: str, k: int = 3, entries: list[dict] | None = None, vector_bank: dict | None = None) -> list[dict]:
     """The learned entries closest to a form question: wording match and meaning (embeddings), at most k, only those
     reasonably close. A plain answer from another company is kept only when it is a near-exact wording match (the
     planner is told it was given elsewhere)."""
@@ -136,7 +136,7 @@ def relevant(label: str, company: str, k: int = 3, entries: list[dict] | None = 
     q = _clean(label)
     texts = [[_clean(t) for t in [e["question"], *(e.get("seen") or [])]] for e in entries]
     flat = [t for ts in texts for t in ts]
-    vecs = _vectors([q, *flat])
+    vecs = ([vector_bank.get(t) for t in [q,*flat]] if vector_bank and all(t in vector_bank for t in [q,*flat]) else None) if vector_bank is not None else _vectors([q,*flat])
     qv, lookup = (vecs[0], dict(zip(flat, vecs[1:]))) if vecs else (None, {})
     scored = []
     for e, ts in zip(entries, texts):

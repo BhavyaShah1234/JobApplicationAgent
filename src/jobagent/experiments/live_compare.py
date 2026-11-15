@@ -133,9 +133,13 @@ def main():
     p.add_argument('--out',type=Path,required=True);p.add_argument('--url')
     p.add_argument('--storage-state',type=Path);p.add_argument('--headless',action='store_true')
     p.add_argument('--active-budget-minutes',type=float,default=30)
+    p.add_argument('--model-call-seconds',type=float,default=180,help='Same bounded writer-call budget in either arm.')
     p.add_argument('--observe',action='store_true',help='Save action screenshots and gate each completed page for source/visual audit.')
+    p.add_argument('--passive-observation',action='store_true',help='With --observe, use external read-only CDP filmstrip instead of blocking per-action screenshots for timed arms.')
     p.add_argument('--debug-port',type=int,default=0,help='Local CDP port for a read-only live observer.')
-    args=p.parse_args();os.umask(0o077)
+    args=p.parse_args()
+    if args.passive_observation and not args.observe:p.error('--passive-observation requires --observe')
+    os.umask(0o077)
     root=args.out.resolve();root.mkdir(parents=True,exist_ok=False)
     from jobagent.config import get_settings
     original=get_settings();data=root/'data';data.mkdir();state=root/'state';state.mkdir()
@@ -178,12 +182,47 @@ def main():
     def stop(*_):raise TrialStopped('trial active-time budget or operator stop')
     signal.signal(signal.SIGTERM,stop)
     def budget():
+        stopping=None
         while True:
-            time.sleep(2)
-            if (root/'control/pending.json').exists():continue
-            if captured and captured[0].snapshot()['active_filling_s']-observer.excluded_s()>args.active_budget_minutes*60:
-                os.kill(os.getpid(),signal.SIGTERM);return
+            time.sleep(1)
+            if not captured:continue
+            snapshot=captured[0].snapshot()
+            snapshot.update(observation_s=observer.excluded_s(),active_filling_excluding_observation_s=max(0,snapshot['active_filling_s']-observer.excluded_s()))
+            write(root/'metrics-progress.json',snapshot)
+            requested=(root/'control/stop').exists()
+            over=snapshot['active_filling_excluding_observation_s']>args.active_budget_minutes*60
+            if stopping is None and (requested or (over and not (root/'control/pending.json').exists())):
+                stopping=time.monotonic();write(root/'operator-stop.json',{'reason':'operator stop' if requested else 'active budget','partial_metrics':snapshot})
+                os.kill(os.getpid(),signal.SIGTERM)
+            if stopping is not None and time.monotonic()-stopping>15:
+                # Terminate only this trial's child processes if a synchronous
+                # browser call swallowed the signal. Preserve the last metrics.
+                parents={}
+                for proc in Path('/proc').iterdir():
+                    if not proc.name.isdigit():continue
+                    try:
+                        status=(proc/'status').read_text();parent=int(next(line.split()[1] for line in status.splitlines() if line.startswith('PPid:')))
+                        parents[int(proc.name)]=parent
+                    except (OSError,StopIteration,ValueError):pass
+                owned={os.getpid()}
+                for _ in range(len(parents)):
+                    new={pid for pid,parent in parents.items() if parent in owned}
+                    if new<=owned:break
+                    owned|=new
+                for pid in owned-{os.getpid()}:
+                    try:os.kill(pid,signal.SIGTERM)
+                    except ProcessLookupError:pass
+                os._exit(124)
     threading.Thread(target=budget,daemon=True).start()
+    from jobagent import llm
+    structured=llm.structured_invoke
+    def bounded_model(*a,**kw):
+        remaining=args.active_budget_minutes*60
+        if captured:remaining-=captured[0].snapshot()['active_filling_s']-observer.excluded_s()
+        supplied=kw.pop('deadline_s',args.model_call_seconds)
+        return structured(*a,**kw,deadline_s=max(0,min(supplied,args.model_call_seconds,remaining)))
+    llm.structured_invoke=bounded_model
+
     if (job/'context-snapshot.json').exists():
         company_source=json.loads((job/'context-snapshot.json').read_text()).get('COMPANY','')
         build_context=A.context
@@ -212,7 +251,7 @@ def main():
     else:
         from jobagent.filling import adapter
         adapter.fill_page=instrument(adapter.fill_page)
-    if args.observe:
+    if args.observe and not args.passive_observation:
         fill_field=forms.fill_field
         def observed_fill(page,view,field,answer,files,*a,**kw):
             detail={'label':field.label,'kind':field.kind,'section':field.section,
@@ -259,11 +298,11 @@ def main():
         except BaseException as exc:
             if captured:captured[0].finish()
             write(root/'exception.json',{'type':type(exc).__name__,'message':str(exc),'elapsed_total_s':time.monotonic()-start,
-                  'metrics':captured[0].snapshot() if captured else None,'ready':False})
+                  'metrics':{**captured[0].snapshot(),'observation_s':observer.overhead_s,'active_filling_excluding_observation_s':max(0,captured[0].snapshot()['active_filling_s']-observer.overhead_s)} if captured else None,'ready':False})
             raise
         finally:
             try:
-                page.screenshot(path=str(root/'final.png'),full_page=True)
+                page.screenshot(path=str(root/'final.png'),full_page=True,timeout=5000)
                 write(root/'final-view.json',{'url':page.url,'fields':[asdict(f) for f in forms.read_page(page).fields],
                       'submission_blocks':page.evaluate('window.__trialSubmissionBlocks||[]'),
                       'native_controls':[{'frame':i,'controls':frame.locator('input:not([type=password]),select,textarea').evaluate_all(

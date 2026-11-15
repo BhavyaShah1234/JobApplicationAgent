@@ -33,17 +33,30 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
 
     def prepare(fields):
         matches=A.match_entries(fields,ctx.get('_jd',{}).get('company',''),ctx.get('_applicant') or {})
-        if env.get('out_dir') and not ctx.get('_application_address') and any(
-                e.get('question') in {'Current address','Current location (city)'} for _,e in matches.values()):
+        from .routing import family
+        address_needed=any(e.get('question') in {'Current address','Current location (city)'} for _,e in matches.values()) or any(
+            f.kind in ('text','combobox','select') and family(f.label)=='location' for f in fields)
+        if env.get('out_dir') and not ctx.get('_application_address') and address_needed:
             application_address.prepare(ctx,env['out_dir'],model,log)
-        facts=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''),ctx.get('TODAY',''))
+        if '_experimental_compiled_facts' not in ctx:
+            ctx['_experimental_compiled_facts']=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''),ctx.get('TODAY',''))
+        from .routing import personal_facts
+        facts=list(ctx['_experimental_compiled_facts'])+personal_facts(ctx)
         sheet=ctx.get('ANSWERS_FOR_THIS_APPLICATION','')
-        if sheet and sheet.strip()!='(none)':
-            facts.append(Fact('application.answers',[],sheet,'applicant/application/answers.md',record=True))
+        from .routing import answer_sheet_facts
+        facts+=answer_sheet_facts(sheet)
         if ctx.get('_application_address'):
             for fact in facts:
                 if any('/'+q+'/answer' in fact.source for q in ('Current address','Current location (city)')):
                     fact.instructions=''  # the address policy has already resolved this application-local fact
+        live=getattr(ctx.get('_experimental_filler'),'_live',None)
+        if live and live.view:
+            from .routing import unlisted_school
+            for field in fields:
+                conditional=unlisted_school(field,live.view,facts)
+                if conditional is not None:
+                    facts.append(Fact('condition:'+str(field.id),[field.label],conditional.value,conditional.source,field.section,
+                        instructions='Leave blank' if conditional.value=='' else ''))
         return facts+list(ctx.get('_experimental_learned_facts',{}).values())
 
     def sources(fields,decisions):
@@ -58,12 +71,19 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         eligible=[e for e in stored if norm(e.get('company','')).replace(' ','') in company_keys|{'any'}]
         cache=ctx.setdefault('_experimental_learned_retrieval',{})
         known=ctx.setdefault('_experimental_learned_facts',{})
+        queries=[f for f in fields if not entity_scope(f.section) and norm(f.label) not in cache]
+        if queries and eligible:
+            from jobagent.tools import learned as L
+            texts=[L._clean(f.label) for f in queries]+[L._clean(t) for e in eligible for t in [e['question'],*(e.get('seen') or [])]]
+            vectors=L._vectors(list(dict.fromkeys(texts)))
+            vector_bank=dict(zip(dict.fromkeys(texts),vectors)) if vectors else {}
+        else:vector_bank={}
         for f in fields:
             if entity_scope(f.section):continue  # old learned rows have no entity identifier
             if norm(f.label) not in cache:
                 exact=[e for e in eligible if norm(f.label) in [norm(x) for x in [e['question'],*(e.get('seen') or [])]]]
                 cache[norm(f.label)]=exact[:3] or learned.relevant(f.label,company,entries=[
-                    {**e,'company':'any' if e.get('company')=='any' else company} for e in eligible])
+                    {**e,'company':'any' if e.get('company')=='any' else company} for e in eligible],vector_bank=vector_bank)
             for entry in cache[norm(f.label)]:
                 value=entry.get('answer')
                 if value is None and not entry.get('instructions'):continue
@@ -110,6 +130,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         ctx['_experimental_filler']=filler
     if filler.step!=page_no:
         filler.cache={};filler.step=page_no;filler.failures={}
+    filler.log=log
     filler.upload_observer=observe_upload
     from jobagent.tools import lookup
     filler.lookup_resolver=lookup.run
@@ -130,7 +151,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                     e.get('field_key')==key(f)),None)
         if entry is None:entry={}
         proof=filler.upload_proofs.get((page_no,key(f))) if f.kind=='file' else None
-        success=entry.get('outcome')=='verified' and not f.invalid and (proof.verify() if proof else forms.same_value(entry.get('readback',''),f.value,f.kind))
+        success=entry.get('outcome')=='verified' and not f.invalid and (proof.verify() if proof else forms.same_value(entry.get('readback',''),f.value,f.kind,f.label))
         value=entry.get('answer','')
         known_blank=success and value=='' and not f.required
         row={'page':page_no,'section':f.section,'label':f.label,'kind':f.kind,'required':f.required,

@@ -5,7 +5,7 @@ from jobagent.tools.forms import Field
 def test_school_cannot_fuzzy_match_a_different_school():
     f=Field(0,'select','School',options=['Adams State University','Other'])
     assert resolve(f,[Fact('school',['School'],'Arizona State University','applicant')]).value is None
-    f.kind='combobox'
+    f.kind='combobox';f.options_state='partial'
     assert resolve(f,[Fact('school',['School'],'Arizona State University','applicant')]).value=='Arizona State University'
 
 

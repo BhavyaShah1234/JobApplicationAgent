@@ -74,19 +74,21 @@ class PlannerAudit(llm.BaseCallbackHandler):
     def __init__(self, path, model):
         self.path, self.model = path, model
 
-    def event(self, event, run_id):
+    def event(self, event, run_id, **detail):
         with self.path.open('a') as handle:
             handle.write(json.dumps({'event': event, 'model': self.model, 'run_id': str(run_id),
-                                     'at': datetime.now().isoformat()})+'\n')
+                                     'at': datetime.now().isoformat(),**detail})+'\n')
 
     def on_chat_model_start(self, serialized, messages, **kwargs):
-        self.event('start', kwargs.get('run_id'))
+        params=kwargs.get('invocation_params') or {}
+        method='function_calling' if params.get('tools') else (params.get('response_format') or {}).get('type','unknown') if isinstance(params.get('response_format'),dict) else 'unknown'
+        self.event('start', kwargs.get('run_id'),method=method)
 
     def on_llm_end(self, response, **kwargs):
         self.event('complete', kwargs.get('run_id'))
 
     def on_llm_error(self, error, **kwargs):
-        self.event('error', kwargs.get('run_id'))
+        self.event('error', kwargs.get('run_id'),kind=llm.classify(error))
 
 
 PROMPT = """You fill a job application form for the candidate, from the candidate's own files only. For each field
@@ -118,8 +120,7 @@ Think like the candidate filling in their own form, with common sense:
   on site there; holds a GPA of 4.0 -> the '3.8 - 4.0' range; never worked for the company -> 'No, never').
 - An entry's answer true/false means Yes/No (pick the matching option). A question whose answer follows from
   APPLICANT, RESUME, JOB or COMPANY is never asked: ask_human only when none of them gives or implies it.
-- Questions about preferences or opinions the files don't state (a favourite tool) are answered from what the
-  candidate uses most in the RESUME, as the candidate would, not asked.
+- Preferences and opinions require an explicit owner answer or an applicable owner instruction; otherwise ask.
 - Each answer must answer ITS question: a person's name is never a salary, a URL is never a yes/no.
 
 Rules:
@@ -476,6 +477,12 @@ def plan(fields: list[forms.Field], ctx: dict, model, log=print, feedback: str =
     h = hints(fields, ctx.get("_jd", {}).get("company", ""), ctx.get("_applicant"), log)
     for fid, s in sheet_hints(fields, ctx.get("ANSWERS_FOR_THIS_APPLICATION", "")).items():
         h[fid] = s + ("\n    " + h[fid] if fid in h else "")
+    from jobagent.filling.routing import route,word_limits
+    from jobagent.filling.facts import compile_facts
+    indexed=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''),ctx.get('TODAY',''))
+    for field in fields:
+        r=route(field,indexed);limits=word_limits(field,[x for x in indexed if x.id in r.fact_ids])
+        if limits:h[field.id]=h.get(field.id,'')+f' REQUIRED WORD LIMITS: {limits[0]}-{limits[1]} words.'
     msgs = [SystemMessage(PROMPT),
             HumanMessage(f"{files}\n\n"
                          + ("== ALREADY ON THIS PAGE (planned earlier) ==\n" + "\n".join(f.brief() for f in filled)
@@ -493,9 +500,29 @@ def plan(fields: list[forms.Field], ctx: dict, model, log=print, feedback: str =
     answers = {}
     for f in fields:
         answer = getattr(out, f'field_{f.id}').model_copy(update={'id':f.id})
-        if answer.source == 'already_filled' and not (f.value and forms.same_value(answer.value, f.value, f.kind)):
+        if answer.source == 'already_filled' and not (f.value and forms.same_value(answer.value, f.value, f.kind,f.label)):
             answer.source = 'applicant' if in_applicant(answer.value, ctx.get('_applicant') or {}) else 'written'
         answers[f.id] = answer
+    from jobagent.filling.routing import route,word_limits
+    from jobagent.filling.facts import compile_facts
+    facts=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''),ctx.get('TODAY',''))
+    repairs=[]
+    for field in fields:
+        a=answers[field.id];r=route(field,facts);bound=[x for x in facts if x.id in r.fact_ids]
+        limits=word_limits(field,bound)
+        if field.kind=='textarea' and a.value and limits and not limits[0]<=len(a.value.split())<=limits[1]:
+            repairs.append({'field_id':field.id,'draft':a.value,'word_limits':limits})
+    if repairs:
+        from jobagent.filling.planned import Drafts
+        fixed=llm.structured_invoke(model,Drafts,[SystemMessage(
+            'Repair each supplied draft to its exact word_limits using only the supplied resume/company evidence. '
+            'Do not invent personal history. Return one draft per field, source written, with an evidence quote.'),
+            HumanMessage(json.dumps({'repairs':repairs,'resume':ctx.get('RESUME',''),'company':ctx.get('COMPANY','')}))],first='function_calling',log=log)
+        for item in repairs:
+            value=next((x.value for x in fixed.drafts if x.field_id==item['field_id']),None)
+            low,high=item['word_limits'];a=answers[item['field_id']]
+            if value and low<=len(value.split())<=high:answers[item['field_id']]=a.model_copy(update={'value':value})
+            else:answers[item['field_id']]=a.model_copy(update={'value':'','flag':'writer did not satisfy word limits'})
     return answers, out.add
 
 
@@ -523,7 +550,7 @@ that fact: check the answer against the JD, and where the JD states a value the 
 means the JD's value (a numeric range by meaning: "30% or less" is not "50% or more"); where the JD is silent the instruction's
 own fallback applies. A school, employer or person must be the actual one the files name, never a similar-sounding neighbour.
 These rules are also support:
-agreeing to a consent needed to apply, choosing "I don't wish to answer" for self-identification APPLICANT leaves
+choosing "I don't wish to answer" for self-identification APPLICANT leaves
 empty. An answer listed as a list of words gives variants of one answer: any of
 them is supported. APPLICANT wins over the RESUME where they disagree (never swap one for the other: that is flagged, not
 corrected). A corrected value for a choice field must be one of its listed options, copied exactly. Return one check
@@ -594,7 +621,7 @@ def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, mode
         # points at the posting ("use the JD's percentage"), or a question about WHICH institution, must be validated against that
         # source, not waved through because an instruction exists (F29/F30)
         bound=resolve_fact(f,source_facts) if f else None
-        if a.source == "applicant" and bound and bound.value is not None and forms.same_value(bound.value,a.value,f.kind):
+        if a.source == "applicant" and bound and bound.value is not None and forms.same_value(bound.value,a.value,f.kind,f.label):
             continue  # the answer to THIS question is explicit, unconditional and rendered correctly
         jd_rule = "instructions=" in instr and re.search(r"(?i)\b(jd|job description|posting|listing)\b", instr) \
             and not (f and forms.is_identity(f.label))
@@ -801,6 +828,20 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
     company = ctx.get("_jd", {}).get("company", "")
     from jobagent.filling.facts import compile_facts,resolve as resolve_fact
     evidence=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''),ctx.get('TODAY',''))
+    from jobagent.filling.routing import route,resolve_routed,personal_facts,answer_sheet_facts
+    evidence+=personal_facts(ctx)+answer_sheet_facts(ctx.get('ANSWERS_FOR_THIS_APPLICATION',''))
+    for field in todo:
+        answer=answers.get(field.id)
+        if answer is None or answer.source in ('human','learned'):continue
+        routing=route(field,evidence)
+        if routing.family not in ('external_sharing','residency','clearance_eligibility','clearance_held','arbitration','read_ack','event_history','account_status','privacy_consent','future_contact','sms_consent','ai_consent'):continue
+        decision=resolve_routed(field,evidence,routing)
+        if decision is None:continue
+        if decision.value is not None:
+            answers[field.id]=answer.model_copy(update={'value':decision.value,'source':'applicant','why':decision.reason or decision.source,'ask_human':False,'flag':''})
+        elif decision.reason.startswith('explicit'):
+            answers[field.id]=answer.model_copy(update={'value':'','ask_human':True,'flag':decision.reason})
+
 
     for field in todo:
         bound=resolve_fact(field,evidence)
@@ -1007,7 +1048,7 @@ def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict,
 def _key(f: forms.Field) -> tuple:
     if f.kind == "file":  # native ID or preserved lazy caption stays stable after mounting/uploading
         return (f.frame, f.kind, f.label.rsplit(" / ", 1)[-1], f.slot)
-    return (f.frame, f.kind, f.label[:120], f.section)
+    return (f.frame, f.kind, f.label[:120], (f.frame_identity+':'+f.identity) if f.identity else f.section)
 
 
 class PlannerFailed(RuntimeError):
@@ -1183,7 +1224,7 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                      "options": f.options[:60], "before": f.value, "answer": a.value if a else "",
                      "why": a.why if a else "",
                      "source": a.source if a else "none", "flag": a.flag if a else "not answered by the planner",
-                     "filled": "", "error": "", "answered": a is not None, "frame": f.frame, "slot": f.slot}
+                     "filled": "", "error": "", "answered": a is not None, "frame": f.frame, "slot": f.slot,"identity":f.identity}
             clear_line2 = bool(
                 a
                 and ctx.get("_application_address")
@@ -1284,7 +1325,7 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
         by_label.setdefault(_key(g)[:3], []).append(g)
     for key, e in done.items():
         f = shown.get(key)
-        if f is None and len(by_label.get(key[:3], [])) == 1:
+        if f is None and not e.get('identity') and len(by_label.get(key[:3], [])) == 1:
             f = by_label[key[:3]][0]  # the same field; only the heading above it changed
         e["readback"] = f.value if f else "(field gone)"
         if e["kind"] == "file" and e["filled"] and not (f and f.value and Path(e["filled"]).name in f.value):
@@ -1302,7 +1343,12 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
         elif not want:
             e["verified"] = False  # a nonempty prefill alone is not source verification
         else:
-            e["verified"] = forms.same_value(want, f.value, e["kind"])
+            e["verified"] = forms.same_value(want, f.value, e["kind"],f.label)
+        if e['kind']=='file' and e.get('filled'):
+            proofs=[proof for proof in getattr(page,'_jobagent_upload_proofs',[]) if proof.identity==e.get('identity')]
+            proof=next((proof for proof in reversed(proofs) if proof.verify()),None)
+            e['verified']=bool(proof)
+            if proof:e.update(readback=proof.name,held_file_sha256=proof.expected,upload_verification=proof.method)
         e["outcome"] = outcome_of(e, f)
         record.append(e)
     if planner_error:

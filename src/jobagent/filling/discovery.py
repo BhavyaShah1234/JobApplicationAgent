@@ -12,7 +12,7 @@ for(let i=0;i<roots.length;i++) for(const e of roots[i].querySelectorAll('*')) {
  const lab=e.getAttribute('aria-label') || (e.labels?.[0]?.textContent) || e.placeholder || '';
  if(lab) out.push({label:lab.trim(), type:e.type||e.getAttribute('role')||e.tagName.toLowerCase(),
    visible:rect.width>1&&rect.height>1&&s.visibility!=='hidden'&&s.display!=='none',
-   required:e.required||e.getAttribute('aria-required')==='true',format:e.placeholder||'',source:'DOM'});
+   required:e.required||e.getAttribute('aria-required')==='true',format:e.placeholder||'',source:'DOM',locator_ref:e.getAttribute('data-jf-ref')||'',native_id:e.id||'',frame_identity:window.__jobagentFieldNodes?.epoch||''});
 } return out;
 }'''
 
@@ -47,7 +47,7 @@ def extract(data, source, depth=0, inherited_condition=None, section=''):
 
 class Discovery:
     def __init__(self, page, budget=30):
-        self.page=page;self.budget=budget;self.delivered=[];self.responses=0
+        self.page=page;self.budget=budget;self.delivered=[];self.responses=0;self.parsed=set();self.spent=0.
         self.page.on('requestfinished',self.received)
 
     def received(self, request):
@@ -65,6 +65,10 @@ class Discovery:
 
     def parse(self,text,source):
         if len(text)>100000:return
+        import hashlib
+        fingerprint=(source,hashlib.sha256(text.encode()).digest())
+        if fingerprint in self.parsed:return
+        self.parsed.add(fingerprint)
         if source.endswith('JavaScript'):
             # Only JSON-compatible schema literals; no eval and no arbitrary bundle analysis.
             for m in re.finditer(r'(?:formSchema|questionnaire|questions)\s*[:=]\s*',text):
@@ -76,7 +80,7 @@ class Discovery:
             except ValueError:pass
 
     def inventory(self):
-        deadline=time.monotonic()+self.budget;out=[];problems=[]
+        started=time.monotonic();deadline=started+max(0,self.budget-self.spent);out=[];problems=[]
         from jobagent.tools.forms import frames_of
         for frame in frames_of(self.page):
             if time.monotonic()>=deadline:
@@ -91,6 +95,7 @@ class Discovery:
             except Exception as e:problems.append(type(e).__name__)
         out+=self.delivered
         unique={json.dumps(x,sort_keys=True):x for x in out}
+        self.spent+=time.monotonic()-started
         return {'fields':list(unique.values()),'problems':problems}
 
     def close(self):

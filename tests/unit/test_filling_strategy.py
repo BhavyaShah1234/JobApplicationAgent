@@ -513,9 +513,9 @@ def test_list_sources_and_history_rules_are_preserved():
     assert len(titles)==1 and titles[0].instructions=='Use only paid roles.'
 
 
-def test_chooser_element_handle_can_verify_retained_bytes_without_visible_filename(world,monkeypatch):
-    world.setup('<div class=upload><label>Resume</label><button type=button onclick="const i=document.createElement(\'input\');'
-                'i.type=\'file\';i.style.display=\'none\';document.body.appendChild(i);i.click()">Choose file</button></div>')
+def test_chooser_element_handle_can_verify_retained_form_owned_bytes_without_visible_filename(world,monkeypatch):
+    world.setup('<form id=application><div class=upload><label>Resume</label><button type=button onclick="const i=document.createElement(\'input\');'
+                'i.type=\'file\';i.name=\'resume\';i.setAttribute(\'form\',\'application\');i.style.display=\'none\';document.body.appendChild(i);i.click()">Choose file</button></div></form>')
     world.page.goto('https://fixture.test/apply')
     path=world.job/'resume.pdf';path.write_bytes(b'%PDF-1.4 chooser bytes')
     wait=world.page.wait_for_timeout;monkeypatch.setattr(world.page,'wait_for_timeout',lambda ms:wait(min(ms,10)))

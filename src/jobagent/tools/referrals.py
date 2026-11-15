@@ -158,7 +158,7 @@ def answer_for(field, contact: dict, company: str = "") -> dict | None:
         "select", "combobox", "radio", "buttons", "checkboxes",
     ):
         if field.options:
-            option = _referral_option(field.options, company)
+            option = _referral_option(field.options, company) or next((x for x in field.options if x.strip().lower()=='other'),'')
             return _answer(
                 option,
                 "" if option else "no employee-referral option found",

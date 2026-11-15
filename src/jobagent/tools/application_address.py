@@ -610,6 +610,10 @@ def prepare(ctx: dict, out_dir, model, log=print) -> dict:
 
     # Override this application's context; do not save to applicant.yaml.
     data = ctx["_applicant"]
+    if '_personal_address' not in ctx:
+        import copy
+        original=next((e.get('answer') for _,e in applicant.entries(data) if e['question']=='Current address'),None)
+        ctx['_personal_address']=copy.deepcopy(original)
     values = {
         "Current address": selected["address"],
         "Current location (city)": (
@@ -659,6 +663,7 @@ def prepare(ctx: dict, out_dir, model, log=print) -> dict:
         width=120,
     )
     ctx["_application_address"] = selected
+    ctx.pop("_experimental_compiled_facts",None)
 
     log(
         f"address: using {values['Current address']['line1']}, "

@@ -1,0 +1,62 @@
+# Form-planning repair and watched validation — 2026-11-15
+
+Status: implementation and validation in progress. Experimental remains opt-in. No application submissions are authorized by this comparison or performed by its harness.
+
+This follow-up retains the failed November 14 cohort and all subsequent diagnostic attempts. No speed claim or promotion follows from a partial, source-incorrect, assisted, or merely `ready` run.
+
+## Implementation changes being validated
+
+- Classify questions and select evidence per field before the existing batched writer. Log routes; do not let a field borrow another field's fact IDs. Keep owner preferences/consents distinct from resume-derived qualifications.
+- Retain full native option catalogues, explicit catalogue completeness, and native values. Custom menus expose their rendered subset; search factual identities and owner-supplied variants. Reject unavailable choices in complete catalogues.
+- Wait for visible loaded dropdown choices rather than hidden nodes belonging to closed pickers. Preserve catalogues for unchanged controls and invalidate dependencies when geography changes.
+- Keep physical control references stable across numeric renumbering. Re-read an individual control after writing; refresh the full view after structural changes. Add all known education/work rows before answer planning.
+- Batch learned-answer embeddings and cache source compilation. Use the same structured-output protocol as the original strategy. Preserve word limits, exact date rules, and purpose-specific personal history.
+- Require the expected document bytes and owned upload evidence. Dispatch once and poll. Reject visible errors/busy widgets and acknowledgements from a different widget. A retained input without a filename must belong to its actual submission form or widget; an unrelated temporary body input is not sufficient.
+- Preserve the real residence state separately from the application-specific address for residency predicates.
+- Persist partial metrics during cancellation and bound individual model calls identically in both strategies.
+
+## Watched diagnostic attempts
+
+| Attempt | Outcome | Consequence |
+| --- | --- | --- |
+| Ashby smoke v1 | Draft correct after two avoidable sourced questions; upload, calendar and authorized acknowledgements visually inspected. | Fix observable account-email and numeric-years rules. Exclude from unassisted success and paired timing evidence. |
+| Greenhouse smoke v1 | Rejected: unrelated Additional Information copied into optional SAT/ACT answer; second degree omitted. | Tighten evidence routing and associate Add another toolbar with its owned entity group. |
+| Greenhouse smoke v2 | Both education rows correct, no failed dropdown writes, link/date resolved without assistance; rejected for unrelated conference-history answer. | Require purpose-specific conference/account history, with the same history guard in the original strategy. |
+| Greenhouse smoke v3 | Passed source and visual audit, zero avoidable assistance. | Retain as an unmeasured correctness smoke; optional unknowns stayed blank. |
+
+The SAT/ACT score and conference history are genuinely missing optional facts. They must remain blank unless the owner supplies them; they must never be synthesized from hobbies, previous applications, or future-contact permission.
+
+## Validation checkpoints
+
+- Earlier integration snapshot: 191 passed (older checkpoint, not a claim about the final source).
+- v4 core: 94 passed.
+- Forms/upload/approval/browser suite after shared-proof correction: 81 passed. Later ownership and menu changes still need their relevant checks.
+- v8 pipeline regressions: 26 passed.
+- Later core/targeted checks and final paired live comparison pending.
+
+Private screenshots, source snapshots, fixtures, answers, network-related artifacts and detailed metrics are under the ignored `outputs/verification/form-pipeline-2026-11-15` directory. They are not committed.
+
+## Subsequent evidence
+
+- Greenhouse smoke v3 passed independent full-page visual and per-field source inspection: both education rows, GPA, offered preferences and date quarter, required answers, and owned resume/cover-letter byte proof. Zero avoidable questions and zero failed writes. Two genuinely unknown optional questions were skipped. It is a correctness diagnostic only because local checks overlapped it.
+- Lever smoke v1 is rejected. It needed an avoidable location assist because hidden status text polluted the label. Later screenshot review also showed an unverified resume-parser website prefill. The saved Portfolio / website answers Other website; that question was avoidable too. The initial blank-field approval was incorrect and is explicitly corrected in the private audit, retaining the raw event and original attempt.
+- Native/wrapping labels and unlabelled fallback text now filter hidden original DOM nodes rather than detached clones (which lose CSS visibility), and exclude option subtrees. A country catalogue can disambiguate a generically named Location selector. Custom choices within a checkbox question belong to that question, rather than becoming another question.
+- Website variants are classified as the same explicit owner website source; the saved canonical URL replaces unverified parser prefills. Identity readback also rejects similarly named institutions and people.
+- v9 core checkpoint: 106 passed. v10 focused checkpoint: 33 passed. v11 passed 97 before a missing public test fixture stopped the forms suite; the snapshot packaging was corrected, and the forms suite then passed 26. v12 targeted checkpoint: 50 passed. v13 pipeline/forms checkpoint: 61 passed. v14 latest pipeline/forms/observed-regression checkpoint: 79 passed. These are checkpoints, not additive independent test counts.
+
+## Timed comparison protocol
+
+Freeze one source version and the same input fixtures for each original/experimental pair. Run arms sequentially without concurrent local tests or model preparation. Use fresh browser contexts with no submitted application. Alternate order: Ashby original/experimental, Greenhouse experimental/original, Lever original/experimental. Retain every attempted arm and reject source-incorrect or incomplete pairs.
+
+Use passive read-only CDP recording while filling, plus full-page visual/source inspection at each completed page. Blocking per-action screenshots are used for diagnostics, not the timed cohort: asynchronous site work can progress during a screenshot, so subtracting all such screenshot time could overstate autonomous speed. Report raw active time and observation-adjusted active time; human wait and page inspection are separately recorded. Genuine missing facts are distinct from avoidable assistance.
+
+The selected third family is Spotify's active New York Lever posting, using an existing agent-generated backend resume identically in both arms (no company-specific cover letter reused). Preflight exclusions are retained: the Palantir posting needs unresolved clearance eligibility; Zoox needs citizenship-status dates; Wealthfront needs client history; Veeva requires a transcript and an owner safe-sender action. No filling outcome was used to exclude those preflights.
+
+
+## Frozen candidate for paired runs
+
+The final pre-cohort checkpoint passed 83 pipeline/forms/observed-regression checks. One additional regression verifies that the writer receives all 351 available options rather than an unusable catalogue-search marker (passed). Earlier full strategy tests passed before an unrelated missing public fixture stopped the following forms file; that packaging issue was corrected. The 81-check upload/approval/browser checkpoint and subsequent targeted ownership regressions remain part of the evidence. Counts from overlapping checkpoints are not added together.
+
+Lever smoke v2 passed full-page and per-field inspection with zero questions, including the canonical Other website value and newly revealed demographics. It remains unmeasured because local checks overlapped it. The final candidate also renders explicit Male/Man and Not a veteran/No equivalents locally; Not a protected veteran does not establish No to a general veteran question.
+
+The writer receives the complete *available* option catalogue whenever an unresolved field needs generation. Native catalogues are complete. Asynchronously loaded/virtualized menus remain explicitly partial; source-driven searches use only supplied literal values or approved source variants. Exact known matches bypass the model entirely.

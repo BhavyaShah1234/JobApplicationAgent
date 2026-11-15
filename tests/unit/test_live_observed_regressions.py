@@ -109,18 +109,18 @@ def test_required_pseudo_marker_on_radio_question_header(world):
 
 def test_checker_receives_unselected_facts_and_temporal_context(world):
     seen=[]
-    facts=[Fact('nickname',['Nickname'],'CJ','applicant/name'),Fact('future',['Future sponsorship'],'Yes','applicant/future')]
+    facts=[Fact('nickname',['Nickname'],'CJ','applicant/name',instructions='Use lowercase'),Fact('future',['Future sponsorship'],'Yes','applicant/future')]
     class Model(SourceModel):
         def with_structured_output(self,schema,**kwargs):
             def invoke(msgs):
-                if schema is Mappings:return Mappings(mappings=[Mapping(field_id=0,fact_id='nickname')])
+                if schema is Mappings:return Mappings(mappings=[Mapping(field_id=0,fact_id='nickname',value='cj')])
                 data=json.loads(msgs[-1].content);seen.append(data)
                 assert {x['id'] for x in data['all_facts']}=={'nickname','future'}
                 assert data['sources']['today']=='2026-11-14'
                 return Supported(supported_ids=[0])
             return SimpleNamespace(invoke=invoke)
     filler=PlannedFiller(facts,lambda _: {},Model(),{'today':'2026-11-14'})
-    assert filler.plan([forms.Field(id=0,kind='text',label='What should we call you?')])[0].value=='CJ'
+    assert filler.plan([forms.Field(id=0,kind='text',label='What should we call you?')])[0].value=='cj'
     assert len(seen)==1
 
 

@@ -11,7 +11,7 @@ filling. Submit buttons are never clicked here.
 import json
 import re
 from datetime import datetime
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -34,6 +34,19 @@ FIELDS_JS = r"""(start) => {
       const s = getComputedStyle(a); if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false; }
     return true; };
   const clean = t => (t || '').replace(/\s+/g, ' ').trim();
+  const caption = e => {
+    // Read the original nodes: detached clones lose CSS visibility and expose
+    // hidden loading/error text. Exclude option subtrees before walking text.
+    const text=(n,root=false)=>{
+      if(n.nodeType===Node.TEXT_NODE)return n.textContent;
+      if(n.nodeType!==Node.ELEMENT_NODE)return '';
+      if(!root && n.matches('select,[role=listbox],[role=option]'))return '';
+      const style=getComputedStyle(n);
+      if(!root && (n.hidden || style.display==='none' || style.visibility==='hidden'))return '';
+      return [...n.childNodes].map(c=>text(c)).join(' ');
+    };
+    return clean(text(e,true));
+  };
   // F17: author roots, including closed roots recovered through the DOM protocol, share the same reader.
   const roots = [];
   const walk = r => { roots.push(r); for (const h of r.querySelectorAll('*')) {
@@ -42,10 +55,10 @@ FIELDS_JS = r"""(start) => {
   const all = sel => roots.flatMap(r => [...r.querySelectorAll(sel)]);
   const anchor = e => { let x = e; while (x.getRootNode() instanceof ShadowRoot) x = x.getRootNode().host; return x; };
   const byIds = (ids, ctx) => clean((ids || '').split(/\s+/).map(i => (ctx ? ctx.getRootNode() : document).getElementById(i))
-      .filter(Boolean).map(x => x.innerText || x.textContent).join(' '));
-  const ownText = e => { const l = e.closest('label'); return l ? clean(l.innerText) : ''; };
+      .filter(Boolean).map(x => caption(x)).join(' '));
+  const ownText = e => { const l = e.closest('label'); return l ? caption(l) : ''; };
   // a widget's own caption, never the question (Carvana's "SELECT ANSWER" / "SELECT ALL THAT APPLY" boxes)
-  const GENERIC = /^(select( an?)?( answer| option| one| all that apply)?|choose( one| an option)?|please (select|choose)( one)?|-+ ?select ?-+|-+)$/i;
+  const GENERIC = /^(type your response|type here|enter (your )?answer|select( an?)?( answer| option| one| all that apply)?|choose( one| an option)?|please (select|choose)( one)?|-+ ?select ?-+|-+)$/i;
   const CONTROLS = 'input:not([type=hidden]), select, textarea, [role=combobox], [aria-haspopup=listbox]';
   const before = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
   const nearLabel = e => {
@@ -67,17 +80,22 @@ FIELDS_JS = r"""(start) => {
     // Workday: the form field's own label (a list button's aria-label holds its value: "Select One Required")
     const ff = e.closest('[data-automation-id^=formField-]');
     const fl = ff && ff.querySelector(':scope > label, :scope > legend, :scope > fieldset > legend, label');
-    if (fl && clean(fl.innerText)) return clean(fl.innerText).slice(0, 300);
+    if (fl && caption(fl)) return caption(fl).slice(0, 300);
     let t = byIds(e.getAttribute('aria-labelledby'), e);
-    if (!t && e.id) { const l = e.getRootNode().querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) t = clean(l.innerText); }
+    if (!t && e.id) { const l = e.getRootNode().querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) t = caption(l); }
     if (!t) t = clean(e.getAttribute('aria-label'));
-    if (!t) { const l = e.closest('label'); if (l) t = clean(l.innerText); }
+    if (!t) { const l = e.closest('label'); if (l) t = caption(l); }
     if (!t) {
       // Ashby and similar: the question is the first label of the field's block, the input itself has none
       const fc = e.closest('[data-field-path], [data-field-entry-id]');
       const l = fc && [...fc.querySelectorAll('label, legend')].find(x => !x.contains(e) && clean(x.innerText));
-      if (l) t = clean(l.innerText); }
-    if (!t) { const fs = e.closest('fieldset'); const lg = fs && fs.querySelector('legend'); if (lg) t = clean(lg.innerText); }
+      if (l) t = caption(l); }
+    if (!t) { const fs = e.closest('fieldset'); const lg = fs && fs.querySelector('legend'); if (lg) t = caption(lg); }
+    if (!t || GENERIC.test(t)) {
+      const block=e.closest('.application-question,[data-field-path],[data-field-entry-id]');
+      const title=block && block.querySelector('.application-label,[class*=question-title],legend');
+      if(title)t=caption(title);
+    }
     if (!t || GENERIC.test(t)) t = nearLabel(e) || (GENERIC.test(t) ? '' : t);
     if (!t) { const p = clean(e.placeholder || e.getAttribute('title') || ''); if (!GENERIC.test(p)) t = p; }
     if (!t) t = around(e, ownOf(e)).replace(/^(select all that apply|select( an?)?( answer| option| one)?)\b\s*/i, '');
@@ -88,8 +106,8 @@ FIELDS_JS = r"""(start) => {
     // (Lever and many custom forms put it in a sibling div, not a label)
     let a = e.parentElement;
     for (let k = 0; a && k < 6; k++, a = a.parentElement) {
-      let x = clean(a.innerText);
-      for (const o of own) if (o) x = x.split(o).join(' ');
+      let x = caption(a);
+      for (const o of own) if (o && own.length<100) x = x.split(o).join(' ');
       x = clean(x);
       if (x.length > 1 && x.length < 400) return x;
       if (x.length >= 400) break; }
@@ -97,7 +115,8 @@ FIELDS_JS = r"""(start) => {
   const groupQuestion = (e, name) => {
     // radio / checkbox groups: the group's legend or aria label, else the container text before the options
     if (e.closest('[data-automation-id^=formField-]')) return question(e);  // Workday: the form field's label
-    const blk = e.closest('[data-field-path], fieldset');
+    const blk = e.closest('[data-field-path], fieldset, .application-question');
+    if (blk?.querySelector(':scope > .application-label'))return caption(blk.querySelector(':scope > .application-label'));
     if (blk) {  // the block's own question: a label that isn't one of the boxes' labels
       const ids = new Set([...blk.querySelectorAll('input')].map(b => b.id).filter(Boolean));
       const q = [...blk.querySelectorAll('label, legend')].find(l => !ids.has(l.getAttribute('for')) && !l.querySelector('input') && clean(l.innerText));
@@ -113,11 +132,25 @@ FIELDS_JS = r"""(start) => {
   const section = e => {
     // the nearest heading above the field (e.g. "Work Experience 2", "Voluntary Self-Identification")
     // headings only: a legend is a field's own label (Workday's "To*" date), not a section
-    const hs = all('h1, h2, h3, h4, h5, [role=heading]').filter(h => vis(h)
+    const hs = all('h1, h2, h3, h4, h5, [role=heading], [class*=header] > p, [class*=title] > p').filter(h => vis(h)
+      && (/^H[1-5]$/.test(h.tagName) || h.getAttribute('role')==='heading' || /^(education|work experience|employment history|languages)(?: \d+)?$/i.test(clean(h.innerText)))
       && !h.closest('[role=dialog],[role=listbox],[role=menu],[class*=datepicker i],[class*=calendar i]'));
     let best = '';
     const ae = anchor(e);
-    for (const h of hs) { if (anchor(h).compareDocumentPosition(ae) & Node.DOCUMENT_POSITION_FOLLOWING) best = clean(h.innerText); }
+    for (const h of hs) {
+      if(h.tagName==='P' && !h.parentElement?.parentElement?.contains(e))continue;
+      if (anchor(h).compareDocumentPosition(ae) & Node.DOCUMENT_POSITION_FOLLOWING) best = clean(h.innerText);
+    }
+    if(/^education$/i.test(best)) {
+      const index=(e.id||'').match(/--(\d+)$/);
+      if(index)return 'Education '+(Number(index[1])+1);
+      return 'Education 1';
+    }
+    const education=e.closest('[class*=education--entry],[class*=education-entry], [data-education-index]');
+    if(education && /^education$/i.test(best)) {
+      const peers=all('[class*=education--entry],[class*=education-entry],[data-education-index]');
+      return 'Education '+(peers.indexOf(education)+1);
+    }
     return best.slice(0, 80); };
   // a required marker is "*" or a lookalike (Lever uses U+2731), at the end of the caption or followed by a space
   const star = q => /[*✱∗＊⁎]\s*$|[*✱∗＊⁎]\s|\(required\)/i.test(q||'');
@@ -168,6 +201,8 @@ FIELDS_JS = r"""(start) => {
     f.id = n++;
     f.identity=identity(e);
     f.frame_identity=registry.epoch;
+    f.locator_ref=registry.epoch+':'+f.identity;
+    e.setAttribute('data-jf-ref',f.locator_ref);
     f.invalid=e.getAttribute('aria-invalid')==='true' || !!(e.validity && !e.validity.valid);
     f.required=!!f.required || required(e,f.label);
     f.calendar=e.type!=='date' && e.tagName==='INPUT' &&
@@ -271,11 +306,11 @@ FIELDS_JS = r"""(start) => {
     if (e.closest('[data-jf-skip], header, nav, [role=banner], [data-automation-id=navigationContainer]')) continue;
     if (e.closest('[data-automation-id=promptOption], [data-automation-id=activeListContainer], [role=option]')) continue;  // inside an open option list
     // a group is the boxes sharing a name inside one question (Workday repeats a name in every work-experience entry)
-    const scope = e.closest('fieldset, [role=group], [role=radiogroup], [data-automation-id^=formField-]') || e.getRootNode();
+    const scope = e.closest('fieldset, [role=group], [role=radiogroup], [data-automation-id^=formField-], .application-question') || e.getRootNode();
     const sameName = t === 'radio' || t === 'checkbox' ? [...scope.querySelectorAll(`input[type=${t}][name="${CSS.escape(e.name || '')}"]`)] : [];
     if (e.hasAttribute('data-jf')) continue;  // already part of a group
     // one question's checkboxes, each with its own name: a Workday form field, an Ashby field block, a fieldset
-    const qBlock = t === 'checkbox' ? e.closest('[data-automation-id^=formField-], [data-field-path], fieldset') : null;
+    const qBlock = t === 'checkbox' ? e.closest('[data-automation-id^=formField-], [data-field-path], fieldset, .application-question') : null;
     const ffBoxes = qBlock ? [...qBlock.querySelectorAll('input[type=checkbox]')] : [];
     if (t === 'radio' || (t === 'checkbox' && ((e.name && sameName.length > 1) || ffBoxes.length > 1))) {
       // Workday lists one question's checkboxes under one form field, each with its own name
@@ -303,7 +338,7 @@ FIELDS_JS = r"""(start) => {
     if (role === 'radio') continue;  // ARIA radio groups are rare on forms; left to the page model
     if (e.tagName === 'SELECT') {
       const opts = [...e.options].filter(o => !o.disabled && !o.hidden).map(o => clean(o.text)).filter(Boolean);   // a disabled prompt is not a choice
-      add(e, {kind: 'select', label: q, required: required(e, q), options: opts.slice(0, 300), multiple: e.multiple,
+      add(e, {kind: 'select', label: q, required: required(e, q), options: opts, option_values: [...e.options].filter(o=>!o.disabled&&!o.hidden&&clean(o.text)).map(o=>o.value), options_state:'complete', multiple: e.multiple,
               value: e.selectedIndex >= 0 && e.value ? clean(e.options[e.selectedIndex].text) : '',
               // The selected option's own evidence that it is a PROMPT and not an answer: a disabled option is never submitted, a hidden
               // one is not offered, and a `data-placeholder` / placeholder-labelled one says so. A longer, question-specific prompt
@@ -331,7 +366,18 @@ FIELDS_JS = r"""(start) => {
     const tx = clean(b.innerText || b.getAttribute('aria-label'));
     if (!/^add( another)?\b/i.test(tx) || !vis(b) || !shown(b) || tx.length > 40) continue;
     b.setAttribute('data-jf-add', String(adds.length));
-    adds.push({id: adds.length, text: tx, section: section(b) || clean(b.getAttribute('aria-label'))}); }
+    let ownedSection=section(b) || clean(b.getAttribute('aria-label'));
+    // A shared Add another toolbar may sit outside the entry header's owner.
+    // Associate it with the nearest ancestor containing only one entity group.
+    for(let owner=b.parentElement;owner && !owner.matches('form,body,html');owner=owner.parentElement){
+      const ids=new Set([...owner.querySelectorAll('[data-jf]')].map(e=>Number(e.getAttribute('data-jf'))));
+      const fields=out.filter(f=>ids.has(f.id));
+      if(!fields.length)continue;
+      const groups=fields.map(f=>(f.section||'').match(/^(Education|Work Experience|Employment History)(?: \d+)?$/i)?.[1]);
+      if(groups.every(Boolean) && new Set(groups.map(x=>x.toLowerCase())).size===1)ownedSection=groups[0];
+      break;
+    }
+    adds.push({id: adds.length, text: tx, section: ownedSection}); }
   const errors = all('[role=alert], [aria-invalid=true], [class*=error i], [id*=error i], [data-automation-id*=error i]')
       .filter(vis).map(e => clean(e.innerText)).filter(t => t && t.length < 300);
   const headings = all('h1, h2, h3, [data-automation-id=pageHeader], [aria-current=step]')
@@ -341,7 +387,7 @@ FIELDS_JS = r"""(start) => {
     const text = clean(button.innerText || button.getAttribute('aria-label'));
     if (!/^((click here to )?(choose (a )?file|browse( files)?|upload( (a |your )?(file|resume|cv|cover letter|document|attachment))?|attach( (a |your )?(file|resume|cv|cover letter|document|attachment))?))$/i.test(text)
         || !vis(button) || !shown(button) || button.hasAttribute('data-jf')) continue;
-    const box = button.closest('fieldset,[data-field-path],[data-field-entry-id],[class*=upload i],.form-group,.form-field') || button.parentElement;
+    const box = button.closest('[data-field-path],[data-field-entry-id]') || button.closest('[class*=upload i],fieldset,.form-group,.form-field') || button.parentElement;
     if (!box || box.querySelector('input[type=file]')) continue;
     const label = box.querySelector('label,legend');
     const caption = (label && clean(label.innerText)) || question(button) || text;
@@ -381,6 +427,9 @@ class Field:
     frame_identity: str = ''
     invalid: bool = False
     calendar: bool = False
+    locator_ref: str = ''
+    options_state: str = 'complete'
+    option_values: list[str] = field(default_factory=list)
 
     def brief(self) -> str:
         opts = ""
@@ -531,12 +580,21 @@ def read_page(page: Page) -> PageView:
                                 maxlength=x.get("maxlength"), format=x.get("format", ""), help=x.get("help", ""),
                                 linked=bool(x.get("linked")), prompt=bool(x.get("prompt")),
                                 identity=x.get('identity',''),frame_identity=x.get('frame_identity',''),invalid=bool(x.get('invalid')),
-                                calendar=bool(x.get('calendar'))))
+                                calendar=bool(x.get('calendar')),locator_ref=x.get('locator_ref',''),
+                                options_state=x.get('options_state','partial' if x['kind']=='combobox' else 'complete'),
+                                option_values=x.get('option_values',[])))
         adds += [{**a, "frame": k} for a in snap.get("adds", [])]
         buttons += snap["buttons"]
         errors += snap["errors"]
         headings += snap["headings"]
     fields = merge_linked_uploads(fields)
+    # Unique questions without author IDs can survive a React node replacement.
+    # Keep locator_ref tied to the actual node; identity is only for planning/audit.
+    for g in fields:
+        if g.kind!='file' and g.identity.startswith('node:'):
+            signature=(g.frame,g.kind,_norm(g.label),_norm(g.section))
+            if sum((x.frame,x.kind,_norm(x.label),_norm(x.section))==signature for x in fields)==1:
+                g.identity='question:'+repr(signature[1:])
     seen: dict[tuple, int] = {}
     for g in fields:                      # uploads often share a native name ("file"): number them so none is lost
         if g.kind == "file":
@@ -769,8 +827,11 @@ def in_range(option: str, x: float) -> bool:
     return False
 
 
-def same_value(want: str, got: str, kind: str) -> bool:
+def same_value(want: str, got: str, kind: str, question: str = "") -> bool:
     """The page shows the value that was meant (read-back check)."""
+    if kind in ('combobox','select','radio','buttons') and is_identity(question):
+        return any(identity_option(v.strip(),[got],person=bool(PERSON_Q.search(question))) is not None
+                   for v in want.split(' | ') if v.strip())
     if " | " in want:
         # one of the candidate's wordings exactly: "Arizona State University" is not "Arizona State University - West"
         g = _norm(got)
@@ -894,32 +955,42 @@ def fill_calendar(page,view,f,answer):
 
 
 def locate(view: PageView, f: Field):
-    return field_element(view.frames[f.frame], f'[data-jf="{f.id}"]')
+    selector=f'[data-jf-ref={json.dumps(f.locator_ref)}]' if f.locator_ref else f'[data-jf="{f.id}"]'
+    loc=field_element(view.frames[f.frame],selector)
+    if f.locator_ref and hasattr(loc,'count') and loc.count()!=1:
+        raise FillError('The captured control is not exactly one control now; refresh the form')
+    return loc
 
 
 def _open_options(frame: Frame, loc, page: Page) -> list[str]:
     loc.scroll_into_view_if_needed(timeout=5000)
     loc.click(timeout=8000)
-    page.wait_for_timeout(700)
+    try:
+        # Other closed pickers can retain hidden option nodes. Wait for actual
+        # visible choices from this opening, not merely any option in the DOM.
+        frame.wait_for_function("pattern => {const skip=new RegExp(pattern,'i');return ("+OPTIONS_JS+")().some(t=>!skip.test(t));}",
+                                arg=_NO_OPTIONS.pattern.removeprefix('(?i)'),timeout=1500)
+    except Exception:pass
     return [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
 
 
-def discover_options(page: Page, view: PageView, log=print) -> None:
+def discover_options(page: Page, view: PageView, log=print, *, fields=None) -> None:
     """Open each combobox once to read its options (react-select and Workday lists render them only when open).
     A search box with no list until something is typed keeps no options (the answer is typed then)."""
-    for f in view.fields:
+    for f in (view.fields if fields is None else fields):
         if f.kind != "combobox" or f.options:
             continue
         try:
             loc = locate(view, f)
-            f.options = _open_options(view.frames[f.frame], loc, page)[:300]
+            f.options = _open_options(view.frames[f.frame], loc, page)
+            f.options_state = 'partial'
             if loc.get_attribute("data-uxi-widget-type") == "selectinput" and len(f.options) <= 15:
                 f.options = _expand_categories(page, view.frames[f.frame], loc, f.options)
         except Exception as e:
             log(f"forms: options of \"{f.label[:50]}\" unreadable: {type(e).__name__}")
         finally:
             page.keyboard.press("Escape")
-            page.wait_for_timeout(200)
+            page.wait_for_timeout(30)
 
 
 def _expand_categories(page: Page, frame: Frame, loc, top: list[str]) -> list[str]:
@@ -997,7 +1068,7 @@ def close_option(answer: str, options: list[str]) -> str | None:
 
 
 def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[str, str], tie_break=None,
-               strict: bool = False, close: bool = False, before_upload=None, upload_confirmation=None) -> str:
+               strict: bool = False, close: bool = False, before_upload=None, upload_confirmation=None, alternatives=()) -> str:
     """Put `answer` into the field. Returns what was chosen (the option text for choice fields)."""
     from jobagent.tools import challenge
     if challenge.guard(page):
@@ -1007,6 +1078,8 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             raise challenge.Blocked("Form changed after verification; field requires review")
         f = matches[0]
     frame, loc = view.frames[f.frame], locate(view, f)
+    tagged=loc.get_attribute('data-jf')
+    if tagged is not None and tagged.isdigit() and int(tagged)!=f.id:f=replace(f,id=int(tagged))
     if f.kind == "file":
         path = files.get(answer) or answer
         name = path.rsplit("/", 1)[-1]
@@ -1020,6 +1093,12 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                             f"{name} to a control that might be another widget")
         f, view = same[0], live
         frame, loc = view.frames[f.frame], locate(view, f)
+        if before_upload is None:
+            from jobagent.filling.uploads import UploadProof
+            proof=UploadProof(path,loc);proof.identity=f.identity;proof.frame=f.frame_identity
+            proofs=getattr(page,'_jobagent_upload_proofs',None)
+            if proofs is None:proofs=[];page._jobagent_upload_proofs=proofs
+            proofs.append(proof);before_upload=proof.bind;upload_confirmation=proof.verify
         if loc.evaluate("e => e.tagName !== 'INPUT'"):
             # Associate the clicked control with its chooser/new input, without assuming a caption or input ID.
             choosers = []
@@ -1055,31 +1134,21 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         native=loc.element_handle(timeout=1200) if hasattr(loc,'element_handle') else loc
         if native is None:raise FillError('The resolved file input disappeared before upload')
         if before_upload:before_upload(native)
-        for _ in range(2):  # the upload counts once the page shows the file's name
-            if getattr(getattr(page, 'context', None), 'jobagent_policy', None):
-                # The agent runs in Docker but Chrome runs on the host. Transfer bytes;
-                # a Docker /app path is not a file path on the desktop browser's host.
-                import mimetypes
-                from pathlib import Path
-                native.set_input_files({'name': name, 'mimeType': mimetypes.guess_type(path)[0] or 'application/octet-stream',
-                                     'buffer': Path(path).read_bytes()},timeout=8000)
+        # Dispatch once. Poll owned evidence, not a filename elsewhere or a
+        # second upload of the same bytes while the first is still processing.
+        if getattr(getattr(page, 'context', None), 'jobagent_policy', None):
+            import mimetypes
+            native.set_input_files({'name':name,'mimeType':mimetypes.guess_type(path)[0] or 'application/octet-stream',
+                                   'buffer':Path(path).read_bytes()},timeout=8000)
+        else:native.set_input_files(path,timeout=8000)
+        for _ in range(60):
+            if upload_confirmation:
+                if upload_confirmation():return path
             else:
-                native.set_input_files(path,timeout=8000)
-            for _ in range(10):
-                page.wait_for_timeout(2000)
-                if upload_confirmation and upload_confirmation():return path
                 try:
-                    if native.evaluate('e=>e.isConnected') and name in native.evaluate('e=>[...(e.files||[])].map(f=>f.name)'):   # a detached input holds the file for nobody
-                        return path
-                except Exception:
-                    pass  # some uploaders replace their native input after accepting the file
-                # the name must show inside THIS widget's boundary; the same name elsewhere on the page (another widget holding that
-                # file, a document list) proves nothing about this one
-                others = [c for g in view.fields if g.kind == "file" and (g.id, g.frame) != (f.id, f.frame) for c in _captions(g.label)]
-                shown = attachment_evidence(page, view, f, others, [name], f.label) or \
-                    attachment_evidence(page, view, None, others, [name], f.label)
-                if name in (shown or ""):
-                    return path
+                    if native.evaluate('e=>e.isConnected') and name in native.evaluate('e=>[...(e.files||[])].map(f=>f.name)'):return path
+                except Exception:pass
+            page.wait_for_timeout(500)
         raise FillError(f"{name} was attached but the page never showed it")
     loc.scroll_into_view_if_needed(timeout=5000)
     if f.calendar:return fill_calendar(page,view,f,answer)
@@ -1149,7 +1218,9 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         opt = strict_option(answer, f.options) if strict else close_option(answer, f.options) if close and not is_identity(f.label) else _choose(f.label, answer, f.options, tie_break)
         if opt is None:
             raise FillError(f"{answer!r} isn't offered as such")
-        loc.select_option(label=opt, timeout=8000)
+        values=[v for label,v in zip(f.options,f.option_values) if label==opt]
+        if values and len(set(values))!=1:raise FillError('The offered label identifies several distinct options')
+        loc.select_option(**({'value':values[0]} if values else {'label':opt}),timeout=8000)
         return opt
     if f.kind == "checkbox":
         want = _norm(answer) in ("checked", "yes", "true", "agree", "i agree", "accept")
@@ -1165,7 +1236,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             raise FillError(f"{answer!r} isn't offered as such")
         k = f.options.index(opt)
         field_element(frame, f'[data-jf="{f.id}"][data-jf-opt="{k}"]').click(timeout=8000)
-        page.wait_for_timeout(500)
+        page.wait_for_timeout(50)
         return opt
     if f.kind in ("radio", "checkboxes"):
         wanted = [a.strip() for a in (answer.split(";") if f.kind == "checkboxes" else [answer]) if a.strip()]
@@ -1212,24 +1283,31 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         pick = (lambda ans, o: (strict_option(ans, o) or (strict_place(ans,o) if geographic else None), 0)) if strict else \
             (lambda ans, o: (identity_option(ans, o, person=bool(PERSON_Q.search(f.label))), 0)) if is_identity(f.label) else \
             (lambda ans, o: (close_option(ans, o), 0)) if close else match_option
-        opt, _ = pick(answer, opts) if opts else (None, 0)
+        candidates=list(dict.fromkeys([answer,*[str(a) for a in alternatives if a and not OTHER_OPTION.match(str(a))]]))
+        def offered(options):
+            return next((hit for candidate in candidates if (hit:=pick(candidate,options)[0]) is not None),None)
+        opt=offered(opts) if opts else None
         if opt is None and (loc.evaluate("e => e.tagName") == "INPUT"):
             # a search box: type the answer (or its first words) and pick from what the site suggests
-            for probe in dict.fromkeys([answer[:60], " ".join(answer.split()[:3]), answer.split()[0] if answer else ""]):
+            for probe in dict.fromkeys([*[a[:60] for a in candidates], " ".join(answer.split()[:3]), answer.split()[0] if answer else ""]):
                 if not probe:
                     continue
+                previous=frame.evaluate(OPTIONS_JS)
                 loc.fill("")
-                loc.type(probe, delay=40)
+                loc.type(probe, delay=0)
                 if loc.get_attribute("data-uxi-widget-type") == "selectinput":
                     loc.press("Enter")  # Workday searches on Enter
-                page.wait_for_timeout(1800)
+                try:
+                    frame.wait_for_function("before => {const choices=("+OPTIONS_JS+")();return choices.length && !choices.every(t=>/^loading/i.test(t)) && JSON.stringify(choices)!==JSON.stringify(before);}",
+                                            arg=previous,timeout=1800)
+                except Exception:pass
                 opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
                 if not opts and loc.get_attribute("data-uxi-widget-type") == "selectinput":
                     # Workday picks a search's only result by itself: no list, just the new chip
                     chips = loc.evaluate("e => [...(e.closest('[data-automation-id=multiSelectContainer]') || "
                                          "e.parentElement).querySelectorAll('[data-automation-id=selectedItem]')]"
                                          ".map(x => x.innerText.trim())")
-                    if chips and pick(answer, chips)[0]:
+                    if chips and offered(chips):
                         return chips[-1]
                     for _ in chips if not strict else []:  # it picked something else: undo
                         box = loc.locator("xpath=ancestor::*[@data-automation-id='multiSelectContainer'][1]")
@@ -1237,7 +1315,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                         page.keyboard.press("Delete")
                         page.wait_for_timeout(500)
                 if opts:
-                    opt, _ = pick(answer, opts)
+                    opt=offered(opts)
                     if opt:
                         break
         if opt is None and (strict or close):
@@ -1257,7 +1335,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         try:
             option.first.click(timeout=8000)
         finally:
-            page.wait_for_timeout(1200)
+            page.wait_for_timeout(1200 if loc.get_attribute('data-uxi-widget-type')=='selectinput' else 50)
         # Carvana's GPA multi-select keeps its options open after selection and
         # intercepts the next field. Close its own trigger, without clicking elsewhere.
         if (loc.get_attribute("id") or "").endswith("_multiselect") and shadow_locator(frame, '[role="option"]:visible').count():

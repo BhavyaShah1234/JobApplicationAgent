@@ -21,6 +21,7 @@ class Fact:
     record: bool = False
     tools: list[str] = field(default_factory=list)
     reference_date: str = ''
+    authority: str = 'owner'
 
 
 @dataclass
@@ -39,7 +40,7 @@ def key(f):
 def owner_only(f):
     """A resume establishes experience, not preferences, consent or sensitive history."""
     return bool(re.search(r'(?i)enjoy|prefer|desired|would you like|consent|agree|acknowledg|convict|felony|misdemeanor|'
-                          r'citizen|sponsor|disab|medical|dismiss|religio|faith|gender|sexual|ethnic|\brace\b', f.label))
+                          r'pronouns|currently.*client|(?:opened|have) an? account|conferences?.*(?:attend|planning)|gatherings.*attend|citizen|sponsor|disab|medical|dismiss|religio|faith|gender|sexual|ethnic|\brace\b|birth|social security|\bssn\b|passport|clearance|resident|^legal name$|^full name$|^name$|\bemail\b|\bphone\b|share.*(?:external|partner)' , f.label))
 
 
 ENTITY_HEADER = re.compile(r'^(?:(?:previous|prior|past)\s*)?(work\s*experience|employment(?:\s*history)?|professional\s*experience|education|academic(?:\s*(?:history|qualifications))?|references?|referrals?)\s*(?:entry\s*)?(\d+)?$')
@@ -63,7 +64,14 @@ def scope_allows(f, fact):
     target=entity_scope(f.section)
     if fact.section:
         origin=entity_scope(fact.section)
-        return target==origin if target and origin else norm(f.section)==norm(fact.section)
+        if target and origin:
+            return target[0]==origin[0] and (target[1] or 1)==(origin[1] or 1)
+        if origin and not target:
+            # Explicit global questions can read a source record outside a UI row.
+            q=norm(f.label)
+            if origin[0]=='education' and re.search(r'(currently attending|last attend)',q):return origin[1]==1
+            if origin[0]=='employment' and re.search(r'(current|previous).*(employer|company|job title)',q):return origin[1]==1
+        return norm(f.section)==norm(fact.section)
     # A general contact answer is not evidence for an employer, school or reference's contact details.
     if target and (norm(f.label) in ENTITY_COMPONENTS or any(norm(a) in ENTITY_COMPONENTS for a in fact.aliases)):
         return False
@@ -89,10 +97,32 @@ def choice(f, values):
         parts=[x.strip() for x in values[0].split(';') if x.strip()]
         picks=[forms.strict_option(x,f.options) for x in parts]
         if parts and all(x is not None for x in picks):return '; '.join(picks)
+    if 'pronoun' in norm(f.label):
+        equivalents={'he him his':'he him','she her hers':'she her','they them theirs':'they them'}
+        target=equivalents.get(norm(values[0]))
+        hits=[o for o in f.options if norm(o)==target] if target else []
+        if len(hits)==1:return hits[0]
+    if 'gender' in norm(f.label) and norm(values[0]) in ('male','female'):
+        target={'male':'man','female':'woman'}[norm(values[0])]
+        hits=[o for o in f.options if norm(o)==target]
+        if len(hits)==1:return hits[0]
     if 'veteran' in norm(f.label) and norm(values[0]) in ('not a veteran','not veteran'):
+        binary=[o for o in f.options if norm(o)=='no']
+        if len(binary)==1:return binary[0]
         hits=[o for o in f.options if re.search(r'(?i)\bnot (?:a )?protected veteran\b',o)
               and not re.search(r'(?i)decline|prefer not',o)]
         if len(hits)==1:return hits[0]
+    if re.search(r'(?i)disability',f.label) and norm(values[0]).startswith('no '):
+        hits=[o for o in f.options if norm(o).startswith('no ')]
+        if len(hits)==1:return hits[0]
+    # Quarter choices denote a date interval, not a literal spelling of the
+    # owner's available date. Select only the unique interval containing it.
+    if re.search(r'(?i)start|availab',f.label) and re.fullmatch(r'\d{4}-\d{2}-\d{2}',values[0]):
+        try:
+            date=datetime.strptime(values[0],'%Y-%m-%d')
+            hits=[o for o in f.options if (m:=re.search(r'(?i)\bQ([1-4])\s+(\d{4})\b',o)) and int(m[2])==date.year and int(m[1])==(date.month-1)//3+1]
+            if len(hits)==1:return hits[0]
+        except ValueError:pass
     for value in values:
         hit = forms.strict_option(value, f.options)
         if hit is not None:
@@ -122,23 +152,24 @@ def choice(f, values):
               (target[0]==target[1] and percent_range(o) and percent_range(o)[0]<=target[0]<=percent_range(o)[1])]
         if len(hits)==1:return hits[0]
     # Searchable pickers must search the actual identity, not pick the closest initial result.
-    if f.kind == 'combobox':
+    if f.kind == 'combobox' and (not f.options or f.options_state in ('partial','search_required','stale')):
         return values[0]
     return None
 
 
 def from_fact(f, fact):
     if fact.instructions:
+        if fact.reference_date and re.search(r"(?i)today(?:'s| s)?",fact.instructions) and not re.search(r'(?i)\bif\b|\bunless\b',fact.instructions):
+            return from_fact(f,Fact(fact.id,fact.aliases,fact.reference_date,fact.source+'; clock '+fact.reference_date,fact.section,fact.variants,authority=fact.authority))
         weekday=re.search(r'(?i)\b(?:coming|next)\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b',fact.instructions)
         if weekday and fact.reference_date and not re.search(r'(?i)\bif\b|\bunless\b',fact.instructions):
             if f.kind in ('select','combobox','radio','buttons','checkboxes') and not f.calendar and re.search(r'(?i)\bin a list\b.*\bimmediately\b',fact.instructions):
                 rendered=choice(f,['immediately'])
                 if rendered is not None:return Decision(rendered,fact.source,fact.id,'explicit list fallback in owner rule')
-            else:
-                today=datetime.strptime(fact.reference_date,'%Y-%m-%d')
-                day=['monday','tuesday','wednesday','thursday','friday','saturday','sunday'].index(weekday[1].lower())
-                value=(today+timedelta(days=(day-today.weekday())%7 or 7)).strftime('%Y-%m-%d')
-                return from_fact(f,Fact(fact.id,fact.aliases,value,fact.source+'; clock '+fact.reference_date,fact.section,fact.variants))
+            today=datetime.strptime(fact.reference_date,'%Y-%m-%d')
+            day=['monday','tuesday','wednesday','thursday','friday','saturday','sunday'].index(weekday[1].lower())
+            value=(today+timedelta(days=(day-today.weekday())%7 or 7)).strftime('%Y-%m-%d')
+            return from_fact(f,Fact(fact.id,fact.aliases,value,fact.source+'; clock '+fact.reference_date,fact.section,fact.variants))
         # Only unconditional literal rules can bypass the source-aware planner.
         literal=re.fullmatch(r'(?is)\s*(?:use|enter|answer)\s+["\']?([^\n]+?)["\']?\.?\s*', fact.instructions)
         clear=re.fullmatch(r'(?is)\s*(?:leave|keep)\s+(?:it\s+)?(?:blank|empty)\.?\s*', fact.instructions)
@@ -194,8 +225,14 @@ def resolve(f, facts):
     if suffix and label.endswith(suffix):label=label[:-len(suffix)].strip()
     matches = [x for x in facts if not x.record and norm(label) in map(norm, x.aliases)
                and scope_allows(f,x)]
+    sheets=[x for x in matches if x.id.startswith('application.answer.')]
+    if sheets:matches=sheets
     human=[x for x in matches if x.source=='human']
     if len(human)==1:matches=human
+    if len(matches)>1:
+        profile=[x for x in matches if x.source.startswith('applicant/')]
+        if profile:matches=profile
+        if len({(x.value,x.instructions,x.section) for x in matches})==1:matches=matches[:1]
     if len(matches) != 1:
         return Decision(None, reason='no unique source-backed mapping')
     fact = matches[0]
@@ -237,7 +274,8 @@ def compile_facts(data, raw_jd, reference_date=''):
                                       instructions=entry.get('instructions',''),tools=tools))
         elif isinstance(value,list) and value and all(isinstance(x,dict) for x in value):
             for i,row in enumerate(value,1):
-                group='Education' if q=='Degrees' else 'Work Experience' if q=='Work history' else q
+                group='Education' if q=='Degrees' else 'Work Experience' if q=='Work history' else ''
+                row_section=f'{group} {i}' if group else ''
                 aliases={'school':['School','University','Institute'], 'degree':['Degree'], 'field':['Field of Study','Major'],
                          'from':['From Date','Start Date'], 'start':['From Date','Start Date'],
                          'end':['End Date'], 'to':['End Date'], 'company':['Company Name','Employer'], 'title':['Job Title'],
@@ -245,7 +283,7 @@ def compile_facts(data, raw_jd, reference_date=''):
                          'description':['Description','Responsibilities','Role Description'], 'gpa':['GPA','Grade Point Average'],
                          'city':['City'], 'state':['State','Province'], 'country':['Country']}
                 import json
-                facts.append(Fact(source+f'/{i-1}',[q],json.dumps(row,ensure_ascii=False),source+f'/{i-1}',f'{group} {i}',
+                facts.append(Fact(source+f'/{i-1}',[q],json.dumps(row,ensure_ascii=False),source+f'/{i-1}',row_section,
                                   instructions=entry.get('instructions',''),record=True,tools=tools))
                 for component in row:
                     names=aliases.get(component,[component.replace('_',' ')])
@@ -254,7 +292,7 @@ def compile_facts(data, raw_jd, reference_date=''):
                     variants=v if isinstance(v,list) else [v]
                     if variants and isinstance(variants[0],(str,int,float)):
                         facts.append(Fact(source+f'/{i-1}/{component}',names,str(variants[0]),source+f'/{i-1}/{component}',
-                                          f'{group} {i}',[str(x) for x in variants[1:]],instructions=entry.get('instructions',''),tools=tools))
+                                          row_section,[str(x) for x in variants[1:]],instructions='' if re.match(r'(?i)one (?:education )?entry per',entry.get('instructions','')) else entry.get('instructions',''),tools=tools))
         elif isinstance(value,list) and (value or entry.get('instructions')):
             import json
             facts.append(Fact(source,[q,*entry.get('seen',[])],json.dumps(value,ensure_ascii=False),source,
@@ -279,5 +317,8 @@ def compile_facts(data, raw_jd, reference_date=''):
             facts.append(Fact('travel.fallback',['Willingness to travel','Percentage of travel'],'100%',
                               'applicant travel instruction; original jd.txt searched in full'))
 
-    for fact in facts:fact.reference_date=reference_date
+    origins={f'applicant/{sec}/{e["question"]}/answer':'resume' for sec,e in entries(data) if 'resume' in str(e.get('source','')).lower()}
+    for fact in facts:
+        fact.reference_date=reference_date
+        fact.authority=next((origin for prefix,origin in origins.items() if fact.source.startswith(prefix)), 'owner')
     return facts
