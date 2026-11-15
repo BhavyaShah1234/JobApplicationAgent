@@ -7,3 +7,7 @@ outputs
 **/__pycache__
 .pytest_cache
 .venv
+asu_contacts.csv
+.vscode
+CODE_REVIEW_FINDINGS.md
+*.sqlite
