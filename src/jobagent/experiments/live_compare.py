@@ -69,6 +69,49 @@ class TrialHitl:
 class TrialStopped(BaseException):pass
 
 
+class VisualObserver:
+    """Trial-only evidence. Never tags controls or changes application answers."""
+    def __init__(self,root,metrics,gate=False):
+        self.root=root;self.metrics=metrics;self.gate=gate;self.events=[]
+        self.overhead_s=0.;self.active_since=None
+
+    def excluded_s(self):
+        return self.overhead_s+(time.monotonic()-self.active_since if self.active_since else 0.)
+
+    def snapshot(self,page,event,detail=None,gate=False):
+        counted=bool(self.metrics and self.metrics[0].phase=='filling')
+        started=time.monotonic()
+        if counted:self.active_since=started
+        n=len(self.events)+1;folder=self.root/'visual';folder.mkdir(exist_ok=True)
+        data={'id':n,'event':event,'detail':detail or {},'url':page.url,'frames':[]}
+        try:
+            page.screenshot(path=str(folder/f'{n:04d}.png'),full_page=True,timeout=15000)
+            for i,frame in enumerate(page.frames):
+                try:
+                    controls=frame.locator('input:not([type=password]),select,textarea,[role=combobox]').evaluate_all('''es=>es.map(e=>({
+                        id:e.id,name:e.name,type:e.type||e.getAttribute('role'),value:e.type==='file' ? [...(e.files||[])].map(f=>f.name) : e.value,
+                        visible:!!(e.getBoundingClientRect().width&&e.getBoundingClientRect().height),
+                        required:e.required||e.getAttribute('aria-required')==='true',invalid:e.getAttribute('aria-invalid')==='true'||!!(e.validity&&!e.validity.valid),
+                        labels:[...(e.labels||[])].map(x=>x.innerText),aria_label:e.getAttribute('aria-label')
+                    }))''')
+                    data['frames'].append({'frame':i,'url':frame.url,'controls':controls})
+                except Exception as exc:data['frames'].append({'frame':i,'error':type(exc).__name__})
+            write(folder/f'{n:04d}.json',data);write(self.root/'visual-latest.json',data)
+            if gate and self.gate:
+                write(self.root/'control/inspection-pending.json',{'id':n,'screenshot':str(folder/f'{n:04d}.png'),'event':event})
+                reply=self.root/f'control/inspection-{n}.json'
+                while not reply.exists():
+                    if time.monotonic()-started>900:raise TrialStopped('visual inspection timed out')
+                    time.sleep(.5)
+                answer=json.loads(reply.read_text());(self.root/'control/inspection-pending.json').unlink(missing_ok=True)
+                data['inspection']=answer
+                if answer.get('action')!='continue':raise TrialStopped('operator stopped after visual inspection: '+answer.get('reason',''))
+        finally:
+            data['observation_s']=time.monotonic()-started;data['during_filling']=counted
+            if counted:self.overhead_s+=data['observation_s'];self.active_since=None
+            self.events.append(data);write(self.root/'visual-events.json',self.events)
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--job',type=Path,required=True);p.add_argument('--company',required=True)
@@ -76,6 +119,8 @@ def main():
     p.add_argument('--out',type=Path,required=True);p.add_argument('--url')
     p.add_argument('--storage-state',type=Path);p.add_argument('--headless',action='store_true')
     p.add_argument('--active-budget-minutes',type=float,default=30)
+    p.add_argument('--observe',action='store_true',help='Save action screenshots and gate each completed page for source/visual audit.')
+    p.add_argument('--debug-port',type=int,default=0,help='Local CDP port for a read-only live observer.')
     args=p.parse_args();os.umask(0o077)
     root=args.out.resolve();root.mkdir(parents=True,exist_ok=False)
     from jobagent.config import get_settings
@@ -115,12 +160,14 @@ def main():
     class ObservedMetrics(base_metrics):
         def __init__(self):super().__init__();captured.append(self)
     M.FillingMetrics=ObservedMetrics
+    observer=VisualObserver(root,captured,args.observe)
     def stop(*_):raise TrialStopped('trial active-time budget or operator stop')
     signal.signal(signal.SIGTERM,stop)
     def budget():
         while True:
             time.sleep(2)
-            if captured and captured[0].snapshot()['active_filling_s']>args.active_budget_minutes*60:
+            if (root/'control/pending.json').exists():continue
+            if captured and captured[0].snapshot()['active_filling_s']-observer.excluded_s()>args.active_budget_minutes*60:
                 os.kill(os.getpid(),signal.SIGTERM);return
     threading.Thread(target=budget,daemon=True).start()
     if (job/'context-snapshot.json').exists():
@@ -141,13 +188,26 @@ def main():
             view=forms.read_page(page)
             item={'page':page_no,'url':page.url,'fields':[asdict(f) for f in view.fields]}
             views.append(item);write(root/'initial-views.json',views)
-            page.screenshot(path=str(root/f'before-{len(views)}.png'),full_page=True)
-            return fn(page,ctx,files,model,log,record,page_no,*a,**kw)
+            if args.observe:observer.snapshot(page,'page-start',{'page':page_no})
+            else:page.screenshot(path=str(root/f'before-{len(views)}.png'),full_page=True)
+            result=fn(page,ctx,files,model,log,record,page_no,*a,**kw)
+            if args.observe:observer.snapshot(page,'page-filled',{'page':page_no,'records':[r for r in record if r.get('page')==page_no]},gate=True)
+            return result
         return observed
     if args.strategy=='original':A.fill_page=instrument(A.fill_page)
     else:
         from jobagent.filling import adapter
         adapter.fill_page=instrument(adapter.fill_page)
+    if args.observe:
+        fill_field=forms.fill_field
+        def observed_fill(page,view,field,answer,files,*a,**kw):
+            detail={'label':field.label,'kind':field.kind,'section':field.section,'intended':answer}
+            try:
+                chosen=fill_field(page,view,field,answer,files,*a,**kw);detail['chosen']=chosen;return chosen
+            except BaseException as exc:
+                detail['error']=f'{type(exc).__name__}: {str(exc)[:200]}';raise
+            finally:observer.snapshot(page,'field-action',detail)
+        forms.fill_field=observed_fill
     blocked=[]
     def route(r):
         request=r.request;url=request.url.lower()
@@ -161,7 +221,9 @@ def main():
             blocked.append({'url':url,'reason':'final submission request'});write(root/'submission-blocks.json',blocked);r.abort()
         else:r.continue_()
     with sync_playwright() as pw:
-        browser=pw.chromium.launch(channel='chrome',headless=args.headless)
+        browser=pw.chromium.launch(channel='chrome',headless=args.headless,
+            args=[f'--remote-debugging-port={args.debug_port}','--remote-debugging-address=127.0.0.1'] if args.debug_port else [])
+        if args.debug_port:write(root/'browser.json',{'cdp':f'http://127.0.0.1:{args.debug_port}','headless':args.headless})
         context=browser.new_context(**({'storage_state':str(args.storage_state)} if args.storage_state else {}))
         shadow.install(pw,context);context.add_init_script(GUARD);context.route('**/*',route)
         page=context.new_page();start=time.monotonic()
@@ -172,8 +234,11 @@ def main():
                 ensure_account(page,url,portal_vault,portal_inbox,hitl,portal_inbox.address,log=print)
             result=A.run(page,job,args.company,hitl=hitl,ask_s=900,filling_strategy=args.strategy,
                          ensure_signed_in=sign_in,log=lambda m:print(m,flush=True))
+            metrics=dict(result.get('filling_metrics') or {})
+            metrics.update(observation_s=observer.overhead_s,
+                active_filling_excluding_observation_s=max(0,metrics.get('active_filling_s',0)-observer.overhead_s))
             write(root/'outcome.json',{'state':result.get('state'),'ready':result.get('ready_to_submit'),
-                  'metrics':result.get('filling_metrics'),'elapsed_total_s':time.monotonic()-start})
+                  'metrics':metrics,'elapsed_total_s':time.monotonic()-start})
         except BaseException as exc:
             if captured:captured[0].finish()
             write(root/'exception.json',{'type':type(exc).__name__,'message':str(exc),'elapsed_total_s':time.monotonic()-start,
