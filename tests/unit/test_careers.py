@@ -1,7 +1,21 @@
 import json
 
+import pytest
+
 from jobagent.config import get_settings
 from jobagent.tools import careers as C
+
+
+@pytest.fixture(autouse=True)
+def isolated_careers_unit_tests(monkeypatch):
+    from jobagent.tools import research
+
+    def unexpected_network(*args, **kwargs):
+        pytest.fail('Careers unit tests must stub every external lookup')
+
+    monkeypatch.setattr(C.httpx, 'get', unexpected_network)
+    monkeypatch.setattr(research, '_search', unexpected_network)
+    monkeypatch.setattr(C.time, 'sleep', lambda _: None)
 
 
 def test_ats_families_and_board_tokens():
@@ -46,6 +60,8 @@ def test_footer_links_prefer_careers_hosts_and_ignore_the_rest_of_the_page():
 
 
 def test_resolve_search_then_footer_then_model_and_caches(tmp_path, monkeypatch):
+    from jobagent.tools import research
+
     monkeypatch.setenv("STATE_DIR", str(tmp_path))
     get_settings.cache_clear()
     pages = {"https://careers.acme.com/": ("https://careers.acme.com/", '<a href="https://boards.greenhouse.io/acme">x</a>', 200, False),
@@ -54,6 +70,8 @@ def test_resolve_search_then_footer_then_model_and_caches(tmp_path, monkeypatch)
              "https://x.com/gamma-jobs": ("https://x.com/gamma-jobs", "<html>Just a moment</html>", 403, True)}
     monkeypatch.setattr(C, "_get", lambda url, timeout=20: pages.get(url, (url, "", 404, False)))
     monkeypatch.setattr(C, "_browser_html", lambda url: "")
+    monkeypatch.setattr(C, "guess_greenhouse", lambda *args, **kwargs: None)
+    monkeypatch.setattr(research, "find_website", lambda company: None)
     searches = {"Acme careers": [{"href": "https://careers.acme.com/", "title": "Careers"}], "Beta careers": [],
                 "Gamma careers": [{"href": "https://x.com/gamma-jobs", "title": "Gamma jobs"}]}
     search = lambda q, n=8: searches.get(q, [])  # noqa: E731

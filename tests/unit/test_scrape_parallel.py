@@ -54,7 +54,9 @@ def test_scrape_many_runs_in_parallel_and_skips_cached(tmp_path, monkeypatch):
     urls = [f"https://example.com/jobs/{i}" for i in range(4)] + [cached]
     items = scrape_mod.scrape_many(urls, Hitl(tmp_path / "hitl", notify=lambda _: None), workers=4, log=lambda _: None)
     get_settings.cache_clear()
-    assert [bool(i.result) for i in items] == [True, True, True, True, False] and items[-1].cached
+    assert [bool(i.result) for i in items] == [True, True, True, True, False] and items[-1].cached, [
+        (i.url, i.error, i.unavailable) for i in items
+    ]
     assert not any(i.error for i in items)
     # parallel: the four 1-second reads overlap (a timing-free check; Chrome start-up time varies with load)
     events = sorted([(s, 1) for s, _ in spans] + [(e, -1) for _, e in spans])

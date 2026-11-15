@@ -4,9 +4,10 @@ import pytest
 
 from jobagent.tools import challenge, desktop_probe
 from jobagent.tools.hitl import HitlTimeout
+from page_fakes import EventPage
 
 
-class Page:
+class Page(EventPage):
     url = 'https://www.carvana.com/careers/apply?token=secret'
     clock = 0
 

@@ -361,14 +361,26 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path, timeout=30)  # parallel workers wait for each other's writes
     conn.row_factory = sqlite3.Row
     conn.create_function("jobagent_job_key", 1, job_key, deterministic=True)
-    conn.executescript(SCHEMA)
-    for table, column, decl in MIGRATIONS:  # columns added after a table already existed
-        if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
-    canonicalize_job_keys(conn)
-    migrate_relationships(conn)
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    try:
+        conn.executescript(SCHEMA)
+        missing=[(table,column,decl) for table,column,decl in MIGRATIONS
+                 if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}]
+        if missing:
+            # Only upgrades need a write lock. Recheck after acquiring it: another
+            # worker may have added these columns while this connection waited.
+            conn.execute("BEGIN IMMEDIATE")
+            for table,column,decl in missing:
+                if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            conn.commit()
+        canonicalize_job_keys(conn)
+        migrate_relationships(conn)
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
+    except BaseException:
+        conn.rollback()
+        conn.close()
+        raise
 
 
 def ensure_job(conn: sqlite3.Connection, jd: dict, key: str) -> int:

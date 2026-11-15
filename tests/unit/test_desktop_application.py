@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from jobagent.tools import browser, desktop_probe, desktop_browser, challenge
+from page_fakes import EventPage
 
 
 @pytest.mark.parametrize('valid', [True, False])
@@ -132,7 +133,7 @@ def test_apply_auto_falls_back_only_for_a_challenge_block(tmp_path,monkeypatch,r
 
 def test_unusable_desktop_form_blocks_before_lookups_or_planning(tmp_path,monkeypatch):
     from jobagent.steps import apply
-    class Page:
+    class Page(EventPage):
         url='https://www.carvana.com/careers/apply?gh_jid=8188615'
     monkeypatch.setattr(apply,'context',lambda *a:{'_jd':{'apply_url':Page.url}})
     monkeypatch.setattr(apply.llm,'writer',lambda *a,**kw:object())
@@ -160,7 +161,7 @@ def test_planner_audit_records_calls_without_prompt_content(tmp_path):
 def test_removed_desktop_posting_stops_before_address_lookup_and_records_closed(tmp_path,monkeypatch):
     from jobagent.steps import apply
     from jobagent.tools import availability
-    class Page:
+    class Page(EventPage):
         url='https://www.carvana.com/careers/apply?gh_jid=8063598'
     page=Page()
     monkeypatch.setattr(apply,'context',lambda *a:{'_jd':{'apply_url':page.url}})
@@ -208,7 +209,8 @@ def test_planner_answers_are_bound_to_schema_slots_not_returned_ids(monkeypatch)
 def test_verifier_corrections_are_bound_to_their_question(monkeypatch):
     from jobagent.steps import apply
     from jobagent.tools.forms import Field
-    fields=[Field(0,'text','First Name'),Field(7,'combobox','Visa sponsorship',options=['Yes','No'])]
+    # Slot binding is independent of the owner-evidence gate for sensitive facts.
+    fields=[Field(0,'text','First Name'),Field(7,'combobox','Document format',options=['Yes','No'])]
     answers={0:apply.Answer(id=0,value='wrong',source='written'),7:apply.Answer(id=7,value='Yes',source='written')}
     monkeypatch.setattr(apply,'hints',lambda *a,**kw:{})
     def invoke(model,schema,*args,**kwargs):
@@ -218,6 +220,17 @@ def test_verifier_corrections_are_bound_to_their_question(monkeypatch):
     apply.check(fields,answers,{},None,lambda m:None)
     assert answers[0].value=='Candidate'
     assert answers[7].value=='No'
+
+
+def test_verifier_cannot_supply_sponsorship_without_owner_evidence(monkeypatch):
+    from jobagent.steps import apply
+    from jobagent.tools.forms import Field
+    fields=[Field(7,'combobox','Visa sponsorship',options=['Yes','No'])]
+    answers={7:apply.Answer(id=7,value='Yes',source='written')}
+    monkeypatch.setattr(apply.llm,'structured_invoke',lambda *a,**kw:pytest.fail('No eligible answers to check'))
+    apply.check(fields,answers,{},None,lambda m:None)
+    assert answers[7].value=='' and answers[7].ask_human
+    assert 'owner' in answers[7].flag
 
 
 def _lease_world(tmp_path, monkeypatch, url, reply_extra=None, cdp=None):

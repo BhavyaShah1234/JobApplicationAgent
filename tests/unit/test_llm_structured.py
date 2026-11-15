@@ -218,7 +218,10 @@ def test_only_an_unavailable_voyager_falls_back_to_ollama(monkeypatch):
 
 
 def test_the_writers_are_voyager_only_and_say_so():
-    assert "Voyager only" in llm.writer.__doc__ and llm.writer(10).max_retries == 0
+    from jobagent.config import Settings
+
+    settings = Settings(_env_file=None, openai_api_key="unit-test-not-a-real-key")
+    assert "Voyager only" in llm.writer.__doc__ and llm.writer(10, settings=settings).max_retries == 0
     m = FakeModel({"json_schema": [Out(name="ok")]})
     llm.structured_invoke(m, Out, [HumanMessage("x")])
     info = llm.last_call()

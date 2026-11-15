@@ -6,6 +6,30 @@ from .facts import compile_facts,Decision,Fact,key,norm,entity_scope
 from .planned import PlannedFiller,read_view
 
 
+def _saved_matches(fields, eligible, company):
+    """Resolve literal saved questions before requesting semantic retrieval."""
+    from jobagent.tools import learned
+    from .routing import needs_entity_binding
+
+    matches={};pending=[]
+    for field in fields:
+        question=norm(field.label)
+        if question in matches:continue
+        entries=[e for e in eligible if not needs_entity_binding(field.label,field.section,field.help) or e.get('instructions')]
+        exact=[e for e in entries if question in [norm(t) for t in [e['question'],*(e.get('seen') or [])]]]
+        matches[question]=exact[:3]
+        if not exact and entries:pending.append((field,entries))
+    if pending:
+        texts=list(dict.fromkeys([learned._clean(f.label) for f,_ in pending]+
+            [learned._clean(t) for _,entries in pending for e in entries for t in [e['question'],*(e.get('seen') or [])]]))
+        vectors=learned._vectors(texts)
+        vector_bank=dict(zip(texts,vectors)) if vectors else {}
+        for field,entries in pending:
+            matches[norm(field.label)]=learned.relevant(field.label,company,entries=[
+                {**e,'company':'any' if e.get('company')=='any' else company} for e in entries],vector_bank=vector_bank)
+    return matches
+
+
 def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
     from jobagent.steps import apply as A
     from jobagent.tools import forms,application_address,learned
@@ -72,20 +96,9 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         cache=ctx.setdefault('_experimental_learned_retrieval',{})
         known=ctx.setdefault('_experimental_learned_facts',{})
         queries=[f for f in fields if not entity_scope(f.section) and norm(f.label) not in cache]
-        if queries and eligible:
-            from jobagent.tools import learned as L
-            texts=[L._clean(f.label) for f in queries]+[L._clean(t) for e in eligible for t in [e['question'],*(e.get('seen') or [])]]
-            vectors=L._vectors(list(dict.fromkeys(texts)))
-            vector_bank=dict(zip(dict.fromkeys(texts),vectors)) if vectors else {}
-        else:vector_bank={}
+        cache.update(_saved_matches(queries,eligible,company))
         for f in fields:
             if entity_scope(f.section):continue  # old learned rows have no entity identifier
-            if norm(f.label) not in cache:
-                from .routing import needs_entity_binding
-                entries=[e for e in eligible if not needs_entity_binding(f.label,f.section,f.help) or e.get('instructions')]
-                exact=[e for e in entries if norm(f.label) in [norm(x) for x in [e['question'],*(e.get('seen') or [])]]]
-                cache[norm(f.label)]=exact[:3] or learned.relevant(f.label,company,entries=[
-                    {**e,'company':'any' if e.get('company')=='any' else company} for e in entries],vector_bank=vector_bank)
             for entry in cache[norm(f.label)]:
                 value=entry.get('answer')
                 if value is None and not entry.get('instructions'):continue
