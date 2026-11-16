@@ -27,3 +27,17 @@ def test_blank_page_and_one_line_project_are_reported(tmp_path):
     assert any("blank at the bottom" in i for i in lay.issues)
     assert lay.one_line_projects == ["Demo"]
     assert lay.short_skills == ["Languages"]
+
+
+def test_off_page_text_is_a_hard_failure_even_on_one_page(tmp_path):
+    from types import SimpleNamespace
+
+    from jobagent.steps import multi_agent
+
+    tex = DOC.replace("A one-line description of a project.", "VeryLongUnbreakableHeading" * 12)
+    T.compile_pdf(tex, tmp_path)
+    lay = layout.check(tmp_path / "resume.pdf")
+    assert lay.pages == 1
+    assert any(i.startswith("text overflows the page") for i in lay.issues)
+    hard = multi_agent.hard_issues({"job_dir": tmp_path}, SimpleNamespace(skills=[]))
+    assert any(i.startswith("text overflows the page") for i in hard)

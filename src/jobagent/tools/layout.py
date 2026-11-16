@@ -46,12 +46,16 @@ class Layout:
     one_line_projects: list[str] = field(default_factory=list)
 
 
-def rows(pdf: Path) -> list[Row]:
+def _bbox(pdf: Path) -> str:
+    return subprocess.run(["pdftotext", "-bbox", "-f", "1", "-l", "1", str(pdf), "-"],
+                          capture_output=True, text=True).stdout
+
+
+def rows(pdf: Path, *, bbox: str | None = None) -> list[Row]:
     """Page 1's words grouped into visual rows (pdftotext splits a row at wide gaps, e.g. title and date)."""
-    xml = subprocess.run(["pdftotext", "-bbox", "-f", "1", "-l", "1", str(pdf), "-"], capture_output=True,
-                         text=True).stdout
+    xml = _bbox(pdf) if bbox is None else bbox
     words = [(float(a), float(b), float(c), float(d), html_unescape(w)) for a, b, c, d, w in re.findall(
-        r'<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">(.*?)</word>', xml)]
+        r'<word xMin="([-\d.]+)" yMin="([-\d.]+)" xMax="([-\d.]+)" yMax="([-\d.]+)">(.*?)</word>', xml)]
     out: list[Row] = []
     for x0, y0, x1, y1, w in sorted(words, key=lambda t: (round(t[3]), t[0])):
         if out and abs(out[-1].y1 - y1) <= 2.5:
@@ -93,7 +97,14 @@ def check(pdf: Path) -> Layout:
     if lay.pages != 1:
         lay.issues.append(f"the resume is {lay.pages} pages; it must be exactly one")
         return lay
-    rs = rows(pdf)
+    bbox = _bbox(pdf)
+    rs = rows(pdf, bbox=bbox)
+    page = re.search(r'<page width="([\d.]+)" height="([\d.]+)"', bbox)
+    if page:
+        w, h = map(float, page.groups())
+        clipped = [r.text for r in rs if r.x0 < -0.5 or r.y0 < -0.5 or r.x1 > w + 0.5 or r.y1 > h + 0.5]
+        if clipped:
+            lay.issues.append("text overflows the page: " + "; ".join(clipped[:3])[:240])
     body = [r for r in rs[2:]]
     left, right = min(r.x0 for r in body), max(r.x1 for r in body)
     width = right - left

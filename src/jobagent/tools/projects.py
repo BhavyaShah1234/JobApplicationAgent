@@ -145,9 +145,16 @@ def render(entries: list[ProjectEntry], cards: dict[str, dict], years: dict[str,
     for e in entries:
         c = cards[e.repo.lower()]
         text = e.short if e.repo in short and e.short else e.paragraph
+        date = to_latex(years.get(c["full_name"], ""))
+        heading = (f"\\textbf{{\\href{{{c['url']}}}{{{to_latex(e.title)}}}}} $|$ "
+                   f"\\emph{{{to_latex(', '.join(heading_stack(e.stack)))}}}")
+        # The template's l/r tabular columns do not wrap. Reserve the actual
+        # date width before laying out the title/stack, keeping fonts unchanged.
+        heading = (r"\begingroup\setbox0=\hbox{\normalsize " + date + "}"
+                   r"\parbox[t]{\dimexpr0.97\textwidth-\wd0-2\tabcolsep-1em\relax}"
+                   r"{\raggedright " + heading + r"}\endgroup")
         out += ["    \\resumeProjectHeading",
-                f"      {{\\textbf{{\\href{{{c['url']}}}{{{to_latex(e.title)}}}}} $|$ "
-                f"\\emph{{{to_latex(', '.join(heading_stack(e.stack)))}}}}}{{{years.get(c['full_name'], '')}}}",
+                f"      {{{heading}}}{{{date}}}",
                 *([f"      \\resumeProjectText{{{to_latex(text)}}}"] if macro else
                   ["      \\resumeItemListStart",  # the template's own list spacing, with an empty label: no bullet
                    f"        \\item[]\\small{{{to_latex(text)} \\vspace{{-2pt}}}}",

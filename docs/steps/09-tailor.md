@@ -137,6 +137,8 @@ Each rule is checked after the model writes; a broken rule goes back to the mode
 | A Technical Skills category whose terms were all deduplicated away is left out (no empty "Databases:" line) | `apply_fill` |
 | `<` `>` `×` `±` become LaTeX commands (the template's default font printed them as ¡ ¿ Ö) | `to_latex` |
 | The rendered page is checked (blank bottom, 1-3-word last lines, half-empty skills lines, one-line projects) | `tools/layout.py` |
+| Project titles/stacks wrap beside the measured date width without changing the template's fonts or margins | `tools/projects.py` |
+| Text outside the physical PDF page is a hard failure, even when the document has exactly one page | `tools/layout.py`, `steps/multi_agent.py` |
 
 ## Projects and repo cards
 

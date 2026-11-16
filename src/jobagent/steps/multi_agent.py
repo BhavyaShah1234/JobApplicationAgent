@@ -393,7 +393,7 @@ def check_layout(state: State) -> dict:
     if lay:
         for issue in lay.issues:
             agent = ("skills" if issue.startswith("Technical Skills") else
-                     "projects" if issue.startswith("the project") else "experience")
+                     "projects" if issue.startswith(("the project", "text overflows")) else "experience")
             tasks[agent].append(issue)
         used = " ".join(x for sl in f.skills for x in sl.render()).lower()
         pool = [t.strip() for _, items in r.skills for t in T.to_plain(items).split(",")
@@ -483,7 +483,7 @@ def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
     description, a blank band at the bottom, an empty skills line. Reads the resume.pdf on disk."""
     pdf = ctx["job_dir"] / "resume.pdf"
     lay = layout.check(pdf)
-    out = [i for i in lay.issues if i.startswith("the resume is") or i.startswith("the project")]
+    out = [i for i in lay.issues if i.startswith(("the resume is", "the project", "text overflows"))]
     proj = ctx["job_dir"] / "projects.json"
     if proj.exists():  # a short form only adds an extra project: at least 2 (or all available) must be in full
         st = json.loads(proj.read_text())
