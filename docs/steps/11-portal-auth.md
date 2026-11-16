@@ -114,3 +114,7 @@ flowchart TD
 Next for robustness: a test suite of about 10 portals (one per platform in `asu_contacts.csv`) with success rates
 and steps per portal, and replaying a portal's last successful route from its notes before asking the model.
 
+The general account agent's snapshot marks controls covered by another element as `BLOCKED_BY`. It also names icon
+buttons using their title, image alternative text or ID when needed. This lets it close a blocking cookie notice before
+trying sign-in, without accepting optional tracking cookies or treating intercepted clicks as rejected credentials.
+

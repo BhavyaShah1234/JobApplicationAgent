@@ -42,6 +42,36 @@ render();
 VALUES = {"EMAIL": "jamie@example.org", "PASSWORD": "Shared-pw-1", "FIRST_NAME": "Jamie", "LAST_NAME": "Lee", "PHONE": "5551234567"}
 
 
+@pytest.mark.parametrize("close", [
+    '<button title="Close cookie notice" onclick="notice.remove()">×</button>',
+    '<button onclick="notice.remove()"><img alt="Close cookie notice" width=20 height=20></button>',
+    '<button id="cookie-notice-close" onclick="notice.remove()"> </button>',
+])
+def test_auth_snapshot_exposes_cookie_obstruction_and_icon_close(close):
+    """A visible sign-in button can be covered; its blocking notice must reach the account agent."""
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(channel="chrome", headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content('<button id="signin" style="width:120px;height:40px"><span>Sign In</span></button>'
+                             '<div id="notice" style="position:fixed;inset:0;z-index:100;background:white">'
+                             '<p>Cookie preferences</p>' + close + '</div>')
+            snap = page.evaluate(PA.SNAPSHOT_JS)
+            signin = next(x for x in snap["items"] if x["label"] == "Sign In")
+            assert signin["blocked_by"]
+            view, frames = PA.snapshot(page)
+            assert "BLOCKED_BY=" in view
+            close_index = next(i for i, x in enumerate(snap["items"])
+                               if "close" in x["label"].lower())
+            assert not snap["items"][close_index]["blocked_by"]
+            PA._target(frames, PA.AuthAction(thought="Dismiss the blocking notice", action="click",
+                                             element=close_index)).click()
+            after = page.evaluate(PA.SNAPSHOT_JS)
+            assert not next(x for x in after["items"] if x["label"] == "Sign In")["blocked_by"]
+        finally:
+            browser.close()
+
+
 class Driver:
     """Stands in for the model: follows a script of (action, label-fragment, value, frame text condition)."""
     def __init__(self, script):

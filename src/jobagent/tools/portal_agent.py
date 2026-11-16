@@ -31,13 +31,17 @@ SNAPSHOT_JS = r"""() => {
   const label = e => {
     if (e.id) { const l = document.querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) return l.innerText.trim(); }
     const l = e.closest('label'); if (l) return l.innerText.trim();
-    return (e.getAttribute('aria-label') || e.placeholder || e.name || e.innerText || e.value || '').trim(); };
+    return (e.getAttribute('aria-label') || e.title || e.placeholder || e.name || e.innerText || e.value ||
+            e.querySelector('img[alt]')?.alt || e.id || '').trim(); };
   const out = [];
   document.querySelectorAll('input, select, textarea, button, a[href], [role=button], [role=checkbox], [role=link]').forEach(e => {
     if (!vis(e) || e.disabled) return;
     const t = (e.getAttribute('type') || '').toLowerCase();
     if (t === 'hidden') return;
-    out.push({tag: e.tagName.toLowerCase(), type: t, label: label(e).slice(0, 80),
+    const r = e.getBoundingClientRect();
+    const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    const blocked = top && !e.contains(top) ? (label(top) || top.id || top.tagName).slice(0, 100) : '';
+    out.push({tag: e.tagName.toLowerCase(), type: t, label: label(e).slice(0, 80), blocked_by: blocked,
               checked: e.checked === true, value_set: !!(e.value && t !== 'checkbox' && t !== 'radio' && t !== 'submit'),
               options: e.tagName === 'SELECT' ? [...e.options].map(o => o.text.trim()).filter(Boolean).slice(0, 40) : null,
               chosen: e.tagName === 'SELECT' && e.selectedIndex >= 0 ? e.options[e.selectedIndex].text.trim() : null});
@@ -74,6 +78,9 @@ class AuthAction(BaseModel):
 PROMPT = """You operate a job portal in a browser for the candidate, to get SIGNED IN to their account on this
 careers site. Each turn you see the visible fields and buttons (by frame and index) and the page text, and you choose
 ONE action. Rules:
+- A field/button marked BLOCKED_BY is covered by another element. Dismiss a blocking cookie notice or dialog
+  first, preferably using its Close button (including an icon labelled by its title, image or ID), or Reject
+  optional cookies. Do not repeatedly click the covered control or accept optional tracking/marketing cookies.
 - Sign in FIRST with {EMAIL} and {PASSWORD}. Only if the site clearly says there is no account for this email (or the
   sign-in fails as "user not found" / "no account" and the site offers a create-account / sign-up path) REGISTER a new
   account with {EMAIL}, {PASSWORD} (and confirm-password {PASSWORD}), {FIRST_NAME}, {LAST_NAME}, {PHONE} where asked
@@ -131,6 +138,7 @@ def snapshot(page: Page) -> tuple[str, list]:
         kept.append((n, f))
         items = "\n".join(f"  [{i}] {x['tag']}{'/' + x['type'] if x['type'] else ''} \"{x['label']}\""
                           f"{' (checked)' if x['checked'] else ''}{' (filled)' if x['value_set'] else ''}"
+                          + (f" BLOCKED_BY={x['blocked_by']!r}" if x.get('blocked_by') else "")
                           + (f" CHOICES={x['options']} (use action select with one of them; now: {x['chosen']!r})" if x.get("options") else "")
                           for i, x in enumerate(snap["items"]))
         parts.append(f"FRAME {n} {f.url[:100]}\nTEXT: {snap['text']}\nELEMENTS:\n{items}")
