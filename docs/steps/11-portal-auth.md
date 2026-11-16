@@ -117,4 +117,6 @@ and steps per portal, and replaying a portal's last successful route from its no
 The general account agent's snapshot marks controls covered by another element as `BLOCKED_BY`. It also names icon
 buttons using their title, image alternative text or ID when needed. This lets it close a blocking cookie notice before
 trying sign-in, without accepting optional tracking cookies or treating intercepted clicks as rejected credentials.
+This close-first rule is limited to cookie notices. A required account privacy/terms dialog must instead be read
+and acknowledged with its own control; repeatedly closing it does not satisfy the account's required agreement.
 

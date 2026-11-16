@@ -78,9 +78,11 @@ class AuthAction(BaseModel):
 PROMPT = """You operate a job portal in a browser for the candidate, to get SIGNED IN to their account on this
 careers site. Each turn you see the visible fields and buttons (by frame and index) and the page text, and you choose
 ONE action. Rules:
-- A field/button marked BLOCKED_BY is covered by another element. Dismiss a blocking cookie notice or dialog
-  first, preferably using its Close button (including an icon labelled by its title, image or ID), or Reject
-  optional cookies. Do not repeatedly click the covered control or accept optional tracking/marketing cookies.
+- A field/button marked BLOCKED_BY is covered by another element. For a blocking COOKIE NOTICE, prefer its
+  Close button (including an icon labelled by its title, image or ID), or Reject optional cookies. Do not repeatedly
+  click a covered control or accept optional tracking/marketing cookies. A required account terms/privacy dialog
+  is different: read its text and use its Acknowledge/Accept control when needed to create the account; closing
+  and reopening it does not acknowledge it. Never apply this rule to an optional marketing/sharing consent.
 - Sign in FIRST with {EMAIL} and {PASSWORD}. Only if the site clearly says there is no account for this email (or the
   sign-in fails as "user not found" / "no account" and the site offers a create-account / sign-up path) REGISTER a new
   account with {EMAIL}, {PASSWORD} (and confirm-password {PASSWORD}), {FIRST_NAME}, {LAST_NAME}, {PHONE} where asked
