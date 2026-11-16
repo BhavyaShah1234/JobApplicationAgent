@@ -101,6 +101,8 @@ def contact_party(text):
                           ('reference',r'\breferences?\b'),('supervisor',r'\bsupervisor\b|\bmanager\b'),
                           ('relative',r'\brelative\b|family member')]:
         if re.search(pattern,q):return party
+    if re.search(r"\b(?:their|his|her|that person s)\b.{0,45}\b(?:name|email|e mail|phone|address)\b",q):
+        return 'third_party'
     return 'applicant'
 
 

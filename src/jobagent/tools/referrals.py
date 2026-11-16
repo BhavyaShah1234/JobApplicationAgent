@@ -25,6 +25,22 @@ EMAIL = re.compile(r"(?i)\be[- ]?mail\b")
 CONTACT_DETAILS = re.compile(
     r"(?i)\b(?:contact\s+(?:information|details)|referrer\s+details)\b"
 )
+PRONOMINAL_CONTACT = re.compile(
+    r"(?i)\b(?:their|his|her|that person'?s)\b.{0,45}\b(?:name|e[- ]?mail|phone|address)\b"
+)
+
+
+def contextualize(fields) -> None:
+    """Bind adjacent pronoun follow-ups to a selected employee source, never to the applicant."""
+    parent = None
+    for field in fields:
+        if SOURCE.search(field.label):
+            parent = field if _referral_option([field.value]) else None
+        elif (parent is not None and field.frame == parent.frame
+              and field.section == parent.section and PRONOMINAL_CONTACT.search(field.label)):
+            field.help = (field.help + f" Employee referrer details for {parent.label!r}: {parent.value}.").strip()
+        else:
+            parent = None
 
 
 def company_key(value: str) -> str:
@@ -105,9 +121,12 @@ def _referral_option(options: list[str], company: str = '') -> str:
             leaf,
         ))
         referral = bool(re.search(r"referr|recommend", leaf))
+        knows_employee = bool(re.search(r"\bknow\s+some(?:one|body)\s+at\s+(?:the\s+)?company\b", leaf))
 
         if employee and (referral or "referr" in option.casefold()):
             rank = 100
+        elif knows_employee:
+            rank = 90
         elif employee and re.fullmatch(
             r"(?:current\s+)?(?:employee|associate|colleague|co-worker)",
             leaf,

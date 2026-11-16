@@ -245,6 +245,47 @@ def test_referrer_email_is_not_overwritten_with_applicants_email():
     assert filler.plan([field])[0].value=='referrer@example.test'
 
 
+@pytest.mark.parametrize('contact,expected', [
+    ({'name':'Referrer Owner','email':'referrer@example.test'},'Referrer Owner (referrer@example.test)'),
+    ({},None),
+])
+def test_pronominal_referrer_followup_uses_company_contact_or_stays_unanswered(world,contact,expected):
+    world.setup('''<h1>My Information</h1><label for=source>How Did You Hear About Us?</label>
+    <input id=source value="Know Someone at the Company">
+    <label for=person>What's their name or email address?</label><input id=person>
+    <label for=email>Email</label><input id=email type=email>''')
+    world.page.goto('https://fixture.test/apply')
+    fields=forms.read_page(world.page).fields
+    assert 'referrer' in fields[1].help
+    assert 'referrer' not in fields[2].help
+    facts=[Fact('personal-email',['Email'],'candidate@example.test','applicant/contact')]
+    filler=PlannedFiller(facts,no_questions,model=object(),referral_context={'company':'Example','contact':contact},
+                         source_resolver=lambda fields,answers:{})
+    decisions=filler.plan(fields[1:],allow_human=False)
+    assert decisions[fields[1].id].value==expected
+    assert decisions[fields[2].id].value=='candidate@example.test'
+    assert filler.model_calls==0
+
+
+@pytest.mark.parametrize('label', ["What's their name or email address?",'Their phone number','Her email'])
+def test_unbound_third_party_contact_cannot_resolve_to_applicant(label):
+    field=forms.Field(id=0,kind='text',label=label)
+    facts=[Fact('personal-email',['Email'],'candidate@example.test','applicant/contact'),
+           Fact('personal-phone',['Phone'],'5551234567','applicant/contact')]
+    assert not route(field,facts).fact_ids
+    assert PlannedFiller(facts,no_questions).plan([field],allow_human=False)[0].value is None
+
+
+def test_sourcing_context_does_not_cross_a_frame_or_an_unrelated_question():
+    from jobagent.tools import referrals
+    source=forms.Field(id=0,kind='text',label='How did you hear about this position?',value='Employee Referral')
+    child=forms.Field(id=1,kind='text',label='Their email',frame=1)
+    unrelated=forms.Field(id=2,kind='text',label='First Name')
+    later=forms.Field(id=3,kind='text',label='Their email')
+    referrals.contextualize([source,child,unrelated,later])
+    assert not child.help and not later.help
+
+
 def test_unsupplied_conference_history_requires_owner_evidence():
     field=forms.Field(id=0,kind='textarea',label='Please let us know of any conferences you are planning to attend or have previously attended.')
     facts=[Fact('extra',['Additional information'],'Unrelated hobbies','applicant/written')]

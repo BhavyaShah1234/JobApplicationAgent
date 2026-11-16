@@ -588,6 +588,8 @@ def read_page(page: Page) -> PageView:
         errors += snap["errors"]
         headings += snap["headings"]
     fields = merge_linked_uploads(fields)
+    from jobagent.tools import referrals
+    referrals.contextualize(fields)
     # Unique questions without author IDs can survive a React node replacement.
     # Keep locator_ref tied to the actual node; identity is only for planning/audit.
     for g in fields:

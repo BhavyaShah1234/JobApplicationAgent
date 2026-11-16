@@ -107,7 +107,7 @@ class PlannedFiller:
     def plan(self, fields, allow_human=True):
         if self.prepare_sources:self.facts=self.prepare_sources(fields)
         self.facts=[x for x in self.facts if x.id not in self.session_facts]+[x for ident,x in self.session_facts.items() if self.session_fact_steps.get(ident) in (None,self.step)]
-        answers={};missing=[]
+        answers={};missing=[];referral_policy={}
         routes={f.id:route(f,self.facts) for f in fields}
         self.routes.extend(asdict(r) for r in routes.values())
         for f in fields:
@@ -115,7 +115,9 @@ class PlannedFiller:
             if self.referral_context is not None and d.source!='human':
                 from jobagent.tools import referrals
                 policy=referrals.answer_for(f,self.referral_context.get('contact',{}),self.referral_context.get('company',''))
-                if policy is not None:d=Decision(policy.get('value') or None,'saved referral policy',reason=policy.get('flag',''))
+                if policy is not None:
+                    d=Decision(policy.get('value') or None,'saved referral policy',reason=policy.get('flag',''))
+                    referral_policy[f.id]=d
             if d.value is not None and d.source!='human' and owner_only(f):
                 ids=set(d.fact_id.split(','));bound=[x for x in self.facts if x.id in ids]
                 if bound and not any(x.authority=='owner' for x in bound):
@@ -124,10 +126,10 @@ class PlannedFiller:
             if d.source not in ('human','saved referral policy') and not (d.value is not None and d.fact_id.startswith('application.answer.')) and routed is not None:d=routed
             answers[f.id]=d
             if d.value is None:missing.append(f)
-        source_updates={}
+        source_updates=dict(referral_policy)
         if self.source_resolver:
-            eligible=[f for f in missing if answers[f.id].reason!='exact day missing from source']
-            source_updates=self.source_resolver(eligible,answers)
+            eligible=[f for f in missing if f.id not in referral_policy and answers[f.id].reason!='exact day missing from source']
+            source_updates.update(self.source_resolver(eligible,answers))
             answers.update(source_updates)
             for f in eligible:
                 if f.id not in source_updates:
