@@ -27,6 +27,9 @@ day after submission a role that required citizenship.)
 
 **Review queue.** `jobagent review-queue` lists the applications filled to their review screen and waiting for your decision (oldest
 first, how ready each is, its blockers, and the exact `jobagent submit ...` command that opens its review). It never approves anything.
+Plain `apply` and batch/queue applications register a `filled` database row when they reach review, including drafts with unresolved
+fields. Their own result file determines readiness. This registration needs no submission hook or approval and preserves submitted
+or uncertain states; it also keeps the company's pacing slot counted after the worker releases its active claim.
 
 **Outcomes that are not email.** `jobagent outcomes add APPLICATION STAGE [--date YYYY-MM-DD] [--note ...]` records a call or a message
 as your own outcome event; it counts in `stats` and the learning looks like a mail outcome.

@@ -834,6 +834,21 @@ def apply_cmd(
     except Unavailable as gone:
         wf.mark("apply", "failed", error=f"unavailable: {gone.kind}")
         _stopped(job_dir, gone, "apply")
+    if res["state"] == "review":
+        from datetime import UTC, datetime
+
+        from jobagent import db
+        from jobagent.steps.submit import record
+
+        # Plain apply and queue runs never enter submit's review hook. Persist the
+        # draft here too, so review-queue can find it and pacing keeps its slot
+        # after the queue's active claim is released. record preserves sent states.
+        conn = db.connect()
+        try:
+            record(conn, Path(job_dir), jd, state="filled",
+                   filled_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        finally:
+            conn.close()
     wf.mark("apply", "done" if res["state"] == "review" else "failed", result={"state": res["state"], "ready": bool(res.get("ready_to_submit"))})
     console.print(f"apply: {res['state']}; {res['verified']}/{len(res['fields'])} fields verified; "
                   f"{len(res['flags'])} for review -> {job_dir}/application/application.md", highlight=False)
