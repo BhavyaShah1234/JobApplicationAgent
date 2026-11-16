@@ -156,7 +156,12 @@ def _target(locations: list[str], log) -> dict:
         if code is None:
             log(f"address: resolving the state for {location!r}")
             try:
-                hit = lookup.geocode(f"{location}, United States") or {}
+                # A duplicate country qualifier can make Nominatim return no
+                # result for an otherwise valid city (e.g. San Jose, United
+                # States of America, United States). Keep a single US qualifier.
+                city_query = re.sub(r"(?i)\b(?:united states(?: of america)?|usa|us)\b", "", location).strip(" ,")
+                query = ", ".join(part for part in (city_query, "United States") if part)
+                hit = lookup.geocode(query) or {}
             except Exception as exc:
                 log(
                     f"address: state lookup failed for {location!r} "

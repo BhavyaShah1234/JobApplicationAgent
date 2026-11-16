@@ -5,6 +5,21 @@ import pytest
 from jobagent.tools import application_address as A
 
 
+@pytest.mark.parametrize("location", [
+    "San Jose", "San Jose, United States of America", "San Jose, United States",
+    "San Jose, USA", "San Jose, US",
+])
+def test_city_lookup_uses_a_single_country_qualifier(monkeypatch, location):
+    queries = []
+    def geocode(query):
+        queries.append(query)
+        return {"address": {"country_code": "us", "state": "California", "ISO3166-2-lvl4": "US-CA"}}
+    monkeypatch.setattr(A.lookup, "geocode", geocode)
+    target = A._target([location], lambda message: None)
+    assert queries == ["San Jose, United States"]
+    assert target["state_code"] == "CA"
+
+
 @pytest.fixture
 def prepared_address_lookups(monkeypatch):
     targets = []
