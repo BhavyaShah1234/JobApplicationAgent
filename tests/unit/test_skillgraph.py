@@ -239,3 +239,13 @@ def test_a_skill_under_many_duties_is_a_weaker_neighbour_than_a_specific_one():
         SG.ingest(g, jd(t, s), "ml", ask=ask)
     res = SG.suggest(g, ["PyTorch"], "ml", owned=set(), on_resume=set())
     assert [x["skill"] for x in res["review"]][0] == "JAX"
+
+
+def test_languages_do_not_steer_the_neighbours():
+    g = SG.Graph()
+    PLAN["l1"] = [duty("model training", "PyTorch", "JAX", "Python"), duty("frontend development", "Python", "React")]
+    ingest_langs = jd("l1", ["PyTorch", "JAX", "Python", "React"])
+    SG.ingest(g, ingest_langs, "ml", ask=ask)
+    g.nodes[g.find("skill", "Python")]["category"] = "language"
+    res = SG.suggest(g, ["Python", "PyTorch"], "ml", owned=set(), on_resume=set())
+    assert [x["skill"] for x in res["review"]] == ["JAX"]                       # React sits under a duty only Python (a language) points at

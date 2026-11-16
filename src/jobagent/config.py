@@ -21,7 +21,7 @@ CONCERN = {                      # which file each setting belongs to
     "queue": ["pacing_max_per_company", "pacing_window_days", "queue_lease_seconds"],
     "learning": ["learning_use_site_mix", "learning_use_tailoring_hints", "learning_use_lessons"],
     "logging": ["log_level"],
-    "skills": ["skills_use_graph", "skills_max_neighbours", "skills_duty_merge", "skills_skill_merge"],
+    "skills": ["skills_model", "skills_use_graph", "skills_max_neighbours", "skills_duty_merge", "skills_skill_merge"],
 }
 
 
@@ -112,6 +112,7 @@ class Settings(BaseSettings):
     pacing_window_days: int = Field(default=7, ge=1, le=365)
     queue_lease_seconds: int = Field(default=900, ge=30)               # how long a claimed queue job stays its runner's without a heartbeat (tools/jobqueue.py)
     apply_max_pages: int = Field(default=15, ge=1, le=60)                    # the most wizard pages `apply` walks through before it stops
+    skills_model: Literal["fast", "planner"] = "fast"        # model that groups a posting's skills by duty (planner: ~10 min a posting, better groups)
     skills_use_graph: bool = True                          # step 4c: neighbouring skills the candidate owns may fill spare room on the resume
     skills_max_neighbours: int = Field(default=6, ge=1, le=20)
     skills_duty_merge: float = Field(default=0.92, gt=0, le=1)

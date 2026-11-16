@@ -3,3 +3,4 @@
 # skills_max_neighbours: 6
 # skills_duty_merge: 0.92     # similarity at which two duty names count as one
 # skills_skill_merge: 0.9     # similarity at which two skill names count as one
+# skills_model: fast       # or planner: slower (~10 min a posting) but groups skills better; use for 'jobagent skills build --rebuild'

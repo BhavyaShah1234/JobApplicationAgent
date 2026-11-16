@@ -323,6 +323,14 @@ INGEST_PROMPT = (
     "fits the work; make a new duty (at most 4 words) only for work none of them covers. Give each technology a category.")
 
 
+def _role() -> str:
+    try:
+        from jobagent.config import get_settings
+        return get_settings().skills_model
+    except Exception:
+        return "fast"
+
+
 def default_ask(jd: dict, known_duties: list[str], skills: list[str]) -> list[DutyOut]:
     """One structured call to the fast model per posting (the planner model took ~10 minutes a posting for this grouping)."""
     from langchain_core.messages import HumanMessage, SystemMessage
@@ -331,7 +339,7 @@ def default_ask(jd: dict, known_duties: list[str], skills: list[str]) -> list[Du
     body = {"title": jd.get("title"), "responsibilities": (jd.get("responsibilities") or [])[:25],
             "preferred_qualifications": (jd.get("preferred_qualifications") or [])[:10]}
     text = (f"KNOWN DUTIES: {json.dumps(known_duties)}\n\nPOSTING:\n{json.dumps(body, ensure_ascii=False)}\n\nLIST: {json.dumps(skills)}")
-    out = llm.structured_invoke(llm.chat("fast"), IngestOut, [SystemMessage(INGEST_PROMPT), HumanMessage(text)])
+    out = llm.structured_invoke(llm.chat(_role()), IngestOut, [SystemMessage(INGEST_PROMPT), HumanMessage(text)])
     return out.duties
 
 
@@ -342,7 +350,7 @@ def default_merge(duties: list[str]) -> list[MergeGroup]:
     prompt = ("These are the duties collected from many job postings. Group the ones that mean the same kind of work (e.g. 'model training' "
               "and 'training machine learning models'); for each group give the duty to keep (one of the group, exact text) and the others to "
               "merge into it. Leave distinct duties out. Use only the given names.")
-    return llm.structured_invoke(llm.chat("fast"), MergeOut, [SystemMessage(prompt), HumanMessage(json.dumps(duties))]).groups
+    return llm.structured_invoke(llm.chat(_role()), MergeOut, [SystemMessage(prompt), HumanMessage(json.dumps(duties))]).groups
 
 
 def ensure_role(g: Graph, role_id: str, title: str = "") -> str:
@@ -460,7 +468,8 @@ def suggest(g: Graph, jd_skills: list[str], role_id: str, owned: set[str], on_re
     if not mine:
         return {"owned": [], "review": []}
     duty_score: dict[str, float] = {}
-    for sid in mine:
+    steering = {s for s in mine if g.nodes[s]["category"] != "language"} or mine      # Python / Java sit under almost every duty: they steer nothing
+    for sid in steering:
         for duty, w in g.parents(sid):
             duty_score[duty] = duty_score.get(duty, 0.0) + w
     role = f"role:{role_id}"
