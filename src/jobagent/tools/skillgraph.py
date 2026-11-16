@@ -672,6 +672,27 @@ def _fingerprint(jd: dict, g: Graph, owned: set[str]) -> dict:
     return {"jd": jd_fp(jd), "graph": g.version, "owned": hashlib.sha1(json.dumps(sorted(owned)).encode()).hexdigest()[:12]}
 
 
+def named_in(text: str, item: dict) -> bool:
+    """Whether the posting's own text names this skill (by name or recorded alias). A skill the posting names is the posting's, not a graph
+    suggestion: the claims policy has always allowed what the posting asks for. Names of three letters or fewer ("Go", "R") must match
+    case-sensitively as a whole word, so the verb "go" does not count."""
+    for name in [item["skill"], *item.get("aliases", [])]:
+        flags = 0 if len(name) <= 3 else re.IGNORECASE
+        if re.search(rf"(?<![A-Za-z0-9+#]){re.escape(name)}(?![A-Za-z0-9+#])", text, flags):
+            return True
+    return False
+
+
+def _posting_text(jd: dict, job_dir: Path | None) -> str:
+    parts = [json.dumps(jd, ensure_ascii=False)]
+    if job_dir is not None and (job_dir / "jd.txt").exists():
+        try:
+            parts.append((job_dir / "jd.txt").read_text())
+        except OSError:
+            pass
+    return "\n".join(parts)
+
+
 def job_suggestions(job_dir: Path | None, jd: dict, role_id: str, resume_terms: list[str], settings=None) -> dict:
     """Suggestions for one job, also written to <job_dir>/skill_suggestions.json with the fingerprints of the posting, the graph and the
     candidate's skills (an EMPTY result is written too, so an old one never lingers). {} when switched off, when the graph has nothing for
@@ -687,6 +708,9 @@ def job_suggestions(job_dir: Path | None, jd: dict, role_id: str, resume_terms: 
         g = load(s)
         owned = owned_skills(resume_terms, s)
         res = suggest(g, clean_skills(jd.get("technical_skills") or []), role_id, owned, {norm(t) for t in resume_terms}, s.skills_max_neighbours)
+        text = _posting_text(jd, job_dir)
+        for k in ("owned", "review"):                                   # skills the posting itself names are its own, not suggestions
+            res[k] = [x for x in res[k] if not named_in(text, x)]
         res["fingerprint"] = _fingerprint(jd, g, owned)
         if art:
             _write_atomic(art, json.dumps(res, indent=1))

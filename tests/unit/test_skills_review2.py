@@ -268,3 +268,22 @@ def test_the_real_render_of_both_writers_drops_a_skill_the_candidate_lacks():
     r2 = T.parse(TT.TEX)
     tex2, _ = T.apply_fill(r2, untouched)                                                              # no guard attached: nothing is removed
     assert "HuggingFace" in tex2
+
+
+def test_a_skill_the_posting_names_anywhere_is_not_a_suggestion(tmp_path, monkeypatch):
+    monkeypatch.setenv("STATE_DIR", str(tmp_path / "s"))
+    monkeypatch.setenv("SKILLS_USE_GRAPH", "true")
+    get_settings.cache_clear()
+    job = tmp_path / "job"
+    job.mkdir()
+    posting = jd("p", ["PyTorch"])
+    posting["basic_qualifications"] = ["Experience with SQL databases", "Willing to go the extra mile"]
+    (job / "jd.json").write_text(json.dumps(posting))
+    g = SG.Graph()
+    SG.ingest(g, jd("a", ["PyTorch", "SQL", "Go"]), "ml", ask=lambda *a: [duty("model training", "PyTorch", "SQL", "Go")])
+    SG.save(g, "t", None)
+    res = SG.job_suggestions(job, posting, "ml", ["Python"])
+    assert [x["skill"] for x in res["review"]] == ["Go"]              # SQL is in the posting's text; "go" the verb is not the language
+    f = SimpleNamespace(skills=[T.SkillLine(category="Data", terms=["SQL", "PyTorch"])])
+    assert SG.violations(job, f) == []
+    get_settings.cache_clear()
