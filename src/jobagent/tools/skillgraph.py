@@ -624,6 +624,37 @@ def owned_skills(resume_terms: list[str] | None = None, settings=None) -> set[st
     return out
 
 
+def evidence_text(settings=None) -> str:
+    """Everything the candidate wrote about their own work: the resume template (experience bullets, projects, skills), master_profile.yaml
+    and the titles/summaries/stacks of their GitHub repo cards. A skill named there is one the candidate has used."""
+    from jobagent.config import get_settings
+    s = settings or get_settings()
+    parts: list[str] = []
+    for p in (s.data_dir / "templates" / "resume.tex", s.data_dir / "master_profile.yaml"):
+        try:
+            parts.append(p.read_text())
+        except OSError:
+            pass
+    for p in (s.state_dir / "github" / "cards").glob("*.json"):
+        try:
+            c = json.loads(p.read_text())
+            parts.append(" ".join([str(c.get("title", "")), str(c.get("summary", "")), " ".join(c.get("tech_stack", []) or [])]))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return "\n".join(parts)
+
+
+def owned_with_evidence(g: Graph, resume_terms: list[str], settings=None) -> set[str]:
+    """`owned_skills` plus every graph skill the candidate's own writing names. Names of one or two characters ("Go", "R") are not read
+    out of prose (too easy to misread), only from the explicit skill lists."""
+    owned = owned_skills(resume_terms, settings)
+    text = evidence_text(settings)
+    for n in g.of_kind("skill"):
+        if len(n["name"]) > 2 and named_in(text, {"skill": n["name"], "aliases": n["aliases"]}):
+            owned |= {norm(n["name"]), *(norm(a) for a in n["aliases"])}
+    return owned
+
+
 def approve(skill: str, settings=None) -> bool:
     """Record a skill the candidate confirms they have; it counts as owned from then on. (master_profile.yaml is the candidate's own
     file and is never rewritten by the agent, so approvals live in state/skills/approved.json.)"""
@@ -706,7 +737,7 @@ def job_suggestions(job_dir: Path | None, jd: dict, role_id: str, resume_terms: 
                 art.unlink(missing_ok=True)
             return {}
         g = load(s)
-        owned = owned_skills(resume_terms, s)
+        owned = owned_with_evidence(g, resume_terms, s)
         res = suggest(g, clean_skills(jd.get("technical_skills") or []), role_id, owned, {norm(t) for t in resume_terms}, s.skills_max_neighbours)
         text = _posting_text(jd, job_dir)
         for k in ("owned", "review"):                                   # skills the posting itself names are its own, not suggestions
@@ -722,8 +753,17 @@ def job_suggestions(job_dir: Path | None, jd: dict, role_id: str, resume_terms: 
 
 
 def _resume_terms(resume) -> list[str]:
+    """The template's skills as individual terms: "Term (a, b)" gives Term, a and b."""
     from jobagent.tools import tailor
-    return [t.strip() for _, items in resume.skills for t in tailor.to_plain(items).split(",") if t.strip()]
+    out: list[str] = []
+    for _, items in resume.skills:
+        for part in re.split(r",(?![^()]*\))", tailor.to_plain(items)):
+            part = part.strip()
+            if m := re.fullmatch(r"(.+?)\s*\((.+)\)", part):
+                out += [m.group(1).strip(), *[x.strip() for x in m.group(2).split(",") if x.strip()]]
+            elif part:
+                out.append(part)
+    return out
 
 
 def for_tailor(job_dir: Path | None, jd, resume, settings=None) -> dict:
@@ -746,7 +786,7 @@ def input_fingerprint(jd, resume, settings=None) -> str:
         if not s.skills_use_graph:
             return "off"
         res = for_tailor(None, jd, resume, s)
-        basis = {"graph": load(s).version, "owned": sorted(owned_skills(_resume_terms(resume), s)), "n": s.skills_max_neighbours,
+        basis = {"graph": (g := load(s)).version, "owned": sorted(owned_with_evidence(g, _resume_terms(resume), s)), "n": s.skills_max_neighbours,
                  "res": {k: [(x["skill"], x["via"]) for x in res.get(k, [])] for k in ("owned", "review")}}
         return hashlib.sha1(json.dumps(basis, sort_keys=True).encode()).hexdigest()[:16]
     except Exception:

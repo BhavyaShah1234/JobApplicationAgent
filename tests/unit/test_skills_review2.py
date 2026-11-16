@@ -287,3 +287,18 @@ def test_a_skill_the_posting_names_anywhere_is_not_a_suggestion(tmp_path, monkey
     f = SimpleNamespace(skills=[T.SkillLine(category="Data", terms=["SQL", "PyTorch"])])
     assert SG.violations(job, f) == []
     get_settings.cache_clear()
+
+
+def test_a_skill_the_candidates_own_writing_names_counts_as_owned(tmp_path, monkeypatch):
+    monkeypatch.setenv("STATE_DIR", str(tmp_path / "s"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "d"))
+    get_settings.cache_clear()
+    (tmp_path / "d" / "templates").mkdir(parents=True)
+    (tmp_path / "d" / "templates" / "resume.tex").write_text("\\resumeItem{Moved a monolith to microservices on Kubernetes, with data in Azure SQL.}\n"
+                                                              "\\resumeItem{Go beyond the brief.}")
+    g = SG.Graph()
+    SG.ingest(g, jd("a", ["Kubernetes", "SQL", "Go", "Terraform"]), "ml", ask=lambda *a: [duty("cloud infrastructure", "Kubernetes", "SQL", "Go", "Terraform")])
+    owned = SG.owned_with_evidence(g, ["Python"])
+    assert {"kubernetes", "sql", "python"} <= owned and "terraform" not in owned and "go" not in owned          # "Go" in prose is not evidence
+    assert SG._resume_terms(SimpleNamespace(skills=[("Cloud", "AWS (EC2, Kubernetes), Azure")])) == ["AWS", "EC2", "Kubernetes", "Azure"]
+    get_settings.cache_clear()
