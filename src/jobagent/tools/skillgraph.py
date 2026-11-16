@@ -383,8 +383,9 @@ def build(g: Graph, roles: list[dict], postings: list[tuple[dict, str]], *, ask=
     for rid, title in titles.items():
         ensure_role(g, rid, title)
     stats = {"postings": 0, "skipped": 0, "failed": 0, "roles_without_postings": []}
-    for jd, rid in postings:
+    for i, (jd, rid) in enumerate(postings, 1):
         try:
+            log(f"skills: {i}/{len(postings)} {jd.get('company', '')} - {jd.get('title', '')} ({rid})")
             res = ingest(g, jd, rid, ask=ask, embed=embed, duty_threshold=thresholds[0], skill_threshold=thresholds[1],
                          role_title=titles.get(rid, ""))
         except Exception as exc:                                 # one posting that fails never stops the others; a rerun retries it
