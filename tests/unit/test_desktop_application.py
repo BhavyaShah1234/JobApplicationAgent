@@ -97,8 +97,11 @@ def test_lazy_upload_is_discovered_and_filled(tmp_path,desktop):
         b.close()
 
 
-@pytest.mark.parametrize('resumable,expected', [(True,['docker','desktop']), (False,['docker'])])
-def test_apply_auto_falls_back_only_for_a_challenge_block(tmp_path,monkeypatch,resumable,expected):
+@pytest.mark.parametrize('resumable,blocked_by,expected', [
+    (True,'challenge',['docker','desktop']), (False,'challenge',['docker']),
+    (True,'planner',['docker']), (True,'policy',['docker']), (True,None,['docker']),
+])
+def test_apply_auto_falls_back_only_for_a_challenge_block(tmp_path,monkeypatch,resumable,blocked_by,expected):
     from typer.testing import CliRunner
     from jobagent import main
     from jobagent.steps import apply
@@ -111,7 +114,7 @@ def test_apply_auto_falls_back_only_for_a_challenge_block(tmp_path,monkeypatch,r
         return nullcontext(SimpleNamespace(pages=[object()]))
     def run(*args,**kwargs):
         runs.append(kwargs)
-        return {'state':'blocked' if len(runs)==1 else 'review','resumable':resumable,
+        return {'state':'blocked' if len(runs)==1 else 'review','resumable':resumable,'blocked_by':blocked_by,
                 'verified':0,'fields':[],'flags':[],'ready_to_submit':True,'blockers':[]}
     monkeypatch.setattr(main,'_stop_if_unavailable',lambda *a:None)
     monkeypatch.setattr(main,'_stop_if_documents_invalid',lambda *a:None)   # F05 gate: not what this test is about
@@ -122,9 +125,9 @@ def test_apply_auto_falls_back_only_for_a_challenge_block(tmp_path,monkeypatch,r
     result=CliRunner().invoke(main.app,['apply',str(tmp_path),'carvana','--browser-mode','auto'])
     # F03: a run that ends blocked is a nonzero exit (4) for shell chains and the queue; the desktop retry that ends on
     # a ready review screen is 0
-    assert result.exit_code==(0 if resumable else 4),result.output
+    assert result.exit_code==(0 if len(expected)==2 else 4),result.output
     assert modes==expected
-    if resumable:
+    if len(expected)==2:
         assert runs[-1]['already_open']
         assert runs[-1]['observe_s']==30
         assert runs[0]['desktop_fallback'] and not runs[-1]['desktop_fallback']

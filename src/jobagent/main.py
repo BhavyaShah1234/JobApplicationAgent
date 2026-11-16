@@ -829,7 +829,8 @@ def apply_cmd(
                 res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
                           ask_s=ask_minutes * 60, model_name=model, filling_strategy=strategy,
                           **sess.run_options(observe_s=30, auto_fallback=browser_mode == 'auto'))
-            if not (res.get('state')=='blocked' and res.get('resumable') and mode=='docker' and browser_mode=='auto'):
+            if not (res.get('state')=='blocked' and res.get('blocked_by')=='challenge'
+                    and res.get('resumable') and mode=='docker' and browser_mode=='auto'):
                 break
     except Unavailable as gone:
         wf.mark("apply", "failed", error=f"unavailable: {gone.kind}")
