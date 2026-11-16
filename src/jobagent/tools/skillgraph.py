@@ -25,6 +25,17 @@ from pydantic import BaseModel, Field
 
 CATEGORIES = ("language", "framework", "database", "cloud", "tool", "method")
 GENERAL_DUTY = "general tooling"          # skills a posting names without tying them to a duty
+# the kinds of work offered to the model first, so duties stay short and shared across postings (it may add a new one when none fits)
+DEFAULT_DUTIES = (
+    "model training", "model deployment and hosting", "data pipelines", "data analysis", "databases", "backend services", "api development",
+    "frontend development", "cloud infrastructure", "devops and ci/cd", "testing and quality", "observability and monitoring",
+    "distributed systems", "systems and embedded programming", "networking", "security", "computer vision",
+    "natural language processing", "robotics and controls", "mobile development", "performance optimization")
+MAX_DUTY_WORDS = 5
+# nouns that make a phrase a kind of knowledge, not a technology ("backend languages", "optimization techniques", "predictive models")
+GENERIC_SKILL = re.compile(r"(?i)\b(languages?|techniques|concepts|principles|fundamentals|experience|knowledge|skills?|various|different|"
+                           r"other|related|similar|models|algorithms|methods|approaches|practices|tools|technologies|frameworks|platforms|"
+                           r"systems|engineering|development|programming|solutions|applications|environments?|databases)\b")
 
 # spellings that are the same technology; extended automatically when two names merge by similarity
 BUILTIN_ALIASES = {
@@ -54,11 +65,40 @@ def clean_skills(terms: list[str]) -> list[str]:
         for part in re.split(r",|;|\band\b(?= [A-Z])|\|", str(raw)):
             part = part.strip(" .-•")
             key = norm(part)
-            if not key or len(key) > 40 or len(key.split()) > 5 or key in seen:
+            if not key or len(key) > 40 or len(key.split()) > 4 or key in seen or (len(key.split()) > 1 and GENERIC_SKILL.search(key)):
                 continue
             seen.add(key)
             out.append(part)
     return out
+
+
+def valid_duty(name: str) -> bool:
+    """A duty is a short kind of work ("model training"), not a sentence copied from a responsibility."""
+    words = name.strip().split()
+    return 0 < len(words) <= MAX_DUTY_WORDS and len(name.strip()) <= 40
+
+
+def role_for(jd: dict, roles: list[dict], embed=None, threshold: float = 0.55) -> str:
+    """The role a posting belongs to when the queue recorded none: the first role whose title pattern matches, else the role whose
+    title + description is most similar to the posting's title and summary (at or above `threshold`); '' when none fits."""
+    import re as _re
+    title = jd.get("title") or ""
+    for r in roles:
+        for pat in r.get("patterns") or []:
+            try:
+                if _re.search(pat, title):
+                    return r["id"]
+            except _re.error:
+                continue
+    if embed is None or not roles:
+        return ""
+    texts = [f"{title}. {(jd.get('role_summary') or '')[:300]}"] + [f"{r.get('title', '')}. {r.get('description', '')}" for r in roles]
+    vecs = embed(texts)
+    if not vecs or vecs[0] is None:
+        return ""
+    scored = [(cosine(vecs[0], v), r["id"]) for r, v in zip(roles, vecs[1:], strict=False) if v is not None]
+    best = max(scored, default=(0.0, ""))
+    return best[1] if best[0] >= threshold else ""
 
 
 def jd_key(jd: dict) -> str:
@@ -250,7 +290,7 @@ class SkillOut(BaseModel):
 
 
 class DutyOut(BaseModel):
-    duty: str = Field(max_length=60, description="A kind of work in a few words, lower case, e.g. 'model training', 'model deployment "
+    duty: str = Field(max_length=200, description="A kind of work in at most 4 words, lower case, e.g. 'model training', 'model deployment "
                                                   "and hosting', 'databases', 'data pipelines', 'frontend development'")
     skills: list[SkillOut] = Field(max_length=25)
 
@@ -272,8 +312,9 @@ INGEST_PROMPT = (
     "You organise the technologies of ONE job posting by the kind of work each is used for.\n"
     "Given the posting's responsibilities and its list of technologies, return the duties the posting asks for (at most 8) and, under each, "
     "the technologies from the LIST that serve it. A technology may serve several duties. Use only technologies from the LIST, spelled as "
-    "listed; do not add any. Name duties as kinds of work, not as technologies. REUSE one of the KNOWN DUTIES (exact text) whenever it "
-    "means the same work; make a new duty only for work none of them covers. Give each technology a category.")
+    "listed; do not add any (skip anything that is not a named technology, library, language, service or tool). Name duties as short "
+    "kinds of work of at most 4 words, never as a sentence and never as a technology. CHOOSE from the KNOWN DUTIES (exact text) whenever one "
+    "fits the work; make a new duty (at most 4 words) only for work none of them covers. Give each technology a category.")
 
 
 def default_ask(jd: dict, known_duties: list[str], skills: list[str]) -> list[DutyOut]:
@@ -306,7 +347,7 @@ def ensure_role(g: Graph, role_id: str, title: str = "") -> str:
     return nid
 
 
-def ingest(g: Graph, jd: dict, role_id: str, *, ask=default_ask, embed=None, duty_threshold: float = 0.85, skill_threshold: float = 0.9,
+def ingest(g: Graph, jd: dict, role_id: str, *, ask=default_ask, embed=None, duty_threshold: float = 0.92, skill_threshold: float = 0.9,
            role_title: str = "") -> dict:
     """Add one posting. Idempotent per posting: a second call with the same posting changes nothing. Returns what changed."""
     key = jd_key(jd)
@@ -327,9 +368,9 @@ def ingest(g: Graph, jd: dict, role_id: str, *, ask=default_ask, embed=None, dut
     new_skills: list[str] = []
     new_duties: list[str] = []
     placed: set[str] = set()
-    for d in ask(jd, known, skills):
+    for d in ask(jd, list(dict.fromkeys([*DEFAULT_DUTIES, *known])), skills):
         duty_name = d.duty.strip().lower()
-        if not duty_name:
+        if not valid_duty(duty_name):                          # a sentence, not a duty: its skills fall to "general tooling"
             continue
         duty = resolve(g, "duty", duty_name, embed, duty_threshold)
         if duty is None:
@@ -377,7 +418,7 @@ def consolidate(g: Graph, merge=default_merge) -> int:
 
 
 def build(g: Graph, roles: list[dict], postings: list[tuple[dict, str]], *, ask=default_ask, embed=None, merge=default_merge,
-          log=print, thresholds: tuple[float, float] = (0.85, 0.9)) -> dict:
+          log=print, thresholds: tuple[float, float] = (0.92, 0.9)) -> dict:
     """Add every role of the roles file (even with no postings yet) and every saved posting, then consolidate the duties."""
     titles = {r["id"]: r.get("title", r["id"]) for r in roles if r.get("id")}
     for rid, title in titles.items():

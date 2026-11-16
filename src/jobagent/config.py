@@ -114,7 +114,7 @@ class Settings(BaseSettings):
     apply_max_pages: int = Field(default=15, ge=1, le=60)                    # the most wizard pages `apply` walks through before it stops
     skills_use_graph: bool = True                          # step 4c: neighbouring skills the candidate owns may fill spare room on the resume
     skills_max_neighbours: int = Field(default=6, ge=1, le=20)
-    skills_duty_merge: float = Field(default=0.85, gt=0, le=1)
+    skills_duty_merge: float = Field(default=0.92, gt=0, le=1)
     skills_skill_merge: float = Field(default=0.9, gt=0, le=1)
     log_level: Literal["normal", "quiet"] = "normal"       # quiet hides progress detail on screen (the log file keeps everything)
 

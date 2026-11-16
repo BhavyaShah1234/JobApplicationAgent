@@ -79,15 +79,17 @@ class Pipeline:
                 return
             from jobagent.tools import matching, skillgraph as SG
             jd = json.loads((d / "jd.json").read_text())
-            rid = (row["role_id"] if "role_id" in row.keys() and row["role_id"] else "")
-            if not rid:
-                return
             g = SG.load(self.settings)
             if SG.jd_key(jd) in g.postings:
                 return
+            roles = matching.load_roles().get("roles", [])
+            embed = SG.default_embed(self.settings)
+            rid = (row["role_id"] if "role_id" in row.keys() and row["role_id"] else "") or SG.role_for(jd, roles, embed)
+            if not rid:
+                return
             before = g.content_hash()
-            titles = {r["id"]: r.get("title", "") for r in matching.load_roles().get("roles", [])}
-            res = SG.ingest(g, jd, rid, embed=SG.default_embed(self.settings), role_title=titles.get(rid, ""),
+            titles = {r["id"]: r.get("title", "") for r in roles}
+            res = SG.ingest(g, jd, rid, embed=embed, role_title=titles.get(rid, ""),
                             duty_threshold=self.settings.skills_duty_merge, skill_threshold=self.settings.skills_skill_merge)
             if SG.save(g, f"posting {jd.get('company', '')} - {jd.get('title', '')}", before, self.settings) and res["added_skills"]:
                 self.log(f"skills: {len(res['added_skills'])} new skill(s) added to the graph")

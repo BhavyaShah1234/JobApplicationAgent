@@ -11,13 +11,17 @@ def register(app: typer.Typer, console) -> None:
     skills_app = typer.Typer(no_args_is_help=True, help="The skill graph: Role -> Duty -> Skill, built from the postings the agent has read.")
     app.add_typer(skills_app, name="skills")
 
+    skipped: list[str] = []
+
     def postings() -> list[tuple[dict, str, Path]]:
         """Every saved posting with its role id: the discovery match recorded in the queue, else the first role whose title pattern fits."""
         from jobagent import db
         from jobagent.config import get_settings
         from jobagent.tools import matching
+        from jobagent.tools import skillgraph as SG
         s, conn = get_settings(), db.connect()
         roles = matching.load_roles().get("roles", [])
+        embed = SG.default_embed(s)
         out = []
         for f in sorted(glob.glob(str(s.outputs_dir / "*" / "*" / "jd.json"))):
             try:
@@ -25,21 +29,24 @@ def register(app: typer.Typer, console) -> None:
             except (OSError, json.JSONDecodeError):
                 continue
             row = conn.execute("SELECT role_id FROM jobs WHERE url = ?", (jd.get("source_url") or "",)).fetchone()
-            rid = (row["role_id"] if row and row["role_id"] else "") or next(
-                (r["id"] for r in roles if matching._hits(r.get("patterns"), jd.get("title") or "")), "")
+            rid = (row["role_id"] if row and row["role_id"] else "") or SG.role_for(jd, roles, embed)
             if rid:
                 out.append((jd, rid, Path(f).parent))
+            else:
+                skipped.append(f"{jd.get('company', '')} - {jd.get('title', '')}")
         return out
 
     @skills_app.command("build")
-    def build(no_merge: bool = typer.Option(False, "--no-merge", help="Skip the duty consolidation call.")) -> None:
+    def build(no_merge: bool = typer.Option(False, "--no-merge", help="Skip the duty consolidation call."),
+              rebuild: bool = typer.Option(False, "--rebuild", help="Start from an empty graph (the embedding cache is kept).")) -> None:
         """Create or extend the graph from data/target_roles.yaml and every saved posting (safe to rerun: postings already in it are skipped)."""
         from jobagent.config import get_settings
         from jobagent.log import runlog
         from jobagent.tools import matching, skillgraph as SG
+        skipped.clear()
         log, s = runlog("skills"), get_settings()
-        g = SG.load(s)
-        before = g.content_hash()
+        g = SG.Graph() if rebuild else SG.load(s)
+        before = "" if rebuild else g.content_hash()
         found = postings()
         stats = SG.build(g, matching.load_roles().get("roles", []), [(jd, rid) for jd, rid, _ in found], embed=SG.default_embed(s),
                          merge=None if no_merge else SG.default_merge, log=log, thresholds=(s.skills_duty_merge, s.skills_skill_merge))
@@ -47,6 +54,8 @@ def register(app: typer.Typer, console) -> None:
         log(f"skills: {len(g.of_kind('role'))} role(s), {len(g.of_kind('duty'))} duty(ies), {len(g.of_kind('skill'))} skill(s); "
             f"{stats['postings']} new posting(s), {stats['skipped']} already known, {stats['failed']} failed; "
             f"{'saved as version ' + str(g.version) if changed else 'nothing changed'}")
+        for name in skipped:
+            log(f"skills: no role fits '{name}'; left out")
         for rid in stats["roles_without_postings"]:
             log(f"skills: role '{rid}' has no postings yet: run `jobagent skills sync`")
         if stats["failed"]:

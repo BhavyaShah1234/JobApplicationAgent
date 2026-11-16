@@ -199,3 +199,27 @@ def test_the_writers_context_carries_the_related_skills():
     ctx = {"r": r, "graph": {"owned": [{"skill": "JAX", "via": "model training", "score": 1}], "review": []}}
     assert "RELATED SKILLS" in M._context(ctx, None, None) and "JAX" in M._context(ctx, None, None)
     assert "RELATED SKILLS" not in M._context({"r": r}, None, None)
+
+
+def test_duties_are_short_kinds_of_work_and_sentences_are_refused():
+    assert SG.valid_duty("model training") and SG.valid_duty("model deployment and hosting")
+    assert not SG.valid_duty("develop and implement scalable and efficient modeling solutions for products")
+    g = SG.Graph()
+    SG.ingest(g, jd("sent", ["PyTorch"]), "ml", ask=lambda *a: [duty("architect, develop, and maintain high-performance scalable services", "PyTorch")])
+    assert [n["name"] for n in g.of_kind("duty")] == [SG.GENERAL_DUTY]                      # the sentence is not a duty; the skill is kept
+
+
+def test_generic_phrases_are_not_skills():
+    got = SG.clean_skills(["Python", "Different backend languages", "optimization techniques", "predictive models", "Kubernetes", "machine learning",
+                           "Spring Boot", "relational databases", "object-oriented programming"])
+    assert got == ["Python", "Kubernetes", "machine learning", "Spring Boot"]
+
+
+def test_a_posting_with_no_recorded_role_is_placed_by_title_then_by_similarity():
+    roles = [{"id": "ml", "title": "Machine Learning Engineer", "patterns": ["(?i)machine learning"], "description": "models"},
+             {"id": "swe", "title": "Software Engineer", "patterns": [], "description": "backend services and apis"}]
+    assert SG.role_for({"title": "Staff Machine Learning Engineer"}, roles) == "ml"
+    vec = {"Cloud Solutions Engineer. ": [0, 1], "Machine Learning Engineer. models": [1, 0], "Software Engineer. backend services and apis": [0, 0.95]}
+    embed = lambda texts: [next((v for k, v in vec.items() if t.startswith(k)), [0, 0]) for t in texts]   # noqa: E731
+    assert SG.role_for({"title": "Cloud Solutions Engineer", "role_summary": ""}, roles, embed) == "swe"
+    assert SG.role_for({"title": "Pastry Chef"}, roles, lambda texts: [[1, 1]] + [[-1, 0], [0, -1]]) == ""

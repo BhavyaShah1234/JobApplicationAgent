@@ -1,5 +1,5 @@
 # Skill graph (step 4c). Neighbouring skills fill spare room on the resume only when you already have them.
 # skills_use_graph: true
 # skills_max_neighbours: 6
-# skills_duty_merge: 0.85     # similarity at which two duty names count as one
+# skills_duty_merge: 0.92     # similarity at which two duty names count as one
 # skills_skill_merge: 0.9     # similarity at which two skill names count as one
