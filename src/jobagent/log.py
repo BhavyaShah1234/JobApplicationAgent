@@ -17,6 +17,7 @@ Steps keep calling ``log(message)``; `runlog(step)` returns that callable, so no
 """
 
 import atexit
+import contextvars
 import json
 import os
 import re
@@ -103,6 +104,7 @@ class RunLog:
         self.console = console or Console(highlight=False, soft_wrap=True)
         self.directory = directory
         _live.append(self)
+        _current.set(self)                                 # code running in THIS thread/context that has no log of its own writes here
         self._last: tuple | None = None
         self._repeats = 0
         self._file = self._jsonl = None
@@ -124,8 +126,11 @@ class RunLog:
             self.path, self._file, self._jsonl = path, log, jsonl
         except OSError as exc:
             for f in (log, jsonl):
-                if f:
-                    f.close()                              # a half-opened pair never leaks a handle
+                try:
+                    if f:
+                        f.close()                          # a half-opened pair never leaks a handle; a failing close changes nothing
+                except OSError:
+                    pass
             self._disable(exc)
 
     def _disable(self, exc: BaseException) -> None:
@@ -229,6 +234,8 @@ class RunLog:
         self._file = self._jsonl = None
         if self in _live:
             _live.remove(self)
+        if _current.get() is self:
+            _current.set(None)
 
 
 def _esc(text: str) -> str:
@@ -246,7 +253,8 @@ def runlog(step: str, job: str = "", **kw) -> RunLog:
 
 
 _default: RunLog | None = None
-_live: list[RunLog] = []                                   # loggers not yet closed; the newest named run receives code with no log of its own
+_live: list[RunLog] = []                                   # loggers not yet closed (closed at exit)
+_current: contextvars.ContextVar = contextvars.ContextVar("jobagent_runlog", default=None)   # the run of THIS thread / task
 
 
 @atexit.register
@@ -256,12 +264,13 @@ def _close_all() -> None:
 
 
 def default() -> RunLog:
-    """The logger for code that has no `log` callable of its own (a model fallback notice): the run in progress, so the warning lands
-    in that run's file; a standalone stderr logger only when no run is open."""
+    """The logger for code that has no `log` callable of its own (a model fallback notice): the run opened in this thread/context, so the
+    warning lands in that run's file; a standalone stderr logger when there is none (e.g. in a worker thread that was not given the
+    context: use `contextvars.copy_context().run(...)` when starting one)."""
     global _default
-    running = [lg for lg in _live if lg is not _default]
-    if running:
-        return running[-1]
+    cur = _current.get()
+    if cur is not None and cur in _live:                   # never another thread's run: a concurrent run's logger is not ours to pick
+        return cur
     if _default is None:
         from jobagent.config import get_settings
         try:

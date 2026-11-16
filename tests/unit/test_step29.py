@@ -139,7 +139,7 @@ def test_pacing_counts_recent_started_or_sent_applications_per_company(tmp_path)
     add_application(conn, "Acme", "submitted", 30)                    # outside the window
     add_application(conn, "Beta Corp", "skipped", 1)                  # never counted
     add_application(conn, "Beta Corp", "submitted", 3)
-    assert pacing.recent_counts(conn, 7) == {"acme": 2, "beta-corp": 1}
+    assert pacing.recent_counts(conn, 7) == {"acme": 2, "beta": 1}
     assert pacing.excluded(conn, 2, 7) == {"acme": 2} and pacing.excluded(conn, 0, 7) == {}
 
 

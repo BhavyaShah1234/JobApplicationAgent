@@ -19,18 +19,23 @@ CITIZENSHIP = re.compile(
 CLEARANCE = re.compile(
     r"(?i)(ts\s*/\s*sci|top[- ]secret|secret\s+clearance|(active|current|valid|dod|government|federal)\s+(security\s+)?clearance|"
     r"(obtain|hold|maintain|possess|have)\s+(and\s+maintain\s+)?(a\s+|an\s+)?(u\.?s\.?\s+)?(government\s+)?(security\s+)?clearance|"
-    r"security\s+clearance\s+(is\s+)?(required|needed)|q\s+clearance|dod\s+secret|public trust\s+(clearance|position))")
+    r"security\s+clearance\s+(is\s+)?(required|needed)|q\s+clearance|dod\s+secret|public trust\s+(clearance|position)|"
+    r"without\s+(a\s+)?(security\s+)?clearance)")
 NO_SPONSORSHIP = re.compile(
-    r"(?i)(will\s+not|won'?t|unable\s+to|cannot|can'?t|does\s+not|do\s+not|not\s+able\s+to|not\s+offer|no)\s+(provide\s+|offer\s+)?"
+    r"(?i)\b(unable|not\s+able|cannot|can'?t|will\s+not|won'?t|does\s+not|do\s+not|not\s+in\s+a\s+position)\s+(to\s+)?sponsor\b|(will\s+not|won'?t|unable\s+to|cannot|can'?t|does\s+not|do\s+not|not\s+able\s+to|not\s+offer|no)\s+(provide\s+|offer\s+)?"
     r"(visa\s+|immigration\s+|employment\s+)?sponsorship|without\s+(the\s+need\s+for\s+)?(visa\s+|immigration\s+)?sponsorship|"
     r"not\s+(currently\s+)?(sponsoring|eligible\s+for\s+sponsorship)|sponsorship\s+is\s+not\s+(available|offered|provided)")
 US_PERSON = re.compile(r"(?i)(\bITAR\b|export[- ]controlled|export\s+control\s+(laws|regulations)|\bU\.?S\.?\s+persons?\b)")
 # An either/or is only an alternative when "or" joins the two ("citizen or permanent resident"); "and" makes it a second requirement.
-ALTERNATIVE = re.compile(r"(?i)(citizens?(hip)?|national)\b[^.;]{0,40}\bor\b[^.;]{0,40}(?P<alt>permanent\s+resident|green\s*card|lawful\s+permanent|"
+ALTERNATIVE = re.compile(r"(?i)(citizens?(hip)?|national)\b(?:(?!\band\b)[^.;]){0,40}\bor\b[^.;]{0,40}(?P<alt>permanent\s+resident|green\s*card|lawful\s+permanent|"
                          r"authori[sz]ed\s+to\s+work|work\s+authori[sz]ation|authori[sz]ation\s+to\s+work)")
 # a requirement that is absent or only wished for is not a requirement
 NO_CLEARANCE_NEEDED = re.compile(r"(?i)(\bno\s+(security\s+)?clearance|without\s+(a\s+)?(security\s+)?clearance|clearance\s+(is\s+)?(not|never)\s+(required|needed)|"
                                  r"not\s+require\s+(a\s+)?(security\s+)?clearance|clearance\s+is\s+not\s+necessary)")
+EXCLUDES = re.compile(r"(?i)(not\s+eligible|ineligible|cannot\s+(be\s+considered|apply)|(will|can)\s+not\s+be\s+considered|not\s+(be\s+)?considered|disqualif)")
+LAPSED = re.compile(r"(?i)\b(expired|lapsed|inactive|former|formerly|pending|interim|revoked|suspended|in\s+process)\b")
+CLAUSE_SPLIT = re.compile(r";\s*|\s+(?:and|but)\s+(?=(?:an?\s+|the\s+)?(?:active|current|valid|u\.?s\.?\s|us\s|security|clearance|ts\b|top\b|secret\b|visa|"
+                          r"sponsorship|we\b|you\b|candidates\b|applicants\b|no\b))")
 PREFERRED = re.compile(r"(?i)\b(preferred|a plus|nice to have|desired|desirable|bonus|advantage|an asset|ideally)\b")
 REQUIRED = re.compile(r"(?i)\b(must|required|requires?|requirement|mandatory|necessary|only)\b")
 # "able to obtain" is a requirement the employer can usually satisfy by sponsoring the investigation; a held / active one is not
@@ -63,7 +68,10 @@ def _sentences(text: str) -> list[tuple[str, str]]:
     for s in re.split(r"(?<=[.!?\n])\s+|\n+|[\u2022\u00b7]", protected):
         if s and len(s.strip()) > 8:
             out.append((s.strip().replace("\u2024", "."), s.strip().replace("\u2024", "")))
-    return out
+    clauses = []
+    for quote, s in out:                              # independent clauses are judged on their own ("... required and ... preferred")
+        clauses += [(quote, c.strip()) for c in CLAUSE_SPLIT.split(s) if c and len(c.strip()) > 8]
+    return clauses
 
 
 def screen(text: str, facts: dict) -> Verdict:
@@ -94,18 +102,18 @@ def screen(text: str, facts: dict) -> Verdict:
                 add("review", "U.S. citizenship", quote, "required or an alternative (permanent residence / work authorization): check you qualify")
             else:
                 add("review", "U.S. citizenship", quote, "required; your file does not say whether you are a U.S. citizen")
-        if CLEARANCE.search(s) and not NO_CLEARANCE_NEEDED.search(s) and not (PREFERRED.search(s) and not REQUIRED.search(s)):
+        if CLEARANCE.search(s) and (not NO_CLEARANCE_NEEDED.search(s) or EXCLUDES.search(s)) and not (PREFERRED.search(s) and not REQUIRED.search(s)):
             held = (clearance or "").strip().lower()
             if clearance is None:
                 add("review", "security clearance", quote, "a clearance is mentioned; your file does not say whether you hold one")
             elif held in ("none", "no", "n/a", "not applicable"):
-                if OBTAINABLE.search(s) and not ACTIVE.search(s):
+                if OBTAINABLE.search(s):
                     add("review", "security clearance", quote, "asks you to be able to obtain one; your file lists none (the employer may sponsor it)")
                 else:
                     add("blocked", "security clearance", quote, "required, and your file says you hold no clearance")
             else:
                 need, have = clearance_level(s), clearance_level(held)
-                if need is None or have is None or have < need:
+                if LAPSED.search(held) or need is None or have is None or have < need:
                     add("review", "security clearance", quote, f'required; your file lists "{clearance}": check the level matches')
         if NO_SPONSORSHIP.search(s):
             if sponsor is True:

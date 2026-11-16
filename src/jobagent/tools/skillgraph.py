@@ -195,13 +195,16 @@ def default_embed(settings=None) -> Callable[[list[str]], list[list[float]] | No
     s = settings or get_settings()
     path = skills_dir(s) / "vectors.json"
 
+    mem: dict = {}                                       # loaded once: the file holds 4096-number vectors and grows to megabytes
+
     def embed(texts: list[str]):
-        try:
-            cache = json.loads(path.read_text()) if path.exists() else {}
-        except (OSError, json.JSONDecodeError):
-            cache = {}
+        if not mem:
+            try:
+                mem.update(json.loads(path.read_text()) if path.exists() else {})
+            except (OSError, json.JSONDecodeError):
+                pass
         key = lambda t: hashlib.sha1(f"{s.model_embed}|{t}".encode()).hexdigest()  # noqa: E731
-        missing = [t for t in dict.fromkeys(texts) if key(t) not in cache]
+        missing = [t for t in dict.fromkeys(texts) if key(t) not in mem]
         if missing:
             try:
                 emb = llm.embeddings()
@@ -210,11 +213,11 @@ def default_embed(settings=None) -> Callable[[list[str]], list[list[float]] | No
                 return None
             if emb.used_fallback:
                 got = dict(zip(missing, vecs, strict=False))
-                return [got.get(t) or cache.get(key(t)) for t in texts]
-            cache.update({key(t): v for t, v in zip(missing, vecs, strict=False)})
+                return [got.get(t) or mem.get(key(t)) for t in texts]
+            mem.update({key(t): v for t, v in zip(missing, vecs, strict=False)})
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(cache))
-        return [cache[key(t)] for t in texts]
+            path.write_text(json.dumps(mem))
+        return [mem[key(t)] for t in texts]
     return embed
 
 
@@ -315,6 +318,11 @@ def ingest(g: Graph, jd: dict, role_id: str, *, ask=default_ask, embed=None, dut
     if not skills:
         return {"added_skills": [], "added_duties": [], "skipped": False}
     by_norm = {norm(s): s for s in skills}
+    if embed is not None:
+        try:
+            embed(skills)                                  # one batched request for the posting's skills; the lookups below hit the cache
+        except Exception:
+            pass
     known = [n["name"] for n in g.of_kind("duty")]
     new_skills: list[str] = []
     new_duties: list[str] = []

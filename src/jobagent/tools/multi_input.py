@@ -43,6 +43,7 @@ class Plan:
     warnings: list[str] = field(default_factory=list)
     failures: list[Row] = field(default_factory=list)         # inputs that could not be read at all (corrupt file, bad encoding)
     sources: dict = field(default_factory=dict)               # company (lower case) -> where it came from, e.g. "targets.csv row 3"
+    url_meta: dict = field(default_factory=dict)              # canonical URL -> {"source", "company", "referral"} from its file row
     referrals: dict = field(default_factory=dict)             # company (lower case) -> Referral from the file row (consented only)
 
 
@@ -59,6 +60,9 @@ def plan(inputs: list[str]) -> Plan:
             p.failures.append(Row(raw, "input", "failed", f"{type(exc).__name__}: {str(exc)[:160]}"))
             continue
         p.warnings += routed.warnings
+        if routed.kind == "file" and not routed.items:            # a file the candidate named that gave nothing: that input failed
+            p.failures.append(Row(raw, "input", "failed", "; ".join(routed.warnings)[:200] or "no usable rows"))
+            continue
         for item in routed.items:
             if item.kind == "url":
                 key = canonical_url(item.value)
@@ -67,6 +71,8 @@ def plan(inputs: list[str]) -> Plan:
                     continue
                 seen_urls.add(key)
                 p.urls.append(item.value)
+                if item.source and item.source != "input":
+                    p.url_meta[key] = {"source": item.source, "company": item.company, "referral": item.referral}
             else:
                 name = (item.company or item.value).strip()
                 key = name.lower()
@@ -102,7 +108,10 @@ def run_inputs(inputs: list[str], *, through: str = "apply", limit: int = 5, log
         for url in p.urls:
             try:
                 res = pipeline.run(url, through=through, **pipeline_options)
-                rows.append(Row(url, "url", res.state, res.note or (f"exit {res.code}" if res.code else ""), res.code or 0))
+                meta = p.url_meta.get(canonical_url(url), {})
+                extra = (f" [{meta['source']}" + (f"; referral {meta['referral'].name} not attached by batch runs" if meta.get("referral") else "") + "]"
+                         ) if meta else ""
+                rows.append(Row(url, "url", res.state, (res.note or (f"exit {res.code}" if res.code else "")) + extra, res.code or 0))
             except Exception as exc:                                   # one input's failure does not stop the others
                 rows.append(Row(url, "url", "failed", f"{type(exc).__name__}: {str(exc)[:160]}", 1))
     if p.companies:
@@ -123,6 +132,8 @@ def run_inputs(inputs: list[str], *, through: str = "apply", limit: int = 5, log
                 names.add(r.company)
                 where = p.sources.get(r.company.lower() or "", "")
                 note = f"{r.counts.get('queued', 0)} queued, {r.counts.get('needs_review', 0)} to review, {r.listings} listings"
+                if (ref := p.referrals.get(r.company.lower())):
+                    note += f"; referral {ref.name} not attached by batch runs"
                 if getattr(r, "note", "") and not r.listings:
                     rows.append(Row(r.company, "company", "failed", f"discovery: {r.note[:140]}" + (f" ({where})" if where else ""), 1))
                 else:

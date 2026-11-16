@@ -134,7 +134,7 @@ def test_a_file_rows_source_and_referral_survive_planning_and_conflicts_are_expl
                  "Acme,Other Person,other@acme.test,yes\n")
     p = multi_input.plan([str(f)])
     assert p.companies == ["Acme", "Beta"] and "beta" not in p.referrals
-    assert p.referrals["acme"].name == "Pat Lee"                              # the consented row's referral stays with ITS company only
+    assert "acme" not in p.referrals and any("conflicts with" in w for w in p.warnings)   # two different contacts for one company: neither is used
     assert "row" in p.sources["acme"] and "row" in p.sources["beta"]
     two = multi_input.plan(["Acme", str(f)])                                  # a bare name and a file row for one company: still one company
     assert two.companies == ["Acme", "Beta"]

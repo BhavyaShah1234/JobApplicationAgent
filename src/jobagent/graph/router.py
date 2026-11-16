@@ -129,7 +129,7 @@ def parse_table(path: Path) -> Routed:
         routed.warnings.append(f"{path.name}: no company or job URL column (headers: {list(rows[0])})")
         return routed
     get = lambda row, f: (row.get(mapping[f], "") if f in mapping else "").strip()  # noqa: E731
-    seen: set[tuple[str, str]] = set()
+    seen: dict[tuple[str, str], WorkItem] = {}
     for n, row in enumerate(rows, start=2):  # row 1 is the header
         where = f"{path.name} row {n}"
         company, url = get(row, "company"), get(row, "url")
@@ -155,10 +155,16 @@ def parse_table(path: Path) -> Routed:
         kind, value = ("url", url) if url else ("company", company)
         key = (kind, value.lower())
         if key in seen:
-            routed.warnings.append(f"{where}: duplicate of an earlier row, skipped")
+            first = seen[key]
+            if referral and first.referral and referral != first.referral:                       # the same posting/company with two different contacts: use neither
+                routed.warnings.append(f"{where}: conflicts with {first.source} (different referral contact); no referral is used for it")
+                first.referral = None
+            else:
+                routed.warnings.append(f"{where}: duplicate of {first.source}, skipped")
             continue
-        seen.add(key)
-        routed.items.append(WorkItem(kind, value, company=company, referral=referral, source=where))
+        item = WorkItem(kind, value, company=company, referral=referral, source=where)
+        seen[key] = item
+        routed.items.append(item)
     return routed
 
 

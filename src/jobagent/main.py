@@ -407,7 +407,7 @@ def tailor_cmd(
     from jobagent.steps.tailor import cover_letter, main
 
     _stop_if_unavailable(job_dir, "tailor")
-    log = runlog("tailor")
+    log = runlog("tailor", str(job_dir).rstrip("/").rsplit("/", 1)[-1])
     from jobagent.tools import documents
 
     s = get_settings()
@@ -797,7 +797,7 @@ def apply_cmd(
     _stop_if_unavailable(job_dir, "apply")
     _stop_if_documents_invalid(job_dir, "apply")
     _, wf = _lock_job(ctx, job_dir, "apply")
-    log = runlog("apply")
+    log = runlog("apply", str(job_dir).rstrip("/").rsplit("/", 1)[-1])
     if (wf.stage("apply") or {}).get("status") == "interrupted":
         log("apply: an earlier run was interrupted; the page is reopened and read again (filling never sends)")
     wf.mark("apply", "running")
@@ -881,7 +881,7 @@ def submit_cmd(
     _stop_if_unavailable(job_dir, "submit")
     _stop_if_documents_invalid(job_dir, "submit")
     _, wf = _lock_job(ctx, job_dir, "submit")
-    log = runlog("submit")
+    log = runlog("submit", str(job_dir).rstrip("/").rsplit("/", 1)[-1])
     if (wf.stage("submit") or {}).get("status") == "interrupted":
         # not replayed blindly: the submission attempts (guard above) decide what is safe; this only says why a look is worthwhile
         log("submit: an earlier submit run ended before it finished; its submission attempts were checked above and nothing "

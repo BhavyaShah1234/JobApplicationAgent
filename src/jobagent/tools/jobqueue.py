@@ -63,6 +63,18 @@ def slug(company: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", company.lower()).strip("-") or "unknown"
 
 
+CORP_WORDS = {"inc", "incorporated", "corp", "corporation", "co", "company", "llc", "ltd", "limited", "plc", "gmbh", "lp", "llp"}
+
+
+def employer_key(name: str) -> str:
+    """One key per employer for pacing and batch scope: the slug without corporate suffixes ("Acme", "Acme Inc." and "Acme Corporation"
+    are one employer), so a display-name change between discovery and submission never opens a second capacity bucket."""
+    parts = [x for x in slug(name or "").split("-") if x]
+    while len(parts) > 1 and parts[-1] in CORP_WORDS:
+        parts.pop()
+    return "-".join(parts) or "unknown"
+
+
 def combine(location: Decision | None, match: Match) -> tuple[str, str]:
     """(status, reason) from the location verdict and the role match."""
     if location is not None and location.verdict == "non_us":
@@ -138,24 +150,25 @@ def claim(conn: sqlite3.Connection, worker: str, company: str | None = None, lea
     now = now or datetime.now(UTC)
     if conn.in_transaction:
         conn.commit()                                      # BEGIN IMMEDIATE cannot nest inside the caller's open transaction
+    conn.create_function("employer_key", 1, lambda s: employer_key(s or ""), deterministic=True)
     sql = "SELECT id FROM jobs WHERE status = 'queued'"
     args: list = []
     if company:
-        sql += " AND company_slug = ?"
-        args.append(slug(company))
+        sql += " AND employer_key(COALESCE(company_slug, '')) = ?"
+        args.append(employer_key(company))
     if exclude:                                        # companies at their pacing limit (tools/pacing.py)
-        sql += f" AND COALESCE(company_slug, '') NOT IN ({','.join('?' * len(exclude))})"
-        args += list(exclude)
+        sql += f" AND employer_key(COALESCE(company_slug, '')) NOT IN ({','.join('?' * len(exclude))})"
+        args += [employer_key(x) for x in exclude]
     if companies is not None:
-        sql += f" AND COALESCE(company_slug, '') IN ({','.join('?' * len(companies)) or 'NULL'})"
-        args += list(companies)
+        sql += f" AND employer_key(COALESCE(company_slug, '')) IN ({','.join('?' * len(companies)) or 'NULL'})"
+        args += [employer_key(x) for x in companies]
     conn.execute("BEGIN IMMEDIATE")                       # takes the write lock before reading: the choice cannot go stale
     try:
         if pace:
             from jobagent.tools import pacing
             full = tuple(pacing.excluded(conn, pace[0], pace[1], now, active=True))
             if full:
-                sql += f" AND COALESCE(company_slug, '') NOT IN ({','.join('?' * len(full))})"
+                sql += f" AND employer_key(COALESCE(company_slug, '')) NOT IN ({','.join('?' * len(full))})"
                 args += list(full)
         sql += " ORDER BY COALESCE(match_score, 0) DESC, id LIMIT 1"
         row = conn.execute(sql, args).fetchone()
