@@ -372,7 +372,10 @@ class PlannedFiller:
                             if not re.search(r'resume|\bcv\b|cover|passport|certificate|transcript',caption):
                                 caption+=' '+f.section.lower()
                             role='cover_letter' if 'cover' in caption else 'resume' if any(x in caption for x in ('resume','cv')) else None
-                            if re.search(r'autofill|auto-fill|parse your resume',f.label,re.I):role=None
+                            # The same context used to infer a role must also exclude
+                            # a resume parser. Its generic "Upload file" trigger is
+                            # not the separately labelled Resume attachment.
+                            if re.search(r'autofill|auto-fill|parse your resume',caption,re.I):role=None
                             if role not in files and not f.required:role=None
                             decisions[f.id]=Decision(role,'document role')
                     # Parent controls first; always refresh the inventory after each mutation.

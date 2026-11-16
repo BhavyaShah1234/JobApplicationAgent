@@ -286,6 +286,24 @@ def test_sourcing_context_does_not_cross_a_frame_or_an_unrelated_question():
     assert not child.help and not later.help
 
 
+def test_optional_resume_autofill_trigger_is_not_a_second_resume_attachment(world,tmp_path):
+    from test_documents import PDF
+    resume=tmp_path/'resume.pdf';resume.write_bytes(PDF)
+    cover=tmp_path/'cover_letter.pdf';cover.write_bytes(PDF+b'\ncover letter')
+    world.setup('''<h2>Autofill from resume</h2><div><button type=button
+      onclick="window.parserClicks=(window.parserClicks||0)+1;const e=document.createElement('input');e.type='file';this.parentElement.append(e)">Upload file</button></div>
+      <label for=resume>Resume*</label><input id=resume type=file required>
+      <label for=cover>Cover Letter</label><input id=cover type=file>''')
+    world.page.goto('https://fixture.test/apply')
+    parser=next(f for f in forms.read_page(world.page).fields if f.kind=='file' and f.label=='Upload file')
+    assert 'autofill' in parser.section.lower() and not parser.required
+    result=PlannedFiller([],no_questions).fill(world.page,{'resume':str(resume),'cover_letter':str(cover)},advance_pages=False)
+    assert result['state']=='page_complete'
+    assert world.page.evaluate('window.parserClicks||0')==0
+    assert world.page.locator('#resume').evaluate('e=>e.files[0].name')=='resume.pdf'
+    assert world.page.locator('#cover').evaluate('e=>e.files[0].name')=='cover_letter.pdf'
+
+
 def test_unsupplied_conference_history_requires_owner_evidence():
     field=forms.Field(id=0,kind='textarea',label='Please let us know of any conferences you are planning to attend or have previously attended.')
     facts=[Fact('extra',['Additional information'],'Unrelated hobbies','applicant/written')]
