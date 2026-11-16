@@ -223,3 +223,19 @@ def test_a_posting_with_no_recorded_role_is_placed_by_title_then_by_similarity()
     embed = lambda texts: [next((v for k, v in vec.items() if t.startswith(k)), [0, 0]) for t in texts]   # noqa: E731
     assert SG.role_for({"title": "Cloud Solutions Engineer", "role_summary": ""}, roles, embed) == "swe"
     assert SG.role_for({"title": "Pastry Chef"}, roles, lambda texts: [[1, 1]] + [[-1, 0], [0, -1]]) == ""
+
+
+def test_catch_all_and_soft_skill_duties_are_refused():
+    for bad in ("software development", "team collaboration", "debugging and troubleshooting", "algorithm innovation", "software engineering"):
+        assert not SG.valid_duty(bad), bad
+    assert SG.valid_duty("model deployment and hosting") and SG.valid_duty("performance optimization")
+
+
+def test_a_skill_under_many_duties_is_a_weaker_neighbour_than_a_specific_one():
+    g = SG.Graph()
+    PLAN["w1"] = [duty("model training", "PyTorch", "Python", "JAX"), duty("backend services", "Python", "FastAPI")]
+    PLAN["w2"] = [duty("model training", "PyTorch", "Python", "JAX"), duty("data pipelines", "Python", "Spark")]
+    for t, s in (("w1", ["PyTorch", "Python", "JAX", "FastAPI"]), ("w2", ["PyTorch", "Python", "JAX", "Spark"])):
+        SG.ingest(g, jd(t, s), "ml", ask=ask)
+    res = SG.suggest(g, ["PyTorch"], "ml", owned=set(), on_resume=set())
+    assert [x["skill"] for x in res["review"]][0] == "JAX"

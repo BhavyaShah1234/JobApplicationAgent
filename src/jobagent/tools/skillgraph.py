@@ -72,10 +72,16 @@ def clean_skills(terms: list[str]) -> list[str]:
     return out
 
 
+NOT_A_DUTY = re.compile(r"(?i)^(software (development|engineering)|engineering|development|programming|coding|technical work|innovation)$|"
+                        r"collaborat|communicat|mentor|leadership|teamwork|team work|stakeholder|agile|scrum|documentation|problem[- ]solving|"
+                        r"innovation|troubleshoot|debugging")
+
+
 def valid_duty(name: str) -> bool:
-    """A duty is a short kind of work ("model training"), not a sentence copied from a responsibility."""
+    """A duty is a short, specific kind of technical work ("model training"): not a sentence copied from a responsibility, not a catch-all
+    ("software development") and not a soft skill ("team collaboration")."""
     words = name.strip().split()
-    return 0 < len(words) <= MAX_DUTY_WORDS and len(name.strip()) <= 40
+    return 0 < len(words) <= MAX_DUTY_WORDS and len(name.strip()) <= 40 and not NOT_A_DUTY.search(name.strip())
 
 
 def role_for(jd: dict, roles: list[dict], embed=None, threshold: float = 0.55) -> str:
@@ -313,7 +319,7 @@ INGEST_PROMPT = (
     "Given the posting's responsibilities and its list of technologies, return the duties the posting asks for (at most 8) and, under each, "
     "the technologies from the LIST that serve it. A technology may serve several duties. Use only technologies from the LIST, spelled as "
     "listed; do not add any (skip anything that is not a named technology, library, language, service or tool). Name duties as short "
-    "kinds of work of at most 4 words, never as a sentence and never as a technology. CHOOSE from the KNOWN DUTIES (exact text) whenever one "
+    "kinds of work of at most 4 words, never as a sentence and never as a technology; never a catch-all ('software development') or a soft skill ('team collaboration'). CHOOSE from the KNOWN DUTIES (exact text) whenever one "
     "fits the work; make a new duty (at most 4 words) only for work none of them covers. Give each technology a category.")
 
 
@@ -468,7 +474,8 @@ def suggest(g: Graph, jd_skills: list[str], role_id: str, owned: set[str], on_re
         for sid, w in g.children(duty):
             if sid in mine or norm(g.nodes[sid]["name"]) in on_resume:
                 continue
-            part = ds * w / top
+            part = ds * (w / top) / math.log2(2 + len(g.children(duty)))           # a huge duty says little about two of its skills
+            part /= math.sqrt(max(1, len(g.parents(sid))))                           # a skill under many duties (Python) is a weak neighbour
             total[sid] = total.get(sid, 0.0) + part
             if part > best.get(sid, (0.0, ""))[0]:
                 best[sid] = (part, duty)
