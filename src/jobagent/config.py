@@ -21,7 +21,7 @@ CONCERN = {                      # which file each setting belongs to
     "queue": ["pacing_max_per_company", "pacing_window_days", "queue_lease_seconds"],
     "learning": ["learning_use_site_mix", "learning_use_tailoring_hints", "learning_use_lessons"],
     "logging": ["log_level"],
-    "skills": ["skills_model", "skills_use_graph", "skills_max_neighbours", "skills_duty_merge", "skills_skill_merge"],
+    "skills": ["skills_model", "skills_use_graph", "skills_max_neighbours", "skills_duty_merge"],
 }
 
 
@@ -116,7 +116,6 @@ class Settings(BaseSettings):
     skills_use_graph: bool = True                          # step 4c: neighbouring skills the candidate owns may fill spare room on the resume
     skills_max_neighbours: int = Field(default=6, ge=1, le=20)
     skills_duty_merge: float = Field(default=0.92, gt=0, le=1)
-    skills_skill_merge: float = Field(default=0.9, gt=0, le=1)
     log_level: Literal["normal", "quiet"] = "normal"       # quiet hides progress detail on screen (the log file keeps everything)
 
     # Credential vault (Fernet key, urlsafe base64 of 32 bytes)

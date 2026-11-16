@@ -67,12 +67,20 @@ def plan(inputs: list[str]) -> Plan:
             if item.kind == "url":
                 key = canonical_url(item.value)
                 if key in seen_urls:
-                    p.warnings.append(f"duplicate input skipped: {item.value}")
+                    first = p.url_meta.get(key)
+                    if item.referral and first and first.get("referral") and item.referral != first["referral"]:
+                        first["referral"] = None                       # two inputs name different contacts for one posting: use neither
+                        p.warnings.append(f"{item.value}: given with different referral contacts ({first.get('source')} and {item.source}); no referral is used for it")
+                    elif item.referral and first is not None and not first.get("referral") and first.get("source") != item.source:
+                        first["referral"] = item.referral
+                        first["source"] = f"{first.get('source')} + {item.source}"
+                        p.warnings.append(f"duplicate input merged: {item.value} (referral from {item.source})")
+                    else:
+                        p.warnings.append(f"duplicate input skipped: {item.value}")
                     continue
                 seen_urls.add(key)
                 p.urls.append(item.value)
-                if item.source and item.source != "input":
-                    p.url_meta[key] = {"source": item.source, "company": item.company, "referral": item.referral}
+                p.url_meta[key] = {"source": item.source, "company": item.company, "referral": item.referral}
             else:
                 name = (item.company or item.value).strip()
                 key = name.lower()
@@ -110,7 +118,7 @@ def run_inputs(inputs: list[str], *, through: str = "apply", limit: int = 5, log
                 res = pipeline.run(url, through=through, **pipeline_options)
                 meta = p.url_meta.get(canonical_url(url), {})
                 extra = (f" [{meta['source']}" + (f"; referral {meta['referral'].name} not attached by batch runs" if meta.get("referral") else "") + "]"
-                         ) if meta else ""
+                         ) if meta and (meta.get("source") != "input" or meta.get("referral")) else ""
                 rows.append(Row(url, "url", res.state, (res.note or (f"exit {res.code}" if res.code else "")) + extra, res.code or 0))
             except Exception as exc:                                   # one input's failure does not stop the others
                 rows.append(Row(url, "url", "failed", f"{type(exc).__name__}: {str(exc)[:160]}", 1))

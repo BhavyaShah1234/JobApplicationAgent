@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field, create_model
 from jobagent import llm
 from jobagent.clock import with_today
 from jobagent.config import get_settings
+from jobagent.log import with_context
 from jobagent.state import JobDescription
 from jobagent.steps import ats as A
 from jobagent.tools import ats_sites, bundle, github, layout
@@ -239,7 +240,7 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
     T.normalize_originals(r, g)                      # F18: a claimed `original` that is not the template's text is new text
     if outs.get("skills") is not None:
         g.skills = outs["skills"].skills
-        g.skills, dropped = SG.drop_forbidden(g.skills, ctx.get("graph"))      # related skills you do not have are never added
+        g.skills, dropped = SG.enforce(g.skills, SG.forbidden_set(ctx.get("graph")))      # related skills you do not have are never added
         if dropped:
             ctx["log"](f"  skills: removed related skill(s) not in your files: {', '.join(dropped)}")
     if outs.get("summary") is not None and 80 <= len(outs["summary"].summary) <= 600:
@@ -286,7 +287,7 @@ def write_initial(state: State) -> dict:
         return chosen
 
     with ThreadPoolExecutor(2) as ex:
-        fut_p = ex.submit(projects)
+        fut_p = ex.submit(with_context(projects))
         _, exp = _run_agent(ctx, "experience", None, [], "")
         fut_p.result()
     if exp is None:
@@ -526,7 +527,7 @@ def edit_sections(state: State) -> dict:
     ctx, f, tasks = state["ctx"], state["f"], state["tasks"]
     ctx["log"]("editing: " + ", ".join(f"{a} ({len(t)})" for a, t in tasks.items()))
     with ThreadPoolExecutor(len(tasks) or 1) as ex:
-        outs = dict(ex.map(lambda a: _run_agent(ctx, a, f, tasks[a], state.get("last", "")), list(tasks)))
+        outs = dict(ex.map(with_context(lambda a: _run_agent(ctx, a, f, tasks[a], state.get("last", ""))), list(tasks)))
     return {"f": _merge(ctx, f, outs), "tasks": {}}
 
 
@@ -700,6 +701,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> d
            "jd_text": (job_dir / "jd.txt").read_text() if (job_dir / "jd.txt").exists() else "",
            "models": models, "log": log, "sites": sites}
     ctx["graph"] = SG.for_tailor(job_dir, jd, ctx["r"])               # related skills (step 4c); {} when off or empty
+    SG.guard_resume(ctx["r"], job_dir)                                # every render of this resume drops skills that are not the candidate's
     final = build_graph().invoke({"ctx": ctx, "history": []}, {"recursion_limit": 200})
     best = final.get("best")
     if best:
@@ -713,7 +715,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> d
         (job_dir / "resume.pdf").unlink(missing_ok=True)
     lay = layout.check(job_dir / "resume.pdf").issues if best else []
     hard = best.get("hard", []) if best else []
-    claims = documents.claims_from_filled(best["f"]) if best else []
+    claims = (documents.claims_from_filled(best["f"]) + SG.violations(job_dir, best["f"])) if best else []
     hist = [h for h in final.get("history", []) if h.startswith("ats ")]
     summary = ats_sites.write_summary(job_dir, best["scores"] if best else {}, sites)
     avg = summary["average"]
@@ -768,7 +770,7 @@ def run(jobs: list[tuple[str | Path, str]], models: dict | None = None, sites=SI
         return out
 
     with ThreadPoolExecutor(len(jobs)) as ex:
-        results = list(ex.map(one, jobs))
+        results = list(ex.map(with_context(one), jobs))
     (root / "results.json").write_text(json.dumps(results, indent=1))
     lines = [f"# Multi-agent experiment ({now():%Y-%m-%d %H:%M} America/Phoenix)", "",
              "Agents and models: " + ", ".join(f"{k} = {v}" for k, v in models.items()), "",

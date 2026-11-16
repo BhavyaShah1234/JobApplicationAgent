@@ -27,6 +27,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
+from jobagent.log import with_context
 from jobagent.clock import with_today
 from jobagent import llm
 from jobagent.config import get_settings
@@ -258,7 +259,7 @@ def refresh(user: str, token: str | None = None, workers: int = 6, force: bool =
             return f"  {repo.full_name}: FAILED {type(e).__name__}: {str(e)[:120]}"
 
     with ThreadPoolExecutor(workers) as pool:
-        for line in pool.map(one, stale):
+        for line in pool.map(with_context(one), stale):
             log(line)
     cards = []
     for r in repos:

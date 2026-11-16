@@ -45,12 +45,17 @@ def register(app: typer.Typer, console) -> None:
         from jobagent.tools import matching, skillgraph as SG
         skipped.clear()
         log, s = runlog("skills"), get_settings()
-        g = SG.Graph() if rebuild else SG.load(s)
-        before = "" if rebuild else g.content_hash()
         found = postings()
-        stats = SG.build(g, matching.load_roles().get("roles", []), [(jd, rid) for jd, rid, _ in found], embed=SG.default_embed(s),
-                         merge=None if no_merge else SG.default_merge, log=log, thresholds=(s.skills_duty_merge, s.skills_skill_merge))
-        changed = SG.save(g, f"build: {stats['postings']} posting(s)", before, s)
+        try:
+            with SG.locked(s, 30):                                # pipelines adding a posting wait (or skip) while the whole build runs
+                g = SG.Graph() if rebuild else SG.load(s)
+                before = "" if rebuild else g.content_hash()
+                stats = SG.build(g, matching.load_roles().get("roles", []), [(jd, rid) for jd, rid, _ in found], embed=SG.default_embed(s),
+                                 merge=None if no_merge else SG.default_merge, log=log, duty_threshold=s.skills_duty_merge)
+                changed = SG.save(g, f"build: {stats['postings']} posting(s)", before, s)
+        except TimeoutError as exc:
+            log(f"skills: {exc}; try again in a moment")
+            raise typer.Exit(1) from exc
         log(f"skills: {len(g.of_kind('role'))} role(s), {len(g.of_kind('duty'))} duty(ies), {len(g.of_kind('skill'))} skill(s); "
             f"{stats['postings']} new posting(s), {stats['skipped']} already known, {stats['failed']} failed; "
             f"{'saved as version ' + str(g.version) if changed else 'nothing changed'}")
@@ -72,8 +77,9 @@ def register(app: typer.Typer, console) -> None:
         log, conn = runlog("skills"), db.connect()
         from jobagent.tools import matching
         g = SG.load()
-        have = set(g.postings.values())
+        have = {p_["role"] for p_ in g.postings.values()}
         pipe = Pipeline(conn=conn, log=log)
+        failed, none_found, worked = [], [], 0
         for r in matching.load_roles().get("roles", []):
             if r["id"] in have:
                 continue
@@ -88,11 +94,24 @@ def register(app: typer.Typer, console) -> None:
                                                         "ORDER BY COALESCE(match_score,0) DESC LIMIT ?", (r["id"], limit))]
             if not urls:
                 log(f"skills: no postings found for role '{r['id']}'")
+                none_found.append(r["id"])
                 continue
             for u in urls:
-                res = pipe.run(u, through="scrape")
+                try:
+                    res = pipe.run(u, through="scrape")
+                except Exception as exc:                            # one posting's failure never stops the others
+                    failed.append(f"{u[:70]}: {type(exc).__name__}")
+                    log(f"skills: {r['id']}: {u[:70]} failed: {type(exc).__name__}: {str(exc)[:100]}")
+                    continue
                 log(f"skills: {r['id']}: {u[:70]} -> {res.state}")
+                if res.code or res.state in ("failed", "blocked", "unavailable", "needs_review"):
+                    failed.append(f"{u[:70]}: {res.state}")
+                else:
+                    worked += 1
+        log(f"skills: {worked} posting(s) collected; {len(failed)} failed; roles with nothing found: {', '.join(none_found) or 'none'}")
         log("skills: run `jobagent skills build` to fold the new postings in (scraping already adds each one as it is read)")
+        if failed:
+            raise typer.Exit(1)
 
     @skills_app.command("show")
     def show(role: str = typer.Option(None, help="Only this role id.")) -> None:

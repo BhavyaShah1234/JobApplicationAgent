@@ -13,8 +13,8 @@ Two skills are neighbours when they share a duty; edge weights count the posting
 
 **Growing it.** `jobagent skills build` reads the roles file and every saved posting (`outputs/*/*/jd.json`; the role is the queue's match,
 else the first role whose title pattern fits), asks the fast model once per posting to group the posting's technologies by duty, merges
-near-identical duty and skill names by embedding similarity (thresholds in `config/skills.yaml`), then folds duplicate duties with one extra
-call. Rerunning skips postings already in the graph. Every posting the pipeline scrapes is added automatically, and a role added to
+near-identical DUTY names by embedding similarity (`skills_duty_merge`), then folds duplicate duties with one extra call. Skills are
+identified by name and recorded alias only: a similar technology is a different skill, because ownership follows identity. Rerunning skips postings already in the graph. Every posting the pipeline scrapes is added automatically, and a role added to
 `data/target_roles.yaml` appears with no duties until `jobagent skills sync` collects postings for it (scrape only, never apply; it first
 looks at the queue, then re-runs discovery over the companies already known) and their postings give it duties and skills.
 
@@ -25,5 +25,21 @@ screen as "Suggested skills (not added)", and generated lines have such skills r
 and `master_profile.yaml` is never edited (approvals live in `state/skills/approved.json`).
 
 Commands: `skills build|sync|show [--role]|explain SKILL|suggest JOB_DIR|approve SKILL|export [--role]`. Switch and limits: `config/skills.yaml`
-(`skills_use_graph`, `skills_max_neighbours`, `skills_duty_merge`, `skills_skill_merge`). A graph failure is one log line; it never stops a
+(`skills_use_graph`, `skills_max_neighbours`, `skills_duty_merge`, `skills_model`). A graph failure is one log line; it never stops a
 run. The tests keep the graph off (`SKILLS_USE_GRAPH=false` in `tests/conftest.py`) unless a test is about it.
+
+## Behaviour fixed after review (2026-11-16)
+- **Ownership is enforced at the render**, not only in the prompt: every writer and refresh (single writer, multi-agent drafts, ATS refresh) renders
+  through `tailor.apply_fill`, which removes any related skill listed for review (term, name in parentheses, `tools_for`, aliases) and drops
+  a category that ends up empty; `documents` re-checks the finished resume and a violation blocks it.
+- **Skills are identified by name and alias only.** Embedding similarity places duties (which carry no ownership) but never merges two
+  technologies, so TensorFlow and PyTorch stay separate and owning one never makes the other "owned".
+- **Concurrent runs:** the graph is read-modified-written under a file lock (`state/skills/.lock`) and saved atomically with a version taken
+  from committed state; the model call happens outside the lock. A pipeline that cannot get the lock within 5 s logs it and moves on.
+- **A posting read again with changed content** replaces its old support (a content fingerprint of skills, responsibilities and role).
+- **The "general tooling" bucket** (skills a posting never tied to a duty) creates no neighbours.
+- **`skill_suggestions.json`** carries fingerprints of the posting, graph and your skills and is rewritten every time (empty too); a stale one
+  is ignored by the review screen and the guard.
+- **The resume stage's cache inputs** include the graph's effect (`jobagent tailor` rebuilds after you approve a skill, the graph grows or
+  you switch it off) without `--force`.
+- `jobagent skills sync` exits non-zero when any scrape failed and says which roles found nothing.

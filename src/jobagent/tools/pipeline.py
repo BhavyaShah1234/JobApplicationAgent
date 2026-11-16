@@ -73,25 +73,21 @@ class Pipeline:
         return (self.settings.outputs_dir / _slug(row["company"] or "unknown") / str(row["job_id"] or "")).resolve()
 
     def _skill_graph(self, d, row) -> None:
-        """Add this posting to the skill graph (step 4c). The graph never stops a run: any failure is one line in the log."""
+        """Add this posting to the skill graph (step 4c); a posting read again with changed content replaces its old support. The graph
+        never stops a run: any failure is one line in the log."""
         try:
             if not self.settings.skills_use_graph:
                 return
             from jobagent.tools import matching, skillgraph as SG
             jd = json.loads((d / "jd.json").read_text())
-            g = SG.load(self.settings)
-            if SG.jd_key(jd) in g.postings:
-                return
             roles = matching.load_roles().get("roles", [])
             embed = SG.default_embed(self.settings)
             rid = (row["role_id"] if "role_id" in row.keys() and row["role_id"] else "") or SG.role_for(jd, roles, embed)
             if not rid:
                 return
-            before = g.content_hash()
             titles = {r["id"]: r.get("title", "") for r in roles}
-            res = SG.ingest(g, jd, rid, embed=embed, role_title=titles.get(rid, ""),
-                            duty_threshold=self.settings.skills_duty_merge, skill_threshold=self.settings.skills_skill_merge)
-            if SG.save(g, f"posting {jd.get('company', '')} - {jd.get('title', '')}", before, self.settings) and res["added_skills"]:
+            res = SG.add_posting(jd, rid, self.settings, embed=embed, role_title=titles.get(rid, ""))
+            if res and res["added_skills"]:
                 self.log(f"skills: {len(res['added_skills'])} new skill(s) added to the graph")
         except Exception as exc:
             self.log(f"skills: graph not updated ({type(exc).__name__}: {str(exc)[:100]})")

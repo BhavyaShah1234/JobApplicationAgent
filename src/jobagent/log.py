@@ -263,6 +263,16 @@ def _close_all() -> None:
         lg.close()
 
 
+def with_context(fn):
+    """`fn` that runs in a COPY of the caller's context (taken now, copied again per call, so a pool may run it in several threads): the
+    run log that is current here stays current inside a worker thread, so a model-fallback notice lands in the right run's file."""
+    parent = contextvars.copy_context()
+
+    def run(*args, **kwargs):
+        return parent.copy().run(fn, *args, **kwargs)
+    return run
+
+
 def default() -> RunLog:
     """The logger for code that has no `log` callable of its own (a model fallback notice): the run opened in this thread/context, so the
     warning lands in that run's file; a standalone stderr logger when there is none (e.g. in a worker thread that was not given the

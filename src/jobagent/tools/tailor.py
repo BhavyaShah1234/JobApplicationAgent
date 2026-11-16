@@ -51,6 +51,7 @@ class Resume:
     skills_span: tuple[int, int]
     skills: list[tuple[str, str]]  # (category, items text)
     locked: list[str] = field(default_factory=list)
+    forbidden: set = field(default_factory=set)   # related skills this job's candidate does not have (skill graph): never rendered
 
 
 def _braced(tex: str, start: int) -> tuple[str, int]:
@@ -439,16 +440,12 @@ def jd_items(jd: JobDescription) -> list[tuple[str, str, str]]:
     return items
 
 
-def _graph_hint(r, jd) -> str:
-    """Related skills from the skill graph (step 4c), '' when there are none or the graph is off."""
-    try:
-        from jobagent.tools import skillgraph
-        return skillgraph.hint_text(skillgraph.for_tailor(None, jd, r))
-    except Exception:
-        return ""
+def _graph_text(graph) -> str:
+    from jobagent.tools import skillgraph
+    return skillgraph.hint_text(graph or {})
 
 
-def build_fill_prompt(r: Resume, jd: JobDescription, company_md: str, max_bullets: int, feedback: str = "") -> list:
+def build_fill_prompt(r: Resume, jd: JobDescription, company_md: str, max_bullets: int, feedback: str = "", graph: dict | None = None) -> list:
     duties = "\n".join(f"  [{i}] {need} {kind}: {text}" for i, (kind, text, need) in enumerate(jd_items(jd)))
     marked = any(any(x.pool) for x in r.roles)
     roles = []
@@ -466,7 +463,7 @@ def build_fill_prompt(r: Resume, jd: JobDescription, company_md: str, max_bullet
     if feedback:
         text += f"\n\nREVISION REQUEST:\n{feedback}"
     return [SystemMessage(with_today(FILL_PROMPT.format(max_bullets=max_bullets, bullet_target=BULLET_TARGET, bullet_max=BULLET_MAX))),
-            HumanMessage(text + learning_hint(jd) + _graph_hint(r, jd) + "\n\n" + facts_block())]
+            HumanMessage(text + learning_hint(jd) + _graph_text(graph) + "\n\n" + facts_block())]
 
 
 def learning_hint(jd) -> str:
@@ -522,6 +519,11 @@ def fill_locked_parts(r: Resume) -> list[str]:
 
 def apply_fill(r: Resume, f: Filled) -> tuple[str, list[str]]:
     problems = []
+    if r.forbidden:                       # every render of every writer and refresh passes here: a skill the candidate's files do not show is removed
+        from jobagent.tools import skillgraph
+        f.skills, _ = skillgraph.enforce(f.skills, r.forbidden)
+        if not f.skills:
+            f.skills = [SkillLine(category=c, terms=[to_plain(v)]) for c, v in r.skills][:8]
     tex = r.tex
     # skills: the whole category list is regenerated
     s0 = r.skills_span[0]

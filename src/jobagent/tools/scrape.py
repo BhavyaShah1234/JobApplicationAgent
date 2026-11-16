@@ -17,6 +17,7 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage, SystemMessage
 from playwright.sync_api import Page
 
+from jobagent.log import with_context
 from jobagent.clock import with_today
 from jobagent import db, llm
 from jobagent.config import get_settings
@@ -471,4 +472,4 @@ def scrape_many(urls: list[str], hitl: Hitl, workers: int = 5, refresh: bool = F
         return item
 
     with ThreadPoolExecutor(max_workers=max(1, min(workers, len(urls)))) as pool:
-        return list(pool.map(one, urls))
+        return list(pool.map(with_context(one), urls))

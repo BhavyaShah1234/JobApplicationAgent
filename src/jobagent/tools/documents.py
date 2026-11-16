@@ -287,7 +287,9 @@ def resume_findings(job_dir: Path) -> dict:
         return {"evidence": False, "reason": "filled.json is missing or invalid", "hard": [], "claims": []}
     if not (job_dir / "resume.pdf").exists():
         return {"evidence": False, "reason": "resume.pdf is missing", "hard": [], "claims": claims_from_filled(f)}
-    return {"evidence": True, "reason": "", "hard": M.hard_issues({"job_dir": job_dir}, f), "claims": claims_from_filled(f)}
+    from jobagent.tools import skillgraph
+    return {"evidence": True, "reason": "", "hard": M.hard_issues({"job_dir": job_dir}, f),
+            "claims": claims_from_filled(f) + skillgraph.violations(job_dir, f)}
 
 
 def refresh(job_dir: Path, policy: str, target: float, letter: dict | None = None) -> dict | None:

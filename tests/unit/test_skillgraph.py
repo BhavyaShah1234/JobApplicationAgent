@@ -73,15 +73,17 @@ def test_skills_the_model_invents_are_ignored_and_unplaced_ones_go_to_general_to
     assert g.find("skill", "NotInThePosting") is None
 
 
-def test_similar_names_merge_and_the_spelling_is_kept_as_an_alias():
-    vec = {"PyTorch Lightning": [1, 0.1, 0], "Lightning for PyTorch": [1, 0.12, 0], "Kubernetes": [0, 0, 1]}
-    embed = lambda texts: [vec.get(t, [0, 1, 0]) for t in texts]   # noqa: E731
+def test_close_technologies_stay_distinct_skills_and_never_share_ownership():
+    PLAN["a"] = [duty("model training", "TensorFlow")]
+    PLAN["b"] = [duty("model training", "PyTorch")]
+    close = {"TensorFlow": [1, 0.1], "PyTorch": [1, 0.12]}
+    embed = lambda texts: [close.get(t, [0, 1]) for t in texts]   # noqa: E731
     g = SG.Graph()
-    PLAN["a"] = [duty("model training", "PyTorch Lightning")]
-    PLAN["b"] = [duty("model training", "Lightning for PyTorch", "Kubernetes")]
-    SG.ingest(g, jd("a", ["PyTorch Lightning"]), "ml", ask=ask, embed=embed)
-    SG.ingest(g, jd("b", ["Lightning for PyTorch", "Kubernetes"]), "ml", ask=ask, embed=embed)
-    assert len(g.of_kind("skill")) == 2 and "Lightning for PyTorch" in g.nodes[g.find("skill", "PyTorch Lightning")]["aliases"]
+    SG.ingest(g, jd("a", ["TensorFlow"]), "ml", ask=ask, embed=embed)
+    SG.ingest(g, jd("b", ["PyTorch"]), "ml", ask=ask, embed=embed)
+    assert len(g.of_kind("skill")) == 2 and not g.nodes[g.find("skill", "TensorFlow")]["aliases"]
+    res = SG.suggest(g, ["PyTorch"], "ml", owned={"pytorch"}, on_resume=set())
+    assert [x["skill"] for x in res["review"]] == ["TensorFlow"] and res["owned"] == []                    # G02
 
 
 def test_suggestions_are_the_neighbours_under_shared_duties_split_by_ownership():
@@ -155,13 +157,17 @@ def test_owned_skills_come_from_the_candidates_own_files_and_approvals(tmp_path,
 
 
 def test_related_skills_the_candidate_lacks_never_reach_the_resume():
-    res = {"owned": [{"skill": "JAX", "via": "model training", "score": 2}], "review": [{"skill": "HuggingFace", "via": "model training", "score": 1}]}
+    res = {"owned": [{"skill": "JAX", "via": "model training", "score": 2}],
+           "review": [{"skill": "HuggingFace", "via": "model training", "score": 1, "aliases": ["hf"]}]}
     text = SG.hint_text(res)
     assert "JAX (via model training)" in text and "do NOT add these: HuggingFace" in text
-    from jobagent.tools.tailor import SkillLine
-    lines = [SkillLine(category="ML", terms=["PyTorch", "HuggingFace", "JAX"]), SkillLine(category="Only", terms=["HuggingFace"])]
-    kept, dropped = SG.drop_forbidden(lines, res)
-    assert kept[0].terms == ["PyTorch", "JAX"] and kept[1].terms == ["HuggingFace"] and dropped == ["HuggingFace"]    # a line is never emptied
+    from jobagent.tools.tailor import SkillLine, ToolsFor
+    lines = [SkillLine(category="ML", terms=["PyTorch", "HuggingFace", "JAX"]), SkillLine(category="Only", terms=["HF"])]
+    kept, dropped = SG.enforce(lines, SG.forbidden_set(res))
+    assert [x.terms for x in kept] == [["PyTorch", "JAX"]] and dropped == ["HuggingFace", "HF"]              # an emptied line is removed (G01)
+    tools = [SkillLine(category="ML", terms=["Deep Learning (PyTorch, HuggingFace)", "NLP"], tools_for=[ToolsFor(term="NLP", tools=["HuggingFace", "spaCy"])])]
+    kept, dropped = SG.enforce(tools, SG.forbidden_set(res))
+    assert kept[0].terms == ["Deep Learning (PyTorch)", "NLP"] and kept[0].tools_for[0].tools == ["spaCy"] and dropped.count("HuggingFace") == 2
 
 
 def test_suggestions_are_written_for_the_review_screen_and_switched_off_means_nothing(tmp_path, monkeypatch):
@@ -171,14 +177,18 @@ def test_suggestions_are_written_for_the_review_screen_and_switched_off_means_no
     SG.save(built(), "test", None)
     job = tmp_path / "job"
     job.mkdir()
+    posting = jd("x", ["PyTorch"])
+    (job / "jd.json").write_text(json.dumps(posting))
     monkeypatch.setenv("SKILLS_USE_GRAPH", "true")
     get_settings.cache_clear()
-    res = SG.job_suggestions(job, jd("x", ["PyTorch"]), "ml", ["Python"])
+    res = SG.job_suggestions(job, posting, "ml", ["Python"])
     assert res["review"] and (job / "skill_suggestions.json").exists()
     assert any("HuggingFace" in line or "JAX" in line for line in SG.review_lines(job))
+    (job / "jd.json").write_text(json.dumps(jd("x", ["PyTorch", "Rust"])))                       # the posting changed: old suggestions are stale (G07)
+    assert SG.review_lines(job) == []
     monkeypatch.setenv("SKILLS_USE_GRAPH", "false")
     get_settings.cache_clear()
-    assert SG.job_suggestions(job, jd("x", ["PyTorch"]), "ml", ["Python"]) == {}
+    assert SG.job_suggestions(job, posting, "ml", ["Python"]) == {} and not (job / "skill_suggestions.json").exists()
     get_settings.cache_clear()
 
 

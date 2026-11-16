@@ -69,7 +69,7 @@ CORP_WORDS = {"inc", "incorporated", "corp", "corporation", "co", "company", "ll
 def employer_key(name: str) -> str:
     """One key per employer for pacing and batch scope: the slug without corporate suffixes ("Acme", "Acme Inc." and "Acme Corporation"
     are one employer), so a display-name change between discovery and submission never opens a second capacity bucket."""
-    parts = [x for x in slug(name or "").split("-") if x]
+    parts = [x for x in slug(re.sub(r"(?<=\w)\.(?=\w)|\.(?=\s|$)", "", name or "")).split("-") if x]      # "L.L.C." -> "LLC", "Inc." -> "Inc"
     while len(parts) > 1 and parts[-1] in CORP_WORDS:
         parts.pop()
     return "-".join(parts) or "unknown"
@@ -154,13 +154,13 @@ def claim(conn: sqlite3.Connection, worker: str, company: str | None = None, lea
     sql = "SELECT id FROM jobs WHERE status = 'queued'"
     args: list = []
     if company:
-        sql += " AND employer_key(COALESCE(company_slug, '')) = ?"
+        sql += " AND employer_key(COALESCE(NULLIF(company_slug, ''), company, '')) = ?"
         args.append(employer_key(company))
     if exclude:                                        # companies at their pacing limit (tools/pacing.py)
-        sql += f" AND employer_key(COALESCE(company_slug, '')) NOT IN ({','.join('?' * len(exclude))})"
+        sql += f" AND employer_key(COALESCE(NULLIF(company_slug, ''), company, '')) NOT IN ({','.join('?' * len(exclude))})"
         args += [employer_key(x) for x in exclude]
     if companies is not None:
-        sql += f" AND employer_key(COALESCE(company_slug, '')) IN ({','.join('?' * len(companies)) or 'NULL'})"
+        sql += f" AND employer_key(COALESCE(NULLIF(company_slug, ''), company, '')) IN ({','.join('?' * len(companies)) or 'NULL'})"
         args += [employer_key(x) for x in companies]
     conn.execute("BEGIN IMMEDIATE")                       # takes the write lock before reading: the choice cannot go stale
     try:
@@ -168,7 +168,7 @@ def claim(conn: sqlite3.Connection, worker: str, company: str | None = None, lea
             from jobagent.tools import pacing
             full = tuple(pacing.excluded(conn, pace[0], pace[1], now, active=True))
             if full:
-                sql += f" AND employer_key(COALESCE(company_slug, '')) NOT IN ({','.join('?' * len(full))})"
+                sql += f" AND employer_key(COALESCE(NULLIF(company_slug, ''), company, '')) NOT IN ({','.join('?' * len(full))})"
                 args += list(full)
         sql += " ORDER BY COALESCE(match_score, 0) DESC, id LIMIT 1"
         row = conn.execute(sql, args).fetchone()

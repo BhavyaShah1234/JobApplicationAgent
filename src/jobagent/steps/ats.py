@@ -180,6 +180,8 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
     jd_text = (job_dir / "jd.txt").read_text() if (job_dir / "jd.txt").exists() else ""
     r = T.parse((s.data_dir / "templates" / "resume.tex").read_text())
+    from jobagent.tools import skillgraph as SG
+    SG.guard_resume(r, job_dir)                      # the skills this job's candidate does not have never come back through a refresh
     f = T.Filled.model_validate_json((job_dir / "filled.json").read_text())
     # The writing model in function-calling mode: it places skills in the right category and works domain words into
     # bullets. (In json_schema mode it spends its whole token budget deliberating; the fast model mis-places skills.)

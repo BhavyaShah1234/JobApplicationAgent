@@ -16,7 +16,11 @@ Everything that needs a model takes it as a parameter (`ask`, `embed`), so the l
 import hashlib
 import json
 import math
+import os
 import re
+import tempfile
+import time
+from contextlib import contextmanager
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -113,6 +117,15 @@ def jd_key(jd: dict) -> str:
     return hashlib.sha1(basis.lower().encode()).hexdigest()[:16]
 
 
+def jd_fp(jd: dict, role_id: str = "") -> str:
+    """What of a posting matters to the graph: its skills, responsibilities and the role it was placed in. A posting read again
+    with a different fingerprint is re-ingested; with the same one it is skipped."""
+    basis = {"skills": sorted(norm(s) for s in clean_skills(jd.get("technical_skills") or [])),
+             "resp": [str(x) for x in (jd.get("responsibilities") or [])[:25]],
+             "pref": [str(x) for x in (jd.get("preferred_qualifications") or [])[:10]], "role": role_id}
+    return hashlib.sha1(json.dumps(basis, sort_keys=True).encode()).hexdigest()[:16]
+
+
 # --- the graph ---------------------------------------------------------------------------------------------------------------------
 
 class Graph:
@@ -123,7 +136,8 @@ class Graph:
         self.version: int = data.get("version", 0)
         self.nodes: dict = data.get("nodes", {})
         self.edges: dict = data.get("edges", {})
-        self.postings: dict = data.get("postings", {})
+        # posting key -> {"role": role id, "fp": fingerprint of the content ingested}; older files stored just the role id
+        self.postings: dict = {k: (v if isinstance(v, dict) else {"role": v, "fp": None}) for k, v in (data.get("postings") or {}).items()}
 
     def to_dict(self) -> dict:
         return {"version": self.version, "nodes": self.nodes, "edges": self.edges, "postings": self.postings}
@@ -178,6 +192,20 @@ class Graph:
     def parents(self, nid: str) -> list[tuple[str, int]]:
         return [(e["src"], e["weight"]) for e in self.edges.values() if e["dst"] == nid]
 
+    def retract(self, posting: str) -> None:
+        """Take one posting's support out of the graph (before it is read again with changed content): edges lose it, edges and
+        duty/skill nodes nothing supports any more disappear. Roles stay."""
+        for key in list(self.edges):
+            e = self.edges[key]
+            if posting in e["postings"]:
+                e["postings"].remove(posting)
+                e["weight"] = len(e["postings"])
+                if not e["postings"]:
+                    del self.edges[key]
+        linked = {e["src"] for e in self.edges.values()} | {e["dst"] for e in self.edges.values()}
+        for nid in [n for n, v in self.nodes.items() if v["kind"] != "role" and n not in linked]:
+            del self.nodes[nid]
+
     def merge(self, keep: str, drop: str) -> None:
         """Fold node `drop` into `keep`: its edges, aliases and sources move over; edge weights add up by posting."""
         if keep == drop or keep not in self.nodes or drop not in self.nodes:
@@ -210,16 +238,56 @@ def load(settings=None) -> Graph:
         return Graph()
 
 
+@contextmanager
+def locked(settings=None, timeout: float = 60.0):
+    """Exclusive lock on the skill graph for a read-modify-write. Job pipelines run at the same time; each one reloads the graph inside
+    the lock, so no update is lost and versions come from committed state. TimeoutError when another run holds it too long."""
+    import fcntl
+    d = skills_dir(settings)
+    d.mkdir(parents=True, exist_ok=True)
+    f = open(d / ".lock", "a")
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() > deadline:
+                    raise TimeoutError("the skill graph is being updated by another run") from None
+                time.sleep(0.2)
+        yield
+    finally:
+        try:
+            fcntl.flock(f, fcntl.LOCK_UN)
+        finally:
+            f.close()
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as h:
+            h.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def save(g: Graph, why: str, before: str | None = None, settings=None) -> bool:
-    """Write the graph when its content changed since `before` (a `content_hash`): the version goes up and one history line records why."""
+    """Write the graph when its content changed since `before` (a `content_hash`). Call it inside `locked` with a graph loaded INSIDE the
+    lock: the version is the committed one plus one, written atomically, with one history line saying why."""
     if before is not None and g.content_hash() == before:
         return False
     d = skills_dir(settings)
     d.mkdir(parents=True, exist_ok=True)
-    g.version += 1
-    tmp = d / "graph.json.tmp"
-    tmp.write_text(json.dumps(g.to_dict(), indent=1, ensure_ascii=False))
-    tmp.replace(d / "graph.json")
+    try:
+        committed = json.loads((d / "graph.json").read_text()).get("version", 0)
+    except (OSError, json.JSONDecodeError):
+        committed = 0
+    g.version = committed + 1
+    _write_atomic(d / "graph.json", json.dumps(g.to_dict(), indent=1, ensure_ascii=False))
     with open(d / "history.jsonl", "a", encoding="utf-8") as h:
         h.write(json.dumps({"ts": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), "version": g.version, "why": why,
                             "nodes": len(g.nodes), "edges": len(g.edges)}) + "\n")
@@ -229,6 +297,8 @@ def save(g: Graph, why: str, before: str | None = None, settings=None) -> bool:
 # --- similarity --------------------------------------------------------------------------------------------------------------------
 
 def cosine(a: list[float], b: list[float]) -> float:
+    if len(a) != len(b):                                  # vectors of two models are not comparable
+        return 0.0
     na, nb = math.sqrt(sum(x * x for x in a)), math.sqrt(sum(x * x for x in b))
     return sum(x * y for x, y in zip(a, b, strict=False)) / (na * nb) if na and nb else 0.0
 
@@ -257,12 +327,22 @@ def default_embed(settings=None) -> Callable[[list[str]], list[list[float]] | No
                 vecs = emb.embed_documents(missing)
             except Exception:
                 return None
-            if emb.used_fallback:
-                got = dict(zip(missing, vecs, strict=False))
-                return [got.get(t) or mem.get(key(t)) for t in texts]
-            mem.update({key(t): v for t, v in zip(missing, vecs, strict=False)})
+            if emb.used_fallback:                      # another model's space: embed EVERYTHING compared with that one model, cache nothing
+                try:
+                    every = list(dict.fromkeys(texts))
+                    got = dict(zip(every, emb.embed_documents(every), strict=False))
+                except Exception:
+                    return None
+                return [got[t] for t in texts]
+            new = {key(t): v for t, v in zip(missing, vecs, strict=False)}
+            mem.update(new)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(mem))
+            try:
+                disk = json.loads(path.read_text()) if path.exists() else {}
+            except (OSError, json.JSONDecodeError):
+                disk = {}
+            disk.update(new)                          # merge with what another run wrote meanwhile
+            _write_atomic(path, json.dumps(disk))
         return [mem[key(t)] for t in texts]
     return embed
 
@@ -361,28 +441,27 @@ def ensure_role(g: Graph, role_id: str, title: str = "") -> str:
     return nid
 
 
-def ingest(g: Graph, jd: dict, role_id: str, *, ask=default_ask, embed=None, duty_threshold: float = 0.92, skill_threshold: float = 0.9,
-           role_title: str = "") -> dict:
-    """Add one posting. Idempotent per posting: a second call with the same posting changes nothing. Returns what changed."""
-    key = jd_key(jd)
-    if key in g.postings:
+def ingest(g: Graph, jd: dict, role_id: str, *, ask=default_ask, embed=None, duty_threshold: float = 0.92, role_title: str = "") -> dict:
+    """Add one posting. A posting already read with the same content changes nothing; one read again with changed content replaces its
+    old support. Skills are identified by name and recorded alias only (never by embedding similarity: close is not the same technology,
+    and ownership follows identity); duties, which carry no ownership, may merge by similarity."""
+    key, fp = jd_key(jd), jd_fp(jd, role_id)
+    cur = g.postings.get(key)
+    if cur and (cur.get("fp") is None or cur["fp"] == fp):
         return {"added_skills": [], "added_duties": [], "skipped": True}
     skills = clean_skills(jd.get("technical_skills") or [])
+    duties = ask(jd, list(dict.fromkeys([*DEFAULT_DUTIES, *(n["name"] for n in g.of_kind("duty"))])), skills) if skills else []
+    if cur:
+        g.retract(key)
     role = ensure_role(g, role_id, role_title)
-    g.postings[key] = role_id
+    g.postings[key] = {"role": role_id, "fp": fp}
     if not skills:
         return {"added_skills": [], "added_duties": [], "skipped": False}
     by_norm = {norm(s): s for s in skills}
-    if embed is not None:
-        try:
-            embed(skills)                                  # one batched request for the posting's skills; the lookups below hit the cache
-        except Exception:
-            pass
-    known = [n["name"] for n in g.of_kind("duty")]
     new_skills: list[str] = []
     new_duties: list[str] = []
     placed: set[str] = set()
-    for d in ask(jd, list(dict.fromkeys([*DEFAULT_DUTIES, *known])), skills):
+    for d in duties:
         duty_name = d.duty.strip().lower()
         if not valid_duty(duty_name):                          # a sentence, not a duty: its skills fall to "general tooling"
             continue
@@ -394,14 +473,9 @@ def ingest(g: Graph, jd: dict, role_id: str, *, ask=default_ask, embed=None, dut
         for s in d.skills:
             if norm(s.name) not in by_norm:                        # only technologies the posting names
                 continue
-            before = g.find("skill", s.name)
-            sid = resolve(g, "skill", s.name, embed, skill_threshold)
-            if sid is None:
-                sid = g.add("skill", by_norm[norm(s.name)], s.category, key)
-            elif before is None:
-                g.alias(sid, s.name)
-            g.add("skill", g.nodes[sid]["name"], s.category, key)
-            if before is None and sid not in {x for x in new_skills}:
+            known = g.find("skill", s.name) is not None
+            sid = g.add("skill", by_norm[norm(s.name)], s.category, key)
+            if not known:
                 new_skills.append(sid)
             g.link(duty, sid, key)
             placed.add(norm(s.name))
@@ -410,11 +484,33 @@ def ingest(g: Graph, jd: dict, role_id: str, *, ask=default_ask, embed=None, dut
         duty = g.find("duty", GENERAL_DUTY) or g.add("duty", GENERAL_DUTY, source=key)
         g.link(role, duty, key)
         for name in leftover:
-            sid = resolve(g, "skill", name, embed, skill_threshold) or g.add("skill", name, "tool", key)
-            if sid not in new_skills and g.find("skill", name) is None:
+            known = g.find("skill", name) is not None
+            sid = g.add("skill", name, "tool", key)
+            if not known:
                 new_skills.append(sid)
             g.link(duty, sid, key)
     return {"added_skills": new_skills, "added_duties": new_duties, "skipped": False}
+
+
+def add_posting(jd: dict, role_id: str, settings=None, *, ask=default_ask, embed=None, duty_threshold: float | None = None,
+                role_title: str = "", timeout: float = 5.0) -> dict | None:
+    """Add a posting to the SAVED graph while other runs may be doing the same: the slow model call happens outside the lock, then the
+    graph is reloaded inside it and the posting applied to that. None when nothing needed doing."""
+    from jobagent.config import get_settings
+    s = settings or get_settings()
+    snap = load(s)
+    cur = snap.postings.get(jd_key(jd))
+    if cur and (cur.get("fp") is None or cur["fp"] == jd_fp(jd, role_id)):
+        return None
+    skills = clean_skills(jd.get("technical_skills") or [])
+    duties = ask(jd, list(dict.fromkeys([*DEFAULT_DUTIES, *(n["name"] for n in snap.of_kind("duty"))])), skills) if skills else []
+    with locked(s, timeout):
+        g = load(s)
+        before = g.content_hash()
+        res = ingest(g, jd, role_id, ask=lambda *_: duties, embed=embed, role_title=role_title,
+                     duty_threshold=duty_threshold if duty_threshold is not None else s.skills_duty_merge)
+        save(g, f"posting {jd.get('company', '')} - {jd.get('title', '')}", before, s)
+    return res
 
 
 def consolidate(g: Graph, merge=default_merge) -> int:
@@ -432,7 +528,7 @@ def consolidate(g: Graph, merge=default_merge) -> int:
 
 
 def build(g: Graph, roles: list[dict], postings: list[tuple[dict, str]], *, ask=default_ask, embed=None, merge=default_merge,
-          log=print, thresholds: tuple[float, float] = (0.92, 0.9)) -> dict:
+          log=print, duty_threshold: float = 0.92) -> dict:
     """Add every role of the roles file (even with no postings yet) and every saved posting, then consolidate the duties."""
     titles = {r["id"]: r.get("title", r["id"]) for r in roles if r.get("id")}
     for rid, title in titles.items():
@@ -441,8 +537,7 @@ def build(g: Graph, roles: list[dict], postings: list[tuple[dict, str]], *, ask=
     for i, (jd, rid) in enumerate(postings, 1):
         try:
             log(f"skills: {i}/{len(postings)} {jd.get('company', '')} - {jd.get('title', '')} ({rid})")
-            res = ingest(g, jd, rid, ask=ask, embed=embed, duty_threshold=thresholds[0], skill_threshold=thresholds[1],
-                         role_title=titles.get(rid, ""))
+            res = ingest(g, jd, rid, ask=ask, embed=embed, duty_threshold=duty_threshold, role_title=titles.get(rid, ""))
         except Exception as exc:                                 # one posting that fails never stops the others; a rerun retries it
             g.postings.pop(jd_key(jd), None)
             stats["failed"] += 1
@@ -454,7 +549,7 @@ def build(g: Graph, roles: list[dict], postings: list[tuple[dict, str]], *, ask=
             stats["merged_duties"] = consolidate(g, merge)
         except Exception as exc:
             log(f"skills: duty consolidation skipped: {type(exc).__name__}: {str(exc)[:100]}")
-    have = set(g.postings.values())
+    have = {p["role"] for p in g.postings.values()}
     stats["roles_without_postings"] = [rid for rid in titles if rid not in have]
     return stats
 
@@ -471,7 +566,8 @@ def suggest(g: Graph, jd_skills: list[str], role_id: str, owned: set[str], on_re
     steering = {s for s in mine if g.nodes[s]["category"] != "language"} or mine      # Python / Java sit under almost every duty: they steer nothing
     for sid in steering:
         for duty, w in g.parents(sid):
-            duty_score[duty] = duty_score.get(duty, 0.0) + w
+            if g.nodes[duty]["name"] != GENERAL_DUTY:                  # unplaced skills share a bucket, not a kind of work
+                duty_score[duty] = duty_score.get(duty, 0.0) + w
     role = f"role:{role_id}"
     for duty, w in g.children(role) if role in g.nodes else []:
         if duty in duty_score:
@@ -494,7 +590,7 @@ def suggest(g: Graph, jd_skills: list[str], role_id: str, owned: set[str], on_re
     for sid, (score, duty) in ranked:
         n = g.nodes[sid]
         names = {norm(n["name"])} | {norm(a) for a in n["aliases"]}
-        item = {"skill": n["name"], "via": g.nodes[duty]["name"], "score": round(score, 2)}
+        item = {"skill": n["name"], "via": g.nodes[duty]["name"], "score": round(score, 2), "aliases": list(n["aliases"])}
         bucket = "owned" if names & owned else "review"
         if len(out[bucket]) < limit:
             out[bucket].append(item)
@@ -532,15 +628,15 @@ def approve(skill: str, settings=None) -> bool:
     """Record a skill the candidate confirms they have; it counts as owned from then on. (master_profile.yaml is the candidate's own
     file and is never rewritten by the agent, so approvals live in state/skills/approved.json.)"""
     d = skills_dir(settings)
-    d.mkdir(parents=True, exist_ok=True)
-    p = d / "approved.json"
-    try:
-        have = json.loads(p.read_text()) if p.exists() else []
-    except json.JSONDecodeError:
-        have = []
-    if norm(skill) in {norm(x) for x in have}:
-        return False
-    p.write_text(json.dumps(sorted([*have, skill.strip()], key=str.lower), indent=1))
+    with locked(settings, 10):
+        p = d / "approved.json"
+        try:
+            have = json.loads(p.read_text()) if p.exists() else []
+        except json.JSONDecodeError:
+            have = []
+        if norm(skill) in {norm(x) for x in have}:
+            return False
+        _write_atomic(p, json.dumps(sorted([*have, skill.strip()], key=str.lower), indent=1))
     return True
 
 
@@ -569,24 +665,41 @@ def mermaid(g: Graph, role: str | None = None) -> str:
 
 # --- tailoring hooks ---------------------------------------------------------------------------------------------------------------
 
+ARTIFACT = "skill_suggestions.json"
+
+
+def _fingerprint(jd: dict, g: Graph, owned: set[str]) -> dict:
+    return {"jd": jd_fp(jd), "graph": g.version, "owned": hashlib.sha1(json.dumps(sorted(owned)).encode()).hexdigest()[:12]}
+
+
 def job_suggestions(job_dir: Path | None, jd: dict, role_id: str, resume_terms: list[str], settings=None) -> dict:
-    """Suggestions for one job; also written to <job_dir>/skill_suggestions.json for the review screen. {} when switched off, when the
-    graph has nothing for this posting, or on any error (the graph never stops tailoring)."""
+    """Suggestions for one job, also written to <job_dir>/skill_suggestions.json with the fingerprints of the posting, the graph and the
+    candidate's skills (an EMPTY result is written too, so an old one never lingers). {} when switched off, when the graph has nothing for
+    this posting, or on any error: the artifact is then removed (fail closed) and tailoring goes on without the graph."""
+    art = (job_dir / ARTIFACT) if job_dir is not None else None
     try:
         from jobagent.config import get_settings
         s = settings or get_settings()
         if not s.skills_use_graph:
+            if art:
+                art.unlink(missing_ok=True)
             return {}
         g = load(s)
-        res = suggest(g, clean_skills(jd.get("technical_skills") or []), role_id, owned_skills(resume_terms, s),
-                      {norm(t) for t in resume_terms}, s.skills_max_neighbours)
-        if not (res["owned"] or res["review"]):
-            return {}
-        if job_dir is not None:
-            (job_dir / "skill_suggestions.json").write_text(json.dumps(res, indent=1))
-        return res
+        owned = owned_skills(resume_terms, s)
+        res = suggest(g, clean_skills(jd.get("technical_skills") or []), role_id, owned, {norm(t) for t in resume_terms}, s.skills_max_neighbours)
+        res["fingerprint"] = _fingerprint(jd, g, owned)
+        if art:
+            _write_atomic(art, json.dumps(res, indent=1))
+        return res if (res["owned"] or res["review"]) else {}
     except Exception:
+        if art:
+            art.unlink(missing_ok=True)
         return {}
+
+
+def _resume_terms(resume) -> list[str]:
+    from jobagent.tools import tailor
+    return [t.strip() for _, items in resume.skills for t in tailor.to_plain(items).split(",") if t.strip()]
 
 
 def for_tailor(job_dir: Path | None, jd, resume, settings=None) -> dict:
@@ -594,12 +707,36 @@ def for_tailor(job_dir: Path | None, jd, resume, settings=None) -> dict:
     match for this posting's address; {} when there is none or on any error."""
     try:
         from jobagent import db
-        from jobagent.tools import tailor
-        terms = [t.strip() for _, items in resume.skills for t in tailor.to_plain(items).split(",") if t.strip()]
         row = db.connect().execute("SELECT role_id FROM jobs WHERE url = ?", (getattr(jd, "source_url", "") or "",)).fetchone()
-        return job_suggestions(job_dir, jd.model_dump(), (row["role_id"] if row and row["role_id"] else ""), terms, settings)
+        return job_suggestions(job_dir, jd.model_dump(), (row["role_id"] if row and row["role_id"] else ""), _resume_terms(resume), settings)
     except Exception:
         return {}
+
+
+def input_fingerprint(jd, resume, settings=None) -> str:
+    """What the resume stage must treat as an input: the graph switch, the graph's version and the neighbours it would suggest given what the
+    candidate owns. Approving a skill, growing the graph or switching it off therefore rebuilds the resume without --force."""
+    try:
+        from jobagent.config import get_settings
+        s = settings or get_settings()
+        if not s.skills_use_graph:
+            return "off"
+        res = for_tailor(None, jd, resume, s)
+        basis = {"graph": load(s).version, "owned": sorted(owned_skills(_resume_terms(resume), s)), "n": s.skills_max_neighbours,
+                 "res": {k: [(x["skill"], x["via"]) for x in res.get(k, [])] for k in ("owned", "review")}}
+        return hashlib.sha1(json.dumps(basis, sort_keys=True).encode()).hexdigest()[:16]
+    except Exception:
+        return "error"
+
+
+def _valid_artifact(job_dir: Path) -> dict | None:
+    """This job's suggestions when they still describe its posting; None when missing, unreadable or stale."""
+    try:
+        res = json.loads((job_dir / ARTIFACT).read_text())
+        jd = json.loads((job_dir / "jd.json").read_text())
+        return res if (res.get("fingerprint") or {}).get("jd") == jd_fp(jd) else None
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def hint_text(res: dict) -> str:
@@ -615,28 +752,85 @@ def hint_text(res: dict) -> str:
     return "\n".join(lines)
 
 
-def drop_forbidden(skills: list, res: dict) -> tuple[list, list[str]]:
-    """Remove from generated skill lines any related skill that was listed for review (not owned). A line is never emptied. Returns
-    (lines, dropped names). `skills` are tailor.SkillLine objects."""
-    banned = {norm(x["skill"]) for x in (res or {}).get("review", [])}
-    if not banned:
+# --- ownership enforcement: no related skill the candidate's files do not show reaches a resume, whoever wrote it -----------------------
+
+def forbidden_set(res: dict | None) -> set[str]:
+    """`norm` keys (names and aliases) of the related skills listed for review: not owned, so never to appear."""
+    out: set[str] = set()
+    for x in (res or {}).get("review", []):
+        out |= {norm(x["skill"]), *(norm(a) for a in x.get("aliases", []))}
+    out.discard("")
+    return out
+
+
+def _strip(raw: str, forbidden: set[str]) -> tuple[str, list[str]]:
+    """One written term ("A, B (c, d)") without forbidden skills, as a term or inside the parentheses; (rest, what was removed)."""
+    kept, gone = [], []
+    for part in re.split(r",(?![^()]*\))", raw):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.fullmatch(r"(.+?)\s*\((.+)\)", part)
+        term, tools = (m.group(1).strip(), [x.strip() for x in m.group(2).split(",") if x.strip()]) if m else (part, [])
+        if norm(term) in forbidden:
+            gone.append(term)
+            gone += [x for x in tools if norm(x) in forbidden]
+            continue
+        ok = [x for x in tools if norm(x) not in forbidden]
+        gone += [x for x in tools if norm(x) in forbidden]
+        kept.append(f"{term} ({', '.join(ok)})" if ok else term)
+    return ", ".join(kept), gone
+
+
+def enforce(skills: list, forbidden: set[str]) -> tuple[list, list[str]]:
+    """The skill lines (tailor.SkillLine) without any forbidden skill, in terms, in parentheses and in `tools_for`. A line left with nothing
+    is removed: it is never kept to satisfy a minimum. Returns (new lines, removed names)."""
+    if not forbidden:
         return skills, []
     dropped: list[str] = []
+    out = []
     for line in skills:
-        keep = [t for t in line.terms if norm(t) not in banned]
-        if keep and len(keep) < len(line.terms):
-            dropped += [t for t in line.terms if norm(t) in banned]
-            line.terms = keep
-    return skills, dropped
+        terms = []
+        for raw in line.terms:
+            kept, gone = _strip(raw, forbidden)
+            dropped += gone
+            if kept:
+                terms.append(kept)
+        tools_for = []
+        for t in line.tools_for:
+            if norm(t.term) in forbidden:
+                dropped.append(t.term)
+                continue
+            tools = [x for x in t.tools if norm(x) not in forbidden]
+            dropped += [x for x in t.tools if norm(x) in forbidden]
+            if tools:
+                tools_for.append(t.model_copy(update={"tools": tools}))
+        if terms:
+            out.append(line.model_copy(update={"terms": terms, "tools_for": tools_for}))
+    return out, dropped
+
+
+def guard_resume(resume, job_dir: Path) -> None:
+    """Attach this job's forbidden set to the parsed resume, from its (valid) suggestions artifact, so every render of it is checked."""
+    try:
+        resume.forbidden = forbidden_set(_valid_artifact(job_dir))
+    except AttributeError:                                  # not a tailor.Resume (a test double): nothing to guard
+        pass
+
+
+def violations(job_dir: Path, f) -> list[str]:
+    """Skills in a generated resume (`f`: tailor.Filled) that this job's suggestions list as not owned; empty when all is well."""
+    forb = forbidden_set(_valid_artifact(job_dir))
+    if not forb:
+        return []
+    _, dropped = enforce(f.skills, forb)
+    return [f"skill not shown by your files: {x} (it was only suggested; `jobagent skills approve` it first)" for x in dict.fromkeys(dropped)]
 
 
 def review_lines(job_dir: Path) -> list[str]:
-    """Markdown for the review packet: related skills the candidate may want to confirm (empty list when none)."""
-    try:
-        res = json.loads((job_dir / "skill_suggestions.json").read_text())
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not res.get("review"):
+    """Markdown for the review packet: related skills the candidate may want to confirm (empty list when none or when they are stale)."""
+    res = _valid_artifact(job_dir)
+    if not res or not res.get("review"):
         return []
     out = ["## Suggested skills (not added)", "",
            "Related to this posting's skills but not found in your files. Add one only if you really have it: "

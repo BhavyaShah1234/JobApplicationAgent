@@ -15,7 +15,8 @@ CITIZENSHIP = re.compile(
     r"(?i)(must be (a |an )?(u\.?s\.?|united states|american)\s+citizen|(u\.?s\.?|united states)\s+citizens?(hip)?\s+(is |are )?"
     r"(required|a must|only)|requires?\s+(u\.?s\.?|united states)\s+citizenship|citizenship\s+(is\s+)?required|"
     r"only\s+(u\.?s\.?|united states)\s+citizens|(u\.?s\.?)\s+citizens?\s+only|must\s+be\s+a\s+citizen\s+of\s+the\s+united states|"
-    r"(u\.?s\.?|united states)\s+citizenship\s+is\s+(a\s+)?(requirement|condition))")
+    r"(u\.?s\.?|united states)\s+citizenship\s+is\s+(a\s+)?(requirement|condition)|"
+    r"(u\.?s\.?|united states)\s+citizen(ship|s)?\b[^.;]{0,60}\b(is|are)\s+(required|needed|mandatory))")
 CLEARANCE = re.compile(
     r"(?i)(ts\s*/\s*sci|top[- ]secret|secret\s+clearance|(active|current|valid|dod|government|federal)\s+(security\s+)?clearance|"
     r"(obtain|hold|maintain|possess|have)\s+(and\s+maintain\s+)?(a\s+|an\s+)?(u\.?s\.?\s+)?(government\s+)?(security\s+)?clearance|"
@@ -30,11 +31,11 @@ US_PERSON = re.compile(r"(?i)(\bITAR\b|export[- ]controlled|export\s+control\s+(
 ALTERNATIVE = re.compile(r"(?i)(citizens?(hip)?|national)\b(?:(?!\band\b)[^.;]){0,40}\bor\b[^.;]{0,40}(?P<alt>permanent\s+resident|green\s*card|lawful\s+permanent|"
                          r"authori[sz]ed\s+to\s+work|work\s+authori[sz]ation|authori[sz]ation\s+to\s+work)")
 # a requirement that is absent or only wished for is not a requirement
-NO_CLEARANCE_NEEDED = re.compile(r"(?i)(\bno\s+(security\s+)?clearance|without\s+(a\s+)?(security\s+)?clearance|clearance\s+(is\s+)?(not|never)\s+(required|needed)|"
+NO_CLEARANCE_NEEDED = re.compile(r"(?i)(\bno\s+(active\s+|current\s+|valid\s+)?(security\s+)?clearance|without\s+(a\s+)?(security\s+)?clearance|clearance\s+(is\s+)?(not|never)\s+(required|needed)|"
                                  r"not\s+require\s+(a\s+)?(security\s+)?clearance|clearance\s+is\s+not\s+necessary)")
 EXCLUDES = re.compile(r"(?i)(not\s+eligible|ineligible|cannot\s+(be\s+considered|apply)|(will|can)\s+not\s+be\s+considered|not\s+(be\s+)?considered|disqualif)")
 LAPSED = re.compile(r"(?i)\b(expired|lapsed|inactive|former|formerly|pending|interim|revoked|suspended|in\s+process)\b")
-CLAUSE_SPLIT = re.compile(r";\s*|\s+(?:and|but)\s+(?=(?:an?\s+|the\s+)?(?:active|current|valid|u\.?s\.?\s|us\s|security|clearance|ts\b|top\b|secret\b|visa|"
+CLAUSE_SPLIT = re.compile(r"(?i);\s*|,\s+(?:and|but)\s+|\s+(?:and|but)\s+(?=(?:an?\s+|the\s+)?(?:active|current|valid|u\.?s\.?\s|us\s|security|clearance|ts\b|top\b|secret\b|visa|"
                           r"sponsorship|we\b|you\b|candidates\b|applicants\b|no\b))")
 PREFERRED = re.compile(r"(?i)\b(preferred|a plus|nice to have|desired|desirable|bonus|advantage|an asset|ideally)\b")
 REQUIRED = re.compile(r"(?i)\b(must|required|requires?|requirement|mandatory|necessary|only)\b")
@@ -69,8 +70,13 @@ def _sentences(text: str) -> list[tuple[str, str]]:
         if s and len(s.strip()) > 8:
             out.append((s.strip().replace("\u2024", "."), s.strip().replace("\u2024", "")))
     clauses = []
+    shared = re.compile(r"(?i)\b(are|is)\s+(required|needed|mandatory)\W*$")
     for quote, s in out:                              # independent clauses are judged on their own ("... required and ... preferred")
-        clauses += [(quote, c.strip()) for c in CLAUSE_SPLIT.split(s) if c and len(c.strip()) > 8]
+        parts = [c.strip() for c in CLAUSE_SPLIT.split(s) if c and len(c.strip()) > 8]
+        if len(parts) > 1 and (m := shared.search(parts[-1])):
+            # "X and Y are required": the closing predicate belongs to the clauses before it that have none of their own
+            parts = [c if (REQUIRED.search(c) or PREFERRED.search(c)) else f"{c} {m.group(0)}" for c in parts[:-1]] + [parts[-1]]
+        clauses += [(quote, c) for c in parts]
     return clauses
 
 
@@ -95,8 +101,8 @@ def screen(text: str, facts: dict) -> Verdict:
             via_permanent = bool(alt and re.search(r"(?i)permanent|green|lawful", alt.group("alt")))
             via_authorized = bool(alt and not via_permanent)
             if citizen is True or (via_permanent and permanent) or (via_authorized and authorized is True):
-                continue                                  # the posting itself offers an alternative the candidate meets
-            if citizen is False and not alt:
+                pass                                      # met, or the posting itself offers an alternative the candidate meets; the rest of the clause is still read
+            elif citizen is False and not alt:
                 add("blocked", "U.S. citizenship", quote, "required, and your file says you are not a U.S. citizen")
             elif citizen is False:
                 add("review", "U.S. citizenship", quote, "required or an alternative (permanent residence / work authorization): check you qualify")

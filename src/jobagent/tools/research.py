@@ -16,6 +16,7 @@ from urllib.parse import quote, urljoin, urlparse
 import httpx
 from pydantic import BaseModel, Field
 
+from jobagent.log import with_context
 from jobagent.clock import with_today
 from jobagent import db
 from jobagent.config import get_settings
@@ -442,4 +443,4 @@ def research_many(companies: list[str], workers: int = 5, refresh: bool = False,
             return name, None, f"{type(e).__name__}: {str(e)[:150]}", time.monotonic() - t0
 
     with ThreadPoolExecutor(max_workers=max(1, min(workers, len(companies)))) as pool:
-        return list(pool.map(one, companies))
+        return list(pool.map(with_context(one), companies))

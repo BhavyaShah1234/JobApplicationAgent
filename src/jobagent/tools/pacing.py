@@ -24,7 +24,7 @@ def recent_counts(conn, days: int, now: datetime | None = None) -> dict[str, int
     floor = _floor(days, now)
     marks = ",".join("?" * len(COUNTED))
     out: dict[str, int] = {}
-    for r in conn.execute(f"SELECT a.company AS company, j.company_slug AS queued_as, COALESCE(a.submitted_at, a.decided_at, a.filled_at) AS at "
+    for r in conn.execute(f"SELECT a.company AS company, COALESCE(NULLIF(j.company_slug, ''), j.company) AS queued_as, COALESCE(a.submitted_at, a.decided_at, a.filled_at) AS at "
                           f"FROM applications a LEFT JOIN jobs j ON j.id = a.job_id WHERE a.state IN ({marks})", COUNTED):
         name = r["queued_as"] or r["company"]
         if r["at"] and r["at"] >= floor and name:
@@ -38,7 +38,7 @@ def active_counts(conn, days: int = 7, now: datetime | None = None) -> dict[str,
     floor = _floor(days, now)
     marks = ",".join("?" * len(COUNTED))
     out: dict[str, int] = {}
-    for r in conn.execute(f"SELECT j.company_slug AS s FROM jobs j WHERE j.status = 'running' AND j.claimed_by IS NOT NULL AND NOT EXISTS "
+    for r in conn.execute(f"SELECT COALESCE(NULLIF(j.company_slug, ''), j.company) AS s FROM jobs j WHERE j.status = 'running' AND j.claimed_by IS NOT NULL AND NOT EXISTS "
                           f"(SELECT 1 FROM applications a WHERE a.job_id = j.id AND a.state IN ({marks}) "
                           f"AND COALESCE(a.submitted_at, a.decided_at, a.filled_at) >= ?)", (*COUNTED, floor)):
         if r["s"]:

@@ -14,6 +14,7 @@ import sys
 import time
 from pathlib import Path
 
+from jobagent.log import with_context
 from jobagent import llm
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
@@ -130,6 +131,9 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
     company = (s.state_dir / "companies" / f"{company_slug}.md").read_text()
     r = T.parse((s.data_dir / "templates" / "resume.tex").read_text())
+    from jobagent.tools import skillgraph as SG
+    graph = SG.for_tailor(job_dir, jd, r)                       # related skills (step 4c) and this job's review artifact
+    SG.guard_resume(r, job_dir)
     log(f"template: {len(r.roles)} roles; JD: {len(T.jd_items(jd))} JD items, {len(jd.technical_skills)} skills")
     fill_model, fill_schema = llm.writer(16000), T.filled_schema(r)
     proj = None
@@ -198,7 +202,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
         t0 = time.monotonic()
         try:
             f = T.to_filled(r, llm.structured_invoke(fill_model, fill_schema,
-                                                     T.build_fill_prompt(r, jd, company, max_bullets, feedback), log=log))
+                                                     T.build_fill_prompt(r, jd, company, max_bullets, feedback, graph=graph), log=log))
         except Exception as e:  # timeout / token limit on a slow round: try the next round, keep the best so far
             rounds.append(f"model error ({type(e).__name__})")
             log(f"round {attempt}: {time.monotonic() - t0:.0f}s model error {type(e).__name__}: {str(e)[:120]}")
@@ -343,7 +347,7 @@ def check(urls: list[str], workers: int = 3, log=print) -> list[tuple[str, bool,
             return jd, None, f"{type(e).__name__}: {e}"
 
     with ThreadPoolExecutor(workers) as pool:
-        for jd, out, err in pool.map(one, jobs):
+        for jd, out, err in pool.map(with_context(one), jobs):
             name = f"{jd.company}: {jd.title}"
             if err:
                 results.append((name, False, err))
