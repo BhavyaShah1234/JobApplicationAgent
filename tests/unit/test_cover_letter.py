@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from jobagent.state import JobDescription
 from jobagent.tools import cover_letter as CL
 
@@ -80,3 +82,36 @@ def test_template_is_justified_with_name_right_under_the_closing():
     example = (Path(__file__).parents[2] / "data" / "templates" / "cover_letter.example.tex").read_text()
     assert "\\raggedright" not in example
     assert "<<CLOSING>>,\\\\\nFirst Last" in example and "<<DATE>>" not in example
+
+
+@pytest.mark.parametrize("unsupported_claim", [False, True])
+def test_write_checks_normalized_punctuation_but_retains_claim_checks(monkeypatch, tmp_path, unsupported_claim):
+    (tmp_path / "resume.tex").write_text(RESUME)
+    template = tmp_path / "letter-template.tex"
+    template.write_text(RESUME[:RESUME.index(r"\section{Summary}")] + "\n" + "\n".join(CL.SLOTS) + r"\end{document}")
+    monkeypatch.setattr(CL, "template_path", lambda: template)
+    raw = letter("I am applying for the Software Engineer – Datacenter position.",
+                 "I built Azure Data Factory pipelines in Python.",
+                 "I cut costs 70% with Snowflake." if unsupported_claim else "I would bring Microsoft Fabric skills.")
+    calls = []
+
+    def invoke(*args, **kwargs):
+        calls.append(1)
+        return raw
+
+    def compile_pdf(tex, job_dir, name="resume"):
+        (job_dir / f"{name}.tex").write_text(tex)
+        return 1, ""
+
+    monkeypatch.setattr(CL.llm, "structured_invoke", invoke)
+    monkeypatch.setattr(CL, "compile_pdf", compile_pdf)
+    result = CL.write(tmp_path, JD.model_copy(update={"title": "Software Engineer – Datacenter"}), "", object())
+    assert not any("dash" in issue for issue in result["issues"])
+    assert "Software Engineer, Datacenter" in result["letter"].paragraphs[0].text
+    assert "–" in raw.paragraphs[0].text  # normalize a copy, not the caller's evidence
+    if unsupported_claim:
+        assert not result["valid"]
+        assert any("Snowflake" in issue for issue in result["issues"])
+        assert any("'70'" in issue for issue in result["issues"])
+    else:
+        assert result["valid"] and len(calls) == 1

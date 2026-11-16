@@ -168,6 +168,14 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
         except Exception as e:  # timeout / token limit: next round
             log(f"cover letter round {attempt}: model error {type(e).__name__}")
             continue
+        # Apply the same punctuation policy as to_latex before checking the
+        # content. Otherwise a verbatim JD title with an en dash fails every
+        # retry even though the rendered PDF already replaces that dash.
+        letter = letter.model_copy(update={
+            "salutation": DASH.sub(", ", letter.salutation),
+            "closing": DASH.sub(", ", letter.closing),
+            "paragraphs": [p.model_copy(update={"text": DASH.sub(", ", p.text)}) for p in letter.paragraphs],
+        })
         issues = consistency(letter, resume, jd, company_md)
         tex = render(template, letter, jd)
         pages, err = compile_pdf(tex, job_dir, name="cover_letter")

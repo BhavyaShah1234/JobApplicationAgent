@@ -168,7 +168,8 @@ def test_run_job_with_no_best_version_reports_a_failure_and_leaves_no_resume_beh
 def stub_letter(monkeypatch, tmp_path, issues, compile_result):
     d = job(tmp_path, letter=PDF)                             # a stale cover_letter.pdf from an earlier run
     (d / "resume.tex").write_text("resume")
-    letter = SimpleNamespace(paragraphs=[SimpleNamespace(text="one two three")])
+    letter = CL.Letter(salutation="Dear Team,", closing="Sincerely",
+                       paragraphs=[CL.Paragraph(text="one two three", evidence=[]) for _ in range(3)])
     monkeypatch.setattr(CL, "resume_text", lambda tex: "resume")
     monkeypatch.setattr(CL, "template_path", lambda: SimpleNamespace(read_text=lambda: "tpl", name="tpl"))
     monkeypatch.setattr(CL, "build_prompt", lambda *a, **k: [])
