@@ -12,7 +12,7 @@ e.g.  ML Engineer --> model training --> PyTorch, TensorFlow, HuggingFace
 Two skills are neighbours when they share a duty; edge weights count the postings that support a link.
 
 **Growing it.** `jobagent skills build` reads the roles file and every saved posting (`outputs/*/*/jd.json`; the role is the queue's match,
-else the first role whose title pattern fits), asks the planner model once per posting to group the posting's technologies by duty, merges
+else the first role whose title pattern fits), asks the fast model once per posting to group the posting's technologies by duty, merges
 near-identical duty and skill names by embedding similarity (thresholds in `config/skills.yaml`), then folds duplicate duties with one extra
 call. Rerunning skips postings already in the graph. Every posting the pipeline scrapes is added automatically, and a role added to
 `data/target_roles.yaml` appears with no duties until `jobagent skills sync` collects postings for it (scrape only, never apply; it first

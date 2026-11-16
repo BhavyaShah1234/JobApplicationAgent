@@ -277,14 +277,14 @@ INGEST_PROMPT = (
 
 
 def default_ask(jd: dict, known_duties: list[str], skills: list[str]) -> list[DutyOut]:
-    """One structured planner-model call for one posting."""
+    """One structured call to the fast model per posting (the planner model took ~10 minutes a posting for this grouping)."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from jobagent import llm
     body = {"title": jd.get("title"), "responsibilities": (jd.get("responsibilities") or [])[:25],
             "preferred_qualifications": (jd.get("preferred_qualifications") or [])[:10]}
     text = (f"KNOWN DUTIES: {json.dumps(known_duties)}\n\nPOSTING:\n{json.dumps(body, ensure_ascii=False)}\n\nLIST: {json.dumps(skills)}")
-    out = llm.structured_invoke(llm.chat("planner"), IngestOut, [SystemMessage(INGEST_PROMPT), HumanMessage(text)])
+    out = llm.structured_invoke(llm.chat("fast"), IngestOut, [SystemMessage(INGEST_PROMPT), HumanMessage(text)])
     return out.duties
 
 
@@ -295,7 +295,7 @@ def default_merge(duties: list[str]) -> list[MergeGroup]:
     prompt = ("These are the duties collected from many job postings. Group the ones that mean the same kind of work (e.g. 'model training' "
               "and 'training machine learning models'); for each group give the duty to keep (one of the group, exact text) and the others to "
               "merge into it. Leave distinct duties out. Use only the given names.")
-    return llm.structured_invoke(llm.chat("planner"), MergeOut, [SystemMessage(prompt), HumanMessage(json.dumps(duties))]).groups
+    return llm.structured_invoke(llm.chat("fast"), MergeOut, [SystemMessage(prompt), HumanMessage(json.dumps(duties))]).groups
 
 
 def ensure_role(g: Graph, role_id: str, title: str = "") -> str:
