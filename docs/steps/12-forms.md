@@ -3,6 +3,11 @@
 The agent fills a job's application up to its review screen, reads every field back, and stops: it never clicks
 Submit (the user approves and submits in step 13).
 
+Startup rejects a careers search screen with a job-search heading and only optional search filters, even if
+three or more dropdowns are visible. Those controls are not applicant questions. This also applies after wizard
+navigation; the agent stops with an explicit navigation error before planning answers or asking the candidate.
+Candidate fields, uploads and application navigation prevent this narrow filter-only classification.
+
 ## Run it
 
 ```bash

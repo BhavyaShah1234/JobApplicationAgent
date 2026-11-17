@@ -1384,6 +1384,29 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
     return view, done
 
 
+def _listing_filters_only(view: forms.PageView) -> bool:
+    """A careers search is not an application just because it exposes several filters.
+
+    Require a search heading and exclusively optional search controls. Applicant
+    inputs, uploads and application navigation deliberately defeat this test.
+    """
+    heading = re.compile(r"(?i)^(?:(?:find|search|explore|browse)\b.*\b(?:jobs?|careers?|roles?|opportunities)\b|job search\b|search results\b)")
+    if not any(heading.search(h.strip()) for h in view.headings):
+        return False
+    filters = {"work area", "career status", "country region", "country", "region", "location", "locations",
+               "department", "job category", "category", "keywords", "keyword", "job type", "employment type"}
+    if len(view.fields) < 2 or any(f.required or f.kind not in {"select", "combobox", "text"} or
+            re.sub(r"[^a-z0-9]+", " ", f.label.casefold()).strip() not in filters for f in view.fields):
+        return False
+    return not any(forms.NEXT.search(b) or forms.SUBMIT.search(b) for b in view.buttons)
+
+
+def _require_application_page(view: forms.PageView) -> None:
+    if _listing_filters_only(view):
+        raise RuntimeError("Application navigation reached a careers search page containing only search filters; "
+                           "no application questions were planned or answered. Verify the posting's application link.")
+
+
 def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = None, hitl=None,
            already_open: bool = False) -> forms.PageView:
     """Open the posting and get to the application form: click Apply / Apply Manually, sign in when asked.
@@ -1426,6 +1449,7 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
             signed = True
             response = page.goto(url, wait_until="domcontentloaded")  # back to the posting, signed in
             continue
+        _require_application_page(view)
         if len([f for f in view.fields if f.kind != "file"]) >= 3 and not pw:
             return view
         for pat in START:
@@ -1607,6 +1631,7 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
     for _ in range(get_settings().apply_max_pages + 3):
         challenge.guard(page)
         view = forms.read_page(page)
+        _require_application_page(view)
         if known is None:  # a new page (not a retry of a refused one)
             page_no += 1
             start = len(record)

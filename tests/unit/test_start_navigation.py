@@ -102,6 +102,24 @@ def test_continue_application_still_resumes_a_started_application():
     assert state["opened"] is True and len(view.fields) >= 3
 
 
+def test_careers_search_filters_never_reach_application_planning():
+    filters = """<h1>Find your next role</h1><form>
+      <label>Work area<select><option>All</option><option>Engineering</option></select></label>
+      <label>Career status<select><option>All</option><option>Graduate</option></select></label>
+      <label>Country / Region<select><option>All</option><option>United States</option></select></label>
+      <button type=submit onclick="window.sent=true">Search jobs</button></form>"""
+    state, view = start(filters, allow_error=True)
+    assert "careers search page" in view.error
+    assert not state["sent"]
+
+
+def test_search_sidebar_does_not_hide_actual_candidate_controls():
+    html = ("<h1>Find your next role</h1><label>Work area<select><option>All</option></select></label>"
+            "<label>Career status<select><option>All</option></select></label>" + FORM3)
+    state, view = start(html)
+    assert len(view.fields) == 5 and not state["sent"]
+
+
 # --- the capability to send an application ---------------------------------------------------------------------------
 
 def test_the_functions_that_send_an_application_need_an_approval_object():
