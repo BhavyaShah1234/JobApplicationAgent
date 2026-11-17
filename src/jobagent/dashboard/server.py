@@ -52,6 +52,7 @@ NOT_BUILT = ("<!doctype html><meta charset=utf-8><title>Job agent</title><body s
              "(it uses a Node container), then reload this page.</p></body>")
 COOKIE = "jobagent_dashboard"
 THROUGH = ("scrape", "tailor", "apply")          # a started run never goes past the review screen
+UI_PATHS = frozenset(("/", "/index.html", "/overview", "/jobs", "/browser", "/questions", "/review", "/queue", "/runs", "/outcomes", "/start"))
 MAX_BODY = 64_000
 _ACTIVE_RUNS = {}
 SIGN_IN = """<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Job agent</title>
@@ -209,12 +210,12 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/favicon.ico":
             return self._send(204, b"", "image/x-icon")
         q = parse_qs(url.query)
-        if url.path == "/" and "t" in q and hmac.compare_digest(q["t"][0], self.server.token):
-            return self._send(302, b"", "text/plain", {"Location": "/", "Set-Cookie": f"{COOKIE}={self.server.token}; HttpOnly; SameSite=Strict; Path=/"})
+        if url.path in UI_PATHS and "t" in q and hmac.compare_digest(q["t"][0], self.server.token):
+            return self._send(302, b"", "text/plain", {"Location": url.path, "Set-Cookie": f"{COOKIE}={self.server.token}; HttpOnly; SameSite=Strict; Path=/"})
         if not self._cookie_ok():
             return self._send(401, SIGN_IN.encode(), "text/html; charset=utf-8")
         s = self.server.settings
-        if url.path in ("/", "/index.html"):
+        if url.path in UI_PATHS:
             index = STATIC / "index.html"
             return self._send(200, index.read_bytes(), CONTENT_TYPES[".html"]) if index.is_file() else self._send(503, NOT_BUILT.encode(), CONTENT_TYPES[".html"])
         if url.path.startswith("/assets/"):

@@ -93,6 +93,22 @@ def test_every_request_needs_the_token_and_a_local_host_name(env):
     assert c.getresponse().status == 401
 
 
+def test_dashboard_paths_support_deep_links_without_masking_api_404s(env):
+    _, srv, _ = env
+    for path in ('/overview', '/jobs', '/browser', '/questions', '/review', '/queue', '/runs', '/outcomes', '/start'):
+        code, html = call(srv, 'GET', path)
+        assert code == 200 and '<div id="root">' in html
+    assert call(srv, 'GET', '/jobs', cookie=False)[0] == 401
+    assert call(srv, 'GET', '/not-a-page')[0] == 404
+    assert call(srv, 'GET', '/api/not-a-route')[0] == 404
+    c = http.client.HTTPConnection('127.0.0.1', srv.server_address[1])
+    c.request('GET', '/jobs?t=' + srv.token + '&next=https://evil.example')
+    response = c.getresponse()
+    assert response.status == 302 and response.getheader('Location') == '/jobs'
+    assert 'HttpOnly' in response.getheader('Set-Cookie')
+    c.close()
+
+
 def test_the_token_file_is_private_and_stable(tmp_path):
     s = Settings(state_dir=tmp_path, outputs_dir=tmp_path, data_dir=tmp_path)
     t = load_token(s)

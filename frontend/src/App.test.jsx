@@ -6,7 +6,7 @@ import { JOB, mockFetch } from "./test/mockFetch.js";
 const OVERVIEW = { jobs: { queued: 2 }, applications: { filled: 1 }, outcomes: {}, waiting: 2, ready: 1, questions: 3, runs_active: 1, jobs_active: 1, read_only: false };
 
 beforeEach(() => {
-  location.hash = "";
+  history.replaceState(null, "", "/");
 });
 
 test("the header shows the tabs with their counts and the overview shows what is running", async () => {
@@ -31,8 +31,33 @@ test("tabs switch the view", async () => {
   render(<App />);
   await userEvent.click(await screen.findByRole("tab", { name: "Queue" }));
   expect(await screen.findByText("Acme")).toBeInTheDocument();
+  expect(location.pathname).toBe("/queue");
+  expect(location.hash).toBe("");
+  expect(screen.getByRole("tab", { name: /Jobs/ })).toHaveAttribute("href", "/jobs");
   await userEvent.type(screen.getByPlaceholderText(/Filter by company/), "zzz");
   await waitFor(() => expect(screen.queryByText("Acme")).toBeNull());
+});
+
+test("a direct page URL renders the selected view and browser history changes it", async () => {
+  history.replaceState(null, "", "/jobs");
+  mockFetch({ "/api/overview": OVERVIEW, "/api/config": { read_only: false, novnc: "" }, "/api/pipeline": [] });
+  render(<App />);
+  expect(await screen.findByText("No jobs in this view yet.")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: /Jobs/ })).toHaveAttribute("aria-selected", "true");
+  await userEvent.click(screen.getByRole("tab", { name: /Questions/ }));
+  expect(location.pathname).toBe("/questions");
+  history.back();
+  await waitFor(() => expect(screen.getByRole("tab", { name: /Jobs/ })).toHaveAttribute("aria-selected", "true"));
+  expect(location.pathname).toBe("/jobs");
+});
+
+test("an old hash bookmark is replaced with a real path", async () => {
+  history.replaceState(null, "", "/#jobs");
+  mockFetch({ "/api/overview": OVERVIEW, "/api/config": { read_only: false, novnc: "" }, "/api/pipeline": [] });
+  render(<App />);
+  expect(await screen.findByText("No jobs in this view yet.")).toBeInTheDocument();
+  expect(location.pathname).toBe("/jobs");
+  expect(location.hash).toBe("");
 });
 
 test("a 401 shows how to sign in", async () => {

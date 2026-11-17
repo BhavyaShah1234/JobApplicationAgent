@@ -3,8 +3,8 @@
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 header.top{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;padding:10px 20px;border-bottom:1px solid var(--line);background:var(--card)}
 header.top h1{font-size:16px;margin:0;letter-spacing:.2px}nav{display:flex;flex-wrap:wrap;gap:4px}
-nav button{border:0;background:transparent;color:var(--mut);padding:7px 12px;border-radius:8px;cursor:pointer;font:inherit;font-weight:500}
-nav button:hover{background:var(--soft);color:var(--fg)}nav button[aria-selected=true]{background:var(--accsoft);color:var(--acc);font-weight:600}
+nav [role=tab]{text-decoration:none;border:0;background:transparent;color:var(--mut);padding:7px 12px;border-radius:8px;cursor:pointer;font:inherit;font-weight:500}
+nav [role=tab]:hover{background:var(--soft);color:var(--fg)}nav [role=tab][aria-selected=true]{background:var(--accsoft);color:var(--acc);font-weight:600}
 .badge{display:inline-block;min-width:19px;text-align:center;background:var(--bad);color:#fff;border-radius:10px;padding:0 6px;font-size:12px;margin-left:6px;font-weight:600}
 .badge.info{background:var(--acc)}.live{margin-left:auto;color:var(--mut);font-size:13px;display:flex;align-items:center;gap:6px}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block}.dot.on{animation:pulse 1.4s infinite}@keyframes pulse{50%{opacity:.25}}
@@ -89,7 +89,7 @@ html{-webkit-text-size-adjust:100%}.jt,.blabel,.sl{overflow-wrap:anywhere}img,sv
 @media (max-width:760px){
   header.top{gap:6px 10px}header.top h1{font-size:15px}
   header.top nav{order:3;width:100%;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
-  header.top nav::-webkit-scrollbar{display:none}header.top nav button{white-space:nowrap;flex:0 0 auto}
+  header.top nav::-webkit-scrollbar{display:none}header.top nav [role=tab]{white-space:nowrap;flex:0 0 auto}
   .live{margin-left:auto}main{padding:12px}h2{margin-top:20px}
   .cards{grid-template-columns:repeat(2,minmax(0,1fr))}.card b{font-size:22px}
   .jr{margin-left:0;width:100%;flex-wrap:wrap}.steps{gap:6px}.step{flex:1 1 44%;min-width:0}
@@ -99,4 +99,4 @@ html{-webkit-text-size-adjust:100%}.jt,.blabel,.sl{overflow-wrap:anywhere}img,sv
   .tip{max-width:calc(100vw - 16px)}
 }
 @media (max-width:420px){.cards{gap:8px}.card{padding:10px 11px}.job{padding:12px}.panel{padding:12px}.legend{gap:8px 12px}}
-@media (pointer:coarse){header.top nav button{padding:10px 14px}.act{padding:10px 18px}.act.sm{padding:8px 14px}input,select,textarea{font-size:16px}}
+@media (pointer:coarse){header.top nav [role=tab]{padding:10px 14px}.act{padding:10px 18px}.act.sm{padding:8px 14px}input,select,textarea{font-size:16px}}

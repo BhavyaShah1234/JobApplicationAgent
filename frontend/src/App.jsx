@@ -14,15 +14,32 @@ import FetchError from "./components/FetchError.jsx";
 
 const TABS = [["overview", "Overview"], ["jobs", "Jobs"], ["browser", "Browser"], ["questions", "Questions"], ["review", "Review"], ["queue", "Queue"], ["runs", "Runs"], ["outcomes", "Outcomes"], ["start", "Start a run"]];
 
+function currentTab() {
+  const path = location.pathname.replace(/\/+$/, "") || "/";
+  const legacy = ["/", "/index.html"].includes(path) ? location.hash.slice(1) : "";
+  const id = legacy || path.slice(1);
+  return TABS.some(([key]) => key === id) ? id : "overview";
+}
+
 export default function App() {
-  const [tab, setTab] = useState((location.hash || "#overview").slice(1));
+  const [tab, setTab] = useState(currentTab);
   const [config, setConfig] = useState({ read_only: false, novnc: "" });
   const [signedOut, setSignedOut] = useState(false);
   const { data: overview, error: overviewError, updatedAt, reload } = usePoll("/api/overview", 4000);
   useEffect(() => {
-    const changed = () => setTab(TABS.some(([id]) => id === location.hash.slice(1)) ? location.hash.slice(1) : 'overview');
+    const changed = () => {
+      const id = currentTab();
+      const path = "/" + id;
+      if (location.pathname !== path || location.hash) history.replaceState(history.state, "", path);
+      setTab(id);
+    };
+    changed();
+    window.addEventListener('popstate', changed);
     window.addEventListener('hashchange', changed);
-    return () => window.removeEventListener('hashchange', changed);
+    return () => {
+      window.removeEventListener('popstate', changed);
+      window.removeEventListener('hashchange', changed);
+    };
   }, []);
   useEffect(() => {
     get("/api/config").then(setConfig).catch(() => {});
@@ -31,8 +48,9 @@ export default function App() {
     return () => window.removeEventListener("signed-out", out);
   }, []);
   function go(id) {
+    const path = "/" + id;
+    if (location.pathname !== path) history.pushState(null, "", path);
     setTab(id);
-    location.hash = id;
   }
   if (signedOut) return <main><p>Signed out: open the address that `jobagent dashboard` printed.</p></main>;
   const live = overview?.jobs_active > 0;
@@ -43,12 +61,17 @@ export default function App() {
         <h1>Job agent</h1>
         <nav role="tablist">
           {tabs.map(([id, label]) => (
-            <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => go(id)}>
+            <a key={id} href={"/" + id} role="tab" aria-selected={tab === id} onClick={(event) => {
+              if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+                event.preventDefault();
+                go(id);
+              }
+            }}>
               {label}
               {id === "questions" && overview?.questions > 0 && <span className="badge">{overview.questions}</span>}
               {id === "review" && overview?.waiting > 0 && <span className="badge info">{overview.waiting}</span>}
               {id === "jobs" && overview?.jobs_active > 0 && <span className="badge info">{overview.jobs_active}</span>}
-            </button>
+            </a>
           ))}
         </nav>
         <span className="live">
