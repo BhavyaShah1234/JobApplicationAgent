@@ -133,6 +133,42 @@ def test_one_school_portal_instruction_is_read_before_any_extra_row_is_created(p
     assert result['records'][0]['source']=='applicant/education/1/school'
 
 
+def test_delayed_school_row_is_not_added_repeatedly_before_it_renders(page):
+    from jobagent.filling.adapter import _portal_education_facts
+    from jobagent.filling.facts import Fact
+    from jobagent.filling.planned import PlannedFiller
+    page.set_content('''<h1>Application</h1><section><h2>Education</h2>
+      <p>Please ensure you add only your most recent college/university attended.</p>
+      <div id=rows></div><button type=button onclick="window.addClicks++;
+        setTimeout(()=>{const i=window.rowsAdded++;rows.insertAdjacentHTML('beforeend',
+        `<label for=school--${i}>School</label><input id=school--${i} required>`)},900)">Add</button>
+      </section><script>window.addClicks=0;window.rowsAdded=0;</script>''')
+    facts=[Fact('old',['School'],'Older University','applicant/education/0/school',section='Education 1'),
+           Fact('old-date',['End Date'],'2023','applicant/education/0/to',section='Education 1'),
+           Fact('new',['School'],'Latest University','applicant/education/1/school',section='Education 2'),
+           Fact('new-date',['End Date'],'2026','applicant/education/1/to',section='Education 2')]
+    filler=PlannedFiller(facts,lambda _:pytest.fail('Known school must not require assistance'))
+    filler.prepare_sources=lambda _: _portal_education_facts(facts,filler._live.view)
+    result=filler.fill(page,advance_pages=False)
+    page.wait_for_timeout(1000)  # expose any extra clicks whose delayed rows are still queued
+    assert page.evaluate('addClicks') == 1
+    assert page.locator('input').count() == 1
+    assert result['state']=='page_complete' and page.locator('input').input_value()=='Latest University'
+
+
+def test_an_add_control_without_a_new_row_blocks_after_one_click(page,monkeypatch):
+    from jobagent.filling.facts import Fact
+    from jobagent.filling.planned import PlannedFiller
+    page.set_content('''<h1>Application</h1><section><h2>Education</h2>
+      <button type=button onclick="window.clicks=(window.clicks||0)+1">Add</button></section>''')
+    monkeypatch.setattr(PlannedFiller,'ROW_ADD_TIMEOUT_S',0.25)
+    filler=PlannedFiller([Fact('school',['School'],'University','applicant/education',section='Education 1')],
+        lambda _:pytest.fail('A failed Add is a technical blocker, not a missing owner fact'))
+    result=filler.fill(page,advance_pages=False)
+    assert page.evaluate('clicks')==1 and result['state']=='blocked'
+    assert 'stopped before clicking again' in result['blockers'][0]
+
+
 @pytest.mark.parametrize('prefill', ['United States of America (+1)', 'India (+91)', ''])
 def test_search_picker_preserves_correct_phone_prefix_and_can_replace_wrong_or_empty_one(page, prefill):
     from jobagent.filling.facts import compile_facts, resolve

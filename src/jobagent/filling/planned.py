@@ -76,6 +76,7 @@ class Supported(BaseModel):
 
 class PlannedFiller:
     engine_name = 'experimental'
+    ROW_ADD_TIMEOUT_S = 8.0
 
     def __init__(self, facts, ask, model=None, narrative_sources=None, referral_context=None, source_resolver=None, prepare_sources=None):
         self.source_resolver=source_resolver
@@ -344,10 +345,29 @@ class PlannedFiller:
                     prefix=next((x for x in ('education','work experience') if x in group),None)
                     if not prefix:continue
                     desired={norm(f.section) for f in self.facts if norm(f.section).startswith(prefix)}
-                    present={norm(f.section) for f in view.fields if norm(f.section).startswith(prefix)}
+                    present={norm(f.section) for f in view.fields
+                             if f.frame==button['frame'] and norm(f.section).startswith(prefix)}
                     if len(desired)>len(present):
                         view.frames[button['frame']].locator(f'[data-jf-add="{button["id"]}"]').click(timeout=3000)
-                        page.wait_for_timeout(300);added=True;break
+                        # A click can enqueue a render much later than 300 ms.
+                        # Never queue another Add while this one is unconfirmed.
+                        wait_started=time.monotonic();last_capture=float('-inf')
+                        while True:
+                            now=time.monotonic()
+                            if live.changed() or now-last_capture>=0.5:
+                                fresh=live.capture();last_capture=now
+                                current={norm(f.section) for f in fresh.fields
+                                         if f.frame==button['frame'] and norm(f.section).startswith(prefix)}
+                                if len(current)>len(present):
+                                    self.events.append({'event':'entity_row_added','group':prefix,
+                                        'before':len(present),'after':len(current),
+                                        'wait_s':time.monotonic()-wait_started})
+                                    break
+                            if time.monotonic()-wait_started>=self.ROW_ADD_TIMEOUT_S:
+                                return self.result('blocked',records,started,
+                                    [f'{prefix}: a new row did not appear after Add; stopped before clicking again'])
+                            page.wait_for_timeout(100)
+                        added=True;break
                 if added:continue
                 inventory=discovery.inventory()
                 self.events.append({'event':'inventory','round':round_no,**inventory})
