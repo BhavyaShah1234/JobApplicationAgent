@@ -1,0 +1,7 @@
+# Same legal employer under explicitly verified names. Used only for referral CSV lookup.
+# No prefix, substring or fuzzy matches are inferred. Leave empty unless an alias is established.
+# Example:
+# Acme:
+#   aliases: [Acme Technologies]
+#   evidence: https://example.org/company-history
+{}

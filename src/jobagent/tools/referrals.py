@@ -53,16 +53,38 @@ def company_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value.casefold())
 
 
+def company_keys(company: str) -> set[str]:
+    """Exact names plus an explicit, unambiguous same-company alias group; never fuzzy or substring matching."""
+    import yaml
+    key=company_key(company)
+    try:
+        path=get_settings().data_dir/'company_aliases.yaml'
+        data=yaml.safe_load(path.read_text()) or {}
+        if not isinstance(data,dict):return {key}
+        groups=[]
+        for canonical,entry in data.items():
+            if not isinstance(canonical,str) or not isinstance(entry,dict):continue
+            aliases=entry.get('aliases',[])
+            if not isinstance(aliases,list) or any(not isinstance(x,str) for x in aliases):continue
+            names={company_key(x) for x in [canonical,*aliases] if x.strip()}
+            if key in names:groups.append(names)
+        return groups[0] if len(groups)==1 else {key}
+    except (OSError,ValueError,yaml.YAMLError):
+        return {key}
+
+
 def contact_for_company(company: str) -> dict:
     path = get_settings().data_dir / "asu_contacts.csv"
     if not path.exists():
         return {}
 
     matches = []
+    keys=company_keys(company)
 
     with path.open(encoding="utf-8-sig", newline="") as handle:
         for row in csv.DictReader(handle):
-            if company_key(row.get("company", "")) != company_key(company):
+            matched=company_key(row.get("company", ""))
+            if matched not in keys:
                 continue
 
             first = (row.get("first_name") or "").strip()
@@ -77,12 +99,14 @@ def contact_for_company(company: str) -> dict:
                     email = candidate
                     break
 
-            matches.append({
+            matches.append((matched != company_key(company), {
                 "name": name,
                 "first_name": first or (name.split()[0] if name else ""),
                 "last_name": last or (name.split()[-1] if name else ""),
                 "email": email,
-            })
+            }))
+
+    matches=[contact for _,contact in sorted(matches,key=lambda item:item[0])]
 
     return next(
         (contact for contact in matches if contact["name"] and contact["email"]),

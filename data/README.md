@@ -13,6 +13,7 @@ Fill in the real files; git ignores them, so your personal details never get com
 | `preferences.yaml` | Job search: locations, seniority, employment types, exclusions, page limits |
 | `target_roles.yaml` | Roles to find on careers pages (regex patterns + descriptions) |
 | `targets.csv` | Companies to apply to, with optional referral contacts (`referral_consent=yes` required) |
+| `company_aliases.yaml` | Explicit same-company names for referral CSV lookup, with optional evidence notes; ambiguous groups are ignored |
 | `templates/resume.tex`, `templates/cover_letter.tex` | Your LaTeX templates |
 
 `applicant.yaml` replaces the older `personal_info.yaml` and `qa_bank.yaml` (and the relocation / salary parts of
