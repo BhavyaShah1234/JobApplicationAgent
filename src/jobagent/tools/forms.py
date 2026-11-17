@@ -80,7 +80,7 @@ FIELDS_JS = r"""(start) => {
     // Workday: the form field's own label (a list button's aria-label holds its value: "Select One Required")
     const ff = e.closest('[data-automation-id^=formField-]');
     const fl = ff && ff.querySelector(':scope > label, :scope > legend, :scope > fieldset > legend, label');
-    if (fl && caption(fl)) return caption(fl).slice(0, 300);
+    if (fl && caption(fl)) return caption(fl);
     let t = byIds(e.getAttribute('aria-labelledby'), e);
     if (!t && e.id) { const l = e.getRootNode().querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) t = caption(l); }
     if (!t) t = clean(e.getAttribute('aria-label'));
@@ -99,7 +99,7 @@ FIELDS_JS = r"""(start) => {
     if (!t || GENERIC.test(t)) t = nearLabel(e) || (GENERIC.test(t) ? '' : t);
     if (!t) { const p = clean(e.placeholder || e.getAttribute('title') || ''); if (!GENERIC.test(p)) t = p; }
     if (!t) t = around(e, ownOf(e)).replace(/^(select all that apply|select( an?)?( answer| option| one)?)\b\s*/i, '');
-    return t.slice(0, 300); };
+    return t; };
   const ownOf = e => e.tagName === 'SELECT' ? [...e.options].map(o => clean(o.text)) : [clean(e.value)];
   const around = (e, own) => {
     // the nearest container whose text, without the control's own options / value, says something: the question
@@ -120,15 +120,15 @@ FIELDS_JS = r"""(start) => {
     if (blk) {  // the block's own question: a label that isn't one of the boxes' labels
       const ids = new Set([...blk.querySelectorAll('input')].map(b => b.id).filter(Boolean));
       const q = [...blk.querySelectorAll('label, legend')].find(l => !ids.has(l.getAttribute('for')) && !l.querySelector('input') && clean(l.innerText));
-      if (q) return clean(q.innerText).slice(0, 300); }
+      if (q) return clean(q.innerText); }
     const g = e.closest('fieldset, [role=radiogroup], [role=group]');
     if (g) { const lg = g.querySelector('legend');
       const t = (lg && clean(lg.innerText)) || byIds(g.getAttribute('aria-labelledby'), g) || clean(g.getAttribute('aria-label'));
-      if (t) return t.slice(0, 300); }
+      if (t) return t; }
     const labels = [...e.getRootNode().querySelectorAll(`input[name="${CSS.escape(name)}"]`)].map(b => {
       const l = b.closest('label') || (b.id && b.getRootNode().querySelector(`label[for="${CSS.escape(b.id)}"]`));
       return l ? clean(l.innerText) : clean(b.value); });
-    return (around(e, labels) || question(e)).slice(0, 300); };
+    return around(e, labels) || question(e); };
   const section = e => {
     // the nearest heading above the field (e.g. "Work Experience 2", "Voluntary Self-Identification")
     // headings only: a legend is a field's own label (Workday's "To*" date), not a section
@@ -156,8 +156,8 @@ FIELDS_JS = r"""(start) => {
   const star = q => /[*✱∗＊⁎]\s*$|[*✱∗＊⁎]\s|\(required\)/i.test(q||'');
   const required = (e, q) => {
     if(e.required || e.getAttribute('aria-required')==='true' || star(q))return true;
-    // question() truncates display labels. Inspect the same field's original
-    // caption so a long legal definition cannot hide its final required marker.
+    // Inspect the original own caption and its CSS marker, independently of
+    // the field kind's derived label or any shortened display representation.
     const field=e.closest('[data-automation-id^=formField-]');
     const own=field && field.querySelector(':scope > label, :scope > legend, :scope > fieldset > legend, label');
     if(own && (star(caption(own)) || star(getComputedStyle(own,'::after').content.replace(/["']/g,''))))return true;
@@ -242,7 +242,7 @@ FIELDS_JS = r"""(start) => {
     if (btns.length < 2 || !vis(g) || !shown(g) || g.hasAttribute('data-jf')) continue;
     const blk = g.closest('[data-field-path], [data-field-entry-id], fieldset') || g.parentElement;
     const l = blk && [...blk.querySelectorAll('label, legend')].find(x => !x.contains(g) && clean(x.innerText));
-    const q = (l ? clean(l.innerText) : around(btns[0], btns.map(b => clean(b.innerText)))).slice(0, 300);
+    const q = l ? clean(l.innerText) : around(btns[0], btns.map(b => clean(b.innerText)));
     btns.forEach((b, k) => { b.setAttribute('data-jf-opt', String(k)); b.setAttribute('data-jf-btn', '1'); });
     const hidden = blk && blk.querySelector('input');
     add(g, {kind: 'buttons', label: q, required: !!(hidden && hidden.required) || /\*\s*$/.test(q),

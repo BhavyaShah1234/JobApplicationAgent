@@ -58,7 +58,7 @@ def _saved_matches(fields, eligible, company):
         question=norm(field.label)
         if question in matches:continue
         entries=[e for e in eligible if learned.reusable(e,field.label) and
-                 (not needs_entity_binding(field.label,field.section,field.help) or e.get('instructions'))]
+                 (not needs_entity_binding(field.label,field.section,field.help,field.kind) or e.get('instructions'))]
         exact=[e for e in entries if question in [norm(t) for t in [e['question'],*(e.get('seen') or [])]]]
         matches[question]=exact[:3]
         if not exact and entries:pending.append((field,entries))
@@ -176,7 +176,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                     instructions=rule,reference_date=ctx.get('TODAY',''))
             else:
                 from .routing import needs_entity_binding
-                if not needs_entity_binding(q['label'],q.get('section',''),q.get('help','')):
+                if not needs_entity_binding(q['label'],q.get('section',''),q.get('help',''),q.get('kind','')):
                     learned.add(q['label'],q['options'],text,env.get('company',''),env.get('host',''))
                 values[str(q['id'])]=text
             ctx.pop('_experimental_learned_entries',None)

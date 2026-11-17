@@ -14,7 +14,7 @@ from .facts import Decision, Fact, choice, key, norm, resolve, from_fact, scope_
 from .discovery import Discovery
 from .uploads import UploadProof
 from .live_view import LiveView
-from .routing import route,resolve_routed,binding_valid,field_packet,word_limits,unlisted_school,needs_entity_binding
+from .routing import route,resolve_routed,binding_valid,field_packet,word_limits,unlisted_school,needs_entity_binding,DECLARATIONS
 
 
 def read_view(page):
@@ -163,6 +163,14 @@ class PlannedFiller:
                 if f.id not in source_updates:
                     resolved=resolve(f,self.facts)
                     if resolved.value is not None:answers[f.id]=resolved
+        # Source-resolver and answer-sheet shortcuts must respect these same
+        # purpose boundaries; a neighbouring boolean is never a substitute.
+        for f in fields:
+            if routes[f.id].family in DECLARATIONS and answers[f.id].source!='human':
+                answers[f.id]=resolve_routed(f,self.facts)
+                if answers[f.id].value is None:
+                    if f not in missing:missing.append(f)
+                    source_updates[f.id]=answers[f.id]
         for f in missing:
             if answers[f.id].reason in ('missing sponsorship timeframe evidence','explicit owner evidence missing','explicit residency evidence missing'):source_updates[f.id]=answers[f.id]
         # A known fact can still require rendering into the portal's vocabulary.

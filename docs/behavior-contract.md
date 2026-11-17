@@ -17,6 +17,11 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
 - Verify every filled value by reading it back; a required field that is unanswered, unverified, or showing a control's own prompt blocks readiness.
 - Determine requiredness from the original caption bound to the control, before truncating its display text. A long
   definition must not hide its final required marker, and another question's marker must not make a neighbour required.
+- Preserve full explicit question captions for planning and source binding; shorten them only for display/logs.
+  Government referral, government relationship, personal/financial ties, outside work and ethics acknowledgements
+  are separate declarations. Each requires its own exact owner evidence, including its definitions. A neighbouring
+  Yes/No cannot support it, even through a source-resolver or answer-sheet shortcut. A boolean acknowledgement
+  mentioning a manager is distinct from the manager's contact details.
 - Use literal confirmations of a posting's qualifications only for that application, through its current human reply
   or its own answer sheet. Never reuse an old company-wide Yes/No for another role's unstated requirements. Explicit
   instructions to compare each new JD against evidence can still be learned.

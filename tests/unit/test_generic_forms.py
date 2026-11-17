@@ -58,7 +58,7 @@ def test_long_question_keeps_its_own_required_marker_before_display_truncation(p
       <input></fieldset></div>''')
     fields = forms.read_page(page).fields
     assert len(fields) == 2
-    assert len(fields[0].label) <= 300
+    assert len(fields[0].label) > 300 and 'Were you referred?' in fields[0].label
     assert fields[0].required
     assert not fields[1].required
 

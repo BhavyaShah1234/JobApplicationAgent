@@ -8,10 +8,18 @@ import json,re
 from rapidfuzz import fuzz
 from .facts import norm,Decision,Fact,from_fact,choice,entity_scope,scope_allows,owner_only
 
+DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_ack',
+                        'outside_activity','employer_personal_ties'})
+
 
 def family(text):
     q=norm(text)
     rules=[
+      ('government_referral',r'(?:were you|have you been|are you) referred.*government|government.*(?:were you|have you been|are you) referred'),
+      ('government_relationship',r'are you related.*government|do you have.*(?:relatives|family members).*government'),
+      ('ethics_ack',r'(?:please acknowledge|do you acknowledge|confirm your understanding).*?(?:ethics|code of conduct)|(?:ethics|code of conduct).*?(?:please acknowledge|do you acknowledge|confirm your understanding)'),
+      ('employer_personal_ties',r'(?:close|intimate) personal relationships|shared financial interests|personal or business ties'),
+      ('outside_activity',r'(?:do you|will you|are you).*?(?:second job|outside business|secondary employment)'),
       ('external_sharing',r'(?:shar|send|forward|disclos).*?(?:external|partner|third part)'),
       ('clearance_eligibility',r'(?:eligible|eligibility|obtain).*clearance'),
       ('clearance_held',r'(?:hold|have|possess|active).*clearance'),
@@ -89,6 +97,10 @@ def qualification_signature(text,kind):
 
 def same_qualification(field,fact):
     kind=family(field.label)
+    if kind in DECLARATIONS:
+        # These declarations have different subjects and potentially lengthy
+        # definitions. A similar neighbouring Yes/No is not supporting evidence.
+        return any(norm(alias)==norm(field.label) for alias in fact.aliases)
     if kind not in ('experience_years','clearance_held','clearance_eligibility'):return True
     target=qualification_signature(field.label,kind)
     return any(qualification_signature(alias,kind)==target for alias in fact.aliases)
@@ -107,9 +119,12 @@ def contact_party(text):
 
 
 
-def needs_entity_binding(label,section='',help_text=''):
+def needs_entity_binding(label,section='',help_text='',kind=''):
     """A school/reference/employer literal needs its own record, not a global alias."""
     from jobagent.tools.forms import is_identity
+    if not entity_scope(section) and kind in ('select','combobox','radio','buttons','checkbox','checkboxes') and \
+            family(label) in DECLARATIONS:
+        return False  # the candidate's declaration, not an officer/relative/manager's contact component
     return bool(entity_scope(section) or contact_party(label+' '+section+' '+help_text)!='applicant' or
                 (is_identity(label) and family(label) not in ('current_employer','current_title')))
 
@@ -166,7 +181,7 @@ def route(field,facts):
     if kind in ('why_company','project','technical_experience','technical_interests'):
         sources=['owner_rules','resume','jd','company']
     elif kind in ('start_date','signature_date'):sources=['owner_rules','clock']
-    elif kind in ('external_sharing','privacy_consent','future_contact','ai_consent','sms_consent','arbitration','read_ack','event_history','account_status','clearance_eligibility','clearance_held','sponsorship','work_authorization','residency'):
+    elif kind in DECLARATIONS or kind in ('external_sharing','privacy_consent','future_contact','ai_consent','sms_consent','arbitration','read_ack','event_history','account_status','clearance_eligibility','clearance_held','sponsorship','work_authorization','residency'):
         # A different owner's answer with the same boolean value is not evidence.
         found=[x for x in found if fact_family(x)==kind or (kind in ('arbitration','read_ack') and x.id.startswith('application.answer.'))]
         sources=['owner']
@@ -177,10 +192,18 @@ def route(field,facts):
 def resolve_routed(field,facts,route_info=None):
     r=route_info or route(field,facts);bank={x.id:x for x in facts};selected=[bank[i] for i in r.fact_ids]
     owner=[x for x in selected if x.authority=='owner']
+    if r.family in DECLARATIONS:
+        # A current-job answer sheet takes precedence over reusable sources.
+        # Equivalent duplicate facts are fine; conflicting declarations are not.
+        scoped=[x for x in owner if x.id.startswith('application.answer.')]
+        declared=[from_fact(field,x) for x in (scoped or owner) if not x.record and not x.instructions]
+        values={norm(x.value) for x in declared if x.value is not None}
+        if len(values)==1 and all(x.value is not None for x in declared):return declared[0]
+        return Decision(None,reason='explicit owner evidence missing' if not declared else 'conflicting owner declarations')
     if r.family in ('email','phone','preferred_name','legal_name','work_authorization','portfolio_link','pronouns','gender','race','veteran','disability','hispanic'):selected=owner
     if r.family=='external_sharing' and not owner:
         return Decision(choice(field,['No']),'policy:external-sharing-opt-out',reason='No purpose-specific permission; do not opt in to external sharing')
-    if r.family in ('clearance_eligibility','arbitration','read_ack','event_history','account_status','privacy_consent','future_contact','sms_consent','ai_consent') and not owner:
+    if r.family in ('government_referral','government_relationship','ethics_ack','clearance_eligibility','arbitration','read_ack','event_history','account_status','privacy_consent','future_contact','sms_consent','ai_consent') and not owner:
         return Decision(None,reason='explicit owner evidence missing')
     if r.family=='clearance_held' and len(selected)==1 and norm(selected[0].value) in ('none','no','false'):
         return Decision(choice(field,['No']),selected[0].source,selected[0].id)
@@ -243,14 +266,14 @@ def resolve_routed(field,facts,route_info=None):
             if whole in field.options:return Decision(whole,fact.source,fact.id,'completed whole years')
         if re.search(r'\byear\b',norm(field.label)) and entity_scope(field.section):
             return from_fact(replace(field,format='YYYY'),fact)
-        if r.family in ('school','degree','discipline','current_employer','current_title','country','on_site','offer_deadline','portfolio_link','pronouns','languages','gender','race','veteran','disability','hispanic','experience_years','clearance_eligibility','clearance_held','start_date','signature_date','email','phone','preferred_name','legal_name','location','gpa','work_authorization','external_sharing','privacy_consent','future_contact','sms_consent','ai_consent','arbitration','read_ack'):
+        if r.family in ('government_referral','government_relationship','ethics_ack','school','degree','discipline','current_employer','current_title','country','on_site','offer_deadline','portfolio_link','pronouns','languages','gender','race','veteran','disability','hispanic','experience_years','clearance_eligibility','clearance_held','start_date','signature_date','email','phone','preferred_name','legal_name','location','gpa','work_authorization','external_sharing','privacy_consent','future_contact','sms_consent','ai_consent','arbitration','read_ack'):
             return from_fact(field,fact)
     return None
 
 
 def binding_valid(field,bound,value,route_info):
     if any(x.id not in route_info.fact_ids for x in bound):return False
-    protected={'external_sharing','clearance_eligibility','clearance_held','arbitration','read_ack','privacy_consent','future_contact','sms_consent','ai_consent','sponsorship','work_authorization'}
+    protected=DECLARATIONS | {'external_sharing','clearance_eligibility','clearance_held','arbitration','read_ack','privacy_consent','future_contact','sms_consent','ai_consent','sponsorship','work_authorization'}
     if route_info.family in protected:
         if not bound or any(fact_family(x)!=route_info.family for x in bound):return False
         if any(x.authority!='owner' for x in bound):return False
