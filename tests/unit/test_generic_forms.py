@@ -202,6 +202,28 @@ def test_a_required_year_makes_its_composite_required_even_if_the_month_is_optio
     assert len(fields)==1 and fields[0].kind=='date_parts' and fields[0].required
 
 
+def test_an_explicit_skip_survives_a_same_question_dom_replacement(page):
+    from jobagent.filling.planned import PlannedFiller
+    page.set_content('<h1>Application</h1><label for=editor>Preferred editor</label><input id=editor>')
+    prompts=[]
+    filler=PlannedFiller([],lambda qs:prompts.append(qs) or {})
+    assert filler.fill(page,advance_pages=False)['state']=='page_complete'
+    page.locator('#editor').evaluate("e=>e.outerHTML='<input id=editor>'")
+    assert filler.fill(page,advance_pages=False)['state']=='page_complete'
+    assert len(prompts)==1 and page.locator('#editor').input_value()==''
+
+
+def test_a_new_question_after_a_skip_still_gets_its_own_owner_prompt(page):
+    from jobagent.filling.planned import PlannedFiller
+    page.set_content('<h1>Application</h1><label for=editor>Preferred editor</label><input id=editor>')
+    prompts=[];filler=PlannedFiller([],lambda qs:prompts.append(qs) or {})
+    filler.fill(page,advance_pages=False)
+    page.locator('label').evaluate("e=>e.textContent='Preferred conference'")
+    filler.fill(page,advance_pages=False)
+    assert len(prompts)==2
+    assert prompts[0][0]['label']=='Preferred editor' and prompts[1][0]['label']=='Preferred conference'
+
+
 @pytest.mark.parametrize('prefill', ['United States of America (+1)', 'India (+91)', ''])
 def test_search_picker_preserves_correct_phone_prefix_and_can_replace_wrong_or_empty_one(page, prefill):
     from jobagent.filling.facts import compile_facts, resolve
