@@ -17,6 +17,7 @@ import socket
 import subprocess
 import sys
 import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -52,11 +53,12 @@ NOT_BUILT = ("<!doctype html><meta charset=utf-8><title>Job agent</title><body s
 COOKIE = "jobagent_dashboard"
 THROUGH = ("scrape", "tailor", "apply")          # a started run never goes past the review screen
 MAX_BODY = 64_000
+_ACTIVE_RUNS = {}
 SIGN_IN = """<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Job agent</title>
 <body style="font:16px system-ui;max-width:640px;margin:48px auto;padding:0 16px;line-height:1.5">
 <h1 style="font-size:20px">The dashboard is running, but this page needs its access link</h1>
 <p>The address ends in <code>?t=</code> and a long token. It was printed when the dashboard started:</p>
-<pre style="background:#eee;padding:10px;overflow:auto">docker logs jobagent-dashboard 2>&amp;1 | grep "dashboard: http"</pre>
+<pre style="background:#eee;padding:10px;overflow:auto">scripts/dashboard.sh url</pre>
 <p>or, when it was started inside the agent container:</p>
 <pre style="background:#eee;padding:10px;overflow:auto">docker exec jobagent jobagent dashboard --print-url</pre>
 <p>Open that address once; your browser then remembers it.</p></body>"""
@@ -87,7 +89,8 @@ def load_token(settings) -> str:
         return _EPHEMERAL.setdefault(str(p), t)
 
 
-def start_run(settings, inputs, through: str, limit: int, popen=subprocess.Popen) -> dict:
+def start_run(settings, inputs, through: str, limit: int, popen=subprocess.Popen, *,
+              browser_mode='auto', no_ats=False, force=False) -> dict:
     """`jobagent run INPUTS --through ... --limit ...` as a detached process. ValueError for anything not allowed."""
     if through not in THROUGH:
         raise ValueError(f"through must be one of {', '.join(THROUGH)} (the dashboard never submits)")
@@ -95,19 +98,61 @@ def start_run(settings, inputs, through: str, limit: int, popen=subprocess.Popen
         raise ValueError("give between 1 and 10 inputs (job URLs, company names or a file name)")
     clean = []
     for x in inputs:
-        x = str(x).strip()
+        if not isinstance(x, str):
+            raise ValueError('each input must be text')
+        x = x.strip()
         if not x or len(x) > 500 or "\n" in x or "\r" in x or x.startswith("-"):
             raise ValueError(f"not an acceptable input: {x[:40]!r}")
         clean.append(x)
-    limit = int(limit)
-    if not 1 <= limit <= 20:
+    if type(limit) is not int or not 1 <= limit <= 20:
         raise ValueError("limit must be between 1 and 20")
+    if browser_mode not in ('auto', 'docker', 'desktop') or type(no_ats) is not bool or type(force) is not bool:
+        raise ValueError('invalid browser mode or run options')
+    active = _ACTIVE_RUNS.get(str(settings.state_dir.resolve()))
+    if active is not None and active.poll() is None:
+        raise ValueError('a dashboard run is already active; follow it under Jobs or answer its Questions first')
     exe = shutil.which("jobagent")
     cmd = [exe] if exe else [sys.executable, "-m", "jobagent.main"]
-    cmd += ["run", *clean, "--through", through, "--limit", str(limit)]
-    proc = popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
-                 cwd=str(settings.state_dir.parent) if settings.state_dir.parent.is_dir() else None)
-    return {"pid": getattr(proc, "pid", 0), "command": " ".join(cmd), "note": "watch it under Runs; it stops at the review screen"}
+    cmd += ["run", *clean, "--through", through, "--limit", str(limit), '--browser-mode', browser_mode]
+    if no_ats:
+        cmd.append('--no-ats')
+    if force:
+        cmd.append('--force')
+    from jobagent.log import RunLog
+    run_id = uuid.uuid4().hex[:12]
+    directory = settings.state_dir / 'logs'
+    directory.mkdir(parents=True, exist_ok=True)
+    output = directory / f'dashboard-launch-{run_id}.stdout.log'
+    logger = RunLog('dashboard-run', run_id, directory=directory, quiet=True)
+    logger.info('Starting an unsubmitted run; output: ' + output.name)
+    try:
+        with output.open('w') as stream:
+            proc = popen(cmd, stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT,
+                         start_new_session=True, cwd=str(settings.state_dir.parent))
+    except Exception as exc:
+        logger.error(f'Could not start the run: {type(exc).__name__}')
+        logger.close()
+        raise ValueError('could not start the job agent; see Runs') from exc
+    if callable(getattr(proc, 'poll', None)) and callable(getattr(proc, 'wait', None)):
+        _ACTIVE_RUNS[str(settings.state_dir.resolve())] = proc
+
+        def watch():
+            try:
+                while True:
+                    try:
+                        code = proc.wait(timeout=30)
+                        break
+                    except subprocess.TimeoutExpired:
+                        logger._record('heartbeat', 'dashboard-run', 'Run is active; see job progress and questions')
+                logger._record('info' if code == 0 else 'error', 'dashboard-run', f'Run exited with code {code}; output: {output.name}')
+                logger._record('end', 'dashboard-run', 'Run finished', {'exit_code': code})
+            finally:
+                logger.close()
+        threading.Thread(target=watch, daemon=True).start()
+    else:
+        logger.close()  # a test launcher does not own a real child to monitor
+    return {"pid": getattr(proc, "pid", 0), 'run_id': run_id, "command": " ".join(cmd),
+            "note": "watch it under Jobs and Runs; it stops at the review screen"}
 
 
 class Server(ThreadingHTTPServer):
@@ -219,14 +264,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self._answer(s, body))
             if path == "/api/run":
                 with self.server.lock:
-                    return self._json(start_run(s, body.get("inputs"), str(body.get("through", "apply")), body.get("limit", 5), self.server.popen))
+                    return self._json(start_run(s, body.get("inputs"), str(body.get("through", "apply")), body.get("limit", 5), self.server.popen,
+                        browser_mode=body.get('browser_mode', 'auto'), no_ats=body.get('no_ats', False), force=body.get('force', False)))
         except (ValueError, LookupError) as exc:
             return self._json({"error": str(exc)}, 400)
         self._json({"error": "not found"}, 404)
 
     @staticmethod
     def _answer(settings, body: dict) -> dict:
-        from jobagent.tools.hitl import Hitl
+        from jobagent.tools.hitl import Hitl, submission_prompt
         rid, value = str(body.get("id", "")), body.get("value")
         if not rid or not isinstance(value, str) or len(value) > 5000:
             raise ValueError("give the question id and a text answer (at most 5000 characters)")
@@ -236,6 +282,8 @@ class Handler(BaseHTTPRequestHandler):
             raise LookupError("that question is not waiting any more")
         if req.secret:
             raise ValueError("this question asks for a secret: answer it in a terminal (`jobagent hitl answer " + rid + "`), never in a web page")
+        if req.terminal_only or submission_prompt(req.prompt):
+            raise ValueError('submission approval must be answered in a terminal; this dashboard cannot approve or send an application')
         h.answer(rid, value)
         return {"answered": rid}
 

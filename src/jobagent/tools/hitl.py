@@ -7,6 +7,7 @@ Secret answers go straight into the vault; only a marker is written to the answe
 
 import json
 import os
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -15,6 +16,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 SECRET_MARKER = "<stored in vault>"
+
+
+def process_namespace():
+    try:
+        return os.readlink('/proc/self/ns/pid')
+    except OSError:
+        return ''
+
+
+def submission_prompt(prompt):
+    """Recognize approval requests written before terminal_only was recorded."""
+    return bool(re.search(r"answer\s+['\"]approve['\"]\s+to\s+submit", prompt, re.I))
 
 
 class HitlTimeout(TimeoutError):
@@ -32,6 +45,9 @@ class Request:
     created: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
     # Process waiting for the answer; requests of dead processes (killed runs) are pruned.
     pid: int = field(default_factory=os.getpid)
+    pid_namespace: str = ''
+    terminal_only: bool = False
+    context: dict = field(default_factory=dict)
 
 
 def _alive(pid: int) -> bool:
@@ -62,11 +78,20 @@ class Hitl:
         done_when: Callable[[], bool] | None = None,
         timeout_s: float | None = None,
         poll_s: float = 2.0,
+        terminal_only: bool = False,
     ) -> str:
         """Block until the user answers (or `done_when()` turns true). Returns the answer ("" if auto-resolved)."""
-        req = Request(id=uuid.uuid4().hex[:8], prompt=prompt, secret=secret, default=default, vault_target=vault_target)
+        from jobagent.progress import metadata
+        context = metadata()
+        req = Request(id=uuid.uuid4().hex[:8], prompt=prompt, secret=secret, default=default, vault_target=vault_target,
+                      terminal_only=terminal_only or submission_prompt(prompt), context=context,
+                      pid_namespace=process_namespace())
         _write_atomic(self.pending / f"{req.id}.json", json.dumps(asdict(req)))
-        from jobagent.log import host_command
+        from jobagent.log import host_command, progress, _current
+        logger = self.notify if callable(getattr(self.notify, 'progress', None)) else _current.get()
+        stage = context.get('stage')
+        if stage:
+            progress(logger, stage, 'waiting', 'Waiting for your answer', question_id=req.id)
         # the form you can paste on the host; a secret is typed at a hidden prompt, so that command needs stdin and a terminal
         hint = host_command(["jobagent", "hitl", "answer", req.id] + ([] if secret else ["<answer>"]), interactive=secret)
         try:
@@ -89,6 +114,8 @@ class Hitl:
                 time.sleep(poll_s)
         finally:
             (self.pending / f"{req.id}.json").unlink(missing_ok=True)
+            if stage:
+                progress(logger, stage, 'running', 'Resuming after question', question_id=req.id)
 
     # --- user side --------------------------------------------------------------
     def list_pending(self) -> list[Request]:
@@ -98,6 +125,9 @@ class Hitl:
                 req = Request(**json.loads(p.read_text()))
             except (json.JSONDecodeError, TypeError, FileNotFoundError):
                 continue  # being written or removed right now; seen on the next poll
+            if req.pid_namespace and req.pid_namespace != process_namespace():
+                reqs.append(req)  # the filesystem queue can be answered across PID namespaces
+                continue
             if _alive(req.pid):
                 reqs.append(req)
             else:  # the asking run was killed before it could clean up

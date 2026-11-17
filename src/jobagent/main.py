@@ -5,6 +5,7 @@ import json
 
 import typer
 from jobagent.log import runlog
+from jobagent.progress import job_command
 from rich.console import Console
 from rich.table import Table
 
@@ -422,6 +423,7 @@ def _skill_inputs(d, s) -> str:
 
 
 @app.command("tailor")
+@job_command("documents")
 def tailor_cmd(
     ctx: typer.Context,
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> from `jobagent scrape`."),
@@ -627,6 +629,7 @@ def documents_cmd(job_dir: str = typer.Argument(..., help="outputs/<company>/<jo
 
 
 @app.command("cover-letter")
+@job_command("documents")
 def cover_letter_cmd(
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with a tailored resume.tex."),
     company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md)."),
@@ -654,6 +657,7 @@ def cover_letter_cmd(
 
 
 @app.command("ats")
+@job_command("documents")
 def ats_cmd(
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with resume.pdf and jd.txt."),
     site: list[str] = typer.Option(None, "--site", help="Registered ATS checker; repeat for multiple sites."),
@@ -808,6 +812,7 @@ def portal_logout_cmd(url: str = typer.Argument(..., help="A posting or career-s
 
 
 @app.command("apply")
+@job_command("apply")
 def apply_cmd(
     ctx: typer.Context,
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with jd.json, resume.pdf (and cover_letter.pdf)."),
@@ -854,6 +859,10 @@ def apply_cmd(
     try:
         modes = ('docker','desktop') if browser_mode == 'auto' else (browser_mode,)
         for mode in modes:
+            from jobagent.progress import update
+            from jobagent.log import progress
+            update(browser_mode=mode)
+            progress(log, 'apply', 'running', 'Opening application', browser_mode=mode)
             log(f'apply: browser={mode}; planner=Voyager {model or "configured writer"}')
             related = [u for u in (jd.get('source_url'), *(desktop_allow_origin or [])) if u]
             with open_inbox() as inbox, open_session(mode, url, related) as sess:

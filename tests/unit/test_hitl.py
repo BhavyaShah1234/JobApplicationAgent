@@ -6,6 +6,18 @@ import pytest
 from jobagent.tools.hitl import SECRET_MARKER, Hitl, HitlTimeout
 
 
+def test_pending_requests_in_another_pid_namespace_are_not_pruned(tmp_path, monkeypatch):
+    import json
+    from dataclasses import asdict
+    from jobagent.tools import hitl as module
+    h = Hitl(tmp_path, notify=lambda _: None)
+    req = module.Request(id='foreign', prompt='fixture', pid=99999999, pid_namespace='other-namespace')
+    p = h.pending / 'foreign.json'
+    p.write_text(json.dumps(asdict(req)))
+    monkeypatch.setattr(module, '_alive', lambda _: pytest.fail('PID belongs to a different namespace'))
+    assert [r.id for r in h.list_pending()] == ['foreign'] and p.exists()
+
+
 def _answer_when_pending(hitl: Hitl, value: str):
     def run():
         for _ in range(200):

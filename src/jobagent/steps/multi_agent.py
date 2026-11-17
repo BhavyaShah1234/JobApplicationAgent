@@ -643,7 +643,9 @@ def score(state: State) -> dict:
     f, tex, problems, pages, err = render(state)
     rnd = state.get("ats_round", 0)
     best = state.get("best")
-    progress(log, "documents", "running", "ATS baseline" if rnd == 0 else "ATS round", rnd, ATS_ROUNDS, "scoring on the checker sites")
+    progress(log, "documents", "running", ("ATS baseline" if rnd == 0 else "ATS round") if ctx['sites'] else 'Document validation',
+             rnd if ctx['sites'] else None, ATS_ROUNDS if ctx['sites'] else None,
+             'scoring on the checker sites' if ctx['sites'] else 'Optional ATS scans skipped')
     if pages != 1 or err:
         log(f"ats round {rnd}: page not valid ({pages} pages {err}); rolled back to the best version")
         return _rollback(state, "UNDONE: the edit broke the one-page layout; keep lines short") if best else \
@@ -694,7 +696,9 @@ def score(state: State) -> dict:
     avg = A.average({name: value for name, value in ev["scores"].items() if name not in budget_sites})
     n_layout = len(layout.check(job_dir / "resume.pdf").issues)
     log(f"ats round {rnd}: unlimited-site comparison average {avg} {ev['scores']}, layout issues {n_layout}, hard issues {hard}")
-    progress(log, "documents", "running", "ATS baseline" if rnd == 0 else "ATS round", rnd, ATS_ROUNDS, f"average {avg} (target {TARGET:g})")
+    progress(log, "documents", "running", ("ATS baseline" if rnd == 0 else "ATS round") if ctx['sites'] else 'Document validation',
+             rnd if ctx['sites'] else None, ATS_ROUNDS if ctx['sites'] else None,
+             f'average {avg} (target {TARGET:g})' if ctx['sites'] else 'Optional ATS scans skipped')
     if best:
         better = (len(hard) < len(best["hard"]) or
                   (len(hard) == len(best["hard"]) and

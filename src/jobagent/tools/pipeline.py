@@ -105,8 +105,15 @@ class Pipeline:
             from jobagent.filling import select_strategy
             filling_strategy=select_strategy(filling_strategy)
         root = (self.settings.state_dir / "workflows" / hashlib.sha256(url.encode()).hexdigest()[:24]).resolve()
-        with bundle.job_lock(root, "pipeline"):
-            return self._run(url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy, ignore_eligibility)
+        from jobagent.progress import execution
+        with bundle.job_lock(root, "pipeline"), execution(new=True, url=url):
+            try:
+                return self._run(url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy, ignore_eligibility)
+            except BaseException as exc:
+                from jobagent.progress import metadata
+                from jobagent.log import progress
+                progress(self.log, metadata().get('stage', 'scrape'), 'failed', detail=type(exc).__name__)
+                raise
 
     def _run(self, url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy=None, ignore_eligibility=False):
         from jobagent.tools import research, places
@@ -117,6 +124,8 @@ class Pipeline:
         meta = {"job": "", "title": "", "company": ""}
 
         def P(stage, status="running", **kw):                      # where this job is, for the dashboard (run log only)
+            from jobagent.progress import update
+            update(stage=stage, plan=plan, url=url, **meta)
             progress(self.log, stage, status, plan=plan, url=url, **meta, **kw)
         P("scrape")
         wf = W.Workflow(root)
@@ -143,6 +152,8 @@ class Pipeline:
             return PipelineResult(row["status"] if row is not None else "failed", data["job_dir"], data["code"] or 1,
                                   row["notes"] if row is not None else "scrape did not produce a posting")
         d = Path(data["job_dir"])
+        from jobagent.progress import update
+        update(job_dir=str(d.resolve()))
         meta.update(job=d.name, title=row["title"] or "", company=row["company"] or "")
         P("scrape", "done")
         current = W.Workflow(d)
@@ -201,6 +212,7 @@ class Pipeline:
         result = fresh_result(d, started)
         if stage == "submit":
             sent = (result or {}).get("submission", {})
+            P(stage, 'done' if sent.get('state') in ('submitted', 'confirmed') else 'blocked', detail=sent.get('state', 'failed'))
             return PipelineResult(sent.get("state", "failed"), str(d), code, sent.get("message", ""))
         out = outcome_of_apply(result, code)
         final = PipelineResult(*(out[:1] if out else ("unavailable",)), job_dir=str(d), code=code, note=out[1] if out else "posting unavailable")

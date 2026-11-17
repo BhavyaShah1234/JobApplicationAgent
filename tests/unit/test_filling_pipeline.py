@@ -12,6 +12,18 @@ from test_filling_strategy import world
 def no_questions(_):pytest.fail('All required facts were provided')
 
 
+def test_dashboard_telemetry_failure_cannot_turn_an_accepted_field_into_a_fill_failure(world, monkeypatch):
+    world.setup('<label for=email>Email</label><input id=email type=email required>')
+    world.page.goto('https://fixture.test/apply')
+    def broken_progress(*args, **kwargs):
+        raise RuntimeError('fixture telemetry failure')
+    monkeypatch.setattr('jobagent.log.progress', broken_progress)
+    result = PlannedFiller([Fact('email', ['Email'], 'fixture@example.test', 'applicant/contact')], no_questions).fill(
+        world.page, advance_pages=False)
+    assert result['state'] == 'page_complete'
+    assert world.page.locator('#email').input_value() == 'fixture@example.test'
+
+
 def test_a_reader_refresh_cannot_redirect_school_answer_into_degree(world):
     world.setup('<input id=transient><label for=school>School</label><input id=school><label for=degree>Degree</label><input id=degree>')
     world.page.goto('https://fixture.test/apply');old=forms.read_page(world.page);school=old.fields[1]

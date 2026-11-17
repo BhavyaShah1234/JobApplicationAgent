@@ -129,6 +129,92 @@ def test_answering_a_question_writes_the_answer_but_a_secret_is_refused(env):
     assert call(srv, "POST", "/api/hitl/answer", {"id": "dem0a1b2", "value": 5})[0] == 400
 
 
+@pytest.mark.parametrize('legacy', [True, False])
+def test_generic_answer_route_cannot_approve_submission(env, legacy):
+    from dataclasses import asdict
+    from jobagent.tools.hitl import Request
+    s, srv, _ = env
+    req = Request(id='approval1', prompt="Review the application, then answer 'approve' to SUBMIT it or 'skip'.")
+    body = asdict(req)
+    if legacy:
+        body.pop('terminal_only', None)
+    else:
+        body['terminal_only'] = True
+    (s.state_dir / 'hitl/pending/approval1.json').write_text(json.dumps(body))
+    code, response = call(srv, 'POST', '/api/hitl/answer', {'id': req.id, 'value': 'approve'})
+    assert code == 400 and 'terminal' in response['error']
+    assert not (s.state_dir / 'hitl/answers/approval1.json').exists()
+    assert next(q for q in data.hitl_pending(s) if q['id'] == req.id)['terminal_only']
+
+
+def test_human_questions_are_read_without_pruning_other_namespaces(env, monkeypatch):
+    from dataclasses import asdict
+    from jobagent.tools import hitl
+    s, _, _ = env
+    req = hitl.Request(id='foreign1', prompt='Fixture question', pid=99999999, pid_namespace='different-runtime')
+    p = s.state_dir / 'hitl/pending/foreign1.json'
+    p.write_text(json.dumps(asdict(req)))
+    monkeypatch.setattr(hitl, '_alive', lambda _: pytest.fail('foreign PID namespaces cannot be checked here'))
+    assert any(q['id'] == req.id for q in data.hitl_pending(s))
+    assert p.exists()
+
+
+@pytest.mark.parametrize('limit', [None, True, 1.5, '2'])
+def test_invalid_run_limit_returns_json_error_instead_of_crashing(env, limit):
+    _, srv, started = env
+    assert call(srv, 'POST', '/api/run', {'inputs': ['Fixture'], 'limit': limit})[0] == 400
+    assert not started
+
+
+def test_started_run_keeps_browser_and_optional_scan_choices(env):
+    _, srv, started = env
+    code, _ = call(srv, 'POST', '/api/run', {'inputs': ['Fixture'], 'no_ats': True, 'force': True, 'browser_mode': 'auto'})
+    assert code == 200
+    cmd = started[0][0]
+    assert '--no-ats' in cmd and '--force' in cmd and cmd[cmd.index('--browser-mode') + 1] == 'auto'
+
+
+def test_real_child_failure_is_visible_and_output_is_retained(tmp_path):
+    import subprocess
+    import sys
+    import time
+    from jobagent.dashboard.server import start_run
+    s = Settings(state_dir=tmp_path / 'state', data_dir=tmp_path / 'data', outputs_dir=tmp_path / 'outputs')
+
+    def launcher(cmd, **kwargs):
+        return subprocess.Popen([sys.executable, '-c', "print('fixture startup failure'); raise SystemExit(7)"], **kwargs)
+
+    start_run(s, ['Fixture'], 'scrape', 1, popen=launcher)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        rows = data.runs(s)
+        if rows and rows[0]['state'] == 'failed':
+            break
+        time.sleep(.02)
+    assert rows[0]['state'] == 'failed'
+    assert 'fixture startup failure' in next((s.state_dir / 'logs').glob('*.stdout.log')).read_text()
+
+
+def test_an_active_dashboard_child_cannot_be_started_twice(tmp_path):
+    import subprocess
+    import sys
+    s = Settings(state_dir=tmp_path / 'state', data_dir=tmp_path / 'data', outputs_dir=tmp_path / 'outputs')
+    children = []
+
+    def launcher(cmd, **kwargs):
+        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(1)'], **kwargs)
+        children.append(child)
+        return child
+
+    start_run(s, ['Fixture'], 'scrape', 1, popen=launcher)
+    try:
+        with pytest.raises(ValueError, match='already active'):
+            start_run(s, ['Fixture'], 'scrape', 1, popen=launcher)
+        assert len(children) == 1
+    finally:
+        children[0].wait(timeout=5)
+
+
 def test_a_started_run_stops_at_the_review_screen(env):
     s, srv, started = env
     code, out = call(srv, "POST", "/api/run", {"inputs": ["Example Robotics", "https://jobs.example.test/1"], "through": "apply", "limit": 3})
@@ -362,8 +448,10 @@ def test_analytics_funnel_skip_reasons_and_latency_come_from_the_database(tmp_pa
     assert {p["place"] for p in a["skip_places"]} & {"London", "Toronto", "Dublin"}
     assert len(a["timeline"]) == 45 and sum(d["submitted"] for d in a["timeline"]) >= 20 and sum(d["found"] for d in a["timeline"]) > 50
     assert a["latency"]["fill_to_submit_h"] is not None and a["latency"]["n_submit"] >= 20
-    assert a["ats"]["jobs"] == 24 and {x["site"] for x in a["ats"]["by_site"]} == {"autoapplymax", "jobalytics", "hireflow"}
-    assert sum(x["n"] for x in a["ats"]["hist"]) == 24 and len(a["score_hist"]) == 6
+    # The legacy demo rows have no PDF/JD identity. Do not fabricate a current
+    # resume average from unrelated sites or unidentifiable historical scans.
+    assert a['ats']['jobs'] == 0 and a['ats']['incomplete'] == 24 and a['ats']['by_site'] == []
+    assert sum(x["n"] for x in a["ats"]["hist"]) == 0 and len(a["score_hist"]) == 6
 
 
 def test_outcome_rates_carry_their_sample_size_and_small_groups_are_flagged(tmp_path):

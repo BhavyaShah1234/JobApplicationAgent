@@ -153,7 +153,9 @@ class RunLog:
         ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             self._file.write(f"{ts} {level:<5} [{step}] {text}\n")
-            rec = {"ts": ts, "run": self.run_id, "cmd": self.step, "job": self.job, "level": level, "step": step, "msg": text}
+            from jobagent.progress import metadata
+            rec = {"ts": ts, "time_ns": time.time_ns(), "pid": os.getpid(), "run": self.run_id,
+                   "cmd": self.step, "job": self.job, "level": level, "step": step, "msg": text, **metadata()}
             if extra:
                 rec.update({k: v for k, v in extra.items() if v not in (None, "")})          # e.g. a progress record names its own job
             self._jsonl.write(json.dumps(rec, default=str) + "\n")
@@ -281,7 +283,9 @@ def progress(log, stage: str, status: str = "running", label: str = "", i: int |
     fn = getattr(log, "progress", None)
     if callable(fn):
         try:
-            fn(stage, status, label, i, n, detail, **extra)
+            from jobagent.progress import metadata
+            context = {k: v for k, v in metadata().items() if k not in {'stage', 'status', 'label', 'i', 'n', 'detail'}}
+            fn(stage, status, label, i, n, detail, **(context | extra))
         except Exception:
             pass
 

@@ -84,7 +84,8 @@ def test_each_run_writes_a_plain_log_and_a_jsonl_twin(tmp_path):
     assert rows[-1]["level"] == "end"                                       # the closing record the dashboard uses
     rows = rows[:-1]
     assert [(r["level"], r["step"]) for r in rows] == [("ok", "tailor"), ("warn", "tailor")]
-    assert all(set(r) == {"ts", "run", "cmd", "job", "level", "step", "msg"} for r in rows)
+    assert all({"ts", "run", "cmd", "job", "level", "step", "msg", "time_ns", "pid"} <= set(r) for r in rows)
+    assert all(isinstance(r['time_ns'], int) and r['pid'] > 0 for r in rows)
     assert "\x1b" not in log.path.read_text()
 
 

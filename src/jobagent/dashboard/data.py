@@ -98,13 +98,28 @@ def review(settings, conn=None) -> list[dict]:
 
 def hitl_pending(settings) -> list[dict]:
     """Questions the agent is waiting on. A secret is listed (so you know to answer it) but is answered only in a terminal."""
-    from jobagent.tools.hitl import Hitl
-    try:
-        reqs = Hitl(settings.state_dir / "hitl", lambda m: None).list_pending()
-    except OSError:
-        return []
-    return [{"id": r.id, "prompt": r.prompt, "secret": bool(r.secret), "default": r.default, "created": r.created,
-             "terminal_command": f"jobagent hitl answer {r.id}" + ("" if r.secret else " '<answer>'")} for r in reqs]
+    from jobagent.tools.hitl import Request, _alive, process_namespace, submission_prompt
+    from jobagent.log import host_command
+    root = settings.state_dir / 'hitl'
+    rows = []
+    # A viewer may run in a different PID namespace or have read-only mounts.
+    # Reading it must never prune an active worker's request or create folders.
+    for p in (root / 'pending').glob('*.json'):
+        try:
+            r = Request(**json.loads(p.read_text()))
+        except (OSError, ValueError, TypeError):
+            continue
+        if (root / 'answers' / p.name).exists():
+            continue
+        if r.pid_namespace and r.pid_namespace == process_namespace() and not _alive(r.pid):
+            continue
+        terminal = r.secret or r.terminal_only or submission_prompt(r.prompt)
+        rows.append({'id': r.id, 'prompt': r.prompt, 'secret': bool(r.secret),
+                     'terminal_only': terminal, 'context': r.context,
+                     'default': None if r.secret else r.default, 'created': r.created,
+                     'terminal_command': host_command(['jobagent', 'hitl', 'answer', r.id], interactive=r.secret)
+                        + ('' if r.secret else " '<answer>'")})
+    return sorted(rows, key=lambda r: r['created'])
 
 
 def _parse_log(path: Path) -> list[dict]:
@@ -145,6 +160,11 @@ def runs(settings, limit: int = 60) -> list[dict]:
         quiet_s = now - p.stat().st_mtime
         state = ("finished" if any(r.get("level") == "end" for r in recs) else
                  "running" if quiet_s < IDLE_AFTER_S else "waiting" if quiet_s < STALLED_AFTER_S else "stalled")
+        final = next((r for r in reversed(recs) if r.get('level') == 'progress' and r.get('status') in ('done', 'failed', 'blocked')), None)
+        if final and state == 'finished':
+            state = 'finished' if final['status'] == 'done' else final['status']
+        if any(r.get('level') == 'end' and r.get('exit_code') not in (None, 0) for r in recs):
+            state = 'failed'
         out.append({"id": p.stem, "run": body[0].get("run", ""), "step": body[0].get("cmd") or body[0].get("step", ""), "job": body[0].get("job", ""),
                     "started": body[0].get("ts", ""), "last": body[-1].get("ts", ""), "lines": len(body), "errors": levels.count("error"),
                     "warnings": levels.count("warn"), "message": str(body[-1].get("msg", ""))[:160], "state": state,
@@ -172,22 +192,25 @@ def pipeline(settings, hours: float = 72, limit: int = 30) -> list[dict]:
         return []
     now = datetime.now().timestamp()
     files = [p for p in sorted(d.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)[:150] if now - p.stat().st_mtime < hours * 3600]
-    parsed = [(p, _parse_log(p)) for p in files]
+    parsed = [(p, _parse_log(p)) for p in reversed(files)]
     url_job: dict[str, str] = {}                         # a record that names both its url and its job links the two names of one job
     for _, recs in parsed:
         for r in recs:
             if r.get("level") == "progress" and r.get("url") and r.get("job"):
-                url_job[r["url"]] = r["job"]
+                url_job[r["url"]] = r.get('job_dir') or r["job"]
     jobs: dict[str, dict] = {}
     for p, recs in parsed:
         state = _log_state(p, recs, now)
         for r in recs:
             if r.get("level") != "progress" or not r.get("stage"):
                 continue
-            key = r.get("job") or url_job.get(r.get("url", ""), "") or f"url:{r.get('url', '')}"
+            identity = r.get('job_dir') or url_job.get(r.get('url', ''), '') or (
+                f"{r.get('company')}:{r['job']}" if r.get('company') and r.get('job') else r.get('job')) or f"url:{r.get('url', '')}"
+            key = (identity, r.get('execution_id', 'legacy'))
             j = jobs.setdefault(key, {"job": r.get("job", ""), "url": "", "title": "", "company": "", "plan": [], "stages": {}, "trail": [],
-                                      "first": r["ts"], "last": r["ts"], "active": False})
-            for k in ("job", "url", "title", "company"):
+                                      "first": r["ts"], "last": r["ts"], "active": False,
+                                      'identity': identity, 'execution_id': r.get('execution_id', ''), 'job_dir': r.get('job_dir', '')})
+            for k in ("job", "url", "title", "company", 'browser_mode'):
                 if r.get(k):
                     j[k] = r[k]
             if r.get("plan"):
@@ -195,11 +218,12 @@ def pipeline(settings, hours: float = 72, limit: int = 30) -> list[dict]:
             j["active"] = j["active"] or state in ("running", "waiting")
             j["first"], j["last"] = min(j["first"], r["ts"]), max(j["last"], r["ts"])
             j["trail"].append({"ts": r["ts"], "stage": r["stage"], "status": r.get("status", ""), "label": r.get("label", ""), "i": r.get("i"),
-                               "n": r.get("n"), "detail": r.get("detail", "")})
+                               "n": r.get("n"), "detail": r.get("detail", ""), 'time_ns': r.get('time_ns', 0)})
     labels = dict(STAGES)
     out = []
+    pending = hitl_pending(settings)
     for j in jobs.values():
-        j["trail"].sort(key=lambda e: e["ts"])
+        j["trail"].sort(key=lambda e: (e["ts"], e['time_ns']))
         for e in j["trail"]:
             j["stages"][e["stage"]] = e                  # the latest record of each stage wins
         plan = [s for s in (j["plan"] or [k for k, _ in STAGES if k in j["stages"]]) if s in labels]
@@ -208,28 +232,41 @@ def pipeline(settings, hours: float = 72, limit: int = 30) -> list[dict]:
                 plan.append(s)
         plan.sort(key=lambda s: [k for k, _ in STAGES].index(s))
         stages = []
+        questions = [q['id'] for q in pending if isinstance(q.get('context'), dict) and j['execution_id'] and
+                     q['context'].get('execution_id') == j['execution_id']]
         for s in plan:
             e = j["stages"].get(s)
             st = e["status"] if e else "pending"
-            if st == "running" and not j["active"]:
+            if st == "waiting" and questions:
+                j['active'] = True
+            if st in ('running', 'waiting') and not j["active"]:
                 st = "stalled"                           # nothing is writing any more and it never said it finished
             stages.append({"id": s, "label": labels[s], "status": st, "step": (e or {}).get("label", ""), "i": (e or {}).get("i"),
                            "n": (e or {}).get("n"), "detail": (e or {}).get("detail", ""), "ts": (e or {}).get("ts", "")})
         done = sum(1 for s in stages if s["status"] in DONE_STATES)
-        cur = next((s for s in stages if s["status"] in ("running", "stalled", "failed", "blocked")), None)
+        cur = next((s for s in stages if s["status"] in ("running", "waiting", "stalled", "failed", "blocked")), None)
         frac = 0.0
         if cur and cur["status"] == "running":
             frac = min(cur["i"] / cur["n"], 0.95) if cur.get("i") and cur.get("n") else 0.4
         bad = next((s for s in stages if s["status"] in ("failed", "blocked", "stalled")), None)
         overall = ("failed" if bad and bad["status"] == "failed" else "blocked" if bad and bad["status"] == "blocked" else "stalled" if bad else
-                   "done" if stages and done == len(stages) else "running" if j["active"] else "waiting")
+                   "done" if stages and done == len(stages) else 'waiting' if cur and cur['status'] == 'waiting' else "running" if j["active"] else "waiting")
+        j['active'] = bool(j['active'] and cur and cur['status'] in ('running', 'waiting'))
         started = datetime.fromisoformat(j["first"].replace("Z", "+00:00")).timestamp()
         ended = now if j["active"] else datetime.fromisoformat(j["last"].replace("Z", "+00:00")).timestamp()
         out.append({"job": j["job"], "url": j["url"], "title": j["title"] or j["job"] or j["url"], "company": j["company"], "stages": stages,
                     "current": cur["id"] if cur else None, "percent": round(100 * (done + frac) / len(stages)) if stages else 0, "state": overall,
                     "active": j["active"], "started": j["first"], "updated": j["last"], "elapsed_s": int(max(0, ended - started)),
-                    "trail": j["trail"][-14:]})
-    out.sort(key=lambda x: x["updated"], reverse=True)
+                    "trail": j["trail"][-14:], 'identity': j['identity'], 'execution_id': j['execution_id'],
+                    'job_dir': j['job_dir'], 'question_ids': questions, 'browser_mode': j.get('browser_mode', ''),
+                    '_last_ns': j['trail'][-1]['time_ns']})
+    out.sort(key=lambda x: (x["updated"], x['_last_ns']), reverse=True)
+    # A new attempt must not inherit a prior attempt's failures or completion.
+    latest = {}
+    for item in out:
+        item.pop('_last_ns', None)
+        latest.setdefault(item['identity'], item)
+    out = list(latest.values())
     out.sort(key=lambda x: not x["active"])              # active jobs first, each group newest first
     return out[:limit]
 
@@ -326,7 +363,7 @@ def analytics(settings, days: int = 45) -> dict:
         further = [a for a in submitted if by_app.get(a["id"], set()) & {"interview", "offer"}]
         out["funnel"] = [
             {"id": "discovered", "label": "Postings found", "n": total},
-            {"id": "passed", "label": "Passed the US and role filters", "n": len(kept)},
+            {"id": "passed", "label": "Postings not filtered out", "n": len(kept)},
             {"id": "reached", "label": "Application filled to review", "n": len(reached)},
             {"id": "submitted", "label": "Submitted", "n": len(submitted)},
             {"id": "confirmed", "label": "Receipt confirmed", "n": len(confirmed)},
@@ -381,24 +418,36 @@ def analytics(settings, days: int = 45) -> dict:
         f2s = [h for a in submitted if (h := _hours(a["filled_at"], a["submitted_at"])) is not None]
         out["latency"] = {"discovery_to_fill_h": _median(d2f), "fill_to_submit_h": _median(f2s), "n_fill": len(d2f), "n_submit": len(f2s)}
         # resume scores from the checker sites
-        runs = _rows(conn, "SELECT job_dir, site, round, score FROM ats_runs WHERE score IS NOT NULL")
-        latest: dict[tuple[str, str], tuple[int, float]] = {}
-        for r in runs:
-            k = (r["job_dir"], r["site"])
-            if k not in latest or r["round"] >= latest[k][0]:
-                latest[k] = (r["round"], r["score"])
-        per_job: dict[str, list[float]] = {}
+        from jobagent.tools import ats_result
+        runs = _rows(conn, "SELECT DISTINCT job_dir FROM ats_runs WHERE score IS NOT NULL")
+        per_job: dict[str, float] = {}
         per_site: dict[str, list[float]] = {}
-        for (jd_, site), (_, score) in latest.items():
-            per_job.setdefault(jd_, []).append(score)
-            per_site.setdefault(site, []).append(score)
+        seen = set()
+        incomplete = 0
+        for row in runs:
+            d = Path(row['job_dir'])
+            if not d.is_absolute():
+                d = settings.outputs_dir.parent / d
+            d = d.resolve()
+            if d in seen:
+                continue
+            seen.add(d)
+            if not d.is_relative_to(settings.outputs_dir.resolve()):
+                incomplete += 1
+                continue
+            summary = ats_result.gather(d, conn=conn)
+            for site, score in summary['scores'].items():
+                per_site.setdefault(site, []).append(score)
+            if summary['complete'] and summary['average'] is not None:
+                per_job[str(d)] = summary['average']
+            else:
+                incomplete += 1
         hist = [0] * 6                                    # <50, 50-60, ... 90-100
-        for v in per_job.values():
-            m = sum(v) / len(v)
+        for m in per_job.values():
             hist[0 if m < 50 else min(5, int((m - 40) // 10))] += 1
         out["ats"] = {"hist": [{"label": l, "n": n} for l, n in zip(["under 50", "50–60", "60–70", "70–80", "80–90", "90–100"], hist, strict=True)],
                       "by_site": sorted(({"site": s, "mean": round(sum(v) / len(v), 1), "n": len(v)} for s, v in per_site.items()), key=lambda x: -x["mean"]),
-                      "jobs": len(per_job)}
+                      "jobs": len(per_job), 'incomplete': incomplete}
         # outcomes, with the agent's own delay-aware labels (silence is pending/ghosted, never silently a rejection)
         evs = OS.load(conn)
         as_of = datetime.now(UTC)

@@ -93,6 +93,18 @@ class PlannedFiller:
         self.lookup_resolver=None;self.lookup_cache={}
         self.dom_reads=0;self.routes=[];self.technical_failures={};self.session_facts={};self.session_fact_steps={}
 
+    def _report_progress(self, view):
+        # Observability must never turn an accepted field into a fill failure.
+        try:
+            from jobagent.log import progress
+            current_keys = {key(item) for item in view.fields}
+            checked = sum(1 for (step, field_key), item in self.record_state.items()
+                          if step == self.step and field_key in current_keys and item.get('outcome') == 'verified')
+            progress(getattr(self, 'log', None), 'apply', 'running', 'Fields checked',
+                     checked, len(view.fields), detail=f'Form page {self.step}')
+        except Exception:
+            pass
+
     def invoke(self,schema,messages,**kwargs):
         started=time.monotonic()
         try:return llm.structured_invoke(self.model,schema,messages,log=getattr(self,'log',None),**kwargs)
@@ -494,6 +506,7 @@ class PlannedFiller:
                                             'upload_verification':proof.method if proof else None,
                                             'replaced_attachment_count':proof.replaced_count if proof else 0}
                             records.append(row);self.record_state[(self.step,key(f))]=row
+                            self._report_progress(after)
                         except Exception as e:
                             from jobagent.tools.challenge import Blocked
                             if isinstance(e,Blocked):raise
