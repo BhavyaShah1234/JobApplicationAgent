@@ -37,13 +37,12 @@ touch screens get larger buttons and 16 px inputs (no zoom-on-focus). The funnel
 **Pipeline progress.** Each job card shows its plan (scrape, research, documents, apply or submit, depending on how far the run goes), the state of every
 stage (done, running, failed, blocked, stalled, pending), a bar for the whole job, and inside the running stage the step and iteration: for the
 resume and cover letter "First draft", "Layout and quality check 2 of 4", "Fixing findings", "ATS baseline / ATS round 2 of 3", "Cover letter"; for the
-single writer "Resume draft round 3 of 5"; for the form "Form page 3 of 15". The agent writes these as `progress` records
-(`{stage, status, label, i, n, detail, plan, job, url, title, company}`) to the run's `.jsonl` log (`jobagent.log.progress`); every command that touches a job
-contributes to the same card, linked by the job folder name or posting address. A stage that says "running" while nothing has written for 15 minutes shows as
+single writer "Resume draft round 3 of 5"; for the form "Form page 3" and current-field counts. The agent writes these as `progress` records
+(`{stage, status, label, i, n, detail, plan, job, url, title, company}`) to the run's `.jsonl` log (`jobagent.log.progress`); commands within one execution
+contribute to the same card, linked by canonical job directory and execution ID. A stage that says "running" while nothing has written for 15 minutes shows as
 stalled (the run was most likely killed).
 
-**What it can change, and what it cannot.** Only two things: answering a question the agent is waiting on (a secret question is refused with the
-terminal command instead) and starting a run that stops at or before the review screen (`through` cannot be `submit`; inputs cannot start with `-`
+**What it can change, and what it cannot.** Only two things: answering an ordinary question the agent is waiting on (secrets and submission approval require a terminal) and starting a run that stops at or before the review screen (`through` cannot be `submit`; inputs cannot start with `-`
 or contain a newline; arguments are passed as a list, never through a shell). It has no route that approves or sends an application: that stays a
 typed `approve` in a terminal (`jobagent submit ...`); the Review tab only shows the command.
 
@@ -52,23 +51,26 @@ machine (DNS-rebinding defence). POSTs also need the cookie, `Content-Type: appl
 The database is opened read-only. Agent data reaches the page only as React text, never as HTML (a scraped job title cannot inject markup; tests render a hostile title and a Python test forbids
 `dangerouslySetInnerHTML`/`innerHTML`). The content policy allows only scripts and styles from the dashboard itself (no inline or eval). Log names are checked against a strict pattern, so no path can leave `state/logs`.
 
-**Running it.** The dashboard is a separate process from the agent; it must be started, and it must be able to see the agent's `data/`, `state/` and
-`outputs/` folders. Three ways:
+**Running it.** The Compose harness starts the dashboard inside `jobagent` on `http://127.0.0.1:8765`. It shares the actual agent's display, Chrome profile, writable answers, vault, configuration and output folders. Starting a job from the UI therefore runs the same installed CLI as a terminal command, rather than a second agent in a server-only container.
 
-1. `scripts/dashboard.sh start` (recommended): builds an image from this checkout the first time, then starts a container `jobagent-dashboard` on
-   the host network, so `http://127.0.0.1:8765/` works like noVNC does. By default it mounts your folders **read-only** (a view that cannot change
-   anything); `DASHBOARD_MODE=interactive scripts/dashboard.sh start` mounts `state/` and `outputs/` writable so questions can be answered and
-   runs started from the page. `scripts/dashboard.sh url` prints the address with its access token; `stop` removes the container.
-   `JOBAGENT_HOME=/path/to/checkout` points it at another folder holding `data/ state/ outputs/`.
-2. Inside the agent container, once its image contains this code: `docker exec -d jobagent jobagent dashboard`, then
-   `docker exec jobagent jobagent dashboard --print-url`; or set `DASHBOARD_PORT=8765` in `.env` and the entrypoint starts it with the harness.
-3. On the host: `jobagent dashboard` (needs the package installed there).
+```bash
+scripts/dashboard.sh start
+scripts/dashboard.sh url
+scripts/dashboard.sh logs
+```
 
-If the page shows nothing: (a) nothing is listening (`ss -ltn | grep 8765`; the container must exist and use `--network host`, a bridge network
-makes 127.0.0.1 unreachable), (b) you opened the address without `?t=<token>` (you get a page saying so), (c) another program holds the port (the
-dashboard says so; use `--port`). Reaching it from a phone needs a decision on exposure and is step 19, not this one.
-Development without touching real data: `jobagent.dashboard.demo.seed(root)` writes invented companies, a queue, two applications at review, two
-questions, runs and outcomes.
+`url` prints the private access link. Open it once; the cookie authenticates later visits. `start` reuses a healthy running service. To change its mode, stop it first with `scripts/dashboard.sh stop`, then use `DASHBOARD_MODE=readonly scripts/dashboard.sh start` for a read-only view. `JOBAGENT_CONTAINER` selects a different **existing harness** explicitly. Changed source must be rebuilt and the idle harness recreated before it runs; the launcher does not install uncommitted code. Compose uses `DASHBOARD_PORT=8765` by default; an explicitly empty value disables automatic startup. `DASHBOARD_READ_ONLY=0` is interactive and `1` is read-only.
 
-**Not in this step:** approving or submitting, editing data files, secrets, authentication beyond the local token, live push updates (the page polls
-every 6 s).
+The older separate `jobagent-dashboard` container must be stopped before moving to the integrated service on the same port. Its old access cookie is separate: obtain the integrated service's link with `scripts/dashboard.sh url`.
+
+Start a run accepts the normal inputs, a scrape/tailor/apply stop point, optional ATS-scan skipping, and explicit stage refresh. It uses automatic browser fallback and retains startup output and exit status in Runs. A second dashboard launch is refused while its existing child is active. CLI runs still use their normal workflow and browser locks. Nothing started here can pass the review screen.
+
+Progress records carry a canonical job directory and execution ID. Same-numbered requisitions at different companies remain separate, and a retry does not inherit a previous attempt's failure. Standalone tailor/apply/ATS commands report their actual final status. The form page number has no fabricated total; the configured maximum-page budget is not a count of discovered pages. Field progress counts the current inventory and cannot change whether a field is accepted. HITL requests identify their execution, show a waiting stage, and resume through the normal file queue. Read-only viewers do not create or prune requests, including requests from a different PID namespace.
+
+The UI polls active progress every 3–4 seconds, questions every 5 seconds, and slower tables every 6–20 seconds. It needs no manual page refresh. Failed requests show a stale-data notice and retain the last successful update time; pending requests do not accumulate or overwrite another log's response. Ordinary answer drafts survive polling. Secrets and submission-approval requests are terminal-only, enforced by the API even for older approval requests. Human security challenges remain human-operated. The Browser tab explains when fallback is using host Chrome instead of the embedded Docker desktop.
+
+The score chart uses the same exact PDF/JD identity and complete required-provider denominator as application review. Incomplete or unverifiable packets do not become averages. Milestone bars are recorded counts rather than conversion rates between different cohorts; direct URL inputs may bypass discovery filters, and replies do not require an earlier recorded receipt.
+
+If nothing loads, first check the harness is running, obtain the correct access link, and inspect `scripts/dashboard.sh logs`. Development fixtures remain separate: `jobagent.dashboard.demo.seed(root)` creates invented records only in the explicitly supplied test root.
+
+**Not in this step:** approving or submitting, editing data files, secrets, authentication beyond the local token, server-pushed updates (the page polls automatically).

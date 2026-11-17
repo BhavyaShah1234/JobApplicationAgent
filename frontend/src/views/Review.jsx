@@ -3,11 +3,13 @@ import Chip from "../components/Chip.jsx";
 import Cmd from "../components/Cmd.jsx";
 import DataTable from "../components/DataTable.jsx";
 import Empty from "../components/Empty.jsx";
+import FetchError from "../components/FetchError.jsx";
 
 export default function Review() {
-  const { data } = usePoll("/api/review", 8000);
+  const { data, error, reload } = usePoll("/api/review", 8000);
   return (
     <div>
+      <FetchError error={error} reload={reload} />
       <p className="mut">Nothing is sent from this page. Sending an application needs your typed approval in a terminal, per application.</p>
       {!data ? (
         <p className="mut">Loading…</p>

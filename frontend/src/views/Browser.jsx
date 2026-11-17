@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { usePoll } from "../hooks.js";
 import Chip from "../components/Chip.jsx";
+import FetchError from "../components/FetchError.jsx";
 
 // The agent's own browser, live, inside the dashboard: noVNC (served by the agent's container) in a frame. It is the same view you get at the
 // noVNC address, so it also lets you solve a CAPTCHA or take over a form here; a read-only dashboard asks noVNC for a view-only session.
@@ -13,7 +14,8 @@ export function embedUrl(url, readOnly) {
 }
 
 export default function Browser({ config }) {
-  const { data } = usePoll("/api/vnc", 6000);
+  const { data, error, reload } = usePoll("/api/vnc", 6000);
+  const { data: jobs } = usePoll('/api/pipeline', 6000);
   const [nonce, setNonce] = useState(0);
   const url = config.novnc;
   if (!url) {
@@ -25,6 +27,8 @@ export default function Browser({ config }) {
   }
   return (
     <div>
+      <FetchError error={error} reload={reload} />
+      {(jobs || []).some(j => j.active && j.browser_mode === 'desktop') && <div className="box warn">The agent is using its dedicated host Chrome window. Switch to that window to watch or answer a human check; the Docker desktop below may be blank.</div>}
       <div className="tools">
         <b>Agent browser</b>
         {data && <Chip tone={data.reachable ? "ok" : "bad"}>{data.reachable ? "connected" : "not reachable"}</Chip>}

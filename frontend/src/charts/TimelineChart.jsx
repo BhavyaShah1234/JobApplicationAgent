@@ -20,7 +20,7 @@ export default function TimelineChart({ days, show = SERIES.map((s) => s[0]) }) 
   const step = (W - L) / Math.max(1, days.length);
   const bw = Math.max(1.5, (step - 2) / series.length);
   const y = (v) => T + (H - T - B) * (1 - v / max);
-  const ticks = [0, Math.ceil(max / 2), max];
+  const ticks = [...new Set([0, Math.ceil(max / 2), max])];
   const total = days.reduce((a, d) => a + series.reduce((b, s) => b + d[s[0]], 0), 0);
   if (!days.length || !total) return <p className="mut">No activity in this period.</p>;
   const body = (d) => <TipBody title={d.day} rows={series.map(([k, l]) => [l, d[k]])} />;

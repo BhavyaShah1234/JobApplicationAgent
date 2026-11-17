@@ -3,13 +3,15 @@ import { ago } from "../format.js";
 import { usePoll } from "../hooks.js";
 import Chip from "../components/Chip.jsx";
 import DataTable from "../components/DataTable.jsx";
+import FetchError from "../components/FetchError.jsx";
 
 function RunLog({ id }) {
   const [only, setOnly] = useState(false);
-  const { data } = usePoll(`/api/run/${encodeURIComponent(id)}`, 4000);
+  const { data, error, reload } = usePoll(`/api/run/${encodeURIComponent(id)}`, 4000);
   const rows = (data || []).filter((e) => !only || ["error", "warn"].includes(e.level));
   return (
     <div>
+      <FetchError error={error} reload={reload} />
       <div className="tools">
         <b>{id}</b>
         <button type="button" className={`act sm${only ? " sec" : ""}`} onClick={() => setOnly(false)}>
@@ -30,19 +32,20 @@ function RunLog({ id }) {
 
 function stateChip(x) {
   const text = x.state === "waiting" ? `waiting ${Math.round(x.quiet_s / 60)} min` : x.state;
-  const tone = x.state === "running" ? "run" : x.state === "finished" ? "ok" : x.state === "stalled" ? "bad" : "warn";
+  const tone = x.state === "running" ? "run" : x.state === "finished" ? "ok" : ["stalled", "failed", "blocked"].includes(x.state) ? "bad" : "warn";
   return <Chip tone={tone}>{text}</Chip>;
 }
 
 export default function Runs() {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(null);
-  const { data } = usePoll("/api/runs", 6000);
-  if (!data) return <p className="mut">Loading…</p>;
+  const { data, error, reload } = usePoll("/api/runs", 6000);
+  if (!data) return <><FetchError error={error} reload={reload} /><p className="mut">Loading…</p></>;
   const needle = q.toLowerCase();
   const rows = data.filter((x) => !needle || `${x.step} ${x.job} ${x.message}`.toLowerCase().includes(needle));
   return (
     <div>
+      <FetchError error={error} reload={reload} />
       <div className="tools">
         <input type="search" placeholder="Filter by step, job or message" value={q} onChange={(e) => setQ(e.target.value)} />
         <span className="mut">{data.length} recent runs</span>

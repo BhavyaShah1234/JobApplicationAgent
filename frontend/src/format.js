@@ -33,7 +33,7 @@ export function kind(text) {
 }
 
 export const STATE_TEXT = { running: "running", done: "finished", failed: "failed", blocked: "stopped", stalled: "stalled", waiting: "waiting" };
-export const ICON = { done: "✓", running: "●", pending: "○", failed: "✕", blocked: "⏸", stalled: "!", skipped: "–" };
+export const ICON = { done: "✓", running: "●", waiting: "?", pending: "○", failed: "✕", blocked: "⏸", stalled: "!", skipped: "–" };
 
 // "step 2 of 3" style text for a stage that iterates.
 export function iteration(s) {

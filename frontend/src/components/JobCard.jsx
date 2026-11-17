@@ -39,7 +39,7 @@ export default function JobCard({ job: j, onWatch }) {
           <StageStep key={s.id} stage={s} />
         ))}
       </div>
-      {cur && j.state === "running" && (
+      {cur && ["running", "waiting"].includes(j.state) && (
         <div className="now">
           <b>{cur.label}</b>
           {cur.step ? ` — ${cur.step}${it ? `, step ${it}` : ""}` : ""}
@@ -50,7 +50,7 @@ export default function JobCard({ job: j, onWatch }) {
         <button type="button" className="act sec sm" onClick={() => setOpen(!open)}>
           {open ? "Hide history" : "History"}
         </button>
-        {onWatch && j.state === "running" && BROWSER_STAGES.includes(j.current) && (
+        {onWatch && ["running", "waiting"].includes(j.state) && BROWSER_STAGES.includes(j.current) && (
           <button type="button" className="act sm" onClick={onWatch}>
             Watch the browser
           </button>

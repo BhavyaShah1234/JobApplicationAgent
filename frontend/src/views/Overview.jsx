@@ -1,6 +1,7 @@
 import { usePoll } from "../hooks.js";
 import Empty from "../components/Empty.jsx";
 import JobCard from "../components/JobCard.jsx";
+import FetchError from "../components/FetchError.jsx";
 import Stat from "../components/Stat.jsx";
 import ActivitySection from "./overview/Activity.jsx";
 import DiscoverySection from "./overview/Discovery.jsx";
@@ -11,8 +12,8 @@ import { hours, pct } from "./overview/numbers.js";
 
 // Everything at a glance, top to bottom: what needs you, what is running, then the numbers behind the whole pipeline.
 export default function Overview({ overview: o, config, onWatch }) {
-  const { data: jobs } = usePoll("/api/pipeline", o?.jobs_active ? 3000 : 7000);
-  const { data: a } = usePoll("/api/analytics", 20000);
+  const { data: jobs, error: jobsError, reload: reloadJobs } = usePoll("/api/pipeline", o?.jobs_active ? 3000 : 7000);
+  const { data: a, error: analyticsError, reload: reloadAnalytics } = usePoll("/api/analytics", 20000);
   if (!o) return <p className="mut">Loading…</p>;
   const live = (jobs || []).filter((j) => j.active);
   const recent = (jobs || []).filter((j) => !j.active).slice(0, 3);
@@ -20,11 +21,13 @@ export default function Overview({ overview: o, config, onWatch }) {
   const submitted = a?.totals.submitted ?? 0;
   return (
     <div>
+      <FetchError error={jobsError} reload={reloadJobs} />
+      <FetchError error={analyticsError} reload={reloadAnalytics} />
       {config.read_only && <div className="box">Read-only view: you can look at everything here, but answering questions and starting runs is done in a terminal.</div>}
       {haveNumbers && submitted < a.outcomes.min_group && (
         <div className="notice">
           Only {submitted} application{submitted === 1 ? "" : "s"} submitted so far. Response rates need at least {a.outcomes.min_group} resolved applications per group, so the outcome figures below describe
-          what happened, not what to expect. The discovery numbers are solid.
+          what happened, not what to expect.
         </div>
       )}
       <div className="cards">
@@ -33,7 +36,7 @@ export default function Overview({ overview: o, config, onWatch }) {
         <Stat n={o.jobs_active || 0} label="jobs working now" hint="Jobs with a run that is writing to its log right now." />
         {haveNumbers && (
           <>
-            <Stat n={a.totals.jobs.toLocaleString()} label="postings found" sub={`${a.funnel[1].n.toLocaleString()} passed the filters`} hint="Every posting discovery has seen; the sub-line is how many passed the US and role filters." />
+            <Stat n={a.totals.jobs.toLocaleString()} label="postings found" sub={`${a.funnel[1].n.toLocaleString()} not filtered out`} hint="Recorded postings that were not filtered out. Direct URL inputs may bypass discovery filters." />
             <Stat n={submitted} label="submitted" sub={`${a.funnel[4].n} receipt confirmed`} hint="Applications you approved and the agent sent. A receipt is confirmed when the employer's email arrives." />
             <Stat
               n={a.outcomes.rate ? pct(a.outcomes.rate.k / a.outcomes.rate.n) : "–"}
@@ -46,12 +49,12 @@ export default function Overview({ overview: o, config, onWatch }) {
       </div>
 
       <h2>Working now</h2>
-      {live.length ? live.map((j) => <JobCard key={j.job || j.url} job={j} onWatch={onWatch} />) : <Empty>Nothing is running. Start a run from the Start tab or `jobagent run` in a terminal.</Empty>}
+      {live.length ? live.map((j) => <JobCard key={j.identity || j.job_dir || j.url || j.job} job={j} onWatch={onWatch} />) : <Empty>Nothing is running. Start a run from the Start tab or `jobagent run` in a terminal.</Empty>}
       {recent.length > 0 && (
         <>
           <h2>Recently finished</h2>
           {recent.map((j) => (
-            <JobCard key={j.job || j.url} job={j} />
+            <JobCard key={j.identity || j.job_dir || j.url || j.job} job={j} />
           ))}
         </>
       )}

@@ -10,6 +10,7 @@ import Queue from "./views/Queue.jsx";
 import Review from "./views/Review.jsx";
 import Runs from "./views/Runs.jsx";
 import StartRun from "./views/StartRun.jsx";
+import FetchError from "./components/FetchError.jsx";
 
 const TABS = [["overview", "Overview"], ["jobs", "Jobs"], ["browser", "Browser"], ["questions", "Questions"], ["review", "Review"], ["queue", "Queue"], ["runs", "Runs"], ["outcomes", "Outcomes"], ["start", "Start a run"]];
 
@@ -17,7 +18,12 @@ export default function App() {
   const [tab, setTab] = useState((location.hash || "#overview").slice(1));
   const [config, setConfig] = useState({ read_only: false, novnc: "" });
   const [signedOut, setSignedOut] = useState(false);
-  const { data: overview, reload } = usePoll("/api/overview", 4000);
+  const { data: overview, error: overviewError, updatedAt, reload } = usePoll("/api/overview", 4000);
+  useEffect(() => {
+    const changed = () => setTab(TABS.some(([id]) => id === location.hash.slice(1)) ? location.hash.slice(1) : 'overview');
+    window.addEventListener('hashchange', changed);
+    return () => window.removeEventListener('hashchange', changed);
+  }, []);
   useEffect(() => {
     get("/api/config").then(setConfig).catch(() => {});
     const out = () => setSignedOut(true);
@@ -47,10 +53,11 @@ export default function App() {
         </nav>
         <span className="live">
           <span className={`dot${live ? " on" : ""}`} />
-          <span>{live ? "live · " : ""}{overview ? `updated ${new Date().toLocaleTimeString()}` : "connecting…"}</span>
+          <span>{live && !overviewError ? "live · " : ""}{updatedAt ? `${overviewError ? 'last update' : 'updated'} ${new Date(updatedAt).toLocaleTimeString()}` : "connecting…"}</span>
         </span>
       </header>
       <main>
+        <FetchError error={overviewError} reload={reload} />
         {tab === "overview" && <Overview overview={overview} config={config} onWatch={() => go("browser")} />}
         {tab === "jobs" && <Jobs overview={overview} onWatch={() => go("browser")} />}
         {tab === "browser" && <Browser config={config} />}

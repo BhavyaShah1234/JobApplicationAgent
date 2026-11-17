@@ -5,7 +5,7 @@ export default function FunnelSection({ a }) {
   return (
     <>
       <h2>From posting to answer</h2>
-      <Panel title="Funnel" note="Each bar is a count; the percentage is the share kept from the step above.">
+      <Panel title="Recorded milestones" note="Counts may include direct applications. Receipts and responses arrive independently; these bars are not conversion rates between matching groups.">
         <FunnelChart steps={a.funnel} />
       </Panel>
     </>

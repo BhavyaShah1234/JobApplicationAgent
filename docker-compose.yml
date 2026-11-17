@@ -13,6 +13,8 @@ services:
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY must be set in the host shell (Voyager key)}
       TZ: ${TZ:-America/Phoenix}
+      DASHBOARD_PORT: ${DASHBOARD_PORT-8765}
+      DASHBOARD_READ_ONLY: ${DASHBOARD_READ_ONLY:-0}
     volumes:
       - ./data:/app/data
       - ./state:/app/state

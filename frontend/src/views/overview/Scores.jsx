@@ -7,7 +7,7 @@ export default function ScoresSection({ a }) {
     <>
       <h2>Resume scores</h2>
       <div className="grid2">
-        <Panel title="Average checker score per job" note={`${a.ats.jobs} jobs scored. Sites are not comparable to each other, so the average is per job, from each site's last round.`}>
+        <Panel title="Average checker score per job" note={`${a.ats.jobs} current resume/JD pairs have every required checker score. ${a.ats.incomplete || 0} packets are incomplete or unverifiable and excluded from this average. Sites are not comparable to each other.`}>
           <Histogram label="ATS average" bins={a.ats.hist} />
         </Panel>
         <Panel title="By checker site">

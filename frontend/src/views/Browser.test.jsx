@@ -24,6 +24,12 @@ test("a reachable browser view is framed inside the page, sandboxed", async () =
   expect(await screen.findByText("connected")).toBeInTheDocument();
 });
 
+test('desktop fallback explains why the Docker view may be blank', async () => {
+  mockFetch({ '/api/vnc': { url: URL_, reachable: true }, '/api/pipeline': [{ active: true, browser_mode: 'desktop' }] });
+  render(<Browser config={{ novnc: URL_, read_only: false }} />);
+  expect(await screen.findByText(/dedicated host Chrome window/)).toBeInTheDocument();
+});
+
 test("an unreachable one says where it looked and what to check instead of an empty frame", async () => {
   mockFetch({ "/api/vnc": { url: URL_, reachable: false } });
   render(<Browser config={{ novnc: URL_, read_only: false }} />);

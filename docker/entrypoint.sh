@@ -50,7 +50,11 @@ fi
 # Optional dashboard (step 17): DASHBOARD_PORT=8765 serves it on 127.0.0.1 with the harness (host networking), read-write for answering questions and
 # starting runs; DASHBOARD_READ_ONLY=1 for a view only. The address with its access token is in $LOG_DIR/dashboard.log.
 if [ -n "${DASHBOARD_PORT:-}" ]; then
-    jobagent dashboard --host 127.0.0.1 --port "$DASHBOARD_PORT" ${DASHBOARD_READ_ONLY:+--read-only} >"$LOG_DIR/dashboard.log" 2>&1 &
+    dashboard_flags=()
+    case "${DASHBOARD_READ_ONLY:-0}" in 1|true|yes) dashboard_flags+=(--read-only) ;; esac
+    mkdir -p /app/state/dashboard
+    jobagent dashboard --host 127.0.0.1 --port "$DASHBOARD_PORT" --novnc-url "http://localhost:${NOVNC_PORT}/vnc.html" "${dashboard_flags[@]}" >"$LOG_DIR/dashboard.log" 2>&1 &
+    echo "$!" >/app/state/dashboard/server.pid
     echo "Dashboard: http://127.0.0.1:${DASHBOARD_PORT}/ (access address: jobagent dashboard --print-url --port ${DASHBOARD_PORT})"
 fi
 

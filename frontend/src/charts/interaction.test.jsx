@@ -12,13 +12,13 @@ import { ANALYTICS } from "../test/mockFetch.js";
 
 const wrap = (ui) => render(<TipProvider>{ui}</TipProvider>);
 
-test("a funnel step says its share of everything, what it kept, and how many dropped out", async () => {
+test("milestone counts do not invent conversions between different cohorts", async () => {
   wrap(<FunnelChart steps={ANALYTICS.funnel} />);
   await userEvent.hover(screen.getByText("Passed the US and role filters"));
   const t = screen.getByRole("tooltip");
-  expect(t).toHaveTextContent("Share of postings found7%");
-  expect(t).toHaveTextContent("Kept from the step above7%");
-  expect(t).toHaveTextContent("Dropped out here2,885");                    // 3105 - 220
+  expect(t).toHaveTextContent("Recorded count220");
+  expect(t).not.toHaveTextContent("Kept");
+  expect(t).not.toHaveTextContent("Dropped");
 });
 
 test("a bar in a list gives its count and its share of the list", async () => {

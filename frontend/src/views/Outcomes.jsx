@@ -2,13 +2,15 @@ import { ago } from "../format.js";
 import { usePoll } from "../hooks.js";
 import Chip from "../components/Chip.jsx";
 import DataTable from "../components/DataTable.jsx";
+import FetchError from "../components/FetchError.jsx";
 
 export default function Outcomes() {
-  const { data } = usePoll("/api/outcomes", 15000);
-  if (!data) return <p className="mut">Loading…</p>;
+  const { data, error, reload } = usePoll("/api/outcomes", 15000);
+  if (!data) return <><FetchError error={error} reload={reload} /><p className="mut">Loading…</p></>;
   const entries = Object.entries(data.counts);
   return (
     <div>
+      <FetchError error={error} reload={reload} />
       <div className="box">
         {entries.length
           ? entries.map(([k, v]) => (

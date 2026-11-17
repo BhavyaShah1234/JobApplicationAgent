@@ -43,3 +43,10 @@ test("a secret, or a read-only dashboard, shows the terminal command instead of 
   rerender(<Questions config={{ read_only: true }} />);
   await waitFor(() => expect(screen.queryByPlaceholderText("your answer")).toBeNull());
 });
+
+test('submission approval cannot be entered in the ordinary answer box', async () => {
+  mockFetch({ '/api/hitl': [{ ...Q, terminal_only: true, prompt: 'Review and approve submission in a terminal' }] });
+  render(<Questions config={{ read_only: false }} />);
+  expect(await screen.findByText('This decision requires a terminal:')).toBeInTheDocument();
+  expect(screen.queryByPlaceholderText('your answer')).toBeNull();
+});
