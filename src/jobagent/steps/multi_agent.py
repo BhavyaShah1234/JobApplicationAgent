@@ -16,6 +16,7 @@ Loop: write -> fix layout (<= 3 passes) -> score -> route -> agents edit -> fix 
 average rises (or holds within the noise while the page improves), else undone and reported back; <= 3 ATS rounds.
 """
 
+import hashlib
 import json
 import operator
 import time
@@ -131,9 +132,9 @@ manager would and report only real problems, each for the agent that owns that s
   better than a project on the page; a description that doesn't match its repo summary; a title that is a bare repo
   slug; a description under 3 sentences;
 - experience: bullets that don't fit their employer, repeat each other, or miss the posting's main duties;
-- skills: tools placed under a category that does not describe them (for example ML frameworks under Frontend);
-  missing posting tools the bullets use; a category with nothing useful in it; soft skills listed. Prefer moving
-  terms or merging compatible categories over adding padding;
+- skills: tools placed under a category that does not describe them (for example ML frameworks under Frontend or
+  deployment platforms under Databases); an empty category; soft skills listed. Report only these correctness problems, never
+  short lines or missing keywords. Prefer moving terms or merging compatible categories over adding padding;
 - summary: claims the rest of the resume doesn't show; not opening with the posting's title.
 Return an empty list if the resume is sound."""
 
@@ -162,6 +163,10 @@ class State(TypedDict, total=False):
     layout_pass: int
     layout_issues: list
     reviewed: bool
+    content_hash: str
+    content_findings: list
+    content_error: str
+    semantic_hard: list[str]
     hard: list
     budget_feedback: dict            # initial limited-site feedback retained during unlimited-site refinements
     history: Annotated[list, operator.add]
@@ -449,11 +454,12 @@ def check_layout(state: State) -> dict:
                     e["title"].lower() not in known_titles:
                 tasks["projects"].append(f"Project {i} is titled with its bare repo name '{e['title']}': give it a "
                                          "real project title and a full 3-sentence description.")
+    reviewed_content = _reviewed_content(ctx, f, state) if pages == 1 and not err else {}
+    for fd in reviewed_content.get("content_findings", []):
+        tasks[fd.agent].append(fd.issue)
     if pages == 1 and not err and not state.get("reviewed"):
-        # once per cycle, on the first one-page draft: the content review (a better project skipped, a description
-        # that doesn't match its repo...) and the vision check for what code can't see
-        for fd in content_review(ctx, f):
-            tasks[fd.agent].append(fd.issue)
+        # Vision runs once per cycle; semantic findings above are bound to each
+        # visible content revision, so later edits cannot bypass the review.
         tasks["experience"] += [v for v in layout.review(job_dir / "resume.pdf", log=log)
                                 if v.split(" ", 1)[0] in {"odd_characters", "overlap", "overflow", "alignment"}]
         reviewed = True
@@ -464,9 +470,10 @@ def check_layout(state: State) -> dict:
     log(f"validator pass {state.get('layout_pass', 0)}: {pages} page(s), {n} finding(s) "
         f"{ {a: len(t) for a, t in tasks.items()} }" +
         "".join(f"\n    [{a}] {t[:200]}" for a, ts in tasks.items() for t in ts))
-    return {"f": f, "tasks": tasks, "layout_issues": [x for t in tasks.values() for x in t], "hard": hard_issues(ctx, f),
+    return {"f": f, "tasks": tasks, "layout_issues": [x for t in tasks.values() for x in t],
+            "hard": hard_issues(ctx, f) + reviewed_content.get("semantic_hard", []),
             "layout_pass": state.get("layout_pass", 0) + 1, "history": [f"validator {n}"],
-            "reviewed": reviewed}
+            "reviewed": reviewed, **reviewed_content}
 
 
 SUMMARY_MAX = T.SUMMARY_MAX          # one definition (tools/tailor.py) for the schema, the prompts and this check (F18)
@@ -522,17 +529,47 @@ def content_review(ctx: dict, f: T.Filled) -> list:
     msgs = [SystemMessage(REVIEW_PROMPT),
             HumanMessage(f"POSTING: {json.dumps(job)}\n\n" + _context(ctx, f, proj.read_text() if proj.exists() else None))]
     try:
-        out = llm.structured_invoke(llm.writer(4000, timeout=300, model=ctx["models"]["router"]), Review, msgs,
-                                    log=ctx["log"])
+        out = llm.structured_invoke(llm.writer(4000, timeout=120, model=ctx["models"]["router"]), Review, msgs,
+                                    log=ctx["log"], deadline_s=180)
         ctx["log"](f"  content review: {len(out.findings)} finding(s)")
         return out.findings
     except Exception as e:
         ctx["log"](f"  content review failed ({type(e).__name__})")
-        return []
+        raise
+
+
+def _content_hash(ctx: dict, f: T.Filled) -> str:
+    """Bind a semantic review to visible content, not an earlier layout pass."""
+    path = ctx["job_dir"] / "projects.json"
+    st = json.loads(path.read_text()) if path.exists() else {}
+    short = set(st.get("short", []))
+    visible = [{"title": e.get("title"), "stack": e.get("stack"),
+                "text": e.get("short") if e.get("repo") in short and e.get("short") else e.get("paragraph")}
+               for e in st.get("ranked", [])[:st.get("kept", 0)]]
+    value = {"summary": f.summary, "roles": [(e.role, [b.text for b in e.bullets]) for e in f.roles],
+             "skills": [(s.category, s.render()) for s in f.skills], "projects": visible}
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def _reviewed_content(ctx: dict, f: T.Filled, state: dict) -> dict:
+    fingerprint = _content_hash(ctx, f)
+    if fingerprint == state.get("content_hash"):
+        findings, error = state.get("content_findings", []), state.get("content_error", "")
+    else:
+        try:
+            findings, error = content_review(ctx, f), ""
+        except Exception as exc:
+            findings, error = [], f"skills content review unavailable ({type(exc).__name__})"
+    hard = [f"skills: {fd.issue}" for fd in findings if fd.agent == "skills"]
+    if error:
+        hard.append(error)
+    return {"content_hash": fingerprint, "content_findings": findings, "content_error": error, "semantic_hard": hard}
 
 
 def after_layout(state: State) -> str:
     """Keep fixing while the validator has findings (up to LAYOUT_PASSES); then score."""
+    if state.get("content_error"):
+        return "score"  # an unavailable reviewer is not a reason to rewrite sound content
     if state["tasks"] and state["layout_pass"] <= LAYOUT_PASSES:
         return "fix"
     return "score"
@@ -558,6 +595,14 @@ def score(state: State) -> dict:
         log(f"ats round {rnd}: page not valid ({pages} pages {err}); rolled back to the best version")
         return _rollback(state, "UNDONE: the edit broke the one-page layout; keep lines short") if best else \
             {"ats_round": rnd + 1, "last": "the page overflowed: shorten bullets"}
+    hard = list(dict.fromkeys(hard_issues(ctx, f) + state.get("semantic_hard", [])))
+    if state.get("content_hash") and _content_hash(ctx, f) != state["content_hash"]:
+        hard.append("skills content changed after its semantic review")
+    if hard:
+        log(f"ats round {rnd}: document checks failed; no scans spent: {hard}")
+        return _rollback(state, "UNDONE: document checks failed: " + "; ".join(hard)) if best else {
+            "ats_round": rnd + 1, "hard": hard, "last": "document checks failed: " + "; ".join(hard),
+        }
     budget_sites = tuple(name for name in ctx["sites"] if name in ats_sites.BUDGET_SITES)
     first_score = best is None
     sites = tuple(name for name in ctx["sites"] if first_score or name not in budget_sites)
@@ -595,7 +640,6 @@ def score(state: State) -> dict:
     # Compare revisions using the same unlimited scorers; a budget score belongs to its original PDF.
     avg = A.average({name: value for name, value in ev["scores"].items() if name not in budget_sites})
     n_layout = len(layout.check(job_dir / "resume.pdf").issues)
-    hard = hard_issues(ctx, f)
     log(f"ats round {rnd}: unlimited-site comparison average {avg} {ev['scores']}, layout issues {n_layout}, hard issues {hard}")
     if best:
         better = (len(hard) < len(best["hard"]) or
@@ -639,6 +683,8 @@ def _rollback(state: State, why: str, ev: dict | None = None) -> dict:
 
 def after_score(state: State) -> str:
     best = state.get("best")
+    if state.get("content_error") or (not state["ctx"]["sites"] and state.get("hard") and not best):
+        return "done"
     if not state["ctx"]["sites"] and best:  # dry run (no ATS sites): the drafted, layout-checked page is the result
         return "done"
     estimated_scores = {**state.get("budget_feedback", {}).get("scores", {}),
@@ -652,6 +698,12 @@ def after_score(state: State) -> str:
 def route(state: State) -> dict:
     """ATS validator's router: missing keywords and advice -> tasks per agent."""
     ctx, best = state["ctx"], state.get("best")
+    if not best and state.get("hard"):
+        tasks: dict[str, list[str]] = {}
+        for issue in state["hard"]:
+            agent = "skills" if issue.startswith("skills") else "projects" if "project" in issue else "experience"
+            tasks.setdefault(agent, []).append(issue)
+        return {"tasks": tasks, "layout_pass": 0}
     if not best:  # nothing scored yet: the page never fit
         return {"tasks": {"experience": [f"The resume overflows one page: every bullet to one line (about {T.BULLET_TARGET} characters), "
                                          "drop the least relevant bullet of the longest role."],
@@ -732,7 +784,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> d
     if not best:                    # no valid best version: whatever the graph left behind is not a resume
         (job_dir / "resume.pdf").unlink(missing_ok=True)
     lay = layout.check(job_dir / "resume.pdf").issues if best else []
-    hard = best.get("hard", []) if best else []
+    hard = best.get("hard", []) if best else final.get("hard", [])
     claims = (documents.claims_from_filled(best["f"]) + SG.violations(job_dir, best["f"])) if best else []
     hist = [h for h in final.get("history", []) if h.startswith("ats ")]
     summary = ats_sites.write_summary(job_dir, best["scores"] if best else {}, sites)
@@ -748,7 +800,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> d
             "coverage_limited": (T.feasibility(ctx["r"], ctx["jd"], len(ctx["r"].roles) * T.MAX_BULLETS)
                                  if best and ctx.get("r") is not None and ctx.get("jd") is not None else []),
             "produced": bool(best),
-            "failure": None if best else "no valid best version: every attempt failed to produce a one-page resume",
+            "failure": None if best else "no valid best version: document checks did not pass",
             "steps": final.get("history", [])}
 
 

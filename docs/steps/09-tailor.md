@@ -184,6 +184,12 @@ Each rule is checked after the model writes; a broken rule goes back to the mode
 
 All found while working on step 10 (details there); the gate results above are from before these changes.
 
+During live acceptance on 2026-11-16, later padding edits were found to undo the first draft's skills-category review.
+The default multi-agent writer now fingerprints visible content and rechecks each changed candidate, retaining the
+same findings without another call when content is unchanged. Category errors and an unavailable semantic review
+block publication and consume no ATS scan. Physical fitting after review must also preserve the reviewed content.
+Project repairs have a separate 180-second total call budget; failed repairs retain their prior text and its hard findings.
+
 | Date | Change | Why |
 |---|---|---|
 | 2026-10-29 | Claims policy: years of experience up to the declared 5, any skill, the posting's title; never invented degrees, certifications, clearance, citizenship or work authorization, employers, titles, dates, or a location | User decision; `data/master_profile.yaml` `claims` |

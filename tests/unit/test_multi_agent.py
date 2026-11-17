@@ -3,6 +3,67 @@
 from jobagent.steps import multi_agent as M
 
 
+def _review_fixture():
+    return M.T.Filled.model_construct(summary="Developer with cloud experience.", roles=[], notes="metadata",
+        skills=[M.T.SkillLine(category="Databases", terms=["SAP BTP"])])
+
+
+def test_semantic_review_is_bound_to_visible_content_and_retains_unchanged_findings(tmp_path, monkeypatch):
+    import json
+    f = _review_fixture(); calls = []
+    st = {"kept": 1, "short": [], "ranked": [{"repo": "owner/project", "title": "Project", "stack": ["Python"],
+          "paragraph": "Built an automation system.", "short": "Unused short description."}]}
+    path = tmp_path / "projects.json"; path.write_text(json.dumps(st))
+
+    def review(ctx, current):
+        calls.append(current.skills[0].category)
+        return [M.Finding(agent="skills", issue="SAP BTP belongs under Platforms, not Databases")] if current.skills[0].category == "Databases" else []
+
+    monkeypatch.setattr(M, "content_review", review)
+    ctx = {"job_dir": tmp_path}
+    first = M._reviewed_content(ctx, f, {})
+    assert first["semantic_hard"]
+    again = M._reviewed_content(ctx, f, first)
+    assert again["semantic_hard"] == first["semantic_hard"] and len(calls) == 1
+    f.notes = "Changed nonvisible metadata"
+    st["ranked"][0]["short"] = "Another unused variant."; path.write_text(json.dumps(st))
+    assert M._reviewed_content(ctx, f, again)["content_hash"] == first["content_hash"]
+    assert len(calls) == 1
+    f.skills[0].category = "Platforms"
+    repaired = M._reviewed_content(ctx, f, again)
+    assert repaired["semantic_hard"] == [] and len(calls) == 2
+    st["ranked"][0]["paragraph"] = "Changed the visible description."; path.write_text(json.dumps(st))
+    M._reviewed_content(ctx, f, repaired)
+    assert len(calls) == 3
+
+
+def test_unavailable_content_review_blocks_without_rewriting_or_spending_scans(tmp_path, monkeypatch):
+    def unavailable(*args):
+        raise M.llm.StructuredError("provider unavailable", "transient")
+    monkeypatch.setattr(M, "content_review", unavailable)
+    review = M._reviewed_content({"job_dir": tmp_path}, _review_fixture(), {})
+    assert review["content_error"] and review["semantic_hard"]
+    assert M.after_layout({**review, "tasks": {"skills": ["layout advice"]}, "layout_pass": 1}) == "score"
+    assert M.after_score({**review, "ctx": {"sites": ("hireflow",)}}) == "done"
+
+
+def test_known_semantic_defects_and_unreviewed_edits_never_consume_ats_scans(tmp_path, monkeypatch):
+    import pytest
+    f = _review_fixture();ctx = {"job_dir": tmp_path, "jd": None, "jd_text": "JD", "sites": ("hireflow",), "log": lambda _: None}
+    monkeypatch.setattr(M, "render", lambda state: (f, "tex", [], 1, ""))
+    monkeypatch.setattr(M, "hard_issues", lambda *args: [])
+    monkeypatch.setattr(M.A, "evaluate", lambda *a: pytest.fail("An invalid document spent an ATS scan"))
+    state = {"ctx": ctx, "semantic_hard": ["skills: wrong category"]}
+    failed = M.score(state)
+    assert failed["hard"] == ["skills: wrong category"] and "best" not in failed
+    assert list(M.route({**state, **failed})["tasks"]) == ["skills"]
+    assert M.after_score({**state, **failed, "ctx": {**ctx, "sites": ()}}) == "done"
+    prior_hash = M._content_hash(ctx, f)
+    f.skills[0].category = "Changed after validation"
+    changed = M.score({"ctx": ctx, "content_hash": prior_hash})
+    assert any("changed after" in problem for problem in changed["hard"])
+
+
 def test_long_copied_summary_is_flagged():
     s = ("Software Engineer I, Entry-Level, as a recent graduate with a degree in Computer Science or related "
          "discipline, with 1 year of experience, having completed two internships, possessing skills in languages "
