@@ -10,9 +10,13 @@ for(let i=0;i<roots.length;i++) for(const e of roots[i].querySelectorAll('*')) {
  if(!e.matches('input:not([type=hidden]),select,textarea,[role=combobox]'))continue;
  const rect=e.getBoundingClientRect(), s=getComputedStyle(e);
  const lab=e.getAttribute('aria-label') || (e.labels?.[0]?.textContent) || e.placeholder || '';
+ const composite=e.matches('[data-automation-id^=dateSection][data-automation-id$=-input]') &&
+   ['Month','Day','Year'].includes(e.getAttribute('aria-label'))
+   ? e.closest('[data-automation-id=dateInputWrapper][data-jf-ref]') : null;
  if(lab) out.push({label:lab.trim(), type:e.type||e.getAttribute('role')||e.tagName.toLowerCase(),
    visible:rect.width>1&&rect.height>1&&s.visibility!=='hidden'&&s.display!=='none',
-   required:e.required||e.getAttribute('aria-required')==='true',format:e.placeholder||'',source:'DOM',locator_ref:e.getAttribute('data-jf-ref')||'',native_id:e.id||'',frame_identity:window.__jobagentFieldNodes?.epoch||''});
+   required:e.required||e.getAttribute('aria-required')==='true',format:e.placeholder||'',source:'DOM',locator_ref:e.getAttribute('data-jf-ref')||'',native_id:e.id||'',frame_identity:window.__jobagentFieldNodes?.epoch||'',
+   composite_ref:composite?.getAttribute('data-jf-ref')||''});
 } return out;
 }'''
 

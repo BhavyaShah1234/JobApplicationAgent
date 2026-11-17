@@ -169,6 +169,39 @@ def test_an_add_control_without_a_new_row_blocks_after_one_click(page,monkeypatc
     assert 'stopped before clicking again' in result['blockers'][0]
 
 
+@pytest.mark.parametrize('unrelated', [False, True])
+def test_hidden_date_parts_are_covered_only_by_their_own_composite_question(page,unrelated):
+    from jobagent.filling.facts import Fact
+    from jobagent.filling.planned import PlannedFiller
+    extra='<input aria-label="Unrelated question" required style="width:0;height:0;border:0;padding:0">' if unrelated else ''
+    page.set_content('''<h1>Application</h1><h2>Work Experience 1</h2>
+      <div data-automation-id=formField-start><label>From*</label>
+      <div data-automation-id=dateInputWrapper id=start>
+        <span data-automation-id=dateSectionMonth-display>01</span>
+        <input data-automation-id=dateSectionMonth-input aria-label=Month required value=01 style="width:0;height:0;border:0;padding:0">
+        <span data-automation-id=dateSectionYear-display>2026</span>
+        <input data-automation-id=dateSectionYear-input aria-label=Year required value=2026 style="width:0;height:0;border:0;padding:0">
+        EXTRA</div></div>'''.replace('EXTRA',extra))
+    filler=PlannedFiller([Fact('start',['From* (MM/YYYY)','From','Start date'],'January 2026','applicant/work/0/from',section='Work Experience 1')],
+        lambda _:pytest.fail('Known date parts are one supported question, not extra owner questions'))
+    result=filler.fill(page,advance_pages=False)
+    if unrelated:
+        assert result['state']=='blocked' and result['blockers']==['unresolved potential field: Unrelated question']
+    else:
+        assert result['state']=='page_complete'
+        assert any(r.get('outcome')=='verified' and r.get('kind')=='date_parts' for r in result['records'])
+
+
+def test_a_required_year_makes_its_composite_required_even_if_the_month_is_optional(page):
+    page.set_content('''<div><label>From</label><div data-automation-id=dateInputWrapper>
+      <span data-automation-id=dateSectionMonth-display>MM</span>
+      <input data-automation-id=dateSectionMonth-input aria-label=Month>
+      <span data-automation-id=dateSectionYear-display>YYYY</span>
+      <input data-automation-id=dateSectionYear-input aria-label=Year required></div></div>''')
+    fields=forms.read_page(page).fields
+    assert len(fields)==1 and fields[0].kind=='date_parts' and fields[0].required
+
+
 @pytest.mark.parametrize('prefill', ['United States of America (+1)', 'India (+91)', ''])
 def test_search_picker_preserves_correct_phone_prefix_and_can_replace_wrong_or_empty_one(page, prefill):
     from jobagent.filling.facts import compile_facts, resolve

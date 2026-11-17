@@ -500,6 +500,9 @@ class PlannedFiller:
                 if view.errors:return self.result('blocked',records,started,view.errors)
                 if not view.coverage.complete:return self.result('blocked',records,started,view.coverage.problems())
                 def represented(item):
+                    if item.get('composite_ref') and any(f.kind=='date_parts' and
+                            f.frame_identity==item.get('frame_identity') and f.locator_ref==item['composite_ref']
+                            for f in view.fields):return True
                     if item.get('locator_ref'):
                         if any(f.locator_ref==item['locator_ref'] for f in view.fields):return True
                         for proof in self.upload_proofs.values():

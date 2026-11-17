@@ -271,7 +271,7 @@ FIELDS_JS = r"""(start) => {
       const fmt = [...dw.querySelectorAll('[data-automation-id^=dateSection][data-automation-id$=-input]')]
           .map(i => ({Month: 'MM', Day: 'DD', Year: 'YYYY'})[i.getAttribute('aria-label')] || '??').join('/');
       const val = parts.join('/');
-      add(dw, {kind: 'date_parts', label: q + ' (' + fmt + ')', required: required(dw.querySelector('input') || dw, q),
+      add(dw, {kind: 'date_parts', label: q + ' (' + fmt + ')', required: [...dw.querySelectorAll('input')].some(i=>required(i,q)),
                value: /[A-Z]{2}/.test(val) ? '' : val, format: fmt});
       continue; }
     if (t === 'file') {
