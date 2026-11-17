@@ -373,7 +373,8 @@ def test_the_pipeline_reports_each_stage_as_it_goes(tailor_world):
     pipeline = Pipeline(c, SimpleNamespace(state_dir=s.state_dir, outputs_dir=job.parents[1]), invoke=invoke, log=Rec())
     assert pipeline.run(url, no_ats=True).state == "filled"
     plan = ["scrape", "research", "documents", "apply"]
-    assert [(a, b) for a, b, _, _ in seen] == [("scrape", "running"), ("scrape", "done"), ("research", "running"), ("research", "done"),
+    from itertools import groupby
+    assert [state for state, _ in groupby((a, b) for a, b, _, _ in seen)] == [("scrape", "running"), ("scrape", "done"), ("research", "running"), ("research", "done"),
                                               ("documents", "running"), ("documents", "done"), ("apply", "running"), ("apply", "done")]
     assert all(p == plan for _, _, p, _ in seen) and seen[-1][3] == job.name
 
@@ -467,3 +468,26 @@ def test_the_analytics_route_answers(env):
     _, srv, _ = env
     code, out = call(srv, "GET", "/api/analytics")
     assert code == 200 and out["totals"]["jobs"] == 5 and out["funnel"][0] == {"id": "discovered", "label": "Postings found", "n": 5}
+
+
+def test_saved_review_is_not_ready_while_the_same_job_is_being_rebuilt(env, monkeypatch):
+    s, _, _ = env
+    saved = next(r for r in data.review(s) if r['ready'])
+    monkeypatch.setattr(data, 'pipeline', lambda _: [{'active': True, 'job_dir': str(s.outputs_dir.parent / saved['job_dir'])}])
+    current = next(r for r in data.review(s) if r['id'] == saved['id'])
+    assert not current['ready'] and any('newer run' in b for b in current['blockers'])
+    # Reading the dashboard never rewrites the saved application result.
+    monkeypatch.setattr(data, 'pipeline', lambda _: [])
+    assert next(r for r in data.review(s) if r['id'] == saved['id'])['ready']
+
+
+def test_failed_rebuild_cannot_make_an_older_review_ready_again(env, monkeypatch):
+    from datetime import datetime, UTC
+    import os
+    s, _, _ = env
+    saved = next(r for r in data.review(s) if r['ready'])
+    path = s.outputs_dir.parent / saved['job_dir'] / 'application/application.json'
+    os.utime(path, (1, 1))
+    monkeypatch.setattr(data, 'pipeline', lambda _: [{'active': False, 'job_dir': saved['job_dir'], 'started': datetime.now(UTC).isoformat()}])
+    current = next(r for r in data.review(s) if r['id'] == saved['id'])
+    assert not current['ready'] and any('predates' in b for b in current['blockers'])

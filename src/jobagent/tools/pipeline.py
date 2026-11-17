@@ -155,18 +155,19 @@ class Pipeline:
         from jobagent.progress import update
         update(job_dir=str(d.resolve()))
         meta.update(job=d.name, title=row["title"] or "", company=row["company"] or "")
-        P("scrape", "done")
         current = W.Workflow(d)
         current.data["stages"]["scrape"] = wf.stage("scrape")
         current.save()
+        P('scrape', 'running', label='Updating skills graph')
         self._skill_graph(d, row)
+        P('scrape', 'done')
         if through == "scrape":
             return PipelineResult("scraped", str(d))
+        P('research', 'running', label='Eligibility and company research')
         stop = self._eligibility(d, row, ignore_eligibility)
         if stop is not None:
             P("research", "blocked", detail=f"eligibility: {stop.note}"[:200])
             return stop
-        P("research", "running", label="Company research")
         company = row["company"]
         slug = research.slug(company)
         source = json.loads((d / "jd.json").read_text())

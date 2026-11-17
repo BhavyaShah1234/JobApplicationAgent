@@ -40,6 +40,21 @@ def test_same_second_retry_cannot_inherit_the_previous_failure(tmp_path):
     assert not jobs[0]['active']
 
 
+def test_between_stage_work_remains_active_without_inventing_a_current_stage(tmp_path):
+    s = settings(tmp_path)
+    with execution(new=True, job='123', job_dir=str(s.outputs_dir / 'one/123'), plan=['scrape', 'research']):
+        log = RunLog('run', '123', directory=s.state_dir / 'logs', quiet=True)
+        try:
+            progress(log, 'scrape', 'done')
+            job = data.pipeline(s)[0]
+            assert job['active'] and job['state'] == 'running'
+            assert job['current'] is None and job['stages'][1]['status'] == 'pending'
+            progress(log, 'research', 'done')
+            assert not data.pipeline(s)[0]['active']
+        finally:
+            log.close()
+
+
 @pytest.mark.parametrize('fails', [True, False])
 def test_standalone_command_has_a_real_final_status(tmp_path, monkeypatch, fails):
     s = settings(tmp_path)

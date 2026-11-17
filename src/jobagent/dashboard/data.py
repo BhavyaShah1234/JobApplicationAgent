@@ -5,6 +5,7 @@ import json
 import re
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 MAX_LOG_BYTES = 2_000_000
@@ -88,7 +89,28 @@ def review(settings, conn=None) -> list[dict]:
     if conn is None:
         return []
     try:
-        return review_queue.waiting(conn, settings.outputs_dir.parent)
+        rows = review_queue.waiting(conn, settings.outputs_dir.parent)
+        # A saved review belongs to the previous attempt while a rebuild/refill is
+        # active. Keep it visible, but do not advertise the old packet as ready.
+        root = settings.outputs_dir.parent
+        def identity(value):
+            p = Path(value)
+            return str((p if p.is_absolute() else root / p).resolve())
+        latest = {identity(j['job_dir']): j for j in pipeline(settings) if j['job_dir']}
+        for row in rows:
+            path = Path(identity(row['job_dir']))
+            job = latest.get(str(path))
+            if job is None:
+                continue
+            try:
+                predates_run = (path / 'application/application.json').stat().st_mtime < datetime.fromisoformat(job['started'].replace('Z', '+00:00')).timestamp()
+            except (OSError, ValueError, KeyError):
+                predates_run = False
+            if job['active'] or predates_run:
+                row['ready'] = False
+                row['blockers'] = [*row['blockers'], 'A newer run is still updating this application; wait for its review result.' if job['active'] else
+                                   'This saved review predates the latest run; refill and review the current documents.']
+        return rows
     except Exception:
         return []
     finally:
@@ -251,7 +273,8 @@ def pipeline(settings, hours: float = 72, limit: int = 30) -> list[dict]:
         bad = next((s for s in stages if s["status"] in ("failed", "blocked", "stalled")), None)
         overall = ("failed" if bad and bad["status"] == "failed" else "blocked" if bad and bad["status"] == "blocked" else "stalled" if bad else
                    "done" if stages and done == len(stages) else 'waiting' if cur and cur['status'] == 'waiting' else "running" if j["active"] else "waiting")
-        j['active'] = bool(j['active'] and cur and cur['status'] in ('running', 'waiting'))
+        j['active'] = bool(j['active'] and ((cur and cur['status'] in ('running', 'waiting')) or
+                          (cur is None and any(s['status'] == 'pending' for s in stages))))
         started = datetime.fromisoformat(j["first"].replace("Z", "+00:00")).timestamp()
         ended = now if j["active"] else datetime.fromisoformat(j["last"].replace("Z", "+00:00")).timestamp()
         out.append({"job": j["job"], "url": j["url"], "title": j["title"] or j["job"] or j["url"], "company": j["company"], "stages": stages,
@@ -394,8 +417,8 @@ def analytics(settings, days: int = 45) -> dict:
         out["jobs_by_role"] = sorted(({"role": k, "n": v} for k, v in roles.items()), key=lambda x: -x["n"])
         bins = [0] * 6                                   # match score 0.5-1.0 in steps of 0.1 (the last bin is 1.0 only)
         for j in kept:
-            if j["match_score"] is not None and j["match_score"] >= 0.5:
-                bins[min(5, int((j["match_score"] - 0.5) * 10))] += 1
+            if j["match_score"] is not None and 0.5 <= j["match_score"] <= 1.0:
+                bins[min(5, int(Decimal(str(j['match_score'])) * 10) - 5)] += 1
         out["score_hist"] = [{"label": f"{0.5 + i / 10:.1f}" + ("" if i == 5 else f"–{0.6 + i / 10:.1f}"), "n": n} for i, n in enumerate(bins)]
         # activity per day over the last `days`
         today = datetime.now(UTC).date()

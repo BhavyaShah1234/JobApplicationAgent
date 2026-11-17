@@ -7,6 +7,16 @@ from jobagent.dashboard import data
 from jobagent.tools import ats_result, ats_sites
 
 
+def test_score_histogram_keeps_exact_decimal_boundaries_in_the_correct_bins(tmp_path):
+    s = Settings(state_dir=tmp_path / 'state', outputs_dir=tmp_path / 'outputs', data_dir=tmp_path / 'data')
+    s.state_dir.mkdir()
+    with db.connect(s.state_dir / 'jobs.sqlite') as conn:
+        for i, score in enumerate([0.5, 0.6, 0.7, 0.8, 0.9, 1.0]):
+            conn.execute('INSERT INTO jobs(url,company,job_id,status,match_score) VALUES(?,?,?,?,?)',
+                         (f'https://fixture.test/{i}', 'Fixture', str(i), 'queued', score))
+    assert [b['n'] for b in data.analytics(s)['score_hist']] == [1, 1, 1, 1, 1, 1]
+
+
 def test_dashboard_never_averages_scores_from_other_resume_versions(tmp_path):
     s = Settings(state_dir=tmp_path / 'state', outputs_dir=tmp_path / 'outputs', data_dir=tmp_path / 'data')
     s.state_dir.mkdir()
