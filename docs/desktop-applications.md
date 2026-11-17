@@ -61,6 +61,26 @@ jobagent submit outputs/COMPANY/JOB_ID COMPANY --browser-mode desktop --allow-de
 The reviewed payload must still be approved at the final prompt. `auto` is a filling mode; a submission cannot silently
 switch browsers. Scraping and ATS scoring keep their own browser workflows.
 
+## Temporary mailbox
+
+The same host bridge can open Temp-Mail in a dedicated desktop session:
+
+```bash
+docker exec -it jobagent jobagent temp-mail --browser-mode desktop
+```
+
+`--browser-mode auto` (the mailbox command's default) tries Docker first and switches
+to the host desktop only when it detects a security challenge. It waits up to two
+minutes for a real mailbox address; adjust this with `--wait-minutes`. Loading text
+is never returned as an address. Complete any human verification in the browser.
+Desktop Chrome remains open for incoming verification messages after the command
+finishes, including after a timeout. Repeating the desktop command reuses that
+dedicated session; it does not change or delete the mailbox.
+
+This command reads the mailbox address, without opening messages or registering
+accounts elsewhere. A working mailbox does not establish that another website
+accepts disposable email addresses or provides another free scan.
+
 ## Form filling audit
 
 Field discovery and answer planning are shared across employers. Controls are read from

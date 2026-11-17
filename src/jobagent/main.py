@@ -35,6 +35,22 @@ from jobagent import cli_skills  # noqa: E402
 cli_skills.register(app, console)  # step 4c: skills build, sync, show, ...
 
 
+@app.command('temp-mail')
+def temp_mail_cmd(
+    browser_mode: str = typer.Option('auto', help='docker, desktop, or auto (desktop after a Docker security check).'),
+    wait_minutes: float = typer.Option(2, min=0.01, max=60, help='Time to wait for the mailbox or human verification.'),
+):
+    """Open Temp-Mail and read its address; desktop mode leaves the inbox open."""
+    from jobagent.tools import temp_mail, challenge
+
+    try:
+        result = temp_mail.open_mailbox(browser_mode, wait_s=wait_minutes * 60, log=console.print)
+    except (ValueError, challenge.Blocked, RuntimeError) as exc:
+        console.print(f'temp-mail: {exc}', markup=False)
+        raise typer.Exit(1) from exc
+    console.print(result['email'], markup=False)
+
+
 @app.command("desktop-probe")
 def desktop_probe_cmd(
     stage: str = typer.Argument(..., help="manual, read, or field; each stage needs separate owner authorization."),
