@@ -1133,7 +1133,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
     frame, loc = view.frames[f.frame], locate(view, f)
     tagged=loc.get_attribute('data-jf')
     if tagged is not None and tagged.isdigit() and int(tagged)!=f.id:f=replace(f,id=int(tagged))
-    if f.kind == "combobox" and f.value:
+    if f.kind == "combobox" and f.value and not f.invalid:
         same = (phone_code_option(answer, [f.value]) is not None if PHONE_CODE_Q.search(f.label)
                 else _norm(answer) == _norm(f.value) if is_identity(f.label)
                 else already_shows(answer, f.value, f.kind))

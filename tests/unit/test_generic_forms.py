@@ -77,6 +77,18 @@ def test_discovering_prefilled_source_does_not_select_or_clear_its_other_options
     assert forms.read_page(page).fields[0].value == 'Employee Referral'
 
 
+def test_an_invalid_prefilled_picker_is_reselected_before_it_can_be_verified(page):
+    option = 'United States of America (+1)'
+    selected_search_picker(page, 'Country Phone Code', option, [option, 'India (+91)'])
+    page.locator('#pick').evaluate("e=>e.setAttribute('aria-invalid','true')")
+    page.locator('[role=option]').evaluate_all("es=>es.forEach(e=>e.addEventListener('click',()=>pick.removeAttribute('aria-invalid')))")
+    view = forms.read_page(page)
+    assert view.fields[0].invalid
+    assert forms.fill_field(page, view, view.fields[0], option, {}, strict=True) == option
+    assert not forms.read_page(page).fields[0].invalid
+    assert page.evaluate('selectionWrites') == 1
+
+
 def test_unseen_aria_radios_and_contenteditable_are_filled_and_read_back(page):
     page.set_content('''<h1>Candidate details</h1><span id="q_opaque">Preferred workplace</span>
       <div role="radiogroup" aria-labelledby="q_opaque" aria-required="true">
