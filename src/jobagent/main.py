@@ -466,7 +466,8 @@ def tailor_cmd(
         # are unchanged, and redoes only the cover letter; `--force` rebuilds everything.
         rj, how = wf.run("resume", lambda: M.run_job(d, company, {k: model for k in M.DEFAULT_MODELS}, sites, log=log),
                          inputs={"jd": jd_sha, "jd_text": txt_sha, "template": template_sha, "profile": profile_sha, "model": model,
-                                 "sites": list(sites), "skills": _skill_inputs(d, s), "document_provenance": 1},
+                                 "sites": list(sites), "skills": _skill_inputs(d, s), "document_provenance": 1,
+                                 "project_content_validation": 1},
                          outputs=["resume.pdf", "resume.tex", "filled.json"], force=force, log=log,
                          check=lambda r: None if r.get("produced") else (r.get("failure") or "no valid resume was produced"))
         log(f"resume ({how}): average {rj['average']} {rj['scores']}, {rj['pages']} page(s), hard issues {rj['hard_issues']}")

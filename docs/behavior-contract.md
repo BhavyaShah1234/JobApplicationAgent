@@ -23,6 +23,10 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
   `jobagent tailor` run; revalidating documents or rewriting only the cover letter cannot certify a new template.
 - Compile a changed source before starting a fresh writer. A malformed locked template stops with a source error instead of
   spending model rounds on generated content that cannot repair it. The untailored source may exceed one page.
+- Reject a displayed project description without sentence-ending punctuation and route it back to the project writer.
+  Fitting its character budget and PDF bounds alone does not establish that the description is finished.
+- Preserve SkillsFirst's written report and recommendations as feedback; it contributes no numeric score. A missing
+  required numeric provider keeps the five-site average incomplete.
 
 **Learning is advisory.** Recommendations appear only at declared looks (100, 200, 400, 800, 1600 resolved applications); behavior switches are off by default; the site-mix switch is unsupported.
 

@@ -191,6 +191,22 @@ def _sentences(text: str, limit: int) -> str:
     return out or text[:limit].rsplit(" ", 1)[0] + "."
 
 
+def content_findings(state: dict) -> list[str]:
+    """Check the actual project variants selected for rendering, including short forms.
+
+    A model can satisfy max_length by stopping mid-sentence. Page count and text
+    bounds do not detect that, so these drafts must be rewritten before use.
+    """
+    short = set(state.get("short", []))
+    out = []
+    for i, entry in enumerate(state.get("ranked", [])[:state.get("kept", 0)], 1):
+        text = entry.get("short") if entry.get("repo") in short and entry.get("short") else entry.get("paragraph", "")
+        if not re.search(r'''[.!?]["'\u201d\u2019)\]]*\s*$''', text):
+            out.append(f"project {i} description ends without a complete sentence: {text[-100:]!r}; "
+                       "rewrite the whole description within its length budget, ending the final sentence")
+    return out
+
+
 def from_card(c: dict) -> ProjectEntry:
     """A project entry straight from a repo card (fallback when the model can't choose)."""
     title = re.split(r"\s+[—:|-]\s+", c["title"])[0][:45]

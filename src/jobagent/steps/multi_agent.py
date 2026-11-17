@@ -393,6 +393,8 @@ def check_layout(state: State) -> dict:
     lay = layout.check(job_dir / "resume.pdf") if pages == 1 and not err else None
     proj_path = job_dir / "projects.json"
     st = json.loads(proj_path.read_text()) if proj_path.exists() else None
+    if st:
+        tasks["projects"] += P.content_findings(st)
     if lay:
         for issue in lay.issues:
             agent = ("skills" if issue.startswith("Technical Skills") else
@@ -495,6 +497,7 @@ def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
     proj = ctx["job_dir"] / "projects.json"
     if proj.exists():  # a short form only adds an extra project: at least 2 (or all available) must be in full
         st = json.loads(proj.read_text())
+        out += P.content_findings(st)
         full, want = st["kept"] - len(st["short"]), min(2, len(st["ranked"]))
         if full < want:
             out.append(f"only {full} project(s) in full (short forms: {st['short']}); shorten the Summary or skills "
