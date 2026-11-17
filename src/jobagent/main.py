@@ -34,6 +34,10 @@ from jobagent import cli_skills  # noqa: E402
 
 cli_skills.register(app, console)  # step 4c: skills build, sync, show, ...
 
+from jobagent import cli_dashboard  # noqa: E402
+
+cli_dashboard.register(app, console)  # step 17: dashboard
+
 
 @app.command('temp-mail')
 def temp_mail_cmd(
@@ -481,6 +485,8 @@ def tailor_cmd(
         sites = () if no_ats else M.SITES
         # F15: each finished stage is kept. A rerun after a crash (or a second `tailor`) reuses the resume if its inputs and files
         # are unchanged, and redoes only the cover letter; `--force` rebuilds everything.
+        from jobagent.log import progress
+        progress(log, "documents", "running", "Resume")
         rj, how = wf.run("resume", lambda: M.run_job(d, company, {k: model for k in M.DEFAULT_MODELS}, sites, log=log),
                          inputs={"jd": jd_sha, "jd_text": txt_sha, "template": template_sha, "profile": profile_sha, "model": model,
                                  "sites": list(sites), "skills": _skill_inputs(d, s), "document_provenance": 1,
@@ -493,6 +499,7 @@ def tailor_cmd(
         if (rj["produced"] and rj.get("template_sha256")
                 and rj["template_sha256"] == documents.template_fingerprint()):
             # Do not spend another model call when the source changed during generation.
+            progress(log, "documents", "running", "Cover letter", detail=f"resume done: average {rj['average']}")
             cl, how = wf.run("cover_letter", lambda: cover_letter(d, company, log=log),
                              inputs={"resume_tex": W.sha_file(d / "resume.tex"), "profile": profile_sha, "model": model,
                                      "candidate_credentials": 1, "pdf_startup_policy": PDF_STARTUP_POLICY},

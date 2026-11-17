@@ -1,0 +1,36 @@
+import { useState } from "react";
+import { post } from "../api.js";
+
+export default function StartRun({ onStarted }) {
+  const [inputs, setInputs] = useState("");
+  const [through, setThrough] = useState("apply");
+  const [limit, setLimit] = useState(5);
+  const [msg, setMsg] = useState({ text: "", ok: true });
+  async function start() {
+    const r = await post("/api/run", { inputs: inputs.split("\n").map((s) => s.trim()).filter(Boolean), through, limit: Number(limit) });
+    setMsg(r.ok ? { text: `Started (pid ${r.body.pid}). ${r.body.note}`, ok: true } : { text: r.body.error || "failed", ok: false });
+    if (r.ok) setTimeout(() => onStarted?.(), 1800);
+  }
+  return (
+    <div className="box">
+      <p>
+        Starts <code>jobagent run</code> in the background. It goes as far as the choice below and stops at the review screen: it cannot submit.
+      </p>
+      <textarea rows={4} value={inputs} placeholder="One per line: job URLs, company names, or a CSV/XLSX file name" onChange={(e) => setInputs(e.target.value)} />
+      <p>
+        Go as far as{" "}
+        <select value={through} onChange={(e) => setThrough(e.target.value)}>
+          {["scrape", "tailor", "apply"].map((v) => (
+            <option key={v}>{v}</option>
+          ))}
+        </select>
+        {"  ·  "}jobs per company input{" "}
+        <input type="number" min="1" max="20" value={limit} style={{ width: 70 }} onChange={(e) => setLimit(e.target.value)} />
+      </p>
+      <button type="button" className="act" onClick={start}>
+        Start
+      </button>
+      <p className={msg.ok ? "ok" : "bad"}>{msg.text}</p>
+    </div>
+  );
+}

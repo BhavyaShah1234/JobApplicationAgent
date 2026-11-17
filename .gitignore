@@ -231,3 +231,7 @@ data/*
 data/templates/*
 !data/templates/*.example.*
 asu_contacts.csv
+dev/
+
+# Dashboard front end (React): dependencies are installed in a container, never committed; the build in src/jobagent/dashboard/static IS committed
+frontend/node_modules/

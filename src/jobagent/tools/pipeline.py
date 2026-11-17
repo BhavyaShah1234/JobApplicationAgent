@@ -111,6 +111,14 @@ class Pipeline:
     def _run(self, url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy=None, ignore_eligibility=False):
         from jobagent.tools import research, places
         from jobagent.tools.queue_runner import outcome_of_apply, fresh_result
+        from jobagent.log import progress
+        plan = {"scrape": ["scrape"], "tailor": ["scrape", "research", "documents"], "apply": ["scrape", "research", "documents", "apply"],
+                "submit": ["scrape", "research", "documents", "submit"]}[through]
+        meta = {"job": "", "title": "", "company": ""}
+
+        def P(stage, status="running", **kw):                      # where this job is, for the dashboard (run log only)
+            progress(self.log, stage, status, plan=plan, url=url, **meta, **kw)
+        P("scrape")
         wf = W.Workflow(root)
         inputs = {"url": url}
         old = wf.stage("scrape") or {}
@@ -131,9 +139,12 @@ class Pipeline:
                 wf.save()
         row = self._posting(url)
         if data["code"] or row is None or not data["job_dir"]:
+            P("scrape", "failed", detail=(row["notes"] if row is not None else "scrape did not produce a posting") or "")
             return PipelineResult(row["status"] if row is not None else "failed", data["job_dir"], data["code"] or 1,
                                   row["notes"] if row is not None else "scrape did not produce a posting")
         d = Path(data["job_dir"])
+        meta.update(job=d.name, title=row["title"] or "", company=row["company"] or "")
+        P("scrape", "done")
         current = W.Workflow(d)
         current.data["stages"]["scrape"] = wf.stage("scrape")
         current.save()
@@ -142,7 +153,9 @@ class Pipeline:
             return PipelineResult("scraped", str(d))
         stop = self._eligibility(d, row, ignore_eligibility)
         if stop is not None:
+            P("research", "blocked", detail=f"eligibility: {stop.note}"[:200])
             return stop
+        P("research", "running", label="Company research")
         company = row["company"]
         slug = research.slug(company)
         source = json.loads((d / "jd.json").read_text())
@@ -153,6 +166,7 @@ class Pipeline:
                                 inputs={"company": company, "jd": source_sha}, outputs=profiles,
                                 force=force, log=self.log, check=lambda r: "research failed" if r["code"] else None)
         if result["code"]:
+            P("research", "failed", detail="research failed")
             return PipelineResult("failed", str(d), result["code"], "research failed")
         # Resolve derived metadata BEFORE the writer fingerprints jd.json. Otherwise
         # apply.context() adds it afterwards and a retry needlessly rebuilds valid PDFs.
@@ -167,9 +181,13 @@ class Pipeline:
         wf.save()
         current.data["stages"]["scrape"] = wf.stage("scrape")
         current.save()
+        P("research", "done")
+        P("documents", "running", label="Resume and cover letter")
         code = self.invoke("tailor", job_dir=str(d), company=slug, force=force, no_ats=no_ats)
         if code:
+            P("documents", "failed", detail="document generation or document gate failed")
             return PipelineResult("failed", str(d), code, "document generation or document gate failed")
+        P("documents", "done")
         if through == "tailor":
             return PipelineResult("tailored", str(d))
         stage = "submit" if through == "submit" else "apply"
@@ -178,11 +196,14 @@ class Pipeline:
         if stage == "submit":
             kwargs["allow_desktop_submit"] = allow_desktop_submit
         started = time.time()
+        P(stage, "running", label="Filling the form" if stage == "apply" else "Submitting")
         code = self.invoke(stage, **kwargs)
         result = fresh_result(d, started)
         if stage == "submit":
             sent = (result or {}).get("submission", {})
             return PipelineResult(sent.get("state", "failed"), str(d), code, sent.get("message", ""))
         out = outcome_of_apply(result, code)
-        return PipelineResult(*(out[:1] if out else ("unavailable",)), job_dir=str(d), code=code,
-                              note=out[1] if out else "posting unavailable")
+        final = PipelineResult(*(out[:1] if out else ("unavailable",)), job_dir=str(d), code=code, note=out[1] if out else "posting unavailable")
+        P(stage, "done" if final.state in ("filled", "review", "ready", "submitted", "confirmed") else
+          "blocked" if final.state in ("blocked", "needs_review", "unavailable", "closed") else "failed", detail=f"{final.state} {final.note}"[:200])
+        return final
