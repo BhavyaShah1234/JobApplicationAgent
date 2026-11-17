@@ -110,6 +110,10 @@ def test_multi_agent_final_average_drops_a_stale_limited_score(job, monkeypatch,
     (job / "templates").mkdir()
     (job / "templates/resume.tex").write_text("template")
     monkeypatch.setattr(multi, "get_settings", lambda: SimpleNamespace(data_dir=job, state_dir=job))
+    # This graph stub exercises score aggregation, not TeX compilation. Real
+    # template preflight failures are covered in test_template_preflight.py.
+    from jobagent.tools import documents
+    monkeypatch.setattr(documents, "validate_template", lambda *args, **kwargs: None)
     monkeypatch.setattr(multi.T, "parse", lambda text: None)
     monkeypatch.setattr(multi.layout, "check", lambda path: SimpleNamespace(issues=[]))
     monkeypatch.setattr(multi.layout, "page_count", lambda path: 1)

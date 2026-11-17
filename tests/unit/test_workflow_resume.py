@@ -124,6 +124,10 @@ def tailor_world(monkeypatch, tmp_path):
     (job / "jd.json").write_text(json.dumps({"company": "Acme", "title": "Engineer", "source_url": "https://e.test/a"}))
     (job / "jd.txt").write_text("the posting")
     monkeypatch.setenv("STATE_DIR", str(tmp_path))
+    data = tmp_path / "data"
+    (data / "templates").mkdir(parents=True)
+    (data / "templates/resume.tex").write_text("fixture template v1")
+    monkeypatch.setenv("DATA_DIR", str(data))
     get_settings.cache_clear()
     calls = {"resume": 0, "cover": 0, "crash_cover": False}
 
@@ -132,7 +136,8 @@ def tailor_world(monkeypatch, tmp_path):
         for n in ("resume.pdf", "resume.tex", "filled.json"):
             (d / n).write_text(f"{n} #{calls['resume']}")
         return {"produced": True, "average": 91.0, "scores": {"jobscan": 91}, "pages": 1, "hard_issues": [], "average_complete": True,
-                "average_missing": [], "average_sites": ["jobscan"], "claims_issues": []}
+                "average_missing": [], "average_sites": ["jobscan"], "claims_issues": [],
+                "template_sha256": D.template_fingerprint()}
 
     def cover_letter(d, slug, log=print):
         calls["cover"] += 1
@@ -221,6 +226,20 @@ def test_a_changed_posting_rebuilds_the_resume(tailor_world):
     (job / "jd.txt").write_text("a different posting")
     CliRunner().invoke(main.app, ["tailor", str(job), "acme"])
     assert calls["resume"] == 2
+
+
+def test_a_changed_owner_template_rebuilds_both_documents_then_reuses_them(tailor_world):
+    job, calls = tailor_world
+    runner = CliRunner()
+    assert runner.invoke(main.app, ["tailor", str(job), "acme"]).exit_code == 0
+    assert (calls["resume"], calls["cover"]) == (1, 1)
+    (get_settings().data_dir / "templates/resume.tex").write_text("fixture template v2")
+    changed = runner.invoke(main.app, ["tailor", str(job), "acme"])
+    assert changed.exit_code == 0, changed.output
+    assert (calls["resume"], calls["cover"]) == (2, 2)
+    unchanged = runner.invoke(main.app, ["tailor", str(job), "acme"])
+    assert unchanged.exit_code == 0, unchanged.output
+    assert (calls["resume"], calls["cover"]) == (2, 2)
 
 
 def test_two_commands_cannot_work_on_one_job_at_once(tailor_world):
