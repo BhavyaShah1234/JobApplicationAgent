@@ -4,6 +4,9 @@ import re
 from datetime import datetime,timedelta
 from jobagent.tools import forms
 
+EMPLOYMENT_MONTH_POLICY = 'Month-only employment dates'
+FIRST_DAY_POLICY = 'first_day_of_month'
+
 
 def norm(s):
     return re.sub(r'[^a-z0-9]+', ' ', str(s).lower()).strip()
@@ -30,6 +33,8 @@ class Fact:
     reference_date: str = ''
     authority: str = 'owner'
     target_key: tuple | None = None
+    date_policy: str = ''
+    policy_fact_id: str = ''
 
 
 @dataclass
@@ -206,6 +211,7 @@ def from_fact(f, fact):
             return Decision(None,fact.source,fact.id,'source rule requires validation')
         fact=Fact(fact.id,fact.aliases,text,fact.source,fact.section,fact.variants)
     value=choice(f,[fact.value,*fact.variants])
+    rendered_source,rendered_ids=fact.source,fact.id
     format_hint=(f.format or '').upper()
     needs_day=f.kind=='date' or 'DD' in format_hint
     needs_month_year='MM' in format_hint and ('YY' in format_hint)
@@ -214,6 +220,14 @@ def from_fact(f, fact):
         for fmt in ('%Y-%m-%d','%m/%d/%Y','%B %d, %Y'):
             try:parsed=datetime.strptime(fact.value,fmt);break
             except ValueError:pass
+        if parsed is None and needs_day and fact.date_policy==FIRST_DAY_POLICY and fact.policy_fact_id and \
+                (entity_scope(fact.section) or ('',))[0]=='employment':
+            for fmt in ('%Y-%m','%m/%Y','%m-%Y','%Y/%m','%B %Y','%b %Y'):
+                try:parsed=datetime.strptime(fact.value,fmt);break
+                except ValueError:pass
+            if parsed is not None:
+                rendered_source+='; owner-approved first-day approximation: '+fact.policy_fact_id
+                rendered_ids+=','+fact.policy_fact_id
         if parsed is None and not needs_day:
             for fmt in ('%Y-%m','%m/%Y','%B %Y','%b %Y','%Y'):
                 try:parsed=datetime.strptime(fact.value,fmt);break
@@ -223,7 +237,7 @@ def from_fact(f, fact):
         template='YYYY-MM-DD' if f.kind=='date' else format_hint
         tokens={'YYYY':f'{parsed.year:04d}','YY':f'{parsed.year%100:02d}','MM':f'{parsed.month:02d}','DD':f'{parsed.day:02d}'}
         value=re.sub(r'YYYY|YY|MM|DD',lambda m:tokens[m[0]],template)
-    return Decision(value,fact.source,fact.id,'' if value is not None else 'source value not offered')
+    return Decision(value,rendered_source,rendered_ids,'' if value is not None else 'source value not offered')
 
 
 def resolve(f, facts):
@@ -351,4 +365,11 @@ def compile_facts(data, raw_jd, reference_date=''):
     for fact in facts:
         fact.reference_date=reference_date
         fact.authority=next((origin for prefix,origin in origins.items() if fact.source.startswith(prefix)), 'owner')
+    policies=[f for f in facts if f.authority=='owner' and not f.record and
+              EMPLOYMENT_MONTH_POLICY in f.aliases]
+    if policies and {p.value for p in policies}=={FIRST_DAY_POLICY}:
+        for fact in facts:
+            if (entity_scope(fact.section) or ('',))[0]=='employment' and not fact.record and \
+                    any(a in ('From Date','Start Date','End Date') for a in fact.aliases):
+                fact.date_policy=FIRST_DAY_POLICY;fact.policy_fact_id=policies[0].id
     return facts
