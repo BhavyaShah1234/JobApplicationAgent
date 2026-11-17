@@ -177,6 +177,25 @@ def test_unconfirmed_signed_in_claims_do_not_spend_thirty_model_steps_on_the_sam
     assert 'three times' in out['reason'] and not out['registered']
 
 
+def test_unchanged_loading_waits_stop_without_thirty_model_calls_or_credential_retries(monkeypatch):
+    out,driver,asked=run_portal([('wait',None,'')]*12,monkeypatch=monkeypatch)
+    assert out['state']=='failed' and driver.calls==PA.MAX_UNCHANGED_WAITS
+    assert 'loading waits' in out['reason'] and 'unconfirmed' in out['reason']
+    assert not asked and not any(s.startswith(('fill','click')) for s in out['steps'])
+
+
+def test_genuine_visible_progress_resets_the_loading_wait_counter(monkeypatch):
+    original=PA.snapshot;reads=0
+    def changing(page):
+        nonlocal reads
+        reads+=1
+        page.locator('h1').evaluate('(e,n)=>e.textContent="Loading stage "+n',reads)
+        return original(page)
+    monkeypatch.setattr(PA,'snapshot',changing)
+    out,driver,_=run_portal([('wait',None,'')]*6+[('failed',None,'')],monkeypatch=monkeypatch)
+    assert driver.calls==7 and 'reason' not in out
+
+
 def test_one_unchanged_rejection_read_many_times_counts_once_and_registration_can_use_the_password(monkeypatch):
     script = LOGIN + [("wait", None, ""), ("wait", None, ""), ("wait", None, ""),      # the SAME error text, read three more times
                       ("click", "Create Account", ""),

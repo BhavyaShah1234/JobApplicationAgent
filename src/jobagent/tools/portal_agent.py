@@ -23,6 +23,7 @@ from jobagent.tools import verification
 from jobagent.tools import challenge
 
 MAX_STEPS = 30
+MAX_UNCHANGED_WAITS = 4
 CAPTCHA_FRAME = re.compile(r"(?i)hcaptcha|recaptcha|google\.com/recaptcha|challenges\.cloudflare|arkoselabs|funcaptcha")
 
 SNAPSHOT_JS = r"""() => {
@@ -231,6 +232,7 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
     state["alt_password_used"] = False
     login_candidate, register_attempted, toggles, last_nav = None, False, 0, None
     unconfirmed_claims: dict[str, int] = {}
+    unchanged_waits,last_wait_view=0,None
     for step in range(MAX_STEPS):
         page.wait_for_timeout(2500)
         if (c := _settle_unknown(page)) is not None:
@@ -258,6 +260,13 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
                 break
             continue
         view, frames = snapshot(page)
+        if unchanged_waits>=MAX_UNCHANGED_WAITS and view==last_wait_view:
+            state['reason']=f'The portal remained unchanged after {MAX_UNCHANGED_WAITS} loading waits; sign-in is unconfirmed.'
+            history.append(state['reason'])
+            from jobagent.tools.browser import screenshot
+            screenshot(page,f'/app/state/logs/portal-stuck-{host}.png')
+            log(f"portal {host}: {state['reason']}")
+            break
         shown_text = view.split("ELEMENTS:")[0]
         if login_candidate is not None:
             cand, login_candidate = login_candidate, None
@@ -309,6 +318,7 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             log(f"portal {host}: model error {type(e).__name__}")
             continue
         state["registered"] |= a.registered
+        if a.action!='wait':unchanged_waits,last_wait_view=0,None
         log(f"portal {host} step {step}: {a.action} F{a.frame}[{a.element}] {a.value!r} - {a.thought[:120]}")
         if a.action == "signed_out":
             # judged on the page the site lands on: visiting its profile page again can sign a remembered browser
@@ -362,6 +372,8 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             log(f"portal {host}: verification mail found ({mail.subject!r}); it is trashed only if the site accepts it")
             continue
         if a.action == "wait":                  # the page is loading or answering: look again (bounded by MAX_STEPS)
+            unchanged_waits=unchanged_waits+1 if view==last_wait_view else 1
+            last_wait_view=view
             history.append("waited for the page")
             page.wait_for_timeout(1500)
             continue
