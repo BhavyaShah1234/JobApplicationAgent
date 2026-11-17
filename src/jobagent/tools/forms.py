@@ -396,16 +396,24 @@ FIELDS_JS = r"""(start) => {
       }
     }
     adds.push({id: adds.length, text: tx, section: ownedSection, help}); }
+  const successfulUploadAlert=e=>{
+    if(e.getAttribute('role')!=='alert' || e.getAttribute('aria-invalid')==='true' || e.getAttribute('aria-busy')==='true')return false;
+    const accepted=box=>{
+      if(!/^\d+:_attach$/.test(box.id))return false;
+      const status=box.querySelector('[id="'+CSS.escape(box.id.replace(/_attach$/,'_attachSuccess'))+'"]');
+      return status && vis(status) && shown(status) && status.getAttribute('aria-invalid')!=='true' &&
+        status.getAttribute('aria-busy')!=='true' && clean(status.innerText)==='File is uploaded successfully';
+    };
+    const box=e.closest('.attachmentBtn');
+    if(box && accepted(box) && e.id===box.id.replace(/_attach$/,'_attachSuccess'))return true;
+    // The same accepted upload also emits a global toast with a filename.
+    // Exclude it only when that exact filename has its own accepted widget.
+    const toast=clean(e.innerText).match(/^(?:[\uE000-\uF8FF]\s*)?(.+?) File uploaded successfully\.$/);
+    return !!toast && all('.attachmentBtn').some(b=>accepted(b) &&
+      (b.innerText||'').split(/\r?\n/).map(clean).includes(toast[1]));
+  };
   const errors = all('[role=alert], [aria-invalid=true], [class*=error i], [id*=error i], [data-automation-id*=error i]')
-      .filter(vis).filter(e => {
-        // SuccessFactors exposes its positive attachment acknowledgement as an alert.
-        // Keep explicit invalid/busy states and every other alert as blockers.
-        const box=e.closest('.attachmentBtn');
-        return !(box && /^\d+:_attach$/.test(box.id) && e.getAttribute('role')==='alert' &&
-          e.id===box.id.replace(/_attach$/,'_attachSuccess') &&
-          e.getAttribute('aria-invalid')!=='true' && e.getAttribute('aria-busy')!=='true' &&
-          clean(e.innerText)==='File is uploaded successfully');
-      }).map(e => clean(e.innerText)).filter(t => t && t.length < 300);
+      .filter(vis).filter(e=>!successfulUploadAlert(e)).map(e => clean(e.innerText)).filter(t => t && t.length < 300);
   const headings = all('h1, h2, h3, [data-automation-id=pageHeader], [aria-current=step]')
       .filter(vis).map(h => clean(h.innerText)).filter(Boolean).slice(0, 8);
   // Upload controls may mount a native input only after a button is clicked.

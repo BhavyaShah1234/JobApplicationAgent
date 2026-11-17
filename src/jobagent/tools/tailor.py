@@ -176,6 +176,9 @@ def _split_items(text: str) -> list[str]:
     return [t.strip() for t in re.split(r",(?![^{]*\})", text) if t.strip()]
 
 
+PDF_STARTUP_POLICY = 1
+
+
 def compile_pdf(tex: str, out_dir: Path, name: str = "resume") -> tuple[int, str]:
     """Write <name>.tex to out_dir, compile it in a temp dir, copy <name>.pdf back. Returns (pages, error); a page
     whose vertical spacing TeX had to squeeze counts as one page more."""
@@ -184,7 +187,11 @@ def compile_pdf(tex: str, out_dir: Path, name: str = "resume") -> tuple[int, str
     with tempfile.TemporaryDirectory() as tmp:
         # \vbadness=0 makes TeX report a page whose spacing it had to squeeze to fit ("Tight \vbox"); the \typeout
         # logs the height left free on the last page (for the layout validator)
-        body = tex.replace("\\begin{document}", "\\vbadness=0\n\\begin{document}", 1)
+        # Hyperref's default OpenAction only chooses the initial page, but some
+        # recruiting scanners reject it as active content. Omit that optional
+        # startup action while retaining real links and the owner's layout.
+        startup = (r"\makeatletter\@ifpackageloaded{hyperref}{\hypersetup{pdfstartpage={}}}{}\makeatother" "\n")
+        body = tex.replace("\\begin{document}", startup + "\\vbadness=0\n\\begin{document}", 1)
         body = body.replace("\\end{document}", "\\par\\typeout{JOBAGENT-SPACE=\\the\\pagegoal/\\the\\pagetotal}\n"
                             "\\end{document}", 1)
         Path(tmp, f"{name}.tex").write_text(body)

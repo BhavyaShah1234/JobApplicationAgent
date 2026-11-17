@@ -63,6 +63,8 @@ def test_portaled_native_bytes_need_the_original_widget_ack_and_support_same_nam
  proof=p._jobagent_upload_proofs[-1]
  assert proof.widget.get_attribute('id')=='62:_attach'
  assert proof.portaled and proof.form_owned is False and proof.verify()
+ p.locator('body').evaluate('''(e,name)=>{const a=document.createElement('div');a.setAttribute('role','alert');
+ a.textContent='\ue203'+name+' File uploaded successfully.';e.appendChild(a)}''',path.name)
  assert forms.read_page(p).errors==[], 'a successful attachment alert is not a validation error'
  assert upload(p,path)==str(path)
  assert p._jobagent_upload_proofs[-1].method=='dispatched bytes and fresh widget success'
@@ -93,6 +95,18 @@ def test_success_caption_never_masks_explicit_invalidity(env):
  with pytest.raises(forms.FillError,match='never showed'):upload(p,path)
  assert not p._jobagent_upload_proofs[-1].verify()
  assert forms.read_page(p).errors==['File is uploaded successfully']
+
+
+@pytest.mark.parametrize('kind',['wrong_file','invalid','no_widget_ack'])
+def test_a_global_success_toast_needs_its_own_valid_filename_acknowledgement(env,kind):
+ p,path=env
+ assert upload(p,path)==str(path)
+ name='unrelated.pdf' if kind=='wrong_file' else path.name
+ if kind=='no_widget_ack':p.locator('[id="62:_attachSuccess"]').evaluate("e=>e.style.display='none'")
+ p.locator('body').evaluate('''(e,args)=>{const a=document.createElement('div');a.setAttribute('role','alert');
+ if(args.invalid)a.setAttribute('aria-invalid','true');
+ a.textContent='\ue203'+args.name+' File uploaded successfully.';e.appendChild(a)}''',{'name':name,'invalid':kind=='invalid'})
+ assert any(name+' File uploaded successfully.' in text for text in forms.read_page(p).errors)
 
 
 def test_an_existing_source_dialog_cannot_be_attributed_to_this_click(env):
