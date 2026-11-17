@@ -10,6 +10,7 @@ from .facts import norm,Decision,Fact,from_fact,choice,entity_scope,scope_allows
 
 DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_ack',
                         'outside_activity','employer_personal_ties','immigration_support'})
+PURPOSE_BOUND=DECLARATIONS | {'owner_identifier'}
 
 
 def family(text):
@@ -40,6 +41,7 @@ def family(text):
       ('why_company',r'why.*(?:work|join|interest)|why (?:this|our) company'),
       ('technical_experience',r'describe.*experience|technical experience question'),
       ('project',r'favorite project|favourite project|proudest|accomplishment'),
+      ('owner_identifier',r'\b(?:program|employee|applicant|candidate|referral|referrer|membership|registration|identification|passport|tax|social security)\b.{0,32}\b(?:code|id|number|identifier)\b|\bssn\b'),
       ('experience_years',r'(?:how many )?years.*experience'),
       ('account_status',r'currently.*client|(?:opened|have) an? account'),
       ('event_history',r'conferences?.*(?:attend|planning)|gatherings.*attend'),
@@ -128,6 +130,9 @@ def qualification_signature(text,kind):
 
 def same_qualification(field,fact):
     kind=family(field.label)
+    if kind=='owner_identifier':
+        return any(identifier_key(alias)==identifier_key(field.label) for alias in fact.aliases
+                   if family(alias)==kind)
     if kind in DECLARATIONS:
         # These declarations have different subjects and potentially lengthy
         # definitions. A similar neighbouring Yes/No is not supporting evidence.
@@ -135,6 +140,13 @@ def same_qualification(field,fact):
     if kind not in ('experience_years','clearance_held','clearance_eligibility'):return True
     target=qualification_signature(field.label,kind)
     return any(qualification_signature(alias,kind)==target for alias in fact.aliases)
+
+
+def identifier_key(text):
+    """Keep the named identifier's subject, including employer/program qualifiers."""
+    words=norm(text).split()
+    noise={'please','provide','enter','specify','what','is','your','the','a','an','optional'}
+    return tuple('id' if w in {'code','number','identifier'} else w for w in words if w not in noise)
 
 
 
@@ -165,6 +177,8 @@ def candidates(field,facts):
     projected=education_query_facts(field,facts,kind)
     if projected is not None:return projected
     allowed=[x for x in facts if scope_allows(field,x)]
+    if kind=='owner_identifier':
+        return [x for x in allowed if x.authority=='owner' and not x.record and same_qualification(field,x)]
     party=contact_party(field.label+' '+field.section+' '+field.help)
     if kind in ('email','phone','legal_name','preferred_name','current_employer','current_title','country','location','languages','residency','clearance_held','clearance_eligibility','experience_years','work_authorization','sponsorship','pronouns','gender','race','hispanic','veteran','disability'):
         allowed=[x for x in allowed if contact_party(' '.join(x.aliases)+' '+x.section)==party]
@@ -214,7 +228,7 @@ def route(field,facts):
     if kind in ('why_company','project','technical_experience','technical_interests'):
         sources=['owner_rules','resume','jd','company']
     elif kind in ('start_date','signature_date'):sources=['owner_rules','clock']
-    elif kind in DECLARATIONS or kind in ('external_sharing','privacy_consent','future_contact','ai_consent','sms_consent','arbitration','read_ack','event_history','account_status','clearance_eligibility','clearance_held','sponsorship','work_authorization','residency'):
+    elif kind in PURPOSE_BOUND or kind in ('external_sharing','privacy_consent','future_contact','ai_consent','sms_consent','arbitration','read_ack','event_history','account_status','clearance_eligibility','clearance_held','sponsorship','work_authorization','residency'):
         # A different owner's answer with the same boolean value is not evidence.
         found=[x for x in found if fact_family(x)==kind or (kind in ('arbitration','read_ack') and x.id.startswith('application.answer.'))]
         sources=['owner']
@@ -239,7 +253,7 @@ def resolve_routed(field,facts,route_info=None):
     if r.family=='legal_name':
         full=[x for x in owner if x.id.endswith('/full') and not x.record and not x.instructions]
         if len(full)==1:return from_fact(field,full[0])
-    if r.family in DECLARATIONS:
+    if r.family in PURPOSE_BOUND:
         # A current-job answer sheet takes precedence over reusable sources.
         # Equivalent duplicate facts are fine; conflicting declarations are not.
         scoped=[x for x in owner if x.id.startswith('application.answer.')]
@@ -320,7 +334,7 @@ def resolve_routed(field,facts,route_info=None):
 
 def binding_valid(field,bound,value,route_info):
     if any(x.id not in route_info.fact_ids for x in bound):return False
-    protected=DECLARATIONS | {'external_sharing','clearance_eligibility','clearance_held','arbitration','read_ack','privacy_consent','future_contact','sms_consent','ai_consent','sponsorship','work_authorization'}
+    protected=PURPOSE_BOUND | {'external_sharing','clearance_eligibility','clearance_held','arbitration','read_ack','privacy_consent','future_contact','sms_consent','ai_consent','sponsorship','work_authorization'}
     if route_info.family in protected:
         if not bound or any(fact_family(x)!=route_info.family for x in bound):return False
         if any(x.authority!='owner' for x in bound):return False

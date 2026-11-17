@@ -14,7 +14,7 @@ from .facts import Decision, Fact, choice, key, norm, resolve, from_fact, scope_
 from .discovery import Discovery
 from .uploads import UploadProof
 from .live_view import LiveView
-from .routing import route,resolve_routed,binding_valid,field_packet,word_limits,unlisted_school,needs_entity_binding,DECLARATIONS
+from .routing import route,resolve_routed,binding_valid,field_packet,word_limits,unlisted_school,needs_entity_binding,PURPOSE_BOUND
 
 
 def read_view(page):
@@ -166,7 +166,7 @@ class PlannedFiller:
         # Source-resolver and answer-sheet shortcuts must respect these same
         # purpose boundaries; a neighbouring boolean is never a substitute.
         for f in fields:
-            if routes[f.id].family in DECLARATIONS and answers[f.id].source!='human':
+            if routes[f.id].family in PURPOSE_BOUND and answers[f.id].source!='human':
                 answers[f.id]=resolve_routed(f,self.facts)
                 if answers[f.id].value is None:
                     if f not in missing:missing.append(f)
@@ -254,7 +254,8 @@ class PlannedFiller:
                 quoted=bool(m.quote.strip() and m.quote in self.narrative_sources.get(m.source,''))
                 if not f or len(bound)!=len(ids) or not all(scope_allows(f,x) for x in bound):continue
                 if bound and not binding_valid(f,bound,m.value or (from_fact(f,bound[0]).value if len(bound)==1 else '') or '',routes[f.id]):continue
-                if not bound and (not quoted or owner_only(f) or (f.kind!='textarea' and m.source not in ('resume','cover_letter'))):continue
+                if not bound and (not quoted or owner_only(f) or routes[f.id].family in PURPOSE_BOUND or
+                                  (f.kind!='textarea' and m.source not in ('resume','cover_letter'))):continue
                 if not bound and routes[f.id].family=='test_score':
                     from .routing import family
                     if family(m.quote)!='test_score':continue
