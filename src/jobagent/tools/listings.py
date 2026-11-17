@@ -4,14 +4,14 @@ Per ATS family, the board's public listing endpoint (what the board's own page l
 page): Greenhouse job-board API, Lever postings API, Ashby posting API, SmartRecruiters postings API, and Workday's
 `/wday/cxs/<tenant>/<site>/jobs` call (searched once per target role, a few pages each). Any other site: the job links
 on the careers page itself (best effort; location unknown, so those listings go to review). Listings carry title,
-locations, URL, posted date, requisition id and a snippet. A bot check or refusal ends that company's collection with
-`blocked`: it is reported to the candidate, never worked around.
+locations, URL, posted date, requisition id and a snippet. A refused Workday catalog client can use the board's normal
+public Chrome interface. Browser-side refusals still stop collection; visible security checks require the candidate.
 """
 
 import re
 import time
 from datetime import UTC, datetime
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 from lxml import html as lh
@@ -24,6 +24,15 @@ WORKDAY_PAGES = 5      # x 20 results per search
 JOB_HREF = re.compile(r"(?i)/(jobs?|positions?|openings?|requisitions?|vacanc\w+)/[^/?#]+|/careers?/[^/?#]+/[^/?#]+|"
                       r"[?&](job_?id|jid|gh_jid|req(uisition)?_?id|id)=\w+|/jobdetail|/job-details?|/[^/?#]+-\d{4,}/?$")
 TITLE_PLACE = re.compile(r"[–—-]\s*([A-Z][\w .'’-]+,\s*[A-Z]{2})\s*$")  # "Sanitation Manager Job – Marion, IN"
+WORKDAY_FACETS = frozenset(('locations', 'locationCountry', 'jobFamilyGroup', 'jobFamily', 'timeType', 'workerSubType', 'remoteType'))
+
+
+def workday_searches(url: str, queries=None):
+    """Keep an explicitly filtered careers search intact instead of widening it."""
+    params = parse_qs(urlparse(url).query, keep_blank_values=True)
+    facets = {key: list(dict.fromkeys(values)) for key, values in params.items() if key in WORKDAY_FACETS}
+    searches = [params.get('q', [''])[0]] if facets or 'q' in params else list(queries or [''])
+    return searches, facets
 
 
 class Blocked(RuntimeError):
@@ -122,7 +131,11 @@ def workday_locations(item: Listing, get_json=_json) -> list[str]:
     path=parsed.path[parsed.path.find('/job/'):]
     if not path.startswith('/job/'):
         return item.locations
-    data=get_json(f'https://{parsed.netloc}/wday/cxs/{tenant}/{site}{path}') or {}
+    try:
+        data=get_json(f'https://{parsed.netloc}/wday/cxs/{tenant}/{site}{path}') or {}
+    except (Blocked, httpx.HTTPError):
+        from jobagent.tools.listings_browser import read_workday_detail
+        data=read_workday_detail(item.url)
     info=data.get('jobPostingInfo') or {}
     primary=info.get('location') or ''
     additional=info.get('additionalLocations') or []
@@ -193,18 +206,26 @@ def collect(careers: dict, company: str, queries: list[str] | None = None, log=p
         tenant, wd, site = token.split("/")
         host = f"{tenant}.{wd}.myworkdayjobs.com"
         found, seen = [], set()
-        for q in queries or [""]:
-            for page in range(WORKDAY_PAGES):
-                data = get_json(f"https://{host}/wday/cxs/{tenant}/{site}/jobs", "POST",
-                                {"appliedFacets": {}, "limit": 20, "offset": page * 20, "searchText": q})
-                rows = parse_workday(data, company, host, site)
-                for r in rows:
-                    if r.url not in seen:
-                        seen.add(r.url)
-                        found.append(r)
-                if len(rows) < 20:
-                    break
-                time.sleep(PAUSE_S)
+        searches, facets = workday_searches(careers.get('url', ''), queries)
+        try:
+            for q in searches:
+                for page in range(WORKDAY_PAGES):
+                    data = get_json(f"https://{host}/wday/cxs/{tenant}/{site}/jobs", "POST",
+                                    {"appliedFacets": facets, "limit": 20, "offset": page * 20, "searchText": q})
+                    rows = parse_workday(data, company, host, site)
+                    for r in rows:
+                        if r.url not in seen:
+                            seen.add(r.url)
+                            found.append(r)
+                    if len(rows) < 20:
+                        break
+                    time.sleep(PAUSE_S)
+        except Blocked as exc:
+            # Use the site's ordinary public UI, without changing identity or
+            # repeating a refused API call. A refusal in Chrome still stops.
+            from jobagent.tools.listings_browser import collect_workday
+            log(f'listings: {company}: catalog client refused ({exc}); opening the public careers page in Chrome')
+            return collect_workday(careers, company, queries, log=log)
         return found
     log(f"listings: {company}: {fam} boards are not read yet; open {careers.get('url')} yourself")
     return []
