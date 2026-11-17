@@ -452,6 +452,7 @@ def tailor_cmd(
             ([] if found["evidence"] else [f"the hard and claims checks could not be run ({found['reason']})"])
         res = documents.assess(d, resume={"produced": (d / "resume.pdf").exists(), "hard_issues": found["hard"],
                                           "claims_issues": found["claims"], "build_findings": build,
+                                          "template_sha256": out.get("template_sha256"),
                                           "coverage_limited": out.get("coverage_limited", [])},
                                letter=out.get("letter"),
                                ats={"average": ats.get("average"), "complete": ats.get("average") is not None,
@@ -465,12 +466,14 @@ def tailor_cmd(
         # are unchanged, and redoes only the cover letter; `--force` rebuilds everything.
         rj, how = wf.run("resume", lambda: M.run_job(d, company, {k: model for k in M.DEFAULT_MODELS}, sites, log=log),
                          inputs={"jd": jd_sha, "jd_text": txt_sha, "template": template_sha, "profile": profile_sha, "model": model,
-                                 "sites": list(sites), "skills": _skill_inputs(d, s)},
+                                 "sites": list(sites), "skills": _skill_inputs(d, s), "document_provenance": 1},
                          outputs=["resume.pdf", "resume.tex", "filled.json"], force=force, log=log,
                          check=lambda r: None if r.get("produced") else (r.get("failure") or "no valid resume was produced"))
         log(f"resume ({how}): average {rj['average']} {rj['scores']}, {rj['pages']} page(s), hard issues {rj['hard_issues']}")
         cl = None
-        if rj["produced"]:           # a letter is only written from a resume that exists; a failed build stops here
+        if (rj["produced"] and rj.get("template_sha256")
+                and rj["template_sha256"] == documents.template_fingerprint()):
+            # Do not spend another model call when the source changed during generation.
             cl, how = wf.run("cover_letter", lambda: cover_letter(d, company, log=log),
                              inputs={"resume_tex": W.sha_file(d / "resume.tex"), "profile": profile_sha, "model": model},
                              outputs=["cover_letter.pdf", "cover_letter.tex"], force=force, log=log)

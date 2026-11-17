@@ -27,12 +27,15 @@ def fake_world(monkeypatch, tmp_path, result):
     (job / "jd.json").write_text(json.dumps({"company": "Acme", "title": "Engineer", "apply_url": "https://e.test/a",
                                              "source_url": "https://e.test/a"}))
     monkeypatch.setenv("STATE_DIR", str(tmp_path))
+    data=tmp_path/'data';(data/'templates').mkdir(parents=True,exist_ok=True)
+    (data/'templates/resume.tex').write_text('Current test template')
+    monkeypatch.setenv('DATA_DIR',str(data))
     get_settings.cache_clear()
     from jobagent.tools import documents as _D
     from test_documents import PDF as _PDF
     (job / "resume.pdf").write_bytes(_PDF)
     (job / "cover_letter.pdf").write_bytes(_PDF)
-    _D.save(job, _D.assess(job, resume={"produced": True, "hard_issues": [], "claims_issues": []},
+    _D.save(job, _D.assess(job, resume={"produced": True,"template_sha256":_D.template_fingerprint(), "hard_issues": [], "claims_issues": []},
                            letter={"issues": [], "words": 300}, ats={"average": 93.0, "complete": True, "missing": [], "scored": True},
                            policy="warn", target=90.0))
 
@@ -72,6 +75,17 @@ def test_apply_exits_with_the_state_it_ended_in(monkeypatch, tmp_path, result, c
     r = CliRunner().invoke(main.app, ["apply", str(job), "acme"])
     assert r.exit_code == code, r.output
     assert words in r.output
+    get_settings.cache_clear()
+
+
+def test_apply_refuses_a_resume_from_an_older_template_before_opening_a_browser(monkeypatch,tmp_path):
+    job=fake_world(monkeypatch,tmp_path,BASE)
+    (get_settings().data_dir/'templates/resume.tex').write_text('New owner template')
+    import jobagent.tools.browser as B
+    def unexpected(*args,**kwargs):pytest.fail('A stale resume must stop before browser creation')
+    monkeypatch.setattr(B,'application_context',unexpected)
+    result=CliRunner().invoke(main.app,['apply',str(job),'acme'])
+    assert result.exit_code==4 and 'different template' in result.output
     get_settings.cache_clear()
 
 

@@ -293,7 +293,7 @@ def write_initial(state: State) -> dict:
     if exp is None:
         raise RuntimeError("the experience agent failed on the first draft")
     roles = [T.FillRole(role=i, bullets=getattr(exp, f"role_{i}")) for i in range(len(r.roles))]
-    f = T.Filled(summary=T.to_plain(r.summary), roles=roles,
+    f = T.Filled(summary=T.summary_text(r.summary), roles=roles,
                  skills=[T.SkillLine(category=c, terms=[T.to_plain(v)]) for c, v in r.skills][:8] or
                  [T.SkillLine(category="Skills", terms=["Python"])] * 3, notes=exp.notes)
     _, sk = _run_agent(ctx, "skills", f, [], "")
@@ -696,8 +696,9 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> d
     from jobagent.tools import documents
     documents.begin(job_dir)       # fail closed: an in-progress record replaces the manifest before anything is generated
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
+    template_text = (s.data_dir / "templates" / "resume.tex").read_text()
     ctx = {"job_dir": job_dir, "jd": jd, "company": (s.state_dir / "companies" / f"{slug}.md").read_text(),
-           "r": T.parse((s.data_dir / "templates" / "resume.tex").read_text()),
+           "r": T.parse(template_text),
            "jd_text": (job_dir / "jd.txt").read_text() if (job_dir / "jd.txt").exists() else "",
            "models": models, "log": log, "sites": sites}
     ctx["graph"] = SG.for_tailor(job_dir, jd, ctx["r"])               # related skills (step 4c); {} when off or empty
@@ -720,6 +721,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> d
     summary = ats_sites.write_summary(job_dir, best["scores"] if best else {}, sites)
     avg = summary["average"]
     return {"average": avg, "scores": summary["scores"],
+            "template_sha256": documents.template_fingerprint(template_text),
             "average_sites": summary["sites"], "average_missing": summary["missing"],
             "average_complete": summary["complete"],
             "history": [float(h.split()[1]) for h in hist], "history_metric": "unlimited-site comparison",

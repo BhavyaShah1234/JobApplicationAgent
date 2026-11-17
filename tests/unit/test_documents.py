@@ -22,6 +22,15 @@ GOOD_RESUME = {"produced": True, "hard_issues": [], "claims_issues": []}
 GOOD_LETTER = {"issues": [], "words": 300}
 
 
+@pytest.fixture(autouse=True)
+def isolated_template(monkeypatch,tmp_path):
+    data=tmp_path/'template-data';(data/'templates').mkdir(parents=True)
+    (data/'templates/resume.tex').write_text('Current test template')
+    monkeypatch.setenv('DATA_DIR',str(data));get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 def job(tmp_path, resume=PDF, letter=PDF):
     d = tmp_path / "outputs" / "acme" / "1"
     d.mkdir(parents=True)
@@ -33,7 +42,7 @@ def job(tmp_path, resume=PDF, letter=PDF):
 
 
 def assess(d, resume=GOOD_RESUME, letter=GOOD_LETTER, ats=MET, policy="warn"):
-    return D.assess(d, resume=resume, letter=letter, ats=ats, policy=policy, target=90.0)
+    return D.assess(d, resume={"template_sha256":D.template_fingerprint(),**resume}, letter=letter, ats=ats, policy=policy, target=90.0)
 
 
 # --- validity: always blocks ------------------------------------------------------------------------------------------
@@ -108,6 +117,34 @@ def test_a_pdf_that_changed_since_it_was_validated_is_not_the_current_build(tmp_
     assert D.verify(d)["ok"] is False
 
 
+def test_template_content_change_blocks_valid_pdfs_even_with_the_same_mtime(tmp_path,monkeypatch):
+    import os
+    d=job(tmp_path);D.save(d,assess(d));assert D.verify(d)['ok']
+    template=get_settings().data_dir/'templates/resume.tex';before=template.stat()
+    original=D.load(d)['resume']['template_sha256']
+    template.write_text('Updated owner template');os.utime(template,ns=(before.st_atime_ns,before.st_mtime_ns))
+    assert any('different template' in x for x in D.verify(d)['reasons'])
+    monkeypatch.setattr(D,'resume_findings',lambda *_:{'evidence':True,'hard':[],'claims':[]})
+    refreshed=D.refresh(d,'warn',90)
+    assert refreshed['resume']['template_sha256']==original
+    assert not refreshed['valid'] and not D.verify(d)['ok']
+
+
+def test_revalidation_cannot_create_missing_template_provenance(tmp_path,monkeypatch):
+    d=job(tmp_path);record=assess(d);record['version']=1;record['resume'].pop('template_sha256');D.save(d,record)
+    assert any('template provenance is missing' in x for x in D.verify(d)['reasons'])
+    monkeypatch.setattr(D,'resume_findings',lambda *_:{'evidence':True,'hard':[],'claims':[]})
+    refreshed=D.refresh(d,'warn',90)
+    assert refreshed['resume']['template_sha256'] is None and not refreshed['valid']
+
+
+def test_template_changed_during_generation_is_not_a_valid_new_build(tmp_path):
+    d=job(tmp_path);used=D.template_fingerprint()
+    (get_settings().data_dir/'templates/resume.tex').write_text('Owner edited while the writer ran')
+    record=assess(d,resume={**GOOD_RESUME,'template_sha256':used})
+    assert not record['valid'] and any('different template' in x for x in record['blockers'])
+
+
 def test_a_folder_with_a_failed_record_stays_blocked_even_with_valid_looking_pdfs(tmp_path):
     d = job(tmp_path)
     D.save(d, assess(d, resume={**GOOD_RESUME, "hard_issues": ["not one page"]}))
@@ -115,9 +152,10 @@ def test_a_folder_with_a_failed_record_stays_blocked_even_with_valid_looking_pdf
     assert check["ok"] is False and any("not one page" in r for r in check["reasons"])
 
 
-def test_a_legacy_folder_without_a_record_passes_only_with_valid_pdfs_and_a_warning(tmp_path):
+def test_legacy_pdfs_without_template_provenance_require_a_rebuild(tmp_path):
     ok = D.verify(job(tmp_path / "a"))
-    assert ok["ok"] is True and "no recorded validation" in ok["warnings"][0]
+    assert ok["ok"] is False and "no recorded validation" in ok["warnings"][0]
+    assert any('template provenance is missing' in x for x in ok['reasons'])
     assert D.verify(job(tmp_path / "b", resume=None))["ok"] is False
     assert D.verify(job(tmp_path / "c", letter=TWO_PAGES))["ok"] is False
 
@@ -161,6 +199,18 @@ def test_run_job_with_no_best_version_reports_a_failure_and_leaves_no_resume_beh
     res = D.assess(d, resume=out, letter=None, ats={"average": None, "complete": False, "missing": [], "scored": False},
                    policy="warn", target=90.0)
     assert res["valid"] is False and D.exit_code(res) == 1
+
+
+def test_writer_reports_the_template_it_read_not_a_later_file_version(tmp_path,monkeypatch):
+    M,d=stub_run_job(monkeypatch,tmp_path,{'best':None,'history':[]})
+    template=M.get_settings().data_dir/'templates/resume.tex'
+    def generate(*args,**kwargs):
+        template.write_text('Changed after the writer read x')
+        return {'best':None,'history':[]}
+    monkeypatch.setattr(M,'build_graph',lambda:SimpleNamespace(invoke=generate))
+    result=M.run_job(d,'acme',{},())
+    assert result['template_sha256']==D.template_fingerprint('x')
+    assert result['template_sha256']!=D.template_fingerprint(template.read_text())
 
 
 # --- the cover letter ---------------------------------------------------------------------------------------------------
@@ -215,7 +265,7 @@ def tailor_world(monkeypatch, tmp_path, run_job_result, letter=None, policy="war
     def fake_run_job(dd, slug, models, sites, log=print):
         if write and run_job_result["produced"]:
             (dd / "resume.pdf").write_bytes(PDF)
-        return run_job_result
+        return {"template_sha256":D.template_fingerprint(),**run_job_result}
 
     def fake_letter(dd, slug, log=print):
         if write:
@@ -372,7 +422,7 @@ def test_a_damaged_manifest_is_not_a_legacy_folder(monkeypatch, tmp_path, damage
 
 def test_an_absent_manifest_is_still_the_legacy_case_and_a_finished_rebuild_is_distinguishable(tmp_path):
     d = job(tmp_path)
-    assert D.load(d) is None and D.verify(d)["ok"] is True                    # the deliberate legacy import: valid PDFs, a warning
+    assert D.load(d) is None and D.verify(d)["ok"] is False                   # old PDFs have no proof of the current template
     D.save(d, assess(d))
     rec = D.load(d)
     assert rec["status"] == "complete" and D.verify(d)["record"]["status"] == "complete" and D.verify(d)["warnings"] == []
@@ -445,13 +495,13 @@ def test_both_writers_apply_the_claims_policy_to_the_generated_summary(monkeypat
             (d / "resume.pdf").write_bytes(PDF)
             (d / "cover_letter.pdf").write_bytes(PDF)
             (d / "filled.json").write_text(json.dumps({"summary": summary}))
-            return {"problems": [], "uncovered": [], "layout": [], "ats": {"average": 93.0}, "letter": {"issues": [], "words": 200}}
+            return {"template_sha256":D.template_fingerprint(),"problems": [], "uncovered": [], "layout": [], "ats": {"average": 93.0}, "letter": {"issues": [], "words": 200}}
         monkeypatch.setattr(TT, "main", fake_main)
 
         def team_run_job(dd, slug, models, sites, log=print, summary=summary):
             (dd / "resume.pdf").write_bytes(PDF)
             (dd / "filled.json").write_text(json.dumps({"summary": summary}))
-            return {**RJ_GOOD, "claims_issues": D.claims_from_filled(SimpleNamespace(summary=summary))}
+            return {**RJ_GOOD,"template_sha256":D.template_fingerprint(), "claims_issues": D.claims_from_filled(SimpleNamespace(summary=summary))}
         monkeypatch.setattr(M, "run_job", team_run_job)
         args = ["tailor", str(d), "acme"] + (["--single"] if mode == "single" else [])
         r = CliRunner().invoke(main.app, args)
@@ -530,7 +580,7 @@ def test_an_ats_rewrite_that_fails_midway_cannot_leave_an_accepted_draft(monkeyp
     job_dir, invoke = legacy_folder(monkeypatch, tmp_path)
     if prior == "validated":
         D.save(job_dir, assess(job_dir))
-    assert D.verify(job_dir)["ok"] is True and invoke().exit_code == 0 or True
+    assert D.verify(job_dir)["ok"] is (prior == "validated")
 
     def rewrite_then_crash(*a, **k):
         (job_dir / "resume.pdf").write_bytes(PDF + b"%a rewritten draft")               # a valid-looking one-page draft ...
@@ -554,6 +604,7 @@ def test_a_successful_rewrite_publishes_a_complete_record(monkeypatch, tmp_path)
     job_dir, _ = legacy_folder(monkeypatch, tmp_path)
     write_job_identity(job_dir)
     passing_validators(monkeypatch)
+    D.save(job_dir, assess(job_dir))  # a rewrite preserves recorded generation provenance
     monkeypatch.setattr(AT, "run", lambda *a, **k: (job_dir / "resume.pdf").write_bytes(PDF + b"%rewritten"))
     r = CliRunner().invoke(main.app, ["ats-loop", str(job_dir), "acme"])
     assert r.exit_code == 0, r.output

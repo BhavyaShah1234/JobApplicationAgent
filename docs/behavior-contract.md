@@ -1,6 +1,6 @@
 # Behavior contract (current; dated decisions override the original plan)
 
-Last updated 2026-11-15 (step 16 additions: eligibility screen, pacing, review queue). Each line is something the agent does or never does, whatever a step's code or a model says.
+Last updated 2026-11-16 (template provenance and live-acceptance corrections). Each line is something the agent does or never does, whatever a step's code or a model says.
 
 **Never**
 - Submit an application without the candidate's typed `approve` for THAT application at its review prompt (in every browser mode; desktop submit also needs `--allow-desktop-submit`). Filling, queueing and running a pipeline stop at the review screen.
@@ -18,6 +18,9 @@ Last updated 2026-11-15 (step 16 additions: eligibility screen, pacing, review q
 - Treat a page whose frames or regions could not be read as not ready.
 - Record what was sent: a frozen payload and one attempt row per click; a possibly-sent application is never filled or clicked again.
 - Keep generated documents valid (one page, hard and claims checks) and tied to the posting they were built for.
+- Record the SHA-256 of the actual resume template read by either writer. Before filling or submission, require it to match
+  the current `DATA_DIR/templates/resume.tex`. An edited template or an older document without provenance requires a new
+  `jobagent tailor` run; revalidating documents or rewriting only the cover letter cannot certify a new template.
 
 **Learning is advisory.** Recommendations appear only at declared looks (100, 200, 400, 800, 1600 resolved applications); behavior switches are off by default; the site-mix switch is unsupported.
 

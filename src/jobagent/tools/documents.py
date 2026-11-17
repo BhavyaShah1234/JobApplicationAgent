@@ -7,8 +7,8 @@
   * ATS TARGET - did the resume reach the checkers' target? That is a separate, explicit policy (`ats_shortfall` in the
     settings: "warn" lets a valid below-target resume proceed with a warning in the review packet, "block" does not).
 
-The record names the PDFs it describes by SHA-256, so a stale PDF from an earlier run, or one edited afterwards, cannot pass
-as the current successful build.
+The record names the PDFs and the actual source template by SHA-256, so an earlier build cannot pass as current after
+the template or the generated PDF changes. Existing documents without template provenance must be rebuilt.
 """
 from __future__ import annotations
 
@@ -30,6 +30,28 @@ def _fingerprint(job_dir: Path) -> str:
 
 def _sha(path: Path) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+
+
+def template_fingerprint(text: str | None = None) -> str | None:
+    """Fingerprint the actual template text a writer used, or the current configured template."""
+    if text is None:
+        from jobagent.config import get_settings
+        try:
+            text = (get_settings().data_dir / "templates" / "resume.tex").read_text()
+        except OSError:
+            return None
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _template_problem(produced_with: str | None) -> str:
+    if not produced_with:
+        return "resume template provenance is missing: run `jobagent tailor` to rebuild from the current template"
+    current = template_fingerprint()
+    if current is None:
+        return "the current resume template cannot be read: check DATA_DIR/templates/resume.tex"
+    if produced_with != current:
+        return "resume was built from a different template: run `jobagent tailor` to use the current template"
+    return ""
 
 
 def reset(job_dir: Path, names=STALE) -> None:
@@ -140,8 +162,11 @@ def assess(job_dir: Path, *, resume: dict, letter: dict | None, ats: dict, polic
         blockers.append(f"resume: {b}")
     for b in resume.get("evidence_blockers", []):            # temporary: recomputed by every refresh, never carried forward
         blockers.append(f"resume: {b}")
+    template_problem = _template_problem(resume.get("template_sha256")) if resume.get("produced") else ""
+    if template_problem:
+        blockers.append(template_problem)
     r_valid = r_valid and not resume.get("hard_issues") and not resume.get("claims_issues") and not resume.get("failure") \
-        and not resume.get("build_findings") and not resume.get("evidence_blockers")
+        and not resume.get("build_findings") and not resume.get("evidence_blockers") and not template_problem
     if letter is None:
         lpages, lproblem, l_valid = None, "the cover letter was not written", False
         blockers.append("cover letter: not written")
@@ -164,8 +189,9 @@ def assess(job_dir: Path, *, resume: dict, letter: dict | None, ats: dict, polic
                 "incomplete": f"the ATS average is incomplete (missing: {', '.join(ats.get('missing', [])) or 'sites'})"}[status]
         (blockers if policy == "block" else warnings).append(f"ATS: {text} (policy: {policy})")
     valid = r_valid and l_valid
-    return {"version": 1, "status": "complete", "built_at": _stamp(),
+    return {"version": 2, "status": "complete", "built_at": _stamp(),
             "resume": {"valid": bool(r_valid), "pages": rpages, "sha256": _sha(job_dir / "resume.pdf"),
+                       "template_sha256": resume.get("template_sha256"),
                        "hard_issues": list(resume.get("hard_issues", [])), "claims_issues": list(resume.get("claims_issues", [])),
                        "build_findings": list(resume.get("build_findings", [])),
                        "failure": resume.get("failure") or (rproblem if rproblem else None),
@@ -205,7 +231,8 @@ def load(job_dir: Path) -> dict | None:
     try:
         rec = json.loads(p.read_text())
         ok = isinstance(rec, dict) and all(isinstance(rec.get(k), typ) for k, typ in _REQUIRED.items()) and \
-            all(isinstance(rec[k].get("sha256", ""), (str, type(None))) for k in ("resume", "cover_letter"))
+            all(isinstance(rec[k].get("sha256", ""), (str, type(None))) for k in ("resume", "cover_letter")) and \
+            isinstance(rec["resume"].get("template_sha256"), (str, type(None)))
     except (ValueError, OSError, AttributeError):
         ok = False
     if not ok:
@@ -228,8 +255,8 @@ def exit_code(result: dict) -> int:
 
 def verify(job_dir: Path, policy: str = "warn") -> dict:
     """Is what is in the job folder NOW a successful, current build? Returns {ok, reasons, warnings, record}. The record's
-    PDFs must be byte-identical to the ones on disk (a stale or edited PDF is not the validated build). A folder without a
-    record (made before F05) passes only if its PDFs are valid one-page files, with a warning that no build was recorded."""
+    PDFs must be byte-identical to the ones on disk and the writer's template fingerprint must match the current source.
+    A folder without a record cannot prove its source freshness and must be rebuilt."""
     job_dir = Path(job_dir)
     rec = load(job_dir)
     reasons: list[str] = []
@@ -246,11 +273,14 @@ def verify(job_dir: Path, policy: str = "warn") -> dict:
             if lproblem or lp != 1:
                 reasons.append(f"cover letter: {lproblem or f'{lp} pages'}")
         warnings.append("no documents.json: these documents have no recorded validation")
+        reasons.append("resume template provenance is missing: run `jobagent tailor` to rebuild from the current template")
         return {"ok": not reasons, "reasons": reasons, "warnings": warnings, "record": None}
     for key, name in (("resume", "resume.pdf"), ("cover_letter", "cover_letter.pdf")):
         if rec[key].get("sha256") != _sha(job_dir / name):
             reasons.append(f"{name} is not the file that was validated (missing, stale or edited since): re-run `jobagent tailor`"
                            " or `jobagent documents`")
+    if problem := _template_problem(rec["resume"].get("template_sha256")):
+        reasons.append(problem)
     if rec.get("status") == "complete" and rec["ats"].get("job_fingerprint") not in (None, _fingerprint(job_dir)):
         reasons.append("the job posting changed since these documents were validated: run `jobagent documents`")
     if rec.get("status") not in ("complete",):
@@ -328,6 +358,8 @@ def refresh(job_dir: Path, policy: str, target: float, letter: dict | None = Non
         had = old.get("cover_letter", {})
         letter = {"issues": had.get("issues", []), "words": had.get("words")} if (job_dir / "cover_letter.pdf").exists() else None
     new = assess(job_dir, resume={"produced": (job_dir / "resume.pdf").exists(), "hard_issues": hard, "claims_issues": claims,
+                                  # Revalidation never invents new generation provenance or upgrades an old template.
+                                  "template_sha256": old_resume.get("template_sha256"),
                                   "build_findings": list(dict.fromkeys(build)), "evidence_blockers": evidence_blockers},
                  letter=letter, ats=ats, policy=policy, target=target)
     return save(job_dir, new)

@@ -125,12 +125,14 @@ def cover_letter(job_dir: str | Path, company_slug: str, log=print) -> dict:
 def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = True, ats_sites=None,
          log=None, letter: bool = True) -> dict:
     """Tailor one job end to end (resume, then cover letter); returns a summary for checks."""
+    from jobagent.tools import documents
     log = log or (lambda m: print(m, flush=True))
     s = get_settings()
     job_dir = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
     company = (s.state_dir / "companies" / f"{company_slug}.md").read_text()
-    r = T.parse((s.data_dir / "templates" / "resume.tex").read_text())
+    template_text = (s.data_dir / "templates" / "resume.tex").read_text()
+    r = T.parse(template_text)
     from jobagent.tools import skillgraph as SG
     graph = SG.for_tailor(job_dir, jd, r)                       # related skills (step 4c) and this job's review artifact
     SG.guard_resume(r, job_dir)
@@ -292,6 +294,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
     log(f"layout: {len(final_layout)} issue(s)" + "".join(f"\n  - {i}" for i in final_layout))
     if not letter:  # e.g. the model experiment: the resume and its ATS scores only
         return {"job_dir": job_dir, "pages": pages, "uncovered": uncovered, "coverage_limited": T.feasibility(r, jd, max_bullets),
+                "template_sha256": documents.template_fingerprint(template_text),
                 "problems": problems + warn,
                 "bullet_issues": T.duplicates(r, f) + T.quality(r, jd, f), "ats": ats_result,
                 "layout": final_layout}
@@ -302,6 +305,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
         ([x for e in proj.entries for x in (e.title, e.paragraph, e.short)] if proj else []) + \
         [p.text for p in cl["letter"].paragraphs]
     return {"job_dir": job_dir, "pages": pages, "uncovered": uncovered, "coverage_limited": T.feasibility(r, jd, max_bullets),
+            "template_sha256": documents.template_fingerprint(template_text),
             "missing_skills": missing,
             "problems": problems + warn, "bullet_issues": T.duplicates(r, f) + T.quality(r, jd, f),
             "bullets_per_role": [len(e.bullets) for e in f.roles], "projects": len(proj.entries) if proj else None,

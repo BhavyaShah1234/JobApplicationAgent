@@ -117,6 +117,18 @@ def to_plain(latex: str) -> str:
     return out
 
 
+def summary_text(latex: str) -> str:
+    """Unwrap the template's summary formatting before using it as plain-text fallback content."""
+    text = latex.strip()
+    wrapper = re.match(r"\\(?:small|footnotesize|normalsize)\s*\{", text)
+    if wrapper:
+        body, end = _braced(text, wrapper.end() - 1)
+        if not text[end:].strip():
+            text = body
+    text = re.sub(r"^\\justifying\b\s*", "", text)
+    return to_plain(text).strip()
+
+
 _KEEP = set("–’‘“”®™°±×→")
 # Dashes used as punctuation (em dash, or a spaced en dash / double hyphen) read as AI-written text. Ranges like
 # "2025–2026" are not touched.

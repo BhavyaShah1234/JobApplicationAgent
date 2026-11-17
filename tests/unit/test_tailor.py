@@ -330,3 +330,12 @@ def test_a_field_name_is_not_a_named_tool():
                     "Built Azure Data Factory pipelines, cutting failed runs 30%.")
     assert [i for i in T.quality(T.parse(TEX), jd(), vague) if "names no technology" in i]
     assert not [i for i in T.quality(T.parse(TEX), jd(), named) if "names no technology" in i]
+@pytest.mark.parametrize("source", [
+    r"\small{\justifying Built Python systems that improved throughput by 20\%.}",
+    r"\footnotesize{Built Python systems that improved throughput by 20\%.}",
+    r"Built Python systems that improved throughput by 20\%.",
+])
+def test_summary_fallback_is_content_without_template_formatting(source):
+    from jobagent.tools.tailor import summary_text
+    assert summary_text(source) == "Built Python systems that improved throughput by 20%."
+
