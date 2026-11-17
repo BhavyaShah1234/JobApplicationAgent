@@ -25,10 +25,22 @@ from jobagent.dashboard.page import PAGE
 COOKIE = "jobagent_dashboard"
 THROUGH = ("scrape", "tailor", "apply")          # a started run never goes past the review screen
 MAX_BODY = 64_000
+SIGN_IN = """<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Job agent</title>
+<body style="font:16px system-ui;max-width:640px;margin:48px auto;padding:0 16px;line-height:1.5">
+<h1 style="font-size:20px">The dashboard is running, but this page needs its access link</h1>
+<p>The address ends in <code>?t=</code> and a long token. It was printed when the dashboard started:</p>
+<pre style="background:#eee;padding:10px;overflow:auto">docker logs jobagent-dashboard 2>&amp;1 | grep "dashboard: http"</pre>
+<p>or, when it was started inside the agent container:</p>
+<pre style="background:#eee;padding:10px;overflow:auto">docker exec jobagent jobagent dashboard --print-url</pre>
+<p>Open that address once; your browser then remembers it.</p></body>"""
+
+
+_EPHEMERAL: dict[str, str] = {}
 
 
 def load_token(settings) -> str:
-    """The saved token (state/dashboard/token, readable by you only), made on first use so a bookmarked URL keeps working."""
+    """The saved token (state/dashboard/token, readable by you only), made on first use so a bookmarked URL keeps working. When the state
+    folder cannot be written (a read-only view of live data) the token lives only for this process and is printed at start."""
     d = settings.state_dir / "dashboard"
     p = d / "token"
     try:
@@ -37,12 +49,15 @@ def load_token(settings) -> str:
             return t
     except OSError:
         pass
-    d.mkdir(parents=True, exist_ok=True)
     t = secrets.token_urlsafe(24)
-    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as h:
-        h.write(t)
-    return t
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as h:
+            h.write(t)
+        return t
+    except OSError:
+        return _EPHEMERAL.setdefault(str(p), t)
 
 
 def start_run(settings, inputs, through: str, limit: int, popen=subprocess.Popen) -> dict:
@@ -71,9 +86,10 @@ def start_run(settings, inputs, through: str, limit: int, popen=subprocess.Popen
 class Server(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, addr, settings, token: str, allowed_hosts: set[str], popen=subprocess.Popen, novnc_url: str = ""):
+    def __init__(self, addr, settings, token: str, allowed_hosts: set[str], popen=subprocess.Popen, novnc_url: str = "", read_only: bool = False):
         super().__init__(addr, Handler)
         self.settings, self.token, self.allowed_hosts, self.popen, self.novnc_url = settings, token, allowed_hosts, popen, novnc_url
+        self.read_only = read_only
         self.lock = threading.Lock()
 
 
@@ -122,11 +138,11 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/" and "t" in q and hmac.compare_digest(q["t"][0], self.server.token):
             return self._send(302, b"", "text/plain", {"Location": "/", "Set-Cookie": f"{COOKIE}={self.server.token}; HttpOnly; SameSite=Strict; Path=/"})
         if not self._cookie_ok():
-            return self._send(401, b"Open the address that `jobagent dashboard` printed (it ends in ?t=...).", "text/plain")
+            return self._send(401, SIGN_IN.encode(), "text/html; charset=utf-8")
         s = self.server.settings
         if url.path == "/":
             return self._send(200, PAGE.replace("__NOVNC__", json.dumps(self.server.novnc_url).replace("<", "\\u003c")).encode(), "text/html; charset=utf-8")
-        routes = {"/api/overview": lambda: data.overview(s), "/api/queue": lambda: data.queue(s), "/api/applications": lambda: data.applications(s),
+        routes = {"/api/overview": lambda: {**data.overview(s), "read_only": self.server.read_only}, "/api/queue": lambda: data.queue(s), "/api/applications": lambda: data.applications(s),
                   "/api/review": lambda: data.review(s), "/api/hitl": lambda: data.hitl_pending(s), "/api/runs": lambda: data.runs(s),
                   "/api/outcomes": lambda: data.outcomes(s)}
         if url.path in routes:
@@ -142,6 +158,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(403, b"forbidden host", "text/plain")
         if not self._cookie_ok():
             return self._json({"error": "not signed in"}, 401)
+        if self.server.read_only:
+            return self._json({"error": "this dashboard is read-only: answer questions and start runs from a terminal"}, 403)
         origin = self.headers.get("Origin")
         if self.headers.get("X-Dashboard") != "1" or not (self.headers.get("Content-Type") or "").startswith("application/json") or (
                 origin and urlparse(origin).hostname not in self.server.allowed_hosts):
@@ -183,15 +201,25 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(settings, host: str = "127.0.0.1", port: int = 8765, token: str | None = None, popen=subprocess.Popen,
-                extra_hosts: tuple[str, ...] = (), novnc_url: str = "") -> Server:
+                extra_hosts: tuple[str, ...] = (), novnc_url: str = "", read_only: bool = False) -> Server:
     allowed = {"127.0.0.1", "localhost", "::1", host.lower(), *(h.lower() for h in extra_hosts)}
-    return Server((host, port), settings, token or load_token(settings), allowed, popen, novnc_url)
+    return Server((host, port), settings, token or load_token(settings), allowed, popen, novnc_url, read_only)
 
 
-def serve(settings, host: str = "127.0.0.1", port: int = 8765, extra_hosts: tuple[str, ...] = (), novnc_url: str = "", echo=print) -> None:
-    srv = make_server(settings, host, port, extra_hosts=extra_hosts, novnc_url=novnc_url)
-    echo(f"dashboard: http://{host}:{srv.server_address[1]}/?t={srv.token}")
-    echo("dashboard: read-only except answering questions and starting runs up to the review screen; Ctrl+C to stop")
+def access_url(srv: Server) -> str:
+    host = srv.server_address[0]
+    return f"http://{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{srv.server_address[1]}/?t={srv.token}"
+
+
+def serve(settings, host: str = "127.0.0.1", port: int = 8765, extra_hosts: tuple[str, ...] = (), novnc_url: str = "", echo=print,
+          read_only: bool = False) -> None:
+    try:
+        srv = make_server(settings, host, port, extra_hosts=extra_hosts, novnc_url=novnc_url, read_only=read_only)
+    except OSError as exc:
+        raise SystemExit(f"dashboard: cannot listen on {host}:{port} ({exc.strerror or exc}); is another dashboard already running? try --port") from exc
+    echo(f"dashboard: {access_url(srv)}")
+    echo("dashboard: " + ("READ-ONLY view" if read_only else "read-only except answering questions and starting runs up to the review screen")
+         + "; open the address above in your browser; Ctrl+C to stop")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

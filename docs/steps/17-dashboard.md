@@ -23,10 +23,23 @@ machine (DNS-rebinding defence). POSTs also need the cookie, `Content-Type: appl
 The database is opened read-only. Agent data reaches the page only through `textContent`, never as HTML (a scraped job title cannot inject markup;
 a test forbids `innerHTML`). Log names are checked against a strict pattern, so no path can leave `state/logs`.
 
-**Running it.** In the container: `docker exec -d jobagent jobagent dashboard` (the container uses host networking, so the page is at
-`http://127.0.0.1:8765/`; read the token with `docker exec jobagent cat /app/state/dashboard/token`). Reaching it from a phone needs a decision on
-exposure and is step 19, not this one. Development without touching real data: `jobagent.dashboard.demo.seed(root)` writes invented companies, a
-queue, two applications at review, two questions, runs and outcomes.
+**Running it.** The dashboard is a separate process from the agent; it must be started, and it must be able to see the agent's `data/`, `state/` and
+`outputs/` folders. Three ways:
+
+1. `scripts/dashboard.sh start` (recommended): builds an image from this checkout the first time, then starts a container `jobagent-dashboard` on
+   the host network, so `http://127.0.0.1:8765/` works like noVNC does. By default it mounts your folders **read-only** (a view that cannot change
+   anything); `DASHBOARD_MODE=interactive scripts/dashboard.sh start` mounts `state/` and `outputs/` writable so questions can be answered and
+   runs started from the page. `scripts/dashboard.sh url` prints the address with its access token; `stop` removes the container.
+   `JOBAGENT_HOME=/path/to/checkout` points it at another folder holding `data/ state/ outputs/`.
+2. Inside the agent container, once its image contains this code: `docker exec -d jobagent jobagent dashboard`, then
+   `docker exec jobagent jobagent dashboard --print-url`; or set `DASHBOARD_PORT=8765` in `.env` and the entrypoint starts it with the harness.
+3. On the host: `jobagent dashboard` (needs the package installed there).
+
+If the page shows nothing: (a) nothing is listening (`ss -ltn | grep 8765`; the container must exist and use `--network host`, a bridge network
+makes 127.0.0.1 unreachable), (b) you opened the address without `?t=<token>` (you get a page saying so), (c) another program holds the port (the
+dashboard says so; use `--port`). Reaching it from a phone needs a decision on exposure and is step 19, not this one.
+Development without touching real data: `jobagent.dashboard.demo.seed(root)` writes invented companies, a queue, two applications at review, two
+questions, runs and outcomes.
 
 **Not in this step:** approving or submitting, editing data files, secrets, authentication beyond the local token, live push updates (the page polls
 every 6 s).

@@ -52,7 +52,9 @@ def seed(root: Path, secret_question: bool = True) -> dict:
                                          ("2026-11-16T103000-tailor-sample-cloud-bbbb2222", "tailor", "sample-cloud", [("info", "tailor: writing"), ("warn", "tailor: retrying with json mode"), ("error", "tailor: RuntimeError: model down")], 30),
                                          ("2026-11-16T104500-run-cccc3333", "run", "", [("info", "queue: Example Robotics - Robotics Engineer")], 0.2)):
         p = state / "logs" / f"{stem}.jsonl"
-        p.write_text("".join(json.dumps({"ts": _ts(ago), "run": stem[-8:], "job": job, "level": lv, "step": step, "msg": m}) + "\n" for lv, m in lines))
+        recs = [(lv, m) for lv, m in lines] + ([("end", "finished")] if ago > 1 else [])          # the newest run has not finished
+        p.write_text("".join(json.dumps({"ts": _ts(ago), "run": stem[-8:], "cmd": step, "job": job, "level": lv, "step": step, "msg": m}) + "\n"
+                             for lv, m in recs))
         t = datetime.now().timestamp() - ago * 60
         os.utime(p, (t, t))
     return {"state_dir": state, "outputs_dir": outputs, "data_dir": data}

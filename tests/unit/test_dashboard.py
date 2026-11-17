@@ -61,8 +61,9 @@ def test_the_data_layer_reads_the_agents_own_files(env):
     assert any(r["state"] == "confirmed" and r["latest_stage"] == "interview" for r in data.applications(s))
     assert {r["step"] for r in data.runs(s)} == {"apply", "tailor", "run"}
     tailor = next(r for r in data.runs(s) if r["step"] == "tailor")
-    assert tailor["errors"] == 1 and tailor["warnings"] == 1 and not tailor["running"]
-    assert next(r for r in data.runs(s) if r["step"] == "run")["running"]
+    assert tailor["errors"] == 1 and tailor["warnings"] == 1 and tailor["state"] == "finished" and not tailor["running"]
+    live = next(r for r in data.runs(s) if r["step"] == "run")
+    assert live["running"] and live["state"] == "running"
     assert data.outcomes(s)["counts"] == {"confirmation": 1, "interview": 1}
 
 
@@ -167,3 +168,99 @@ def test_the_page_and_api_are_served(env):
 def test_every_table_cell_is_wrapped_in_a_td():
     """The row builder must wrap each value in <td>; unwrapped values ran together on the page (found in a screenshot)."""
     assert 'cell(r).map(c=>h("td",{},c))' in PAGE
+
+
+def test_run_states_follow_the_closing_record_and_how_long_the_log_has_been_quiet(tmp_path):
+    import os
+    import time
+    s = Settings(state_dir=tmp_path / "s", outputs_dir=tmp_path / "o", data_dir=tmp_path / "d")
+    logs = s.state_dir / "logs"
+    logs.mkdir(parents=True)
+
+    def make(name, quiet_s, closed, cmd="run", tag="skills"):
+        recs = [{"ts": "2026-11-17T09:00:00Z", "run": "r", "cmd": cmd, "job": "j", "level": "info", "step": tag, "msg": "x"}]
+        if closed:
+            recs.append({"ts": "2026-11-17T09:01:00Z", "run": "r", "cmd": cmd, "job": "j", "level": "end", "step": cmd, "msg": "finished"})
+        p = logs / f"{name}.jsonl"
+        p.write_text("".join(json.dumps(r) + "\n" for r in recs))
+        os.utime(p, (time.time() - quiet_s,) * 2)
+    make("a", 5, False)
+    make("b", 400, False)
+    make("c", 4000, False)
+    make("d", 4000, True)
+    got = {r["id"]: r for r in data.runs(s)}
+    assert [got[k]["state"] for k in "abcd"] == ["running", "waiting", "stalled", "finished"]
+    assert got["a"]["step"] == "run" and got["a"]["lines"] == 1                      # the command, not the first line's tag ("skills")
+
+
+def test_the_run_log_records_its_command_and_a_closing_line(tmp_path):
+    import io
+    from rich.console import Console
+    from jobagent import log as L
+    lg = L.RunLog("tailor", "job-1", console=Console(file=io.StringIO()), directory=tmp_path / "logs", quiet=False)
+    lg("skills: 3 new skill(s)")
+    lg.close()
+    recs = [json.loads(x) for x in lg.path.with_suffix(".jsonl").read_text().splitlines()]
+    assert recs[0]["cmd"] == "tailor" and recs[0]["step"] == "skills" and recs[-1]["level"] == "end"
+
+
+def test_the_page_does_not_rebuild_under_someone_typing():
+    assert "function busy()" in PAGE and "busy()?later(ms):draw()" in PAGE
+
+
+# --- reaching it: read-only view, sign-in page, token without a writable state folder, port clashes -------------------------------------
+
+def test_a_read_only_dashboard_shows_everything_and_changes_nothing(tmp_path):
+    s = Settings(**seed(tmp_path))
+    srv = make_server(s, "127.0.0.1", 0, popen=lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not start a run")), read_only=True)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        assert call(srv, "GET", "/api/overview")[1]["read_only"] is True and call(srv, "GET", "/api/review")[0] == 200
+        code, out = call(srv, "POST", "/api/hitl/answer", {"id": "dem0a1b2", "value": "Yes"})
+        assert code == 403 and "read-only" in out["error"] and not (s.state_dir / "hitl" / "answers" / "dem0a1b2.json").exists()
+        assert call(srv, "POST", "/api/run", {"inputs": ["x"], "through": "apply"})[0] == 403
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_without_the_token_you_get_a_page_that_says_how_to_get_the_address(env):
+    _, srv, _ = env
+    code, html = call(srv, "GET", "/", cookie=False)
+    assert code == 401 and "access link" in html and "--print-url" in html and "docker logs jobagent-dashboard" in html
+
+
+def test_a_state_folder_that_cannot_be_written_still_gets_a_token(tmp_path, monkeypatch):
+    import jobagent.dashboard.server as S
+    s = Settings(state_dir=tmp_path / "s", outputs_dir=tmp_path / "o", data_dir=tmp_path / "d")
+    monkeypatch.setattr(S.os, "open", lambda *a, **k: (_ for _ in ()).throw(PermissionError("read-only file system")))
+    t = load_token(s)
+    assert len(t) >= 24 and load_token(s) == t                     # stable within the process, nothing written
+
+
+def test_a_busy_port_gives_a_plain_message(env):
+    from jobagent.dashboard.server import serve
+    s, srv, _ = env
+    with pytest.raises(SystemExit) as e:
+        serve(s, "127.0.0.1", srv.server_address[1], echo=lambda m: None)
+    assert "cannot listen" in str(e.value) and "--port" in str(e.value)
+
+
+def test_print_url_prints_the_address_with_the_token(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from jobagent import main
+    from jobagent.config import get_settings
+    monkeypatch.setenv("STATE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    r = CliRunner().invoke(main.app, ["dashboard", "--print-url", "--port", "8765"])
+    assert r.exit_code == 0 and r.output.strip() == f"http://127.0.0.1:8765/?t={(tmp_path / 'dashboard' / 'token').read_text().strip()}"
+    get_settings.cache_clear()
+
+
+def test_the_launcher_and_entrypoint_are_valid_shell():
+    import subprocess
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    for f in ("scripts/dashboard.sh", "docker/entrypoint.sh"):
+        assert subprocess.run(["bash", "-n", str(root / f)], capture_output=True).returncode == 0, f
+    assert "--read-only" in (root / "scripts/dashboard.sh").read_text() and ":ro" in (root / "scripts/dashboard.sh").read_text()

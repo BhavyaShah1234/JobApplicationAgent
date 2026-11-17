@@ -153,7 +153,7 @@ class RunLog:
         ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             self._file.write(f"{ts} {level:<5} [{step}] {text}\n")
-            self._jsonl.write(json.dumps({"ts": ts, "run": self.run_id, "job": self.job, "level": level, "step": step, "msg": text}) + "\n")
+            self._jsonl.write(json.dumps({"ts": ts, "run": self.run_id, "cmd": self.step, "job": self.job, "level": level, "step": step, "msg": text}) + "\n")
             self._file.flush()
             self._jsonl.flush()
         except (OSError, ValueError) as exc:               # disk full, closed handle: never let a progress line stop the workflow
@@ -225,6 +225,8 @@ class RunLog:
 
     def close(self) -> None:
         self._flush_repeats()
+        if self._file is not None:
+            self._record("end", self.step, "finished")          # lets the dashboard tell a finished run from one that is still going
         for f in (self._file, self._jsonl):
             try:
                 if f:

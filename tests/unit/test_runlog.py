@@ -81,8 +81,10 @@ def test_each_run_writes_a_plain_log_and_a_jsonl_twin(tmp_path):
     log.close()
     assert re.search(r"-tailor-acme-1-job-[0-9a-f]{8}\.log$", log.path.name) and re.match(r"\d{4}-\d{2}-\d{2}T\d{6}-", log.path.name)
     rows = [json.loads(x) for x in log.path.with_suffix(".jsonl").read_text().splitlines()]
+    assert rows[-1]["level"] == "end"                                       # the closing record the dashboard uses
+    rows = rows[:-1]
     assert [(r["level"], r["step"]) for r in rows] == [("ok", "tailor"), ("warn", "tailor")]
-    assert all(set(r) == {"ts", "run", "job", "level", "step", "msg"} for r in rows)
+    assert all(set(r) == {"ts", "run", "cmd", "job", "level", "step", "msg"} for r in rows)
     assert "\x1b" not in log.path.read_text()
 
 

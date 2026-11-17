@@ -9,7 +9,8 @@ from pathlib import Path
 
 MAX_LOG_BYTES = 2_000_000
 STEM = re.compile(r"^[A-Za-z0-9_.-]{1,120}$")
-RUNNING_WITHIN_S = 120                                  # a run log written to in the last two minutes is "running"
+STALLED_AFTER_S = 15 * 60                               # a run with no closing record and no new line for this long is "stalled" (killed?)
+IDLE_AFTER_S = 120                                      # ... and "waiting" (a long model call) after this long
 
 
 def ro_conn(settings) -> sqlite3.Connection | None:
@@ -125,7 +126,9 @@ def _parse_log(path: Path) -> list[dict]:
 
 
 def runs(settings, limit: int = 60) -> list[dict]:
-    """Recent runs from the structured logs, newest first: step, job, when, how it went, and whether it is still writing."""
+    """Recent runs from the structured logs, newest first. `step` is the command that was run (older logs: the first line's tag), `state` is
+    finished (closing record written), running, waiting (no line for 2 minutes: usually a long model call) or stalled (no line for 15 minutes
+    and never closed: the run was most likely killed)."""
     d = settings.state_dir / "logs"
     if not d.is_dir():
         return []
@@ -134,13 +137,17 @@ def runs(settings, limit: int = 60) -> list[dict]:
     out = []
     for p in files:
         recs = _parse_log(p)
-        if not recs:
+        body = [r for r in recs if r.get("level") != "end"]
+        if not body:
             continue
-        levels = [r.get("level") for r in recs]
-        out.append({"id": p.stem, "run": recs[0].get("run", ""), "step": recs[0].get("step", ""), "job": recs[0].get("job", ""),
-                    "started": recs[0].get("ts", ""), "last": recs[-1].get("ts", ""), "lines": len(recs),
-                    "errors": levels.count("error"), "warnings": levels.count("warn"), "message": str(recs[-1].get("msg", ""))[:160],
-                    "running": now - p.stat().st_mtime < RUNNING_WITHIN_S})
+        levels = [r.get("level") for r in body]
+        quiet_s = now - p.stat().st_mtime
+        state = ("finished" if any(r.get("level") == "end" for r in recs) else
+                 "running" if quiet_s < IDLE_AFTER_S else "waiting" if quiet_s < STALLED_AFTER_S else "stalled")
+        out.append({"id": p.stem, "run": body[0].get("run", ""), "step": body[0].get("cmd") or body[0].get("step", ""), "job": body[0].get("job", ""),
+                    "started": body[0].get("ts", ""), "last": body[-1].get("ts", ""), "lines": len(body), "errors": levels.count("error"),
+                    "warnings": levels.count("warn"), "message": str(body[-1].get("msg", ""))[:160], "state": state,
+                    "running": state in ("running", "waiting"), "quiet_s": int(quiet_s)})
     return out
 
 

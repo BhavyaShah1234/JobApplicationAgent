@@ -28,7 +28,7 @@ a{color:var(--acc)}@media (max-width:640px){main{padding:8px}table{display:block
 <script>
 const NOVNC = __NOVNC__;
 const TABS = [["overview","Overview"],["questions","Questions"],["review","Review"],["queue","Queue"],["runs","Runs"],["outcomes","Outcomes"],["start","Start a run"]];
-let tab = (location.hash||"#overview").slice(1), timer = null, counts = {};
+let tab = (location.hash||"#overview").slice(1), timer = null, counts = {}, RO = false;
 const $ = (s,el=document)=>el.querySelector(s);
 function h(tag, attrs={}, ...kids){const e=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(k==="class")e.className=v;else if(k.startsWith("on"))e.addEventListener(k.slice(2),v);else e.setAttribute(k,v)}
   for(const k of kids.flat()){if(k==null)continue;e.append(k.nodeType?k:document.createTextNode(String(k)))}return e}
@@ -37,12 +37,13 @@ async function post(path,body){const r=await fetch(path,{method:"POST",credentia
 function table(cols,rows,cell){return h("table",{},h("thead",{},h("tr",{},cols.map(c=>h("th",{},c)))),h("tbody",{},rows.length?rows.map(r=>h("tr",{},cell(r).map(c=>h("td",{},c)))):h("tr",{},h("td",{colspan:cols.length,class:"mut"},"Nothing here yet."))))}
 const when=t=>t?t.replace("T"," ").replace("Z",""):"";
 const cls=s=>/fail|block|error|reject/.test(s)?"bad":/review|warn|unknown|pending/.test(s)?"warn":/submit|confirm|ok|worked|filled/.test(s)?"ok":"";
-function tabs(){const nav=$("#tabs");nav.replaceChildren(...TABS.map(([id,label])=>{const b=h("button",{role:"tab","aria-selected":String(tab===id),onclick:()=>{tab=id;location.hash=id;draw()}},label);
+function tabs(){RO=!!counts.read_only;const nav=$("#tabs");nav.replaceChildren(...TABS.filter(([id])=>!(RO&&id==="start")).map(([id,label])=>{const b=h("button",{role:"tab","aria-selected":String(tab===id),onclick:()=>{tab=id;location.hash=id;draw()}},label);
   if(id==="questions"&&counts.questions)b.append(h("span",{class:"badge"},counts.questions));if(id==="review"&&counts.waiting)b.append(h("span",{class:"badge",style:"background:var(--acc)"},counts.waiting));return b}))}
 const views={
  async overview(m){const o=await api("/api/overview");counts=o;tabs();
   const card=(n,l)=>h("div",{class:"card"},h("b",{},n),h("span",{},l));
   const sum=d=>Object.entries(d||{}).map(([k,v])=>`${v} ${k}`).join(" · ")||"none";
+  if(RO)m.append(h("div",{class:"box"},"Read-only view: you can look at everything here, but answering questions and starting runs is done in a terminal."));
   m.append(h("div",{class:"cards"},card(o.questions,"questions waiting for you"),card(o.waiting,"applications to review"),card(o.ready,"of them ready"),card(o.runs_active,"runs active")),
    h("div",{class:"box"},h("div",{},h("b",{},"Queue: "),sum(o.jobs))),h("div",{class:"box"},h("div",{},h("b",{},"Applications: "),sum(o.applications))),
    h("div",{class:"box"},h("div",{},h("b",{},"Outcomes: "),sum(o.outcomes))),
@@ -50,14 +51,14 @@ const views={
  async questions(m){const q=await api("/api/hitl");if(!q.length)return m.append(h("p",{class:"mut"},"The agent is not waiting on anything."));
   for(const x of q){const ta=h("textarea",{rows:"2",placeholder:x.default?`default: ${x.default}`:"your answer"});const msg=h("span",{class:"mut"});
    m.append(h("div",{class:"box"},h("div",{},h("b",{},"Question "+x.id),h("span",{class:"mut"},"  "+when(x.created))),h("p",{},x.prompt),
-    x.secret?h("p",{class:"warn"},"This asks for a secret. Answer it in a terminal, never here: ",h("code",{},x.terminal_command)):
+    (x.secret||RO)?h("p",{class:"warn"},(x.secret?"This asks for a secret. Answer it in a terminal, never here: ":"Answer it in a terminal: "),h("code",{},x.terminal_command)):
     h("div",{},ta,h("div",{},h("button",{class:"act",onclick:async()=>{const r=await post("/api/hitl/answer",{id:x.id,value:ta.value});msg.textContent=r.ok?"Sent.":(r.body.error||"failed");if(r.ok)setTimeout(draw,600)}},"Send answer"),msg))));}},
  async review(m){const r=await api("/api/review");m.append(h("p",{class:"mut"},"Nothing is sent from this page. Sending an application needs your typed approval in a terminal, per application."),
   table(["#","Company","Title","Ready","Waiting h","Blockers","Open its review (copy into a terminal)"],r,x=>[x.id,x.company,x.title,h("span",{class:x.ready?"ok":"warn"},x.ready?"yes":"no"),x.age_hours??"-",
    h("div",{},x.blockers.length?x.blockers.slice(0,3).map(b=>h("div",{class:"warn"},b)):"-"),h("code",{},x.review_command)]))},
  async queue(m){const r=await api("/api/queue");m.append(table(["Company","Title","Status","Role","Score","Updated","Note"],r,x=>[x.company,x.title,h("span",{class:cls(x.status)},x.status),x.role_id||"",x.match_score??"",when(x.updated_at),h("span",{class:"mut"},x.notes||"")]))},
- async runs(m){const r=await api("/api/runs");const box=h("div");m.append(table(["Step","Job","Started","Lines","Errors","Last line",""],r,x=>[x.step,x.job,when(x.started),x.lines,h("span",{class:x.errors?"bad":""},x.errors),
-   h("span",{class:"mut"},(x.running?"● running  ":"")+x.message),h("button",{class:"act",onclick:async()=>{const l=await api("/api/run/"+x.id);box.replaceChildren(h("div",{class:"log"},l.map(e=>`${e.ts.slice(11,19)} ${e.level.padEnd(5)} [${e.step}] ${e.msg}`).join("\n")))}},"Log")]),box)},
+ async runs(m){const r=await api("/api/runs");const box=h("div");m.append(table(["Step","Job","Started","State","Lines","Errors","Last line",""],r,x=>[x.step,x.job,when(x.started),h("span",{class:x.state==="running"?"ok":x.state==="stalled"?"bad":x.state==="waiting"?"warn":"mut"},x.state==="waiting"?`waiting ${Math.round(x.quiet_s/60)} min`:x.state),x.lines,h("span",{class:x.errors?"bad":""},x.errors),
+   h("span",{class:"mut"},x.message),h("button",{class:"act",onclick:async()=>{const l=await api("/api/run/"+x.id);box.replaceChildren(h("div",{class:"log"},l.map(e=>`${e.ts.slice(11,19)} ${e.level.padEnd(5)} [${e.step}] ${e.msg}`).join("\n")))}},"Log")]),box)},
  async outcomes(m){const o=await api("/api/outcomes");m.append(h("div",{class:"box"},Object.entries(o.counts).map(([k,v])=>`${v} ${k}`).join(" · ")||"No outcomes recorded yet."),
   table(["Received","Stage","Company","Title","Subject"],o.recent,x=>[when(x.received_at),h("span",{class:cls(x.stage)},x.stage),x.company,x.title,h("span",{class:"mut"},x.subject||"")]))},
  async start(m){const inp=h("textarea",{rows:"4",placeholder:"One per line: job URLs, company names, or a CSV/XLSX file name"});const thr=h("select",{},["scrape","tailor","apply"].map(v=>h("option",{value:v,selected:v==="apply"},v)));
@@ -67,6 +68,8 @@ const views={
     msg.textContent=r.ok?`Started (pid ${r.body.pid}). ${r.body.note}`:(r.body.error||"failed");msg.className=r.ok?"ok":"bad"}},"Start"),msg))}};
 async function draw(){clearTimeout(timer);const m=$("#main");const t=tab;tabs();const fresh=h("div");try{await views[t]?.(fresh)}catch(e){if(String(e).includes("401"))return;fresh.append(h("p",{class:"bad"},"Could not load: "+e))}
   if(t===tab){m.replaceChildren(fresh);$("#stamp").textContent="updated "+new Date().toLocaleTimeString()}
-  if(t!=="questions"&&t!=="start")timer=setTimeout(draw,6000);else timer=setTimeout(()=>{if(!document.querySelector("textarea:focus"))draw()},8000)}
+  later(t==="questions"||t==="start"?8000:6000)}
+function busy(){const a=document.activeElement;return (a&&["TEXTAREA","INPUT","SELECT"].includes(a.tagName))||[...document.querySelectorAll("main textarea")].some(x=>x.value)}
+function later(ms){clearTimeout(timer);timer=setTimeout(()=>busy()?later(ms):draw(),ms)}   // never rebuild the page under someone who is typing
 api("/api/overview").then(o=>{counts=o;draw()}).catch(()=>{});
 </script></body></html>"""
