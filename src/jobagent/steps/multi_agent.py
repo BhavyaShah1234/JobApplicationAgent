@@ -120,8 +120,9 @@ PROJECTS_EDIT_PROMPT = """You are the PROJECTS agent of a resume team. Do what T
 - rewrite a paragraph in place (`projects`: 1-based number under PROJECTS and the new paragraph), or
 - replace a weaker project with a better CANDIDATE repo (`swaps`: the number to replace and a full entry for the
   candidate: repo full_name exactly as listed, title, stack, paragraph, short).
-Each paragraph: exactly 3 sentences, {PMIN}-{PMAX} characters: the problem, the system built (stack named), the wow factor
-(a result or scale). The title is a real project name, never the bare repo slug. Use the posting's keywords the TASKS
+Each paragraph: exactly 3 COMPLETE sentences, aiming for 330-370 characters (hard bounds {PMIN}-{PMAX}): the problem,
+the system built (stack named), the wow factor (a result or scale). Finish the final sentence; never cut a sentence
+to reach the character limit. The title is a real project name, never the bare repo slug. Use the posting's keywords the TASKS
 ask for. No dashes as punctuation; "by N%". Never invent degrees, employers or dates.""".replace("{PMIN}", str(T.PARAGRAPH_MIN)).replace("{PMAX}", str(T.PARAGRAPH_MAX))
 
 REVIEW_PROMPT = """You are the VALIDATOR of a resume team. Check the CURRENT RESUME for this posting the way a hiring
@@ -209,7 +210,8 @@ def _section_messages(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str
 
 def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last: str) -> tuple[str, object]:
     """One section agent's call; returns (agent, output) or (agent, None) on failure."""
-    model = llm.writer(16000 if agent == "experience" else 8000, timeout=600, model=ctx["models"][agent])
+    model = llm.writer(16000 if agent == "experience" else 4000 if agent == "projects" else 8000,
+                       timeout=120 if agent == "projects" else 600, model=ctx["models"][agent])
     log, t0 = ctx["log"], time.monotonic()
     try:
         if agent == "projects":
@@ -217,7 +219,10 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
             msgs = [SystemMessage(with_today(PROJECTS_EDIT_PROMPT)),
                     HumanMessage(_context(ctx, f, proj.read_text()) + "\n\nTASKS:\n" + "\n".join(f"- {t}" for t in tasks)
                                  + (f"\n\nLAST ROUND: {last}" if last else ""))]
-            out = llm.structured_invoke(model, ProjectsOut, msgs, log=log)
+            # A short paragraph repair must not spend ten minutes in a fallback
+            # mode after length validation fails. Preserve the previous version
+            # on failure; its hard findings still prevent publication.
+            out = llm.structured_invoke(model, ProjectsOut, msgs, log=log, deadline_s=180)
         elif agent == "experience" and f is not None and not any(FULL_REWRITE.search(t) for t in tasks):
             # targeted edit: only the bullets the validators named (a full rewrite moves every orphan word)
             msgs = T.build_repair_prompt(ctx["r"], ctx["jd"], f, tasks + ([f"LAST ROUND: {last}"] if last else []))

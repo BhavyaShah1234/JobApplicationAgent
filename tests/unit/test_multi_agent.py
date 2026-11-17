@@ -17,6 +17,30 @@ def test_good_summary_passes():
     assert M.summary_issues(s, overflow=False) == []
 
 
+def test_stalled_project_repair_uses_a_short_call_budget_and_keeps_the_previous_version(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from jobagent import llm
+
+    (tmp_path / "projects.json").write_text("{}")
+    monkeypatch.setattr(M, "_context", lambda *a: "Existing project descriptions")
+    fake = SimpleNamespace(model_name="fixture", with_structured_output=lambda *a, **kw: SimpleNamespace(invoke=lambda _: None))
+    monkeypatch.setattr(llm, "writer", lambda *a, **kw: fake)
+    monkeypatch.setattr(llm, "get_settings", lambda: SimpleNamespace(
+        llm_structured_method="function_calling", llm_call_deadline_s=900, llm_max_calls=8, llm_rate_retries=3,
+    ))
+    budgets = []
+
+    def stalled_request(fn, remaining):
+        budgets.append(remaining)
+        raise llm.StructuredError("simulated provider exceeded the caller budget", "deadline")
+
+    monkeypatch.setattr(llm, "_bounded", stalled_request)
+    result = M._run_agent({"job_dir": tmp_path, "models": {"projects": "fixture"}, "log": lambda _: None},
+                          "projects", None, ["Repair an unfinished description"], "")
+    assert result == ("projects", None)  # _merge keeps the previous content, whose hard gate still applies
+    assert len(budgets) == 1 and 0 < budgets[0] <= 180
+
+
 def test_scoring_retries_only_failed_site_and_keeps_written_feedback(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
