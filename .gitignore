@@ -231,3 +231,4 @@ data/*
 data/templates/*
 !data/templates/*.example.*
 asu_contacts.csv
+dev/
