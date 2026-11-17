@@ -10,6 +10,7 @@
 import hmac
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -20,8 +21,15 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from jobagent.dashboard import data
-from jobagent.dashboard.page import PAGE
 
+STATIC = Path(__file__).parent / "static"                    # the built React app (frontend/, built by scripts/build_dashboard.sh)
+CONTENT_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".html": "text/html; charset=utf-8", ".svg": "image/svg+xml",
+                 ".png": "image/png", ".ico": "image/x-icon", ".json": "application/json", ".map": "application/json", ".woff2": "font/woff2"}
+ASSET = re.compile(r"^[A-Za-z0-9._-]{1,120}$")
+CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+NOT_BUILT = ("<!doctype html><meta charset=utf-8><title>Job agent</title><body style='font:16px system-ui;max-width:640px;margin:48px auto'>"
+             "<h1 style='font-size:20px'>The dashboard front end is not built</h1><p>Run <code>scripts/build_dashboard.sh build</code> in the repository "
+             "(it uses a Node container), then reload this page.</p></body>")
 COOKIE = "jobagent_dashboard"
 THROUGH = ("scrape", "tailor", "apply")          # a started run never goes past the review screen
 MAX_BODY = 64_000
@@ -116,9 +124,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        if "Cache-Control" not in (headers or {}):
+            self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", CSP)
         for k, v in (headers or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -140,8 +149,17 @@ class Handler(BaseHTTPRequestHandler):
         if not self._cookie_ok():
             return self._send(401, SIGN_IN.encode(), "text/html; charset=utf-8")
         s = self.server.settings
-        if url.path == "/":
-            return self._send(200, PAGE.replace("__NOVNC__", json.dumps(self.server.novnc_url).replace("<", "\\u003c")).encode(), "text/html; charset=utf-8")
+        if url.path in ("/", "/index.html"):
+            index = STATIC / "index.html"
+            return self._send(200, index.read_bytes(), CONTENT_TYPES[".html"]) if index.is_file() else self._send(503, NOT_BUILT.encode(), CONTENT_TYPES[".html"])
+        if url.path.startswith("/assets/"):
+            name = url.path[len("/assets/"):]
+            f = STATIC / "assets" / name
+            if not ASSET.match(name) or not f.is_file():
+                return self._json({"error": "not found"}, 404)
+            return self._send(200, f.read_bytes(), CONTENT_TYPES.get(f.suffix, "application/octet-stream"), {"Cache-Control": "private, max-age=3600"})
+        if url.path == "/api/config":
+            return self._json({"read_only": self.server.read_only, "novnc": self.server.novnc_url})
         routes = {"/api/overview": lambda: {**data.overview(s), "read_only": self.server.read_only}, "/api/queue": lambda: data.queue(s), "/api/applications": lambda: data.applications(s),
                   "/api/review": lambda: data.review(s), "/api/hitl": lambda: data.hitl_pending(s), "/api/runs": lambda: data.runs(s),
                   "/api/outcomes": lambda: data.outcomes(s), "/api/pipeline": lambda: data.pipeline(s)}

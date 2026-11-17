@@ -12,3 +12,4 @@ asu_contacts.csv
 CODE_REVIEW_FINDINGS.md
 *.sqlite
 dev/
+frontend/

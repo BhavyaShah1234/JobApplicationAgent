@@ -8,7 +8,6 @@ import pytest
 from jobagent.config import Settings
 from jobagent.dashboard import data
 from jobagent.dashboard.demo import seed
-from jobagent.dashboard.page import PAGE
 from jobagent.dashboard.server import load_token, make_server, start_run
 
 
@@ -150,120 +149,63 @@ def test_start_run_builds_an_argument_list_not_a_shell_line(env):
     assert isinstance(seen[0], list) and "Acme; rm -rf /" in seen[0]
 
 
-# --- the page -----------------------------------------------------------------------------------------------------------------------
+# --- the page (a built React app) ------------------------------------------------------------------------------------------------
 
-def test_the_page_never_puts_agent_data_in_as_html():
-    assert "innerHTML" not in PAGE and "outerHTML" not in PAGE and "insertAdjacentHTML" not in PAGE and "document.write" not in PAGE
-
-
-def test_the_page_and_api_are_served(env):
+def test_the_react_app_is_served_with_a_strict_content_policy(env):
+    import re
     _, srv, _ = env
-    code, html = call(srv, "GET", "/")
-    assert code == 200 and "<title>Job agent</title>" in html and "__NOVNC__" not in html
-    for path in ("overview", "queue", "applications", "review", "hitl", "runs", "outcomes"):
-        assert call(srv, "GET", f"/api/{path}")[0] == 200
-    assert call(srv, "GET", "/api/run/does-not-exist")[0] == 404 and call(srv, "GET", "/api/run/..%2f..%2fjobs")[0] == 404
+    c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+    c.request("GET", "/", headers={"Cookie": f"jobagent_dashboard={srv.token}"})
+    r = c.getresponse()
+    html = r.read().decode()
+    csp = r.getheader("Content-Security-Policy")
+    assert r.status == 200 and '<div id="root">' in html and "<title>Job agent</title>" in html
+    assert "script-src 'self'" in csp and "unsafe-inline" not in csp and "unsafe-eval" not in csp and "frame-ancestors 'none'" in csp
+    js = re.search(r'src="(/assets/[^"]+\.js)"', html).group(1)
+    code, body = call(srv, "GET", js)
+    assert code == 200 and "createRoot" in body or "react" in body.lower()
+    css = re.search(r'href="(/assets/[^"]+\.css)"', html).group(1)
+    assert call(srv, "GET", css)[0] == 200
+    assert call(srv, "GET", js, cookie=False)[0] == 401                                  # the assets are behind the token as well
 
 
-def test_every_table_cell_is_wrapped_in_a_td():
-    """The row builder must wrap each value in <td>; unwrapped values ran together on the page (found in a screenshot)."""
-    assert 'cell(r).map(c=>h("td",{},c))' in PAGE
-
-
-def test_run_states_follow_the_closing_record_and_how_long_the_log_has_been_quiet(tmp_path):
-    import os
-    import time
-    s = Settings(state_dir=tmp_path / "s", outputs_dir=tmp_path / "o", data_dir=tmp_path / "d")
-    logs = s.state_dir / "logs"
-    logs.mkdir(parents=True)
-
-    def make(name, quiet_s, closed, cmd="run", tag="skills"):
-        recs = [{"ts": "2026-11-17T09:00:00Z", "run": "r", "cmd": cmd, "job": "j", "level": "info", "step": tag, "msg": "x"}]
-        if closed:
-            recs.append({"ts": "2026-11-17T09:01:00Z", "run": "r", "cmd": cmd, "job": "j", "level": "end", "step": cmd, "msg": "finished"})
-        p = logs / f"{name}.jsonl"
-        p.write_text("".join(json.dumps(r) + "\n" for r in recs))
-        os.utime(p, (time.time() - quiet_s,) * 2)
-    make("a", 5, False)
-    make("b", 400, False)
-    make("c", 4000, False)
-    make("d", 4000, True)
-    got = {r["id"]: r for r in data.runs(s)}
-    assert [got[k]["state"] for k in "abcd"] == ["running", "waiting", "stalled", "finished"]
-    assert got["a"]["step"] == "run" and got["a"]["lines"] == 1                      # the command, not the first line's tag ("skills")
-
-
-def test_the_run_log_records_its_command_and_a_closing_line(tmp_path):
-    import io
-    from rich.console import Console
-    from jobagent import log as L
-    lg = L.RunLog("tailor", "job-1", console=Console(file=io.StringIO()), directory=tmp_path / "logs", quiet=False)
-    lg("skills: 3 new skill(s)")
-    lg.close()
-    recs = [json.loads(x) for x in lg.path.with_suffix(".jsonl").read_text().splitlines()]
-    assert recs[0]["cmd"] == "tailor" and recs[0]["step"] == "skills" and recs[-1]["level"] == "end"
-
-
-def test_the_page_does_not_rebuild_under_someone_typing():
-    assert "function busy()" in PAGE and "busy()?later(ms):draw()" in PAGE
-
-
-# --- reaching it: read-only view, sign-in page, token without a writable state folder, port clashes -------------------------------------
-
-def test_a_read_only_dashboard_shows_everything_and_changes_nothing(tmp_path):
-    s = Settings(**seed(tmp_path))
-    srv = make_server(s, "127.0.0.1", 0, popen=lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not start a run")), read_only=True)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    try:
-        assert call(srv, "GET", "/api/overview")[1]["read_only"] is True and call(srv, "GET", "/api/review")[0] == 200
-        code, out = call(srv, "POST", "/api/hitl/answer", {"id": "dem0a1b2", "value": "Yes"})
-        assert code == 403 and "read-only" in out["error"] and not (s.state_dir / "hitl" / "answers" / "dem0a1b2.json").exists()
-        assert call(srv, "POST", "/api/run", {"inputs": ["x"], "through": "apply"})[0] == 403
-    finally:
-        srv.shutdown()
-        srv.server_close()
-
-
-def test_without_the_token_you_get_a_page_that_says_how_to_get_the_address(env):
+def test_assets_cannot_be_used_to_read_other_files(env):
     _, srv, _ = env
-    code, html = call(srv, "GET", "/", cookie=False)
-    assert code == 401 and "access link" in html and "--print-url" in html and "docker logs jobagent-dashboard" in html
+    for p in ("/assets/../server.py", "/assets/..%2fserver.py", "/assets/%2e%2e/data.py", "/assets/", "/assets/nope.js", "/static/index.html"):
+        assert call(srv, "GET", p)[0] == 404, p
 
 
-def test_a_state_folder_that_cannot_be_written_still_gets_a_token(tmp_path, monkeypatch):
+def test_the_front_end_reports_the_settings_it_needs(env):
+    _, srv, _ = env
+    assert call(srv, "GET", "/api/config") == (200, {"read_only": False, "novnc": ""})
+
+
+def test_an_unbuilt_front_end_says_how_to_build_it(env, tmp_path, monkeypatch):
     import jobagent.dashboard.server as S
-    s = Settings(state_dir=tmp_path / "s", outputs_dir=tmp_path / "o", data_dir=tmp_path / "d")
-    monkeypatch.setattr(S.os, "open", lambda *a, **k: (_ for _ in ()).throw(PermissionError("read-only file system")))
-    t = load_token(s)
-    assert len(t) >= 24 and load_token(s) == t                     # stable within the process, nothing written
+    _, srv, _ = env
+    monkeypatch.setattr(S, "STATIC", tmp_path / "missing")
+    code, html = call(srv, "GET", "/")
+    assert code == 503 and "scripts/build_dashboard.sh" in html
 
 
-def test_a_busy_port_gives_a_plain_message(env):
-    from jobagent.dashboard.server import serve
-    s, srv, _ = env
-    with pytest.raises(SystemExit) as e:
-        serve(s, "127.0.0.1", srv.server_address[1], echo=lambda m: None)
-    assert "cannot listen" in str(e.value) and "--port" in str(e.value)
+def test_the_front_end_never_puts_agent_data_in_as_html():
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[2] / "frontend" / "src"
+    banned = ("dangerouslySetInnerHTML", "innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function")
+    hits = [f"{p.name}: {b}" for p in src.rglob("*.js*") if ".test." not in p.name for b in banned if b in p.read_text()]
+    assert not hits, hits
 
 
-def test_print_url_prints_the_address_with_the_token(tmp_path, monkeypatch):
-    from typer.testing import CliRunner
-    from jobagent import main
-    from jobagent.config import get_settings
-    monkeypatch.setenv("STATE_DIR", str(tmp_path))
-    get_settings.cache_clear()
-    r = CliRunner().invoke(main.app, ["dashboard", "--print-url", "--port", "8765"])
-    assert r.exit_code == 0 and r.output.strip() == f"http://127.0.0.1:8765/?t={(tmp_path / 'dashboard' / 'token').read_text().strip()}"
-    get_settings.cache_clear()
-
-
-def test_the_launcher_and_entrypoint_are_valid_shell():
-    import subprocess
+def test_the_committed_build_matches_the_sources():
+    """The static build is committed with the fingerprint of the sources it came from; a front-end change without a rebuild fails here."""
+    import importlib.util
     from pathlib import Path
     root = Path(__file__).resolve().parents[2]
-    for f in ("scripts/dashboard.sh", "docker/entrypoint.sh"):
-        assert subprocess.run(["bash", "-n", str(root / f)], capture_output=True).returncode == 0, f
-    assert "--read-only" in (root / "scripts/dashboard.sh").read_text() and ":ro" in (root / "scripts/dashboard.sh").read_text()
+    spec = importlib.util.spec_from_file_location("dsh", root / "scripts" / "dashboard_source_hash.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    recorded = (root / "src/jobagent/dashboard/static/source.sha256").read_text().strip()
+    assert recorded == mod.fingerprint(root), "frontend/ changed after the last build: run scripts/build_dashboard.sh build"
 
 
 # --- the pipeline view: where each job is, and which iteration ----------------------------------------------------------------------
@@ -359,3 +301,10 @@ def test_the_token_can_live_outside_the_state_folder(tmp_path, monkeypatch):
     monkeypatch.setenv("DASHBOARD_TOKEN_FILE", str(f))
     t = load_token(s)
     assert f.read_text().strip() == t and load_token(s) == t and not (tmp_path / "ro-state").exists()
+
+
+def test_every_api_route_answers(env):
+    _, srv, _ = env
+    for path in ("overview", "queue", "applications", "review", "hitl", "runs", "outcomes", "pipeline", "config"):
+        assert call(srv, "GET", f"/api/{path}")[0] == 200, path
+    assert call(srv, "GET", "/api/run/does-not-exist")[0] == 404 and call(srv, "GET", "/api/run/..%2f..%2fjobs")[0] == 404

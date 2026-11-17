@@ -1,7 +1,14 @@
 # Step 17: the dashboard
 
 `jobagent dashboard` serves a one-page web UI on this machine (default `http://127.0.0.1:8765/?t=<token>`; the address is printed, the token is
-kept in `state/dashboard/token`, readable by you only). Standard library only: no new dependency, no image change.
+kept in `state/dashboard/token`, readable by you only).
+
+**Built with.** Front end: **React 18** (Vite, plain JSX, no TypeScript), in `frontend/` (components in `src/components`, one file per tab in `src/views`, polling in
+`src/hooks.js`, the only network code in `src/api.js`). Server: Python standard library (`http.server`), no web framework and no new Python dependency. The React app is
+built into `src/jobagent/dashboard/static/` and **committed**, so the machine that runs the agent needs no Node and the agent image is unchanged. Rebuild after
+changing `frontend/`: `scripts/build_dashboard.sh build` (runs npm in a throwaway `node:22-slim` container; exact pinned versions, `package-lock.json`, `npm ci
+--ignore-scripts`); `scripts/build_dashboard.sh test` runs the component tests (Vitest + Testing Library). A Python test checks that the committed build matches the
+sources (`static/source.sha256`).
 
 | Tab | Shows | Source |
 |---|---|---|
@@ -29,8 +36,8 @@ typed `approve` in a terminal (`jobagent submit ...`); the Review tab only shows
 
 **Guards.** Every request needs the token (the first visit with `?t=` sets an HttpOnly, SameSite=Strict cookie) and a `Host` header that names this
 machine (DNS-rebinding defence). POSTs also need the cookie, `Content-Type: application/json`, the `X-Dashboard: 1` header and a same-site `Origin`.
-The database is opened read-only. Agent data reaches the page only through `textContent`, never as HTML (a scraped job title cannot inject markup;
-a test forbids `innerHTML`). Log names are checked against a strict pattern, so no path can leave `state/logs`.
+The database is opened read-only. Agent data reaches the page only as React text, never as HTML (a scraped job title cannot inject markup; tests render a hostile title and a Python test forbids
+`dangerouslySetInnerHTML`/`innerHTML`). The content policy allows only scripts and styles from the dashboard itself (no inline or eval). Log names are checked against a strict pattern, so no path can leave `state/logs`.
 
 **Running it.** The dashboard is a separate process from the agent; it must be started, and it must be able to see the agent's `data/`, `state/` and
 `outputs/` folders. Three ways:
