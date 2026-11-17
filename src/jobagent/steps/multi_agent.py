@@ -107,10 +107,11 @@ ROLE_PROMPTS = {
     "experience": "You are the EXPERIENCE agent: write ONLY the Experience bullets (fields role_N), following the rules "
                   "below for bullets. Other agents write the Summary, Technical Skills and Projects.",
     "skills": "You are the SKILLS agent: write ONLY the Technical Skills lines (`skills`), following the rules below "
-              "for skills. Size budget: 5-7 categories, each about ONE line on the page (roughly 100-120 characters "
-              "of skills); the whole section 7-9 lines. A short line gets relevant skills added, preferring the "
-              "candidate's own TEMPLATE SKILLS; a long one gets trimmed. Never list soft skills or words for "
-              "applicants.",
+              "for skills. Use 3-7 coherent categories, usually one line each. Category names must describe every "
+              "term they contain: languages belong with languages, ML tools with ML, and so on. Prefer the "
+              "candidate's own TEMPLATE SKILLS in their original groups, merging compatible groups if needed. "
+              "Semantic accuracy and relevance come before line fullness: leave a short line rather than add "
+              "an unrelated term. Trim long lines. Never list soft skills or words for applicants.",
     "summary": "You are the SUMMARY agent: write ONLY the Summary, following the rules below for the summary. Base it "
                "on the CURRENT RESUME's bullets, skills and projects so it never claims what they don't show.",
 }
@@ -129,7 +130,9 @@ manager would and report only real problems, each for the agent that owns that s
   better than a project on the page; a description that doesn't match its repo summary; a title that is a bare repo
   slug; a description under 3 sentences;
 - experience: bullets that don't fit their employer, repeat each other, or miss the posting's main duties;
-- skills: missing posting tools the bullets use; a category with nothing useful in it; soft skills listed;
+- skills: tools placed under a category that does not describe them (for example ML frameworks under Frontend);
+  missing posting tools the bullets use; a category with nothing useful in it; soft skills listed. Prefer moving
+  terms or merging compatible categories over adding padding;
 - summary: claims the rest of the resume doesn't show; not opening with the posting's title.
 Return an empty list if the resume is sound."""
 
@@ -396,14 +399,19 @@ def check_layout(state: State) -> dict:
                      "projects" if issue.startswith(("the project", "text overflows")) else "experience")
             tasks[agent].append(issue)
         used = " ".join(x for sl in f.skills for x in sl.render()).lower()
-        pool = [t.strip() for _, items in r.skills for t in T.to_plain(items).split(",")
-                if t.strip() and t.strip().lower() not in used][:15]
-        pool += [x["skill"] for x in (ctx.get("graph") or {}).get("owned", []) if x["skill"].lower() not in used and x["skill"] not in pool][:6]
+        # Keep the source categories: a flat padding pool caused unrelated ML
+        # terms to be inserted under Frontend and Observability in live drafts.
+        pool = {category: [t.strip() for t in T.to_plain(items).split(",")
+                           if t.strip() and t.strip().lower() not in used]
+                for category, items in r.skills}
+        pool = {category: terms for category, terms in pool.items() if terms}
         if lay.short_skills:
             room = {k: f"about {round((1 - v) * 115)} more characters" for k, v in lay.skill_fill.items() if v < 0.85}
-            tasks["skills"].append(f"Each category's last line should be full. Room left: {room}. Fill it with relevant "
-                                   f"skills{' (prefer TEMPLATE SKILLS not yet listed: ' + str(pool) + ')' if pool else ''}"
-                                   "; never wrap a category onto a new line for one or two words.")
+            tasks["skills"].append(f"Short skills lines: {room}. Add a posting-relevant owned skill ONLY if it belongs "
+                                   f"in that category. Unused template skills, grouped by their source category: {pool}. "
+                                   "Merge compatible categories or leave a shorter line if no fitting term is available. "
+                                   "Never move an unrelated term into a category to fill space, and never wrap a category "
+                                   "onto a new line for one or two words.")
         full_projects = (st["kept"] - len(st["short"])) if st else 0
         if lay.free_pt and lay.free_pt > 12 and st and st["short"]:
             tasks["projects"].append(f"About {round(lay.free_pt / 11)} line(s) are free but projects are in their short "
