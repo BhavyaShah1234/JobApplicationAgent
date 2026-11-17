@@ -1,6 +1,20 @@
 import json
 
+import pytest
+
 from jobagent.tools import places
+
+
+@pytest.mark.parametrize('label,city', [
+    ('USA WILMINGTON, MA - HQ', 'WILMINGTON'),
+    ('US Austin, TX', 'Austin'),
+    ('United States of America Austin, TX', 'Austin'),
+    ('U.S. Austin, TX', 'Austin'),
+    ('USA, MA', ''),
+    ('Usaquen, CA', 'Usaquen'),
+])
+def test_country_labels_are_not_part_of_a_us_city(label, city):
+    assert places.written_place(label)['city'] == city
 
 
 def test_written_places_are_kept_and_jargon_is_not_a_place():

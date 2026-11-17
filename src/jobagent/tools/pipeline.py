@@ -158,7 +158,8 @@ class Pipeline:
         # apply.context() adds it afterwards and a retry needlessly rebuilds valid PDFs.
         posting_outputs = [str(d / "jd.json")] + ([str(d / "jd.md")] if (d / "jd.md").exists() else [])
         current.run("locations", lambda: {"places": places.resolve_job(d, slug, log=self.log)},
-                    inputs={"source": source_sha, "profile": W.sha_file(Path(profiles[0]))},
+                    inputs={"source": source_sha, "profile": W.sha_file(Path(profiles[0])),
+                            "resolver_version": places.RESOLVER_VERSION},
                     outputs=posting_outputs, force=force, log=self.log)
         # The bootstrap cache tracks the posting after this owned enrichment step;
         # the locations stage separately records its inputs and resulting artifacts.

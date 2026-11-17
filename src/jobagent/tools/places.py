@@ -20,6 +20,8 @@ JARGON = re.compile(r"(?i)\b(corporate\s+)?(head\s?quarters|hq|head\s+office|hom
                     r"corporate\s+(office|campus|center|centre)|global\s+(headquarters|hq)|world\s?headquarters)\b")
 US = re.compile(r"(?i)\b(united states( of america)?|usa|u\.s\.a?\.?|us)\b")
 CODES = {v.upper(): k.title() for k, v in US_STATES.items()}
+RESOLVER_VERSION = 2
+COUNTRY_PREFIX = re.compile(r"(?i)^(?:united states(?: of america)?|usa|u\.s\.a\.?|u\.s\.?|us)(?:\s+|$)")
 
 
 def written_place(text: str) -> dict | None:
@@ -29,6 +31,10 @@ def written_place(text: str) -> dict | None:
         state = CODES.get(p.upper()) or (p.title() if p.lower() in US_STATES else "")
         if state:
             city = parts[i - 1] if i > 0 and not JARGON.search(parts[i - 1]) else ""
+            # Workday commonly writes "USA WILMINGTON, MA - HQ". The
+            # country tag is not part of the city, nor is a country-only
+            # preceding component evidence of a city.
+            city = COUNTRY_PREFIX.sub("", city).strip()
             return {"city": city, "state": state, "country": "United States", "how": "written in the posting"}
     return None
 
