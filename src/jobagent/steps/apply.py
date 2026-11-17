@@ -1380,7 +1380,8 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
             proofs=[proof for proof in getattr(page,'_jobagent_upload_proofs',[]) if proof.identity==e.get('identity')]
             proof=next((proof for proof in reversed(proofs) if proof.verify()),None)
             e['verified']=bool(proof)
-            if proof:e.update(readback=proof.name,held_file_sha256=proof.expected,upload_verification=proof.method)
+            if proof:e.update(readback=proof.name,held_file_sha256=proof.expected,upload_verification=proof.method,
+                              replaced_attachment_count=proof.replaced_count)
         e["outcome"] = outcome_of(e, f)
         record.append(e)
     if planner_error:

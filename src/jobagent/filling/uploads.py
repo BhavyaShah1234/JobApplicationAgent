@@ -10,7 +10,7 @@ class UploadProof:
         content=self.path.read_bytes()
         self.expected=hashlib.sha256(content).hexdigest();self.size=len(content);self.name=self.path.name
         self.native=None;self.widget=None;self.token=None;self.form=None
-        self.method=''
+        self.method='';self.replaced_count=0
         if trigger:
             self.widget=self.widget_for(trigger)
             self.form=trigger.evaluate_handle('e=>e.form||e.closest("form")').as_element()
@@ -33,8 +33,45 @@ class UploadProof:
         }''')
         return handle.as_element()
 
+    def prepare(self):
+        """Replace only same-named entries with an explicit, non-submitting delete control.
+
+        Workday retains server attachments between visits. Its cleared native input
+        cannot prove their bytes, and adding again would leave duplicates. Other
+        filenames and other widgets are outside this operation's scope.
+        """
+        if not self.widget:return
+        for _ in range(9):
+            if not self.widget.evaluate('box=>box.isConnected'):
+                raise ValueError('Upload widget changed while preparing its attachments')
+            cards=[]
+            for card in self.widget.query_selector_all('[data-automation-id=file-upload-item]'):
+                caption=card.query_selector('[data-automation-id=file-upload-item-name]')
+                if caption and caption.inner_text().strip()==self.name:cards.append(card)
+            if not cards:
+                self.before=self.widget.inner_text()
+                return
+            if len(cards)>8 or self.replaced_count>=8:
+                raise ValueError('Too many same-named attachments to replace safely')
+            actions=[]
+            for card in cards:
+                buttons=card.query_selector_all('button[data-automation-id=delete-file]')
+                if len(buttons)!=1 or buttons[0].get_attribute('type')!='button' or \
+                        buttons[0].get_attribute('aria-label')!='Delete '+self.name or \
+                        not buttons[0].is_visible() or buttons[0].is_disabled():
+                    raise ValueError('Existing attachment has no unambiguous non-submitting delete control')
+                actions.append((card,buttons[0],card.owner_frame()))
+            card,button,frame=actions[0]
+            if frame is None:raise ValueError('Existing attachment lost its frame')
+            button.click(timeout=5000)
+            frame.wait_for_function('(card)=>!card.isConnected',arg=card,timeout=8000)
+            self.replaced_count+=1
+        raise ValueError('Same-named attachments did not settle after replacement')
+
     def bind(self, native):
         self.native=native.element_handle() if hasattr(native,'element_handle') else native
+        if self.replaced_count and not self.native.evaluate('e=>e.isConnected'):
+            raise ValueError('Upload input changed after replacing its old attachment; read the widget again')
         self.token=self.native.evaluate('''e=>{
             const w=e.ownerDocument.defaultView, token=crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
             w.__jobagentUploadProofs ||= new Map();

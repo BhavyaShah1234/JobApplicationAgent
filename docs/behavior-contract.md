@@ -22,6 +22,12 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
   nor an opening control. Preserve the checkpoint; an empty careers shell alone never triggers challenge fallback.
 - Confirm that an Add action exposed a new source-backed row before clicking Add again. Hidden native date parts
   count through their own discovered composite question; unrelated hidden required questions remain blockers.
+- Keep selected search-picker choices as partial option evidence without opening a covered search input just to
+  catalogue choices. A prefill still needs an independent answer source; a different sourced answer can replace it.
+  Recruitment-source policy still inspects actual referral choices before accepting a fallback.
+- Before re-uploading a same-named document, replace only matching entries in that widget when their filename and
+  explicit non-submitting delete control are both unambiguous. Preserve other files/widgets; an old filename alone
+  never verifies a new dispatch. Unclear replacement controls block the upload.
 - Record what was sent: a frozen payload and one attempt row per click; a possibly-sent application is never filled or clicked again.
 - Keep generated documents valid (one page, hard and claims checks) and tied to the posting they were built for.
 - Record the SHA-256 of the actual resume template read by either writer. Before filling or submission, require it to match

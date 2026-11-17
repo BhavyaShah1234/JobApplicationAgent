@@ -1058,17 +1058,21 @@ def _open_options(frame: Frame, loc, page: Page) -> list[str]:
 def discover_options(page: Page, view: PageView, log=print, *, fields=None) -> None:
     """Open each combobox once to read its options (react-select and Workday lists render them only when open).
     A search box with no list until something is typed keeps no options (the answer is typed then)."""
+    from jobagent.tools import referrals
     for f in (view.fields if fields is None else fields):
         if f.kind != "combobox" or f.options:
             continue
         try:
             loc = locate(view, f)
             search_picker = loc.get_attribute("data-uxi-widget-type") == "selectinput"
-            if search_picker and f.value and PHONE_CODE_Q.search(f.label):
-                # Reading this selected search picker used to delete its chip.
-                # The known option is partial evidence; a different source value
-                # can still search for its own country at fill time.
-                f.options = [f.value]
+            if search_picker and f.value and not referrals.SOURCE.search(f.label):
+                # A selected chip can cover the now-empty search input. Opening
+                # it needlessly times out and can clear the choice. These are
+                # partial options, not applicant facts: a different sourced
+                # value can still search and replace them at fill time.
+                # Recruitment-source policy needs the actual offered referral
+                # choices before it can accept a company-specific fallback.
+                f.options = [x.strip() for x in f.value.split(';') if x.strip()] if f.multiple else [f.value]
                 f.options_state = 'partial'
                 continue
             f.options = _open_options(view.frames[f.frame], loc, page)
@@ -1212,7 +1216,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             proof=UploadProof(path,loc);proof.identity=f.identity;proof.frame=f.frame_identity
             proofs=getattr(page,'_jobagent_upload_proofs',None)
             if proofs is None:proofs=[];page._jobagent_upload_proofs=proofs
-            proofs.append(proof);before_upload=proof.bind;upload_confirmation=proof.verify
+            proofs.append(proof);proof.prepare();before_upload=proof.bind;upload_confirmation=proof.verify
         if loc.evaluate("e => e.tagName !== 'INPUT'"):
             # Associate the clicked control with its chooser/new input, without assuming a caption or input ID.
             choosers = []

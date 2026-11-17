@@ -449,6 +449,7 @@ class PlannedFiller:
                                 old_proof=self.upload_proofs.get((self.step,key(f)))
                                 if old_proof:old_proof.close()
                                 proof=UploadProof(files[value],forms.locate(fresh,f));self.upload_proofs[(self.step,key(f))]=proof
+                                proof.prepare()
                                 proof.identity=f.identity;proof.frame=f.frame_identity
                                 proofs=getattr(page,'_jobagent_upload_proofs',[])
                                 if not proofs:page._jobagent_upload_proofs=proofs
@@ -478,7 +479,8 @@ class PlannedFiller:
                             row={'step':self.step,'field_key':key(f),'identity':f.identity,'label':f.label,'section':f.section,'answer':value,'readback':readback,
                                             'frame':f.frame,'kind':f.kind,'slot':f.slot,'required':f.required,'before':f.value,'chosen':chosen,
                                             'widget_caption':getattr(f,'upload_caption',None),'source':d.source,'fact_id':d.fact_id,'outcome':'verified','held_file_sha256':held_sha,
-                                            'upload_verification':proof.method if proof else None}
+                                            'upload_verification':proof.method if proof else None,
+                                            'replaced_attachment_count':proof.replaced_count if proof else 0}
                             records.append(row);self.record_state[(self.step,key(f))]=row
                         except Exception as e:
                             from jobagent.tools.challenge import Blocked

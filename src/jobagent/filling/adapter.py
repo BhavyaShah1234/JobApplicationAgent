@@ -223,7 +223,8 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
              'filled':files.get(value,'') if f.kind=='file' and success else entry.get('chosen','') if success else '',
              'error':entry.get('error',''),'answered':success,'frame':f.frame,'slot':f.slot,'clear':known_blank,
              'readback':f.value,'verified':success,'held_file_sha256':entry.get('held_file_sha256'),
-             'upload_verification':entry.get('upload_verification')}
+             'upload_verification':entry.get('upload_verification'),
+             'replaced_attachment_count':entry.get('replaced_attachment_count',0)}
         row['outcome']=A.outcome_of(row,f)
         record.append(row);done[key(f)]=row
     # A widget can disappear after dispatch, and its native required marker may

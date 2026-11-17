@@ -79,6 +79,27 @@ def test_skills_are_separate_choices_and_replace_old_chips_only_once(page):
     assert not forms.same_value('Python; Go','Python, Go','combobox',f.label,multiple=True)
 
 
+@pytest.mark.parametrize('label,prefill,multiple,offered', [
+    ('School or University', 'Existing University', False, ['Existing University']),
+    ('Type to Add Skills', 'Python', True, ['Python', 'Go']),
+])
+def test_discovery_does_not_open_a_selected_search_picker(page, label, prefill, multiple, offered):
+    selected_search_picker(page, label, prefill, ['Existing University', 'Other University', 'Python', 'Go'], multiple)
+    if multiple:
+        page.locator('[data-automation-id=multiSelectContainer]').evaluate("e=>e.dataset.uxiWidgetType='multiselect'")
+        page.evaluate("chip('Go')")
+        prefill += '; Go'
+    view = forms.read_page(page)
+    forms.discover_options(page, view)
+    field = view.fields[0]
+    assert page.evaluate('opens') == 0
+    assert field.options == offered and field.options_state == 'partial'
+    assert field.value == prefill
+    # A selected option is evidence of a choice, never of the applicant's answer.
+    from jobagent.filling.facts import resolve
+    assert resolve(field, []).value is None
+
+
 def test_workday_field_boundary_can_acknowledge_dispatched_bytes_after_clearing_input(page,tmp_path):
     from jobagent.filling.uploads import UploadProof
     pdf=tmp_path/'resume.pdf';pdf.write_bytes(b'%PDF-1.4 source-bound resume fixture')
