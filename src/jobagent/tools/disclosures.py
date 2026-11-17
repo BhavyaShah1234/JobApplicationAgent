@@ -50,6 +50,10 @@ def expand(page, view, log=lambda _: None) -> bool:
     as headings. A separate non-submitting Expand all control can open them.
     """
     from jobagent.tools.shadow import locator
+    from jobagent.tools.notices import dismiss_cookie_overlay
+    if dismiss_cookie_overlay(page,view.frames.values()):
+        log('apply: dismissed the blocking cookie notice through its native control')
+        return True
     for frame in view.frames.values():
         for row in inventory(frame):
             if not row['can_open']:

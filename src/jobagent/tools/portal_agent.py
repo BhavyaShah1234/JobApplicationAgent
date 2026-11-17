@@ -235,6 +235,9 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
     unchanged_waits,last_wait_view=0,None
     for step in range(MAX_STEPS):
         page.wait_for_timeout(2500)
+        from jobagent.tools.notices import dismiss_cookie_overlay
+        if dismiss_cookie_overlay(page):
+            history.append('dismissed the blocking cookie notice through its native control')
         if (c := _settle_unknown(page)) is not None:
             # A puzzle can close by itself (timeout) without being solved; then the next submit brings a new one.
             # So the user says when it's solved, and a puzzle that keeps coming back stops the run.
