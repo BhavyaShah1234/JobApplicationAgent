@@ -543,18 +543,18 @@ def _shows_account(page: Page, values: dict) -> bool:
         # a "Sign out" link alone isn't proof: amazon.jobs keeps it in its menu for signed-out visitors too
         if any(k and k.lower() in text.lower() for k in keys):
             return True
-        # Editable profile values are omitted from body.innerText. Require the candidate's exact email,
-        # a visible profile heading AND visible sign-out, without a login/set-password form.
+        # Profile values are omitted from body.innerText, including collapsed accordions. Require an exact email
+        # in a real profile input, visible profile/sign-out UI and no password form; a hidden metadata input is insufficient.
         if values.get("EMAIL"):
             try:
                 if f.evaluate(r"""email => {
                   const visible = e => !!(e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
                   const els = s => [...document.querySelectorAll(s)].filter(visible);
-                  return !els('input[type=password]').length &&
-                    els('h1,h2,h3,[role=heading]').some(e => /(?:my|candidate|applicant)\s+profile/i.test(e.innerText)) &&
+                  return !document.querySelector('input[type=password]') &&
+                    els('h1,h2,h3,[role=heading]').some(e => /(?:my|candidate|applicant)\s+profile|^profile\s+information$/i.test(e.innerText.trim())) &&
                     els('a,button,[role=button]').some(e => /^(?:sign|log)\s*out$/i.test(e.innerText.trim())) &&
-                    els('input[type=email],input[name*=email i],input[id*=email i]').some(e =>
-                      e.value.trim().toLowerCase() === email.toLowerCase());
+                    [...document.querySelectorAll('input[type=email],input[name*=email i],input[id*=email i]')].some(e =>
+                      e.type !== 'hidden' && e.value.trim().toLowerCase() === email.toLowerCase());
                 }""", values["EMAIL"]):
                     return True
             except Exception:

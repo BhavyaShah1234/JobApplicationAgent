@@ -78,6 +78,19 @@ def test_account_evidence_reads_profile_values_without_trusting_a_signout_link(p
         finally:browser.close()
 
 
+@pytest.mark.parametrize('email_type,password,expected',[('text',False,True),('hidden',False,False),('text',True,False)])
+def test_collapsed_profile_information_counts_but_hidden_metadata_or_login_password_do_not(email_type,password,expected):
+    with sync_playwright() as pw:
+        browser=pw.chromium.launch(channel='chrome',headless=True)
+        try:
+            page=browser.new_page()
+            page.set_content('<h2>Profile Information</h2><button>Sign Out</button><section hidden>'
+                             '<input name=contactEmail type="'+email_type+'" value="jamie@example.org">'+
+                             ('<input type=password>' if password else '')+'</section>')
+            assert PA._shows_account(page,VALUES) is expected
+        finally:browser.close()
+
+
 @pytest.mark.parametrize("close", [
     '<button title="Close cookie notice" onclick="notice.remove()">×</button>',
     '<button onclick="notice.remove()"><img alt="Close cookie notice" width=20 height=20></button>',
