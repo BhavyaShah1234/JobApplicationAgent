@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field, create_model
 from jobagent import llm
 from jobagent.clock import with_today
 from jobagent.config import get_settings
-from jobagent.log import with_context
+from jobagent.log import progress, with_context
 from jobagent.state import JobDescription
 from jobagent.steps import ats as A
 from jobagent.tools import ats_sites, bundle, github, layout
@@ -276,6 +276,7 @@ def write_initial(state: State) -> dict:
     ctx = state["ctx"]
     r, jd, log = ctx["r"], ctx["jd"], ctx["log"]
     log("initial draft")
+    progress(log, "documents", "running", "First draft: experience, projects, skills, summary")
 
     def projects():
         token = (open_vault().get("github") or {}).get("token")
@@ -446,6 +447,8 @@ def check_layout(state: State) -> dict:
         reviewed = state.get("reviewed", False)
     tasks = {a: t for a, t in tasks.items() if t}
     n = sum(map(len, tasks.values()))
+    progress(log, "documents", "running", "Layout and quality check", state.get("layout_pass", 0) + 1, LAYOUT_PASSES + 1,
+             f"{pages} page(s), {n} finding(s)")
     log(f"validator pass {state.get('layout_pass', 0)}: {pages} page(s), {n} finding(s) "
         f"{ {a: len(t) for a, t in tasks.items()} }" +
         "".join(f"\n    [{a}] {t[:200]}" for a, ts in tasks.items() for t in ts))
@@ -526,6 +529,7 @@ def edit_sections(state: State) -> dict:
     """The agents with tasks edit their sections in parallel (projects.json is backed up for a rollback)."""
     ctx, f, tasks = state["ctx"], state["f"], state["tasks"]
     ctx["log"]("editing: " + ", ".join(f"{a} ({len(t)})" for a, t in tasks.items()))
+    progress(ctx["log"], "documents", "running", "Fixing findings", detail=", ".join(f"{a} ({len(t)})" for a, t in tasks.items()))
     with ThreadPoolExecutor(len(tasks) or 1) as ex:
         outs = dict(ex.map(with_context(lambda a: _run_agent(ctx, a, f, tasks[a], state.get("last", ""))), list(tasks)))
     return {"f": _merge(ctx, f, outs), "tasks": {}}
@@ -538,6 +542,7 @@ def score(state: State) -> dict:
     f, tex, problems, pages, err = render(state)
     rnd = state.get("ats_round", 0)
     best = state.get("best")
+    progress(log, "documents", "running", "ATS baseline" if rnd == 0 else "ATS round", rnd, ATS_ROUNDS, "scoring on the checker sites")
     if pages != 1 or err:
         log(f"ats round {rnd}: page not valid ({pages} pages {err}); rolled back to the best version")
         return _rollback(state, "UNDONE: the edit broke the one-page layout; keep lines short") if best else \
@@ -581,6 +586,7 @@ def score(state: State) -> dict:
     n_layout = len(layout.check(job_dir / "resume.pdf").issues)
     hard = hard_issues(ctx, f)
     log(f"ats round {rnd}: unlimited-site comparison average {avg} {ev['scores']}, layout issues {n_layout}, hard issues {hard}")
+    progress(log, "documents", "running", "ATS baseline" if rnd == 0 else "ATS round", rnd, ATS_ROUNDS, f"average {avg} (target {TARGET:g})")
     if best:
         better = (len(hard) < len(best["hard"]) or
                   (len(hard) == len(best["hard"]) and

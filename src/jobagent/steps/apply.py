@@ -1610,6 +1610,8 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         if known is None:  # a new page (not a retry of a refused one)
             page_no += 1
             start = len(record)
+            from jobagent.log import progress
+            progress(log, "apply", "running", "Form page", page_no, get_settings().apply_max_pages, " / ".join(view.headings[:2])[:80])
         else:
             del record[start:]  # the retry records this page's fields again
         heads = " / ".join(view.headings[:3])

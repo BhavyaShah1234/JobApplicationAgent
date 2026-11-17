@@ -5,13 +5,22 @@ kept in `state/dashboard/token`, readable by you only). Standard library only: n
 
 | Tab | Shows | Source |
 |---|---|---|
-| Overview | counts: questions waiting, applications to review (and how many are ready), runs active, queue / application / outcome totals; link to the noVNC browser view | job database, `state/hitl`, run logs |
+| Overview | what needs you (questions, applications to review), **Working now**: one card per job with its pipeline stages, a progress bar and the current step and iteration; recently finished jobs; totals; link to the noVNC browser view | job database, `state/hitl`, run logs |
+| Jobs | the same job cards with filters (working now, needs attention, finished) and a history of what each job did | `progress` records in the run logs |
 | Questions | what the agent is waiting on; a text box to answer (not for secrets) | `state/hitl/pending` |
 | Review | applications filled to their review screen: ready or not, blockers, hours waiting, and the exact command that opens each review | `tools/review_queue.py` |
 | Queue | discovered postings and their status, role, match score, note | `jobs` |
 | Runs | each run (step, job, start, lines, errors, last line, running) and its full log | `state/logs/*.jsonl` (step 22) |
 | Outcomes | counts by stage and the latest outcome mails per application | `outcome_events` |
 | Start a run | `jobagent run INPUTS --through scrape\|tailor\|apply --limit N` in the background | the `run` command (step 16) |
+
+**Pipeline progress.** Each job card shows its plan (scrape, research, documents, apply or submit, depending on how far the run goes), the state of every
+stage (done, running, failed, blocked, stalled, pending), a bar for the whole job, and inside the running stage the step and iteration: for the
+resume and cover letter "First draft", "Layout and quality check 2 of 4", "Fixing findings", "ATS baseline / ATS round 2 of 3", "Cover letter"; for the
+single writer "Resume draft round 3 of 5"; for the form "Form page 3 of 15". The agent writes these as `progress` records
+(`{stage, status, label, i, n, detail, plan, job, url, title, company}`) to the run's `.jsonl` log (`jobagent.log.progress`); every command that touches a job
+contributes to the same card, linked by the job folder name or posting address. A stage that says "running" while nothing has written for 15 minutes shows as
+stalled (the run was most likely killed).
 
 **What it can change, and what it cannot.** Only two things: answering a question the agent is waiting on (a secret question is refused with the
 terminal command instead) and starting a run that stops at or before the review screen (`through` cannot be `submit`; inputs cannot start with `-`

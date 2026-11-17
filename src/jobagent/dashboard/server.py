@@ -39,10 +39,10 @@ _EPHEMERAL: dict[str, str] = {}
 
 
 def load_token(settings) -> str:
-    """The saved token (state/dashboard/token, readable by you only), made on first use so a bookmarked URL keeps working. When the state
+    """The saved token (state/dashboard/token, or $DASHBOARD_TOKEN_FILE; readable by you only), made on first use so a bookmarked URL keeps working. When the state
     folder cannot be written (a read-only view of live data) the token lives only for this process and is printed at start."""
-    d = settings.state_dir / "dashboard"
-    p = d / "token"
+    p = Path(os.environ["DASHBOARD_TOKEN_FILE"]) if os.environ.get("DASHBOARD_TOKEN_FILE") else settings.state_dir / "dashboard" / "token"
+    d = p.parent
     try:
         t = p.read_text().strip()
         if len(t) >= 16:
@@ -144,7 +144,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, PAGE.replace("__NOVNC__", json.dumps(self.server.novnc_url).replace("<", "\\u003c")).encode(), "text/html; charset=utf-8")
         routes = {"/api/overview": lambda: {**data.overview(s), "read_only": self.server.read_only}, "/api/queue": lambda: data.queue(s), "/api/applications": lambda: data.applications(s),
                   "/api/review": lambda: data.review(s), "/api/hitl": lambda: data.hitl_pending(s), "/api/runs": lambda: data.runs(s),
-                  "/api/outcomes": lambda: data.outcomes(s)}
+                  "/api/outcomes": lambda: data.outcomes(s), "/api/pipeline": lambda: data.pipeline(s)}
         if url.path in routes:
             return self._json(routes[url.path]())
         if url.path.startswith("/api/run/"):

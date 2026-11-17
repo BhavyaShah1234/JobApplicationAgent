@@ -29,7 +29,10 @@ case "${1:-start}" in
     else
       RW=ro; FLAGS=(--read-only); ENVF=(); EXTRA=()
     fi
-    docker run -d --name "$NAME" --restart unless-stopped --network host --user "$(id -u):$(id -g)" -e HOME=/tmp "${ENVF[@]}" "${EXTRA[@]}" \
+    # The access token lives outside your data (so the read-only view can keep it across restarts and your bookmark keeps working).
+    TOK_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/jobagent-dashboard"; mkdir -p "$TOK_DIR"; chmod 700 "$TOK_DIR"
+    docker run -d --name "$NAME" --restart unless-stopped --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -e DASHBOARD_TOKEN_FILE=/dash/token \
+      -v "$TOK_DIR:/dash" "${ENVF[@]}" "${EXTRA[@]}" \
       -v "$HOME_DIR/data:/app/data:ro" -v "$HOME_DIR/state:/app/state:$RW" -v "$HOME_DIR/outputs:/app/outputs:$RW" -v "$HOME_DIR/config:/app/config:ro" \
       --entrypoint jobagent "$TAG" dashboard --host 127.0.0.1 --port "$PORT" "${FLAGS[@]}" >/dev/null
     sleep 3

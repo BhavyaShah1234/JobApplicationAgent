@@ -146,14 +146,17 @@ class RunLog:
                 pass
         self._file = self._jsonl = None
 
-    def _record(self, level: str, step: str, text: str) -> None:
+    def _record(self, level: str, step: str, text: str, extra: dict | None = None) -> None:
         self._open()
         if self._file is None:
             return
         ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             self._file.write(f"{ts} {level:<5} [{step}] {text}\n")
-            self._jsonl.write(json.dumps({"ts": ts, "run": self.run_id, "cmd": self.step, "job": self.job, "level": level, "step": step, "msg": text}) + "\n")
+            rec = {"ts": ts, "run": self.run_id, "cmd": self.step, "job": self.job, "level": level, "step": step, "msg": text}
+            if extra:
+                rec.update({k: v for k, v in extra.items() if v not in (None, "")})          # e.g. a progress record names its own job
+            self._jsonl.write(json.dumps(rec, default=str) + "\n")
             self._file.flush()
             self._jsonl.flush()
         except (OSError, ValueError) as exc:               # disk full, closed handle: never let a progress line stop the workflow
@@ -209,6 +212,14 @@ class RunLog:
             level, tag, text = classify(part)
             self.emit(level, tag, text, full=part.strip())
 
+    def progress(self, stage: str, status: str = "running", label: str = "", i: int | None = None, n: int | None = None, detail: str = "",
+                 **extra) -> None:
+        """Where the work is, for the dashboard: `stage` (scrape, research, documents, apply, submit), its `status` (running, done, failed, blocked,
+        skipped), a `label` for the step inside it ("ATS round"), `i` of `n` when it iterates, and a short `detail`. Written to the files only."""
+        text = f"{stage} {status}" + (f": {label}" if label else "") + (f" {i}/{n}" if i is not None and n else (f" {i}" if i is not None else "")) \
+            + (f" ({detail})" if detail else "")
+        self._record("progress", self.step, text, {"stage": stage, "status": status, "label": label, "i": i, "n": n, "detail": detail[:200], **extra})
+
     def info(self, text): self.emit("info", "", text)
     def ok(self, text): self.emit("ok", "", text)
     def warn(self, text): self.emit("warn", "", text)
@@ -263,6 +274,16 @@ _current: contextvars.ContextVar = contextvars.ContextVar("jobagent_runlog", def
 def _close_all() -> None:
     for lg in list(_live):
         lg.close()
+
+
+def progress(log, stage: str, status: str = "running", label: str = "", i: int | None = None, n: int | None = None, detail: str = "", **extra) -> None:
+    """`log.progress(...)` when `log` is a run log; nothing (and never an error) for a plain print or a test's lambda."""
+    fn = getattr(log, "progress", None)
+    if callable(fn):
+        try:
+            fn(stage, status, label, i, n, detail, **extra)
+        except Exception:
+            pass
 
 
 def with_context(fn):

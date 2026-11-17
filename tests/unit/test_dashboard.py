@@ -60,9 +60,9 @@ def test_the_data_layer_reads_the_agents_own_files(env):
     assert [r["company"] for r in data.review(s)] == ["Sample Cloud Co", "Example Robotics"]                  # oldest first
     assert any(r["state"] == "confirmed" and r["latest_stage"] == "interview" for r in data.applications(s))
     assert {r["step"] for r in data.runs(s)} == {"apply", "tailor", "run"}
-    tailor = next(r for r in data.runs(s) if r["step"] == "tailor")
+    tailor = next(r for r in data.runs(s) if r["id"].endswith("tailor-sample-cloud-bbbb2222"))
     assert tailor["errors"] == 1 and tailor["warnings"] == 1 and tailor["state"] == "finished" and not tailor["running"]
-    live = next(r for r in data.runs(s) if r["step"] == "run")
+    live = next(r for r in data.runs(s) if r["id"].endswith("run-cccc3333"))
     assert live["running"] and live["state"] == "running"
     assert data.outcomes(s)["counts"] == {"confirmation": 1, "interview": 1}
 
@@ -264,3 +264,98 @@ def test_the_launcher_and_entrypoint_are_valid_shell():
     for f in ("scripts/dashboard.sh", "docker/entrypoint.sh"):
         assert subprocess.run(["bash", "-n", str(root / f)], capture_output=True).returncode == 0, f
     assert "--read-only" in (root / "scripts/dashboard.sh").read_text() and ":ro" in (root / "scripts/dashboard.sh").read_text()
+
+
+# --- the pipeline view: where each job is, and which iteration ----------------------------------------------------------------------
+
+def test_the_pipeline_view_shows_stage_iteration_and_progress_for_each_job(env):
+    s, _, _ = env
+    jobs = {j["job"]: j for j in data.pipeline(s)}
+    assert set(jobs) == {"101", "102", "103", "104", "105"}
+    a = jobs["101"]
+    assert a["state"] == "running" and a["active"] and a["current"] == "documents" and a["title"] == "Robotics Engineer" and a["company"] == "Example Robotics"
+    cur = next(x for x in a["stages"] if x["id"] == "documents")
+    assert (cur["step"], cur["i"], cur["n"]) == ("ATS round", 2, 3) and [x["status"] for x in a["stages"]] == ["done", "done", "running", "pending"]
+    assert 60 <= a["percent"] <= 75                                                    # 2 of 4 stages done plus two thirds of the third
+    b = jobs["102"]
+    assert b["current"] == "apply" and next(x for x in b["stages"] if x["id"] == "apply")["step"] == "Form page" and 70 <= b["percent"] <= 85
+    assert jobs["103"]["state"] == "done" and jobs["103"]["percent"] == 100 and not jobs["103"]["active"]
+    assert jobs["104"]["state"] == "failed" and jobs["104"]["current"] == "research"
+    e = jobs["105"]
+    assert e["state"] == "blocked" and "clearance" in next(x for x in e["stages"] if x["id"] == "research")["detail"]
+    assert [j["job"] for j in data.pipeline(s)][:2] == ["102", "101"] or {j["job"] for j in data.pipeline(s)[:2]} == {"101", "102"}      # working jobs first
+
+
+def test_a_stage_left_running_by_a_run_that_is_gone_shows_as_stalled(tmp_path):
+    s = Settings(**seed(tmp_path))
+    import os
+    import time
+    for p in (s.state_dir / "logs").glob("*aaaa0*.jsonl"):
+        os.utime(p, (time.time() - 3600,) * 2)
+    a = next(j for j in data.pipeline(s) if j["job"] == "101")
+    assert a["state"] == "stalled" and not a["active"] and a["stages"][2]["status"] == "stalled"
+
+
+def test_progress_records_carry_stage_iteration_and_job_and_plain_logs_ignore_them(tmp_path):
+    import io
+    from rich.console import Console
+    from jobagent import log as L
+    lg = L.RunLog("tailor", "job-1", console=Console(file=io.StringIO()), directory=tmp_path / "logs", quiet=False)
+    L.progress(lg, "documents", "running", "ATS round", 2, 3, "average 84", url="https://x.test/1", job="job-9")
+    L.progress(print, "documents", "running", "ignored")                              # a plain print or lambda is simply skipped
+    L.progress(lambda m: None, "documents")
+    lg.close()
+    rec = json.loads(lg.path.with_suffix(".jsonl").read_text().splitlines()[0])
+    assert rec["level"] == "progress" and rec["stage"] == "documents" and (rec["i"], rec["n"]) == (2, 3) and rec["job"] == "job-9" and rec["url"] == "https://x.test/1"
+    assert "ATS round 2/3" in lg.path.read_text()
+
+
+def test_the_pipeline_reports_each_stage_as_it_goes(tailor_world):
+    from types import SimpleNamespace
+    from jobagent import db
+    from jobagent.config import get_settings
+    from jobagent.tools import places
+    from jobagent.tools.pipeline import Pipeline
+    job, calls = tailor_world
+    s = get_settings()
+    c = db.connect(s.state_dir / "pipeline.sqlite")
+    url = "https://e.test/progress"
+    seen = []
+
+    class Rec:
+        def __call__(self, m): pass
+
+        def progress(self, stage, status="running", label="", i=None, n=None, detail="", **extra):
+            seen.append((stage, status, extra.get("plan"), extra.get("job")))
+
+    def invoke(stage, **kw):
+        if stage == "scrape":
+            with c:
+                c.execute("INSERT INTO jobs(url,company,job_id,status) VALUES(?,'Acme','1','scraped')", (url,))
+        elif stage == "research":
+            p = s.state_dir / "companies"; p.mkdir(exist_ok=True)
+            (p / "acme.json").write_text('{"name":"Acme"}')
+            (p / "acme.md").write_text("Acme profile")
+        elif stage == "tailor":
+            return Pipeline._invoke(stage, **kw)
+        elif stage == "apply":
+            out = job / "application"; out.mkdir(exist_ok=True)
+            (out / "application.json").write_text(json.dumps({"state": "review", "ready_to_submit": True}))
+        return 0
+    pipeline = Pipeline(c, SimpleNamespace(state_dir=s.state_dir, outputs_dir=job.parents[1]), invoke=invoke, log=Rec())
+    assert pipeline.run(url, no_ats=True).state == "filled"
+    plan = ["scrape", "research", "documents", "apply"]
+    assert [(a, b) for a, b, _, _ in seen] == [("scrape", "running"), ("scrape", "done"), ("research", "running"), ("research", "done"),
+                                              ("documents", "running"), ("documents", "done"), ("apply", "running"), ("apply", "done")]
+    assert all(p == plan for _, _, p, _ in seen) and seen[-1][3] == job.name
+
+
+from test_workflow_resume import tailor_world  # noqa: E402,F401  (a fixture: a prepared job folder with a fake writer)
+
+
+def test_the_token_can_live_outside_the_state_folder(tmp_path, monkeypatch):
+    s = Settings(state_dir=tmp_path / "ro-state", outputs_dir=tmp_path, data_dir=tmp_path)
+    f = tmp_path / "keep" / "token"
+    monkeypatch.setenv("DASHBOARD_TOKEN_FILE", str(f))
+    t = load_token(s)
+    assert f.read_text().strip() == t and load_token(s) == t and not (tmp_path / "ro-state").exists()

@@ -199,6 +199,8 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
     template_skills = [t.strip() for _, items in r.skills for t in re.split(r",(?![^()]*\))", T.to_plain(items))
                        if 1 < len(t.strip()) <= 40]
     for attempt in range(1, 6):
+        from jobagent.log import progress
+        progress(log, "documents", "running", "Resume draft round", attempt, 5)
         t0 = time.monotonic()
         try:
             f = T.to_filled(r, llm.structured_invoke(fill_model, fill_schema,

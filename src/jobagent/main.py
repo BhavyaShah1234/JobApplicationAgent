@@ -467,6 +467,8 @@ def tailor_cmd(
         sites = () if no_ats else M.SITES
         # F15: each finished stage is kept. A rerun after a crash (or a second `tailor`) reuses the resume if its inputs and files
         # are unchanged, and redoes only the cover letter; `--force` rebuilds everything.
+        from jobagent.log import progress
+        progress(log, "documents", "running", "Resume")
         rj, how = wf.run("resume", lambda: M.run_job(d, company, {k: model for k in M.DEFAULT_MODELS}, sites, log=log),
                          inputs={"jd": jd_sha, "jd_text": txt_sha, "template": template_sha, "profile": profile_sha, "model": model,
                                  "sites": list(sites), "skills": _skill_inputs(d, s)},
@@ -475,6 +477,7 @@ def tailor_cmd(
         log(f"resume ({how}): average {rj['average']} {rj['scores']}, {rj['pages']} page(s), hard issues {rj['hard_issues']}")
         cl = None
         if rj["produced"]:           # a letter is only written from a resume that exists; a failed build stops here
+            progress(log, "documents", "running", "Cover letter", detail=f"resume done: average {rj['average']}")
             cl, how = wf.run("cover_letter", lambda: cover_letter(d, company, log=log),
                              inputs={"resume_tex": W.sha_file(d / "resume.tex"), "profile": profile_sha, "model": model},
                              outputs=["cover_letter.pdf", "cover_letter.tex"], force=force, log=log)

@@ -37,7 +37,8 @@ def _count(conn, sql: str) -> dict:
 def overview(settings) -> dict:
     conn = ro_conn(settings)
     out = {"now": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), "jobs": {}, "applications": {}, "outcomes": {}, "waiting": 0, "ready": 0,
-           "questions": len(hitl_pending(settings)), "runs_active": sum(1 for r in runs(settings, 40) if r["running"])}
+           "questions": len(hitl_pending(settings)), "runs_active": sum(1 for r in runs(settings, 40) if r["running"]),
+           "jobs_active": sum(1 for j in pipeline(settings) if j["active"])}
     if conn is None:
         return out
     try:
@@ -137,7 +138,7 @@ def runs(settings, limit: int = 60) -> list[dict]:
     out = []
     for p in files:
         recs = _parse_log(p)
-        body = [r for r in recs if r.get("level") != "end"]
+        body = [r for r in recs if r.get("level") not in ("end", "progress")]
         if not body:
             continue
         levels = [r.get("level") for r in body]
@@ -149,6 +150,88 @@ def runs(settings, limit: int = 60) -> list[dict]:
                     "warnings": levels.count("warn"), "message": str(body[-1].get("msg", ""))[:160], "state": state,
                     "running": state in ("running", "waiting"), "quiet_s": int(quiet_s)})
     return out
+
+
+STAGES = [("scrape", "Read posting"), ("research", "Research company"), ("documents", "Resume & cover letter"), ("apply", "Fill the form"),
+          ("submit", "Submit")]
+DONE_STATES = ("done", "skipped")
+
+
+def _log_state(path: Path, recs: list[dict], now: float) -> str:
+    quiet_s = now - path.stat().st_mtime
+    return ("finished" if any(r.get("level") == "end" for r in recs) else
+            "running" if quiet_s < IDLE_AFTER_S else "waiting" if quiet_s < STALLED_AFTER_S else "stalled")
+
+
+def pipeline(settings, hours: float = 72, limit: int = 30) -> list[dict]:
+    """One entry per job the agent has worked on recently: which stages its plan has, where each stands, which step inside the current stage
+    (the iteration, e.g. "ATS round 2 of 3"), how far along it is overall, and a short trail of what happened. Built from the `progress` records
+    in the run logs, so every command that touches a job (run, tailor, apply, ...) contributes to the same entry."""
+    d = settings.state_dir / "logs"
+    if not d.is_dir():
+        return []
+    now = datetime.now().timestamp()
+    files = [p for p in sorted(d.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)[:150] if now - p.stat().st_mtime < hours * 3600]
+    parsed = [(p, _parse_log(p)) for p in files]
+    url_job: dict[str, str] = {}                         # a record that names both its url and its job links the two names of one job
+    for _, recs in parsed:
+        for r in recs:
+            if r.get("level") == "progress" and r.get("url") and r.get("job"):
+                url_job[r["url"]] = r["job"]
+    jobs: dict[str, dict] = {}
+    for p, recs in parsed:
+        state = _log_state(p, recs, now)
+        for r in recs:
+            if r.get("level") != "progress" or not r.get("stage"):
+                continue
+            key = r.get("job") or url_job.get(r.get("url", ""), "") or f"url:{r.get('url', '')}"
+            j = jobs.setdefault(key, {"job": r.get("job", ""), "url": "", "title": "", "company": "", "plan": [], "stages": {}, "trail": [],
+                                      "first": r["ts"], "last": r["ts"], "active": False})
+            for k in ("job", "url", "title", "company"):
+                if r.get(k):
+                    j[k] = r[k]
+            if r.get("plan"):
+                j["plan"] = r["plan"]
+            j["active"] = j["active"] or state in ("running", "waiting")
+            j["first"], j["last"] = min(j["first"], r["ts"]), max(j["last"], r["ts"])
+            j["trail"].append({"ts": r["ts"], "stage": r["stage"], "status": r.get("status", ""), "label": r.get("label", ""), "i": r.get("i"),
+                               "n": r.get("n"), "detail": r.get("detail", "")})
+    labels = dict(STAGES)
+    out = []
+    for j in jobs.values():
+        j["trail"].sort(key=lambda e: e["ts"])
+        for e in j["trail"]:
+            j["stages"][e["stage"]] = e                  # the latest record of each stage wins
+        plan = [s for s in (j["plan"] or [k for k, _ in STAGES if k in j["stages"]]) if s in labels]
+        for s in list(j["stages"]):
+            if s not in plan and s in labels:
+                plan.append(s)
+        plan.sort(key=lambda s: [k for k, _ in STAGES].index(s))
+        stages = []
+        for s in plan:
+            e = j["stages"].get(s)
+            st = e["status"] if e else "pending"
+            if st == "running" and not j["active"]:
+                st = "stalled"                           # nothing is writing any more and it never said it finished
+            stages.append({"id": s, "label": labels[s], "status": st, "step": (e or {}).get("label", ""), "i": (e or {}).get("i"),
+                           "n": (e or {}).get("n"), "detail": (e or {}).get("detail", ""), "ts": (e or {}).get("ts", "")})
+        done = sum(1 for s in stages if s["status"] in DONE_STATES)
+        cur = next((s for s in stages if s["status"] in ("running", "stalled", "failed", "blocked")), None)
+        frac = 0.0
+        if cur and cur["status"] == "running":
+            frac = min(cur["i"] / cur["n"], 0.95) if cur.get("i") and cur.get("n") else 0.4
+        bad = next((s for s in stages if s["status"] in ("failed", "blocked", "stalled")), None)
+        overall = ("failed" if bad and bad["status"] == "failed" else "blocked" if bad and bad["status"] == "blocked" else "stalled" if bad else
+                   "done" if stages and done == len(stages) else "running" if j["active"] else "waiting")
+        started = datetime.fromisoformat(j["first"].replace("Z", "+00:00")).timestamp()
+        ended = now if j["active"] else datetime.fromisoformat(j["last"].replace("Z", "+00:00")).timestamp()
+        out.append({"job": j["job"], "url": j["url"], "title": j["title"] or j["job"] or j["url"], "company": j["company"], "stages": stages,
+                    "current": cur["id"] if cur else None, "percent": round(100 * (done + frac) / len(stages)) if stages else 0, "state": overall,
+                    "active": j["active"], "started": j["first"], "updated": j["last"], "elapsed_s": int(max(0, ended - started)),
+                    "trail": j["trail"][-14:]})
+    out.sort(key=lambda x: x["updated"], reverse=True)
+    out.sort(key=lambda x: not x["active"])              # active jobs first, each group newest first
+    return out[:limit]
 
 
 def run_log(settings, stem: str, tail: int = 300) -> list[dict] | None:
