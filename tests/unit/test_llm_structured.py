@@ -30,6 +30,19 @@ def test_explicit_output_method_overrides_configured_preference(monkeypatch):
     assert llm.structured_invoke(model, Out, [HumanMessage("x")], first="json_schema").name == "explicit"
 
 
+def test_default_structured_call_cannot_spend_ten_minutes_in_one_mode(monkeypatch):
+    from jobagent.config import Settings
+    settings=Settings(_env_file=None)
+    assert settings.llm_timeout_s==120 and settings.llm_call_deadline_s==180
+    monkeypatch.setattr(llm,'get_settings',lambda:settings)
+    budgets=[]
+    def bounded(fn,seconds):budgets.append(seconds);return fn()
+    monkeypatch.setattr(llm,'_bounded',bounded)
+    model=FakeModel({'function_calling':[Out(name='ok')]})
+    assert llm.structured_invoke(model,Out,[HumanMessage('x')]).name=='ok'
+    assert len(budgets)==1 and 0<budgets[0]<=180
+
+
 class Out(BaseModel):
     name: str
 

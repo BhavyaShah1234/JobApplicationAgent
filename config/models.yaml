@@ -1,5 +1,6 @@
 # Models and LLM call limits. Environment variables and .env override anything here (see: jobagent config show).
 # model_writer: devstral2-123b
 # llm_max_retries: 4
-# llm_timeout_s: 600
+# llm_timeout_s: 120
+# llm_call_deadline_s: 180  # total for one structured call, including modes and retries
 # llm_structured_method: function_calling  # json_mode and json_schema remain available fallbacks

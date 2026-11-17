@@ -16,6 +16,8 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
 **Always**
 - Verify every filled value by reading it back; a required field that is unanswered, unverified, or showing a control's own prompt blocks readiness.
 - Treat a page whose frames or regions could not be read as not ready.
+- Confirm that an Add action exposed a new source-backed row before clicking Add again. Hidden native date parts
+  count through their own discovered composite question; unrelated hidden required questions remain blockers.
 - Record what was sent: a frozen payload and one attempt row per click; a possibly-sent application is never filled or clicked again.
 - Keep generated documents valid (one page, hard and claims checks) and tied to the posting they were built for.
 - Record the SHA-256 of the actual resume template read by either writer. Before filling or submission, require it to match
@@ -27,6 +29,10 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
   Fitting its character budget and PDF bounds alone does not establish that the description is finished.
 - Preserve SkillsFirst's written report and recommendations as feedback; it contributes no numeric score. A missing
   required numeric provider keeps the five-site average incomplete.
+- Bind ATS measurements to a personal report, wait for animated scores to settle, and record provider input limits
+  and actual readback. The default numeric panel is AutoApplyMax, HireFlow, SkillSyncer, ATSAlign and ATS Friendly.
+- Prefer function calling for structured model output. Default network timeout is 120 seconds, and one structured
+  invocation has 180 seconds total across modes/retries; explicit model settings may change those budgets.
 - In the default multi-agent writer, bind semantic review to the visible candidate version. Reuse unchanged findings,
   review edited content again, and reject skills-category errors or an unavailable content review before spending ATS scans.
 
