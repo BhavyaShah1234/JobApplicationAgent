@@ -122,6 +122,8 @@ emails, when requested, come from the matching company row in `/app/data/asu_con
 - A range option holds the file's value: GPA 4.0 -> "3.75+" (`forms.in_range`).
 - "How did you hear": choose the offered employee-referral option; text fields receive "Referred by employee".
   Required employee details come from the matching company row in `asu_contacts.csv` (`referrals.answer_for`).
+  If a complete list has no employee option, a saved owner choice for that company can supply an offered fallback.
+  Another company's answer, a global learned answer, or an unavailable choice cannot override that policy.
 - Address fields: use the job's cached, geocoded address; enforced before filling and after replanning.
 - Repeated entries: at most one per resume role / degree on file (`apply.entry_room`).
 - Skills: only the same name or the same name with a qualifier ("Python (Programming Language)"), never a different

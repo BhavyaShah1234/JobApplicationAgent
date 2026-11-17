@@ -104,34 +104,61 @@ class PlannedFiller:
     def question_key(f):
         return norm(f.label),norm(f.section),f.kind
 
+    def _saved_source_fallback(self, field):
+        """Reuse only this employer's explicit, currently offered source answer."""
+        from jobagent.tools import referrals
+        company=norm((self.referral_context or {}).get('company','')).replace(' ','')
+        matches={}
+        for fact in self.facts:
+            source=fact.source.split(':',2)
+            if len(source)!=3 or source[0]!='learned' or norm(source[1]).replace(' ','')!=company or source[1]=='any':continue
+            if fact.authority!='owner' or fact.instructions or not any(referrals.SOURCE.search(a) for a in fact.aliases):continue
+            offered=next((o for o in field.options if norm(o)==norm(fact.value)),None)
+            if offered is not None:matches[offered]=fact
+        if len(matches)>1:return Decision(None,reason='conflicting company-specific source answers')
+        if not matches:return None
+        value,fact=next(iter(matches.items()))
+        return Decision(value,fact.source,fact.id,'company-specific owner source fallback')
+
     def plan(self, fields, allow_human=True):
         if self.prepare_sources:self.facts=self.prepare_sources(fields)
         self.facts=[x for x in self.facts if x.id not in self.session_facts]+[x for ident,x in self.session_facts.items() if self.session_fact_steps.get(ident) in (None,self.step)]
-        answers={};missing=[];referral_policy={}
+        answers={};missing=[];referral_policy={};source_fallback=set()
         routes={f.id:route(f,self.facts) for f in fields}
         self.routes.extend(asdict(r) for r in routes.values())
         for f in fields:
             d=self.human_answers.get((self.step,key(f))) or self.cache.get(key(f)) or self.prepared.get(self.question_key(f)) or resolve(f,self.facts)
             if self.referral_context is not None and d.source!='human':
                 from jobagent.tools import referrals
-                policy=referrals.answer_for(f,self.referral_context.get('contact',{}),self.referral_context.get('company',''))
+                company=self.referral_context.get('company','')
+                policy=referrals.answer_for(f,self.referral_context.get('contact',{}),company)
                 if policy is not None:
                     d=Decision(policy.get('value') or None,'saved referral policy',reason=policy.get('flag',''))
+                    label=re.sub(re.escape(company),'company',f.label,flags=re.I) if company else f.label
+                    if referrals.SOURCE.search(label) and f.options and f.options_state=='complete' and not referrals._referral_option(f.options,company):
+                        source_fallback.add(f.id)
+                        saved=self._saved_source_fallback(f)
+                        if saved is not None:d=saved
                     referral_policy[f.id]=d
             if d.value is not None and d.source!='human' and owner_only(f):
                 ids=set(d.fact_id.split(','));bound=[x for x in self.facts if x.id in ids]
                 if bound and not any(x.authority=='owner' for x in bound):
                     d=Decision(None,reason='explicit owner evidence missing')
             routed=resolve_routed(f,self.facts,routes[f.id])
-            if d.source not in ('human','saved referral policy') and not (d.value is not None and d.fact_id.startswith('application.answer.')) and routed is not None:d=routed
+            if d.source!='human' and f.id not in referral_policy and not (d.value is not None and d.fact_id.startswith('application.answer.')) and routed is not None:d=routed
             answers[f.id]=d
             if d.value is None:missing.append(f)
         source_updates=dict(referral_policy)
         if self.source_resolver:
-            eligible=[f for f in missing if f.id not in referral_policy and answers[f.id].reason!='exact day missing from source']
-            source_updates.update(self.source_resolver(eligible,answers))
+            eligible=[f for f in fields if (f in missing and f.id not in referral_policy or f.id in source_fallback)
+                      and answers[f.id].reason!='exact day missing from source']
+            source_updates.update({k:v for k,v in self.source_resolver(eligible,answers).items() if k not in referral_policy})
             answers.update(source_updates)
             for f in eligible:
+                if f.id in source_fallback:
+                    saved=self._saved_source_fallback(f)
+                    if saved is not None:answers[f.id]=saved;source_updates[f.id]=saved
+                    continue
                 if f.id not in source_updates:
                     resolved=resolve(f,self.facts)
                     if resolved.value is not None:answers[f.id]=resolved
