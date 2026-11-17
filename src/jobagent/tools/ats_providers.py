@@ -4,7 +4,7 @@ import re
 import time
 from pathlib import Path
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeout
+from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeout, expect
 
 from jobagent.tools.ats_accounts import AutomationBlocked, check_scan_blockers, google_login, human_handoff
 
@@ -258,6 +258,25 @@ def skillsyncer_result(page) -> dict:
     )
 
 
+def _paste_rich_text(page, editor, text):
+    """Use the editor's normal paste/key handlers so its model receives the text."""
+    editor.click()
+    editor.press('ControlOrMeta+A')
+    try:
+        page.evaluate('text => navigator.clipboard.writeText(text)', text)
+    except PlaywrightError:
+        # Clipboard writes can be unavailable in a browser context. Real key
+        # events still exercise the editor's transaction handlers; DOM fill does not.
+        editor.press_sequentially(text, delay=0)
+    else:
+        editor.press('ControlOrMeta+V')
+    expected=re.compile(r'^\s*'+r'\s+'.join(re.escape(w) for w in text.split())+r'\s*$')
+    expect(editor).to_have_text(expected, use_inner_text=True, timeout=10000)
+    editor.blur()
+    expect(editor).to_have_text(expected, use_inner_text=True, timeout=10000)
+    return editor.inner_text()
+
+
 def skillsyncer(page, resume_pdf: Path, jd_text: str, title="", company="") -> dict:
     if not title or not company:
         raise ValueError("SkillSyncer requires the posting's job title and company")
@@ -279,16 +298,22 @@ def skillsyncer(page, resume_pdf: Path, jd_text: str, title="", company="") -> d
         raise AutomationBlocked("SkillSyncer: no scan credits left", "quota_exhausted")
     page.locator("#company").fill(company)
     page.locator("#job_title").fill(title)
-    page.locator('[contenteditable="true"]').first.fill(jd_text)
-    page.locator('[contenteditable="true"]').last.fill("")
+    # Upload first: its editor hydration can replace the other editor's state.
     page.locator('input[type="file"]').last.set_input_files(str(resume_pdf))
     page.wait_for_function(
         "() => [...document.querySelectorAll('[contenteditable=true]')].at(-1)?.innerText.trim().length > 50",
         timeout=30_000,
     )
+    actual=_paste_rich_text(page,page.locator('[contenteditable="true"]').first,jd_text)
+    from jobagent.tools import ats_sites
+    ats_sites._payload.last=ats_sites.payload_record('skillsyncer',jd_text,actual)
     page.get_by_role("button", name="Create Scan", exact=True).first.click(timeout=20_000)
-    page.get_by_role("button", name="Close modal", exact=True).wait_for(state="hidden", timeout=90_000)
-    _wait_report(page, "SkillSyncer", lambda text: bool(re.search(r"Match Report\s+\d+\s*%", text)))
+    def completed(text):
+        if re.search(r'(?i)this is too short to be a job posting',text):
+            raise RuntimeError('SkillSyncer rejected the job-description editor; no score was produced')
+        modal=page.get_by_role('button',name='Close modal',exact=True)
+        return (not modal.count() or not modal.is_visible()) and bool(re.search(r'Match Report\s+\d+\s*%',text))
+    _wait_report(page, "SkillSyncer", completed)
     return skillsyncer_result(page)
 
 

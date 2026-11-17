@@ -65,7 +65,7 @@ JD_LIMITS = {"autoapplymax": 8000, "hireflow": 8000, "resumeatlas": 8000, "atsfr
 JD_WORD_LIMITS = {"resumeatlas": 650}
 # Bump a provider's version when its adapter or parser changes in a way that can change its scores: a recorded score of another
 # version is not reused (limited-scan sites keep scans only for the version that made them).
-PROVIDER_VERSIONS = {"jobscan": 2, "resumeatlas": 3}      # every other provider: 1
+PROVIDER_VERSIONS = {"jobscan": 2, "resumeatlas": 3, "skillsyncer": 2}      # every other provider: 1
 _payload = threading.local()
 
 
