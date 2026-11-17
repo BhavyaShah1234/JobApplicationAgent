@@ -171,6 +171,12 @@ def run_portal(script, account="false", monkeypatch=None, hitl=None):
 LOGIN = [("fill", "Email", "{EMAIL}"), ("fill", "Password", "{PASSWORD}"), ("click", "Sign In", "")]
 
 
+def test_unconfirmed_signed_in_claims_do_not_spend_thirty_model_steps_on_the_same_page(monkeypatch):
+    out,driver,asked=run_portal([('signed_in',None,'')]*5,monkeypatch=monkeypatch)
+    assert out['state']=='failed' and driver.calls==3
+    assert 'three times' in out['reason'] and not out['registered']
+
+
 def test_one_unchanged_rejection_read_many_times_counts_once_and_registration_can_use_the_password(monkeypatch):
     script = LOGIN + [("wait", None, ""), ("wait", None, ""), ("wait", None, ""),      # the SAME error text, read three more times
                       ("click", "Create Account", ""),

@@ -227,6 +227,7 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
     code, challenges, repeats, last_action, pw_submitted, wrong_pw = "", 0, 0, None, False, 0
     state["alt_password_used"] = False
     login_candidate, register_attempted, toggles, last_nav = None, False, 0, None
+    unconfirmed_claims: dict[str, int] = {}
     for step in range(MAX_STEPS):
         page.wait_for_timeout(2500)
         if (c := _settle_unknown(page)) is not None:
@@ -320,6 +321,12 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
                 history.append(f"user handled: {a.thought[:80]}")
                 continue
             if a.action == "signed_in" and not signed_in_evidence(page, values):
+                unconfirmed_claims[view] = unconfirmed_claims.get(view, 0) + 1
+                if unconfirmed_claims[view] >= 3:
+                    state['reason'] = 'The same page failed account-identity verification three times; account sign-in is unconfirmed.'
+                    history.append(state['reason'])
+                    log(f"portal {host}: {state['reason']}")
+                    break
                 history.append("CLAIMED signed in but the page shows no account (no email or name): open the "
                                "profile / account page (it shows the email when signed in) and sign in if it asks")
                 log(f"portal {host}: 'signed in' not confirmed by the page; continuing")
