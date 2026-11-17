@@ -28,19 +28,19 @@ export default function Overview({ overview: o, config, onWatch }) {
         </div>
       )}
       <div className="cards">
-        <Stat n={o.questions} label="questions waiting for you" hot />
-        <Stat n={o.waiting} label="applications to review" sub={`${o.ready} ready to send`} />
-        <Stat n={o.jobs_active || 0} label="jobs working now" />
+        <Stat n={o.questions} label="questions waiting for you" hot hint="Things the agent stopped to ask you. Answer them in the Questions tab (or a terminal for secrets)." />
+        <Stat n={o.waiting} label="applications to review" sub={`${o.ready} ready to send`} hint="Forms filled to their review screen, waiting for your typed approval. Nothing is sent without it." />
+        <Stat n={o.jobs_active || 0} label="jobs working now" hint="Jobs with a run that is writing to its log right now." />
         {haveNumbers && (
           <>
-            <Stat n={a.totals.jobs.toLocaleString()} label="postings found" sub={`${a.funnel[1].n.toLocaleString()} passed the filters`} />
-            <Stat n={submitted} label="submitted" sub={`${a.funnel[4].n} receipt confirmed`} />
+            <Stat n={a.totals.jobs.toLocaleString()} label="postings found" sub={`${a.funnel[1].n.toLocaleString()} passed the filters`} hint="Every posting discovery has seen; the sub-line is how many passed the US and role filters." />
+            <Stat n={submitted} label="submitted" sub={`${a.funnel[4].n} receipt confirmed`} hint="Applications you approved and the agent sent. A receipt is confirmed when the employer's email arrives." />
             <Stat
               n={a.outcomes.rate ? pct(a.outcomes.rate.k / a.outcomes.rate.n) : "–"}
-              label="of resolved applications got a reply"
+              label="of resolved applications got a reply" hint="Of the applications with an answer (a reply, or silence past the cutoff), the share that got a real reply. Silence inside the cutoff is not counted as a no."
               sub={a.outcomes.rate ? `${a.outcomes.rate.k} of ${a.outcomes.rate.n}; 95% interval ${pct(a.outcomes.rate.lo)}–${pct(a.outcomes.rate.hi)}` : "none resolved yet"}
             />
-            <Stat n={hours(a.latency.fill_to_submit_h)} label="median wait for your approval" sub={a.latency.n_submit ? `${a.latency.n_submit} applications` : ""} />
+            <Stat n={hours(a.latency.fill_to_submit_h)} label="median wait for your approval" hint="Median time from a form being filled to you sending it." sub={a.latency.n_submit ? `${a.latency.n_submit} applications` : ""} />
           </>
         )}
       </div>

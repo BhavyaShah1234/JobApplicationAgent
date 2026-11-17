@@ -4,6 +4,7 @@ import FunnelChart from "./FunnelChart.jsx";
 import Histogram from "./Histogram.jsx";
 import IntervalDot from "./IntervalDot.jsx";
 import TimelineChart from "./TimelineChart.jsx";
+import { TipProvider } from "../tooltip.jsx";
 import { ANALYTICS } from "../test/mockFetch.js";
 
 test("the funnel shows each step with the share kept from the one above and a readable description", () => {
@@ -22,21 +23,21 @@ test("a funnel of zeros does not divide by zero", () => {
 
 test("the timeline draws a bar per non-zero day and series, with a tooltip, and says so when empty", () => {
   const { container, rerender } = render(<TimelineChart days={ANALYTICS.timeline} />);
-  expect(container.querySelectorAll("rect").length).toBe(5);                  // found x2, filled, submitted, responses
+  expect(container.querySelectorAll("rect:not([data-testid])").length).toBe(5);                  // found x2, filled, submitted, responses
   expect(container.querySelector("title").textContent).toMatch(/2026-11-15: 12 postings found/);
   rerender(<TimelineChart days={[{ day: "2026-11-15", found: 0, filled: 0, submitted: 0, responses: 0 }]} />);
   expect(screen.getByText("No activity in this period.")).toBeInTheDocument();
 });
 
 test("a rate shows its interval, and a group with too few applications is marked and greyed", () => {
-  const { container, rerender } = render(<IntervalDot rate={0.5} ci={[0.2, 0.8]} tooFew={false} />);
+  const { container, rerender } = render(<TipProvider><IntervalDot rate={0.5} ci={[0.2, 0.8]} tooFew={false} /></TipProvider>);
   expect(screen.getByText("50%")).toBeInTheDocument();
   expect(container.querySelector(".interval")).not.toHaveClass("few");
-  expect(container.querySelector(".interval").getAttribute("title")).toMatch(/95% interval 20% to 80%/);
-  rerender(<IntervalDot rate={1} ci={[0.2, 1]} tooFew />);
+  expect(container.querySelector(".interval").getAttribute("aria-label")).toMatch(/95% interval 20% to 80%/);
+  rerender(<TipProvider><IntervalDot rate={1} ci={[0.2, 1]} tooFew /></TipProvider>);
   expect(container.querySelector(".interval")).toHaveClass("few");
-  expect(container.querySelector(".interval").getAttribute("title")).toMatch(/too few to trust/);
-  rerender(<IntervalDot rate={null} ci={null} />);
+  expect(container.querySelector(".interval").getAttribute("aria-label")).toMatch(/too few to trust/);
+  rerender(<TipProvider><IntervalDot rate={null} ci={null} /></TipProvider>);
   expect(screen.getByText("–")).toBeInTheDocument();
 });
 

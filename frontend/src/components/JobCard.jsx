@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ago, dur, iteration, kind, STATE_TEXT } from "../format.js";
 import Chip from "./Chip.jsx";
+import { TipBody, useTip } from "../tooltip.jsx";
 import StageStep from "./StageStep.jsx";
 
 // One job: title, state, a bar for the whole pipeline, a box per stage, the current step in words, and a history on demand.
@@ -11,6 +12,8 @@ export default function JobCard({ job: j, onWatch }) {
   const cur = j.stages.find((s) => s.id === j.current);
   const done = j.state === "done";
   const it = cur ? iteration(cur) : "";
+  const tip = useTip();
+  const doneStages = j.stages.filter((s) => s.status === "done" || s.status === "skipped").length;
   return (
     <div className="job" data-testid="job-card">
       <div className="jh">
@@ -27,7 +30,8 @@ export default function JobCard({ job: j, onWatch }) {
           )}
         </span>
       </div>
-      <div className={`bar ${j.state}`} role="progressbar" aria-valuenow={done ? 100 : j.percent} aria-valuemin={0} aria-valuemax={100}>
+      <div className={`bar hov ${j.state}`} role="progressbar" aria-valuenow={done ? 100 : j.percent} aria-valuemin={0} aria-valuemax={100}
+        {...tip(<TipBody title="Whole pipeline" rows={[["Progress", `${done ? 100 : j.percent}%`], ["Stages done", `${doneStages} of ${j.stages.length}`], ["Now", cur ? `${cur.label}${cur.step ? `: ${cur.step}` : ""}${iteration(cur) ? ` ${iteration(cur)}` : ""}` : "–"]]} />, `Pipeline ${done ? 100 : j.percent}%`)}>
         <i style={{ width: `${done ? 100 : j.percent}%` }} />
       </div>
       <div className="steps">

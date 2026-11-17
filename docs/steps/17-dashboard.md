@@ -23,6 +23,17 @@ sources (`static/source.sha256`).
 
 **Analytics honesty (on the Overview).** Silence is never counted as a rejection: the outcome labels are the agent's own (pending inside the cutoff, ghosted after it as a weak negative), and a reply rate is shown as "k of n" with a Wilson 95% interval. A group with fewer than 15 resolved applications is drawn grey and a banner says the figures describe what happened, not what to expect, until there are enough applications. Charts are small hand-written SVG components (`frontend/src/charts`), no charting library.
 
+**Interaction.** Every chart and widget on the Overview answers to the pointer, the keyboard and a finger, through one tooltip layer (`frontend/src/tooltip.jsx`):
+hover (or focus with Tab, or tap) a funnel step for its share of all postings, what it kept from the step above and how many dropped out; a bar for its count and
+share of the list; a company for found, passed and the share that passed; a histogram bar or a stacked-bar part (which lights up with its legend row, and the
+others dim); a day on the activity charts for that day's numbers (the chart also takes the arrow keys, and shows a guide column); a reply rate for what it is made
+of (k of n replied, the 95% interval, and a warning when it is too thin); a stage box for its status, step and how long ago; the job bar for the whole pipeline; a headline
+number for what it counts. Escape, a tap elsewhere, or scrolling hides it. Everything is also named for screen readers (`aria-label`, and a live region for the timeline).
+
+**Responsive.** Checked in a real browser at 320, 360, 390, 600, 768, 820, 1024, 1280 and 1600 px: the page never scrolls sideways. Below 760 px the tabs become one
+swipeable row, the headline numbers two columns, the panels one column, tables scroll inside their own box, SVG charts redraw at their real width (so text stays crisp), and
+touch screens get larger buttons and 16 px inputs (no zoom-on-focus). The funnel, legends and Discovery panels reflow (4, 2, then 1 column).
+
 **Pipeline progress.** Each job card shows its plan (scrape, research, documents, apply or submit, depending on how far the run goes), the state of every
 stage (done, running, failed, blocked, stalled, pending), a bar for the whole job, and inside the running stage the step and iteration: for the
 resume and cover letter "First draft", "Layout and quality check 2 of 4", "Fixing findings", "ATS baseline / ATS round 2 of 3", "Cover letter"; for the

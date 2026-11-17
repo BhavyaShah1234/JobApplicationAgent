@@ -50,7 +50,7 @@ export default function OutcomesSection({ a }) {
               cols={["Group", "Applications", "Resolved", "Replied", "Share that replied (95% interval)", "Median days to reply"]}
               rows={rows}
               rowKey={(g) => g.key}
-              render={(g) => [g.key, g.n, g.resolved, `${g.positive + g.negative}`, <IntervalDot key="i" rate={g.response_rate} ci={g.response_ci} tooFew={g.too_few} />, g.median_days != null ? g.median_days.toFixed(1) : "–"]}
+              render={(g) => [g.key, g.n, g.resolved, `${g.positive + g.negative}`, <IntervalDot key="i" name={g.key} k={g.positive + g.negative} n={g.resolved} rate={g.response_rate} ci={g.response_ci} tooFew={g.too_few} />, g.median_days != null ? g.median_days.toFixed(1) : "–"]}
             />
           ) : (
             <p className="mut">Nothing here yet.</p>
