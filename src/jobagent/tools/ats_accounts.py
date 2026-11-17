@@ -4,6 +4,8 @@ import re
 import time
 from urllib.parse import urlsplit
 
+from playwright.sync_api import Error as PlaywrightError
+
 from jobagent.tools import google_auth
 from jobagent.tools.vault import open_vault
 
@@ -132,6 +134,13 @@ def _google_login(page, site: str, ready, timeout_s: float = 90) -> None:
                 f"{site}: Google sign-in needs attention in noVNC",
                 "authentication_required",
             ) from exc
+        except PlaywrightError:
+            # OAuth can finish and close its popup while _step waits for the
+            # next Google field. Re-check the provider rather than failing a
+            # successful sign-in. Errors on a still-open Google page remain real.
+            if not page.is_closed() and (auth.is_closed() or urlsplit(auth.url).hostname != "accounts.google.com"):
+                continue
+            raise
         if not action:
             # A visible MFA, phone or security prompt must be completed by its owner.
             raise AutomationBlocked(

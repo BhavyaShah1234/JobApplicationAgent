@@ -22,6 +22,48 @@ class ReportPage:
         return self.sections
 
 
+@pytest.mark.parametrize("transition", ["popup_closed", "callback_redirect", "google_error", "parent_closed"])
+def test_google_oauth_transition_rechecks_provider_but_keeps_real_errors(monkeypatch, transition):
+    from playwright.sync_api import Error as PlaywrightError
+
+    class Page:
+        def __init__(self, **values):
+            self.__dict__.update(values)
+
+    saved = []
+    vault = SimpleNamespace(get=lambda key: {"email": "owner@example.test", "password": "fixture"},
+                            set=lambda *a, **kw: saved.append((a, kw)))
+    parent = Page(authenticated=False, closed=False, wait_for_timeout=lambda _: None)
+    parent.is_closed = lambda: parent.closed
+    pages = [parent]
+    parent.context = SimpleNamespace(pages=pages)
+    locator = SimpleNamespace(inner_text=lambda **kw: "Choose an account", count=lambda: 0)
+    popup = Page(closed=False, url="https://accounts.google.com/signin", locator=lambda _: locator)
+    popup.is_closed = lambda: popup.closed
+    monkeypatch.setattr(accounts, "open_vault", lambda: vault)
+    monkeypatch.setattr(accounts, "account_email", lambda _: "owner@example.test")
+    monkeypatch.setattr(accounts, "_google_trigger", lambda _: SimpleNamespace(click=lambda **kw: pages.append(popup)))
+
+    def finish_during_wait(*a):
+        if transition == "popup_closed":
+            popup.closed = True
+        elif transition == "callback_redirect":
+            popup.url = "https://checker.example.test/oauth/callback"
+        elif transition == "parent_closed":
+            popup.closed = parent.closed = True
+        parent.authenticated = transition in {"popup_closed", "callback_redirect"}
+        raise PlaywrightError("Target page has been closed" if popup.closed else "Unrelated browser error")
+
+    monkeypatch.setattr(accounts.google_auth, "_step", finish_during_wait)
+    if transition in {"popup_closed", "callback_redirect"}:
+        accounts._google_login(parent, "checker.example.test", lambda p: p.authenticated)
+        assert len(saved) == 1
+    else:
+        with pytest.raises(PlaywrightError):
+            accounts._google_login(parent, "checker.example.test", lambda p: p.authenticated)
+        assert saved == []
+
+
 def test_jobscan_reads_visible_skills_and_excludes_locked_names():
     page = ReportPage("Match Rate\n59\nResume Report", "https://app.jobscan.co/match-report/123", {
         "hardSkills": [
