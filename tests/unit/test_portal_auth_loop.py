@@ -42,6 +42,42 @@ render();
 VALUES = {"EMAIL": "jamie@example.org", "PASSWORD": "Shared-pw-1", "FIRST_NAME": "Jamie", "LAST_NAME": "Lee", "PHONE": "5551234567"}
 
 
+def test_account_evidence_probe_stays_on_its_portal_and_restores_failed_probes(monkeypatch):
+    class Page:
+        url = "https://recruit.test/application"
+        visits = []
+        def evaluate(self, script):
+            return ["https://corporate.test/dashboard", "https://recruit.test/profile"]
+        def goto(self, url, **kwargs):
+            self.visits.append(url)
+            self.url = "https://identity.test/login" if url.endswith("/profile") else url
+        def wait_for_timeout(self, ms):pass
+        def go_back(self, **kwargs):self.url = "https://recruit.test/application"
+    page = Page()
+    monkeypatch.setattr(PA, "_shows_account", lambda page, values: page.url.startswith("https://identity.test"))
+    assert not PA.signed_in_evidence(page, VALUES)
+    assert page.visits == ["https://recruit.test/profile"]
+    assert page.url == "https://recruit.test/application"
+
+
+@pytest.mark.parametrize("password,sign_out,email,expected", [
+    (False, True, "jamie@example.org", True),
+    (True, True, "jamie@example.org", False),
+    (False, False, "jamie@example.org", False),
+    (False, True, "somebody@example.org", False),
+])
+def test_account_evidence_reads_profile_values_without_trusting_a_signout_link(password,sign_out,email,expected):
+    with sync_playwright() as pw:
+        browser=pw.chromium.launch(channel="chrome",headless=True)
+        try:
+            page=browser.new_page()
+            page.set_content('<h1>My Profile</h1><input type=email value="'+email+'">'+
+                             ('<button>Sign Out</button>' if sign_out else '')+
+                             ('<input type=password>' if password else ''))
+            assert PA._shows_account(page,VALUES) is expected
+        finally:browser.close()
+
+
 @pytest.mark.parametrize("close", [
     '<button title="Close cookie notice" onclick="notice.remove()">×</button>',
     '<button onclick="notice.remove()"><img alt="Close cookie notice" width=20 height=20></button>',

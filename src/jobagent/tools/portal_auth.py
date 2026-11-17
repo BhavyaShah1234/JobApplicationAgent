@@ -263,7 +263,8 @@ def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, ema
         vault.set(key, **{**old, "password": alt, "note": "this portal rejected the shared password; its own "
                                                         "password is stored here"})
         log(f"portal {host}: rejected the shared password; its own strong password is saved in the vault")
-    res.created, res.verified_mail = out["registered"], out["verified_mail"]
+    res.created = bool(out["registered"] and out["state"] == "signed_in")
+    res.verified_mail = out["verified_mail"]
     res.signed_in = out["state"] in ("signed_in", "no_account_needed")
     res.notes = out["steps"][-8:]
     if out["state"] == "no_account_needed":

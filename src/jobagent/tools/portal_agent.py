@@ -280,9 +280,11 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             history.append(state["reason"])
             log(f"portal {host}: {state['reason']}")
             break
-        if "NEW_PASSWORD_FORM" in view and pw_submitted and not state["alt_password_used"]:
-            # the same set-password form came back after {PASSWORD} was submitted: the site refused it
-            history.append("the site did NOT accept {PASSWORD} (the new-password form came back): fill "
+        if ("NEW_PASSWORD_FORM" in view and pw_submitted and not state["alt_password_used"]
+                and re.search(r"(?i)password.{0,80}(?:too weak|too common|does not meet|doesn't meet|"
+                              r"not meet|not strong|rejected)|(?:weak|invalid|unacceptable) password", shown_text)):
+            # Other required-field errors can keep this form open; that does not reject its password.
+            history.append("the site reports a password-strength problem with {PASSWORD}: fill "
                            "{ALT_PASSWORD} into BOTH password fields and submit")
             log(f"portal {host}: the shared password was refused; switching to this portal's own password")
             pw_submitted = False
@@ -502,17 +504,31 @@ def signed_in_evidence(page: Page, values: dict) -> bool:
     profile / account page (many portals show neither on their home or menu pages, e.g. amazon.jobs)."""
     if _shows_account(page, values):
         return True
+    original = page.url
+    origin = urlparse(original)
     hrefs = page.evaluate("""() => [...document.querySelectorAll('a[href]')].map(a => a.href)
         .filter(h => /profile|user\\/details|my-?account|account-?info|candidate-?home|dashboard/i.test(h)
                      && !/logout|signout|sign-out|help|faq|privacy/i.test(h)).slice(0, 3)""")
     for href in hrefs:
+        target = urlparse(href)
+        if (target.scheme, target.netloc) != (origin.scheme, origin.netloc):
+            continue  # a corporate/universal account is not evidence of this recruiting portal's session
         try:
             page.goto(href, wait_until="domcontentloaded")
             page.wait_for_timeout(4000)
+            if (urlparse(page.url).scheme, urlparse(page.url).netloc) == (origin.scheme, origin.netloc) \
+                    and _shows_account(page, values):
+                return True
         except Exception:
-            continue
-        if _shows_account(page, values):
-            return True
+            pass
+        # A failed evidence probe must not strand the auth agent on another page or identity service.
+        if page.url != original:
+            try:
+                page.go_back(wait_until="domcontentloaded")
+                if page.url != original:
+                    page.goto(original, wait_until="domcontentloaded")
+            except Exception:
+                return False
     return False
 
 
@@ -527,6 +543,22 @@ def _shows_account(page: Page, values: dict) -> bool:
         # a "Sign out" link alone isn't proof: amazon.jobs keeps it in its menu for signed-out visitors too
         if any(k and k.lower() in text.lower() for k in keys):
             return True
+        # Editable profile values are omitted from body.innerText. Require the candidate's exact email,
+        # a visible profile heading AND visible sign-out, without a login/set-password form.
+        if values.get("EMAIL"):
+            try:
+                if f.evaluate(r"""email => {
+                  const visible = e => !!(e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
+                  const els = s => [...document.querySelectorAll(s)].filter(visible);
+                  return !els('input[type=password]').length &&
+                    els('h1,h2,h3,[role=heading]').some(e => /(?:my|candidate|applicant)\s+profile/i.test(e.innerText)) &&
+                    els('a,button,[role=button]').some(e => /^(?:sign|log)\s*out$/i.test(e.innerText.trim())) &&
+                    els('input[type=email],input[name*=email i],input[id*=email i]').some(e =>
+                      e.value.trim().toLowerCase() === email.toLowerCase());
+                }""", values["EMAIL"]):
+                    return True
+            except Exception:
+                pass
     return False
 
 

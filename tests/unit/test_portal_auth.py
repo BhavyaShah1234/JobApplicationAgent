@@ -61,3 +61,14 @@ def test_live_login_handoff_refuses_an_unrelated_current_page(live_login):
     with pytest.raises(PA.PortalError, match="no longer matches"):
         PA.ensure_account(page, url, vault, inbox, None, "fixture@example.test", already_open=True)
     assert events == []
+
+
+def test_rejected_registration_is_not_recorded_as_account_creation(live_login,monkeypatch):
+    from jobagent.tools import portal_agent
+    page,url,vault,inbox,events=live_login
+    monkeypatch.setattr(portal_agent,'run',lambda *a,**k: {
+        'state':'failed','registered':True,'verified_mail':False,'steps':[]})
+    result=PA.ensure_account(page,url,vault,inbox,None,'fixture@example.test',log=lambda _:None)
+    assert not result.created and not result.signed_in
+    saved=vault.get('portal:careers.example.test')
+    assert 'created' not in saved and not saved['account']
