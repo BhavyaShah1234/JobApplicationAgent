@@ -126,6 +126,10 @@ def collect_workday(careers, company, queries=None, log=print, *, context_factor
             url = urlunparse(parsed._replace(query=urlencode(pairs)))
             response = _navigate_json(page, url, lambda r: _request_matches(r, endpoint, query, facets, 0), controller)
             data = _decode(response)
+            # Some boards report the remaining count after the requested offset.
+            # Keep the initial count; comparing an absolute offset with a later
+            # remaining count would stop early (e.g. 40 >= 39 for 59 jobs).
+            total = data.get('total')
             for page_number in range(L.WORKDAY_PAGES):
                 rows = L.parse_workday(data, company, host, site)
                 for item in rows:
@@ -133,7 +137,6 @@ def collect_workday(careers, company, queries=None, log=print, *, context_factor
                         seen.add(item.url)
                         found.append(item)
                 log(f'listings: {company}: Chrome search {query!r}, page {page_number + 1}: {len(rows)} listings')
-                total = data.get('total')
                 if len(rows) < 20 or isinstance(total, int) and (page_number + 1) * 20 >= total:
                     break
                 if page_number + 1 == L.WORKDAY_PAGES:

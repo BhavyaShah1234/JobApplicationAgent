@@ -90,8 +90,8 @@ async function load(){
 load();</script></body></html>'''
 
 
-@pytest.mark.parametrize('status', [200, 429])
-def test_real_browser_reads_its_own_filtered_pages_or_stops(status, monkeypatch):
+@pytest.mark.parametrize('status,remaining_total', [(200, False), (200, True), (429, False)])
+def test_real_browser_reads_its_own_filtered_pages_or_stops(status, remaining_total, monkeypatch):
     requests = []
     monkeypatch.setattr(L, 'PAUSE_S', 0)
     with sync_playwright() as pw:
@@ -105,8 +105,8 @@ def test_real_browser_reads_its_own_filtered_pages_or_stops(status, monkeypatch)
                 requests.append(body)
                 offset = body['offset']
                 rows = [{'title': 'Software Engineer '+str(i), 'externalPath': '/job/US-Arizona-Phoenix/Engineer_R'+str(i),
-                         'locationsText': 'US, Arizona, Phoenix'} for i in range(offset, min(21, offset+20))]
-                route.fulfill(status=status, content_type='application/json', body=json.dumps({'total': 21, 'jobPostings': rows}))
+                         'locationsText': 'US, Arizona, Phoenix'} for i in range(offset, min(41, offset+20))]
+                route.fulfill(status=status, content_type='application/json', body=json.dumps({'total': 41-offset if remaining_total else 41, 'jobPostings': rows}))
             else:
                 route.fulfill(status=200, content_type='text/html', body=HTML)
         ctx.route('**/*', serve)
@@ -122,8 +122,8 @@ def test_real_browser_reads_its_own_filtered_pages_or_stops(status, monkeypatch)
                 assert len(requests) == 1
             else:
                 rows = collect_workday(careers, 'Acme', ['Software Engineer'], context_factory=factory, log=lambda _: None)
-                assert len(rows) == 21 and len({x.url for x in rows}) == 21
-                assert [r['offset'] for r in requests] == [0, 20]
+                assert len(rows) == 41 and len({x.url for x in rows}) == 41
+                assert [r['offset'] for r in requests] == [0, 20, 40]
                 assert all(r['appliedFacets'] == {'locations': ['a', 'b'], 'jobFamilyGroup': ['sw']} for r in requests)
                 assert all(r['searchText'] == '' for r in requests)
         finally:
