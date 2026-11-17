@@ -95,6 +95,9 @@ ONE action. Rules:
   not meeting its rules, use {ALT_PASSWORD} in every password and confirm field from then on (it's stored for
   this portal).
 - A field already filled (value_set) needs no refill unless it's wrong.
+- A radio marked (checked) is already selected; do not click or check it again to clear an error.
+  A registration validation banner can stay visible until Create Account is retried. After the required choice is
+  selected, complete any other missing required fields and retry Create Account instead of reselecting that radio.
 - When the page asks for a verification code sent by email, answer code_sent (the code will be read from the inbox and
   given to you as {CODE}; for a code split over one-character boxes, fill {CODE} into the FIRST box only);
   when it says a confirmation link was emailed, answer link_sent.
