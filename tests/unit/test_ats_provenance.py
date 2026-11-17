@@ -79,7 +79,7 @@ def test_resumeatlas_word_cap_preserves_the_exact_prefix_and_records_both_units(
     assert sent.endswith('word649')
     assert rec['word_limit'] == 650 and rec['jd_words_total'] == 800 and rec['jd_words_sent'] == 650
     assert rec['truncated'] and rec['sent_sha256'] == hashlib.sha256(sent.encode()).hexdigest()
-    assert ats_sites.jd_payload('resumeatlas', '  short\nposting  ') == '  short\nposting  '
+    assert ats_sites.jd_payload('resumeatlas', '  short\nposting  ') == '  short\nposting'
     assert not ats_sites._payload.last['truncated']
 
 

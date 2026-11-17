@@ -82,6 +82,7 @@ def jd_payload(site: str, jd_text: str) -> str:
         words = list(re.finditer(r'\S+', sent))
         if len(words) > word_limit:
             sent = sent[:words[word_limit - 1].end()]
+        sent = sent.rstrip()  # the provider's word-limited control also removes trailing whitespace
     _payload.last = payload_record(site, jd_text, sent)
     return sent
 
@@ -90,7 +91,7 @@ def payload_record(site: str, jd_text: str, sent: str) -> dict:
     return {"jd_chars_total": len(jd_text), "jd_chars_sent": len(sent), "limit": JD_LIMITS.get(site),
             "jd_words_total": len(jd_text.split()), "jd_words_sent": len(sent.split()),
             "word_limit": JD_WORD_LIMITS.get(site),
-            "truncated": len(sent) < len(jd_text), "jd_sha256": hashlib.sha256(jd_text.encode()).hexdigest(),
+            "truncated": len(sent.rstrip()) < len(jd_text.rstrip()), "jd_sha256": hashlib.sha256(jd_text.encode()).hexdigest(),
             "sent_sha256": hashlib.sha256(sent.encode()).hexdigest()}
 
 
