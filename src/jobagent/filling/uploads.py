@@ -18,7 +18,14 @@ class UploadProof:
 
     @staticmethod
     def widget_for(element):
-        handle=element.evaluate_handle('''e=>{
+        handle=element.evaluate_handle(r'''e=>{
+            // SuccessFactors keeps the acknowledgement and progress next to
+            // attachActions, not inside it. Bind only this exact component.
+            const match=(e.id||'').match(/^(\d+):_attachIcon$/);
+            const attachment=e.closest('.attachmentBtn');
+            if(match && attachment?.id===match[1]+':_attach' &&
+               attachment.querySelectorAll('[id$=":_attachIcon"]').length===1 &&
+               !attachment.querySelector('input:not([type=hidden]):not([type=file]),select,textarea,[role=combobox]'))return attachment;
             const field=e.parentElement?.closest('fieldset,[data-field-path],[data-field-entry-id],[data-automation-id^=formField-],.file-upload,.form-field,.form-group');
             if(field && field.querySelectorAll('input[type=file]').length<=1 &&
                ![...field.querySelectorAll('input:not([type=file]):not([type=hidden]),select,textarea,[role=combobox]')].some(c=>c!==e))return field;
@@ -70,6 +77,9 @@ class UploadProof:
 
     def bind(self, native):
         self.native=native.element_handle() if hasattr(native,'element_handle') else native
+        self.portaled=self.native.get_attribute('data-jf-upload-portaled')=='1'
+        if self.portaled and not self.widget:
+            raise ValueError('A portaled upload requires its original attachment widget')
         if self.replaced_count and not self.native.evaluate('e=>e.isConnected'):
             raise ValueError('Upload input changed after replacing its old attachment; read the widget again')
         self.token=self.native.evaluate('''e=>{
@@ -87,7 +97,18 @@ class UploadProof:
             self.widget=self.widget_for(self.native)
             self.before=self.widget.inner_text() if self.widget else ''
         self.initially_inside=bool(self.widget and self.widget.evaluate('(box,n)=>box.contains(n)',self.native))
-        self.form_owned=bool(self.form and self.native.evaluate('(n,form)=>form.isConnected && n.form===form && !!n.name && !n.disabled',self.form))
+        self.form_owned=bool(not self.portaled and self.form and self.native.evaluate('(n,form)=>form.isConnected && n.form===form && !!n.name && !n.disabled',self.form))
+        if self.portaled:
+            self.native.evaluate('''(e,args)=>{
+                const state=e.ownerDocument.defaultView.__jobagentUploadProofs.get(args.token);
+                state.widget=args.widget;state.busySeen=false;
+                const visible=n=>!!(n.getBoundingClientRect().width&&n.getBoundingClientRect().height)&&getComputedStyle(n).visibility!=='hidden';
+                const inspect=()=>{if(state.file && [...state.widget.querySelectorAll('[aria-busy=true],[role=progressbar],progress,[id$=":_attachLoading"]')].some(visible))state.busySeen=true;};
+                const observer=new MutationObserver(inspect);observer.observe(state.widget,{subtree:true,attributes:true,childList:true,characterData:true});
+                const changed=event=>{if(event.type==='drop' || event.target.closest?.('[id$=":_attachIcon"]'))state.invalidated=true;};
+                state.widget.addEventListener('click',changed,true);state.widget.addEventListener('drop',changed,true);
+                const cleanup=state.cleanup;state.cleanup=()=>{cleanup();observer.disconnect();state.widget.removeEventListener('click',changed,true);state.widget.removeEventListener('drop',changed,true)};
+            }''',{'token':self.token,'widget':self.widget})
 
     def owns(self, element):
         try:
@@ -100,12 +121,16 @@ class UploadProof:
         try:
             if self.widget and self.widget.evaluate('''(box,args)=>{
                 const visible=e=>!!(e.getBoundingClientRect().width&&e.getBoundingClientRect().height)&&getComputedStyle(e).visibility!=='hidden';
+                const success=e=>e.getAttribute('role')==='alert' && e.getAttribute('aria-invalid')!=='true' &&
+                    e.getAttribute('aria-busy')!=='true' && box.matches('.attachmentBtn') && e.id===box.id.replace(/_attach$/,'_attachSuccess') &&
+                    (e.innerText||'').trim()==='File is uploaded successfully';
                 return !box.isConnected || (args.inside&&args.native.isConnected&&!box.contains(args.native)) ||
                     [...box.querySelectorAll('input[type=file]')].some(e=>e!==args.native&&e.files?.length) ||
-                    [...box.querySelectorAll('[aria-invalid=true],[role=alert],[aria-busy=true],[role=progressbar],progress,[class*=progress]')].some(visible);
+                    [...box.querySelectorAll('[aria-invalid=true],[role=alert],[aria-busy=true],[role=progressbar],progress,[class*=progress]')].some(e=>visible(e)&&!success(e));
             }''',{'native':self.native,'inside':getattr(self,'initially_inside',False)}):return False
-            evidence=self.native.evaluate('''async (e,token)=>{
+            evidence=self.native.evaluate(r'''async (e,token)=>{
                 const state=e.ownerDocument.defaultView.__jobagentUploadProofs?.get(token);
+                if(state?.invalidated)return null;
                 const retained=e.isConnected && e.files?.[0];
                 const f=retained || state?.file;if(!f || f.size>5000000)return null;
                 let digest=state?.digestFile===f ? state.digest : null;
@@ -115,7 +140,14 @@ class UploadProof:
                     else {let s='';for(let i=0;i<bytes.length;i+=8192)s+=String.fromCharCode(...bytes.subarray(i,i+8192));digest={bytes:btoa(s)};}
                     if(state){state.digestFile=f;state.digest=digest;}
                 }
-                return {...digest,name:f.name,retained:!!retained,invalid:e.isConnected &&
+                const widget=state?.widget;
+                const success=widget?.querySelector('[id="'+CSS.escape(widget.id.replace(/_attach$/,'_attachSuccess'))+'"]');
+                const acknowledged=!!(state?.busySeen && widget?.isConnected && widget.matches('.attachmentBtn') &&
+                    /^\d+:_attach$/.test(widget.id) && success &&
+                    success.getBoundingClientRect().width && success.getBoundingClientRect().height &&
+                    getComputedStyle(success).visibility!=='hidden' && (success.innerText||'').trim()==='File is uploaded successfully' &&
+                    (widget.innerText||'').includes(f.name));
+                return {...digest,name:f.name,retained:!!retained,acknowledged,invalid:e.isConnected &&
                     (e.getAttribute('aria-invalid')==='true' || (retained && e.validity && !e.validity.valid))};
             }''',self.token)
             if not evidence or evidence['invalid']:return False
@@ -125,10 +157,15 @@ class UploadProof:
             form_owned=bool(getattr(self,'form_owned',False) and self.native.evaluate('(n,form)=>form.isConnected && n.form===form && !!n.name && !n.disabled',self.form))
             if evidence['retained'] and (not self.widget or getattr(self,'initially_inside',False) or form_owned):
                 self.method='native bytes';return True
+            if getattr(self,'portaled',False) and evidence.get('acknowledged'):
+                self.method='dispatched bytes and fresh widget success';return True
             if evidence['name'] not in self.before and self.widget and self.widget.evaluate('''(box,name)=>{
                 const visible=e=>!!(e.getBoundingClientRect().width&&e.getBoundingClientRect().height)&&getComputedStyle(e).visibility!=='hidden';
+                const success=e=>e.getAttribute('role')==='alert' && e.getAttribute('aria-invalid')!=='true' &&
+                    e.getAttribute('aria-busy')!=='true' && box.matches('.attachmentBtn') && e.id===box.id.replace(/_attach$/,'_attachSuccess') &&
+                    (e.innerText||'').trim()==='File is uploaded successfully';
                 return box.isConnected && (box.innerText||'').includes(name) &&
-                    ![...box.querySelectorAll('[aria-invalid=true],[role=alert]')].some(visible);
+                    ![...box.querySelectorAll('[aria-invalid=true],[role=alert]')].some(e=>visible(e)&&!success(e));
             }''',evidence['name']):
                 self.method='dispatched bytes and widget acknowledgement';return True
         except Exception:

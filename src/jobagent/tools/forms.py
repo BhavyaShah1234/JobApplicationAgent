@@ -397,7 +397,15 @@ FIELDS_JS = r"""(start) => {
     }
     adds.push({id: adds.length, text: tx, section: ownedSection, help}); }
   const errors = all('[role=alert], [aria-invalid=true], [class*=error i], [id*=error i], [data-automation-id*=error i]')
-      .filter(vis).map(e => clean(e.innerText)).filter(t => t && t.length < 300);
+      .filter(vis).filter(e => {
+        // SuccessFactors exposes its positive attachment acknowledgement as an alert.
+        // Keep explicit invalid/busy states and every other alert as blockers.
+        const box=e.closest('.attachmentBtn');
+        return !(box && /^\d+:_attach$/.test(box.id) && e.getAttribute('role')==='alert' &&
+          e.id===box.id.replace(/_attach$/,'_attachSuccess') &&
+          e.getAttribute('aria-invalid')!=='true' && e.getAttribute('aria-busy')!=='true' &&
+          clean(e.innerText)==='File is uploaded successfully');
+      }).map(e => clean(e.innerText)).filter(t => t && t.length < 300);
   const headings = all('h1, h2, h3, [data-automation-id=pageHeader], [aria-current=step]')
       .filter(vis).map(h => clean(h.innerText)).filter(Boolean).slice(0, 8);
   // Upload controls may mount a native input only after a button is clicked.
@@ -1224,6 +1232,8 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             listener = lambda chooser: choosers.append(chooser)
             shadow_locator(frame, 'input[type=file]').evaluate_all(
                 "es=>es.forEach(e=>e.setAttribute('data-jf-upload-existing','1'))")
+            shadow_locator(frame, '[role=dialog]').filter(visible=True).evaluate_all(
+                "es=>es.forEach(e=>e.setAttribute('data-jf-upload-existing-dialog','1'))")
             page.on('filechooser', listener)
             try:
                 loc.click(timeout=8000)
@@ -1241,12 +1251,29 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 elif len(inside) == 1:            # a new input that appeared INSIDE this widget's own boundary
                     loc = inside[0]
                 else:
-                    raise FillError('Upload button did not expose one identifiable file input inside its own widget')
+                    # A source picker can be portaled outside the attachment
+                    # widget. Only a newly visible, explicit upload-source
+                    # dialog with one file input and no candidate fields is
+                    # attributable to this click. Other page inputs do not qualify.
+                    dialogs=shadow_locator(frame,'[role=dialog][aria-modal=true]:not([data-jf-upload-existing-dialog])').filter(visible=True)
+                    if len(inside) or dialogs.count()!=1:
+                        raise FillError('Upload button did not expose one identifiable file input inside its own widget')
+                    dialog=dialogs.first
+                    title=dialog.get_attribute('aria-label') or ''
+                    if not re.fullmatch(r'(?i)(?:select|choose) (?:a )?source for (?:your )?file upload',title.strip()) or \
+                            dialog.locator('input:not([type=file]):not([type=hidden]),select,textarea,[role=combobox]').count() or \
+                            dialog.locator('input[type=file]').count()!=1:
+                        raise FillError('Upload source dialog is ambiguous or contains unrelated fields')
+                    loc=dialog.locator('input[type=file]')
+                    if loc.is_disabled():raise FillError('Upload source input is disabled')
+                    loc.evaluate("e=>e.setAttribute('data-jf-upload-portaled','1')")
                 loc.evaluate("(e,label)=>e.setAttribute('data-jf-upload-label',label)", f.label)
             finally:
                 page.remove_listener('filechooser', listener)
                 shadow_locator(frame, '[data-jf-upload-existing]').evaluate_all(
                     "es=>es.forEach(e=>e.removeAttribute('data-jf-upload-existing'))")
+                shadow_locator(frame, '[data-jf-upload-existing-dialog]').evaluate_all(
+                    "es=>es.forEach(e=>e.removeAttribute('data-jf-upload-existing-dialog'))")
         # Retain the resolved node. A Locator can wait 30 seconds for a replaced
         # input on every poll; an ElementHandle can inspect its disconnected
         # node immediately. Choosers already provide an ElementHandle.
