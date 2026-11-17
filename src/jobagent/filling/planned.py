@@ -14,7 +14,7 @@ from .facts import Decision, Fact, choice, key, norm, resolve, from_fact, scope_
 from .discovery import Discovery
 from .uploads import UploadProof
 from .live_view import LiveView
-from .routing import route,resolve_routed,binding_valid,field_packet,word_limits,unlisted_school,needs_entity_binding,PURPOSE_BOUND
+from .routing import route,resolve_routed,binding_valid,field_packet,word_limits,unlisted_school,needs_entity_binding,PURPOSE_BOUND,DETERMINISTIC_BOUND
 
 
 def read_view(page):
@@ -166,13 +166,14 @@ class PlannedFiller:
         # Source-resolver and answer-sheet shortcuts must respect these same
         # purpose boundaries; a neighbouring boolean is never a substitute.
         for f in fields:
-            if routes[f.id].family in PURPOSE_BOUND and answers[f.id].source!='human':
+            if routes[f.id].family in DETERMINISTIC_BOUND and answers[f.id].source!='human':
                 answers[f.id]=resolve_routed(f,self.facts)
                 if answers[f.id].value is None:
                     if f not in missing:missing.append(f)
                     source_updates[f.id]=answers[f.id]
         for f in missing:
-            if answers[f.id].reason in ('missing sponsorship timeframe evidence','explicit owner evidence missing','explicit residency evidence missing'):source_updates[f.id]=answers[f.id]
+            if answers[f.id].reason in ('missing sponsorship timeframe evidence','explicit owner evidence missing','explicit residency evidence missing',
+                                       'waiting for selected education record','explicit education evidence missing'):source_updates[f.id]=answers[f.id]
         # A known fact can still require rendering into the portal's vocabulary.
         render=[f for f in fields if f.kind=='combobox' and f.options and answers[f.id].value is not None
                 and forms.strict_option(answers[f.id].value,f.options) is None and not forms.is_identity(f.label)]
@@ -296,7 +297,9 @@ class PlannedFiller:
                             provenance.append('document:'+m.source+' quote:'+m.quote)
                         answers[f.id]=Decision(d.value,'; '.join(provenance),
                                                ','.join(x.id for x in bound), 'independently source checked')
-        unresolved=[f for f in missing if answers[f.id].value is None and (self.step,key(f)) not in self.declined and key(f) not in self.technical_failures]
+        unresolved=[f for f in missing if answers[f.id].value is None and
+                    answers[f.id].reason!='waiting for selected education record' and
+                    (self.step,key(f)) not in self.declined and key(f) not in self.technical_failures]
         if unresolved and allow_human:
             self.events.append({'event':'human_questions','fields':[{'label':f.label,'section':f.section} for f in unresolved],'classification':'unclassified'})
             self.batches+=1;self.questions+=len(unresolved);started=time.monotonic()

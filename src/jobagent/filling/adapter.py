@@ -124,7 +124,9 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                 if conditional is not None:
                     facts.append(Fact('condition:'+str(field.id),[field.label],conditional.value,conditional.source,field.section,
                         instructions='Leave blank' if conditional.value=='' else ''))
-        return _portal_education_facts(facts+list(ctx.get('_experimental_learned_facts',{}).values()),live.view if live else None)
+        from .education import selection_context
+        return selection_context(_portal_education_facts(facts+list(ctx.get('_experimental_learned_facts',{}).values()),
+                                 live.view if live else None),live.view if live else None)
 
     def sources(fields,decisions):
         if not fields:return {}

@@ -6,11 +6,13 @@ must match their exact purpose; sharing a boolean value proves nothing.
 from dataclasses import dataclass,asdict,replace
 import json,re
 from rapidfuzz import fuzz
-from .facts import norm,Decision,Fact,from_fact,choice,entity_scope,scope_allows,owner_only,expanded_immigration_support
+from .facts import norm,Decision,Fact,from_fact,choice,entity_scope,scope_allows,owner_only,expanded_immigration_support,key
+from .education import STUDY_COMPONENTS
 
 DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_ack',
                         'outside_activity','employer_personal_ties','immigration_support'})
 PURPOSE_BOUND=DECLARATIONS | {'owner_identifier'}
+DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys()
 
 
 def family(text):
@@ -51,6 +53,9 @@ def family(text):
       ('languages',r'language skill|^languages$|^language$'),
       ('education_level',r'highest.*(?:education|degree)'),
       ('education_completion',r'level of completion|current education status'),
+      ('study_region',r'where (?:did|do) you study.*region'),
+      ('study_country',r'where (?:did|do) you study.*country'),
+      ('study_school',r'where (?:did|do) you study.*(?:school|university|institution)'),
       ('discipline',r'(?:please specify|what is).*degree field of study'),
       ('school',r'school|university|institute'),('degree',r'\bdegree\b'),
       ('discipline',r'discipline|field of study|\bmajor\b'),
@@ -92,6 +97,20 @@ def degree_level(value):
 
 def education_query_facts(field,facts,kind):
     """Explicit global degree questions can read the named owner record outside a UI row."""
+    if kind in STUDY_COMPONENTS:
+        component=STUDY_COMPONENTS[kind]
+        exact=[x for x in facts if x.authority=='owner' and not x.record and
+               x.id.startswith('application.answer.') and norm(field.label) in map(norm,x.aliases)]
+        if exact:return exact
+        if entity_scope(field.section):
+            return [x for x in facts if x.authority=='owner' and not x.record and
+                    component in x.aliases and scope_allows(field,x)]
+        context=[x for x in facts if x.id.startswith('form.education.selection:') and x.target_key==key(field)]
+        if len(context)!=1:return []
+        data=json.loads(context[0].value)
+        if data.get('pending'):return context
+        return context+[x for x in facts if x.authority=='owner' and
+            (x.id==data['degree_id'] or (x.section==data['section'] and component in x.aliases and not x.record))]
     degrees=[x for x in facts if x.authority=='owner' and not x.record and
              (entity_scope(x.section) or ('',))[0]=='education' and 'Degree' in x.aliases]
     if entity_scope(field.section):degrees=[x for x in degrees if scope_allows(field,x)]
@@ -239,6 +258,23 @@ def route(field,facts):
 def resolve_routed(field,facts,route_info=None):
     r=route_info or route(field,facts);bank={x.id:x for x in facts};selected=[bank[i] for i in r.fact_ids]
     owner=[x for x in selected if x.authority=='owner']
+    if r.family in STUDY_COMPONENTS:
+        exact=[x for x in owner if x.id.startswith('application.answer.')]
+        context=[x for x in selected if x.id.startswith('form.education.selection:')]
+        if context and json.loads(context[0].value).get('pending'):
+            return Decision(None,reason='waiting for selected education record')
+        component=STUDY_COMPONENTS[r.family]
+        values=exact or [x for x in owner if component in x.aliases and not x.record]
+        if len(values)!=1:return Decision(None,reason='explicit education evidence missing')
+        result=from_fact(field,values[0])
+        if result.value is None and r.family=='study_country':
+            from jobagent.tools import forms
+            value,score=forms.match_option(values[0].value,field.options)
+            if value is not None and score>=95:result=Decision(value)
+        if result.value is None:return result
+        bound=values if exact else selected
+        return Decision(result.value,'; '.join(x.source for x in bound),','.join(x.id for x in bound),
+                        'study component of the selected owner degree')
     if r.family=='education_level' and owner:
         levels=[degree_level(x.value) for x in owner]
         if any(level is None for level in levels):return Decision(None,reason='unknown degree level')
