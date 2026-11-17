@@ -17,6 +17,9 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
 - Verify every filled value by reading it back; a required field that is unanswered, unverified, or showing a control's own prompt blocks readiness.
 - Determine requiredness from the original caption bound to the control, before truncating its display text. A long
   definition must not hide its final required marker, and another question's marker must not make a neighbour required.
+- Use literal confirmations of a posting's qualifications only for that application, through its current human reply
+  or its own answer sheet. Never reuse an old company-wide Yes/No for another role's unstated requirements. Explicit
+  instructions to compare each new JD against evidence can still be learned.
 - Treat a page whose frames or regions could not be read as not ready.
 - Return a resumable `blocked_by=page_start` result when the bounded startup wait finds neither an application
   nor an opening control. Preserve the checkpoint; an empty careers shell alone never triggers challenge fallback.

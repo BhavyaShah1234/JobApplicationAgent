@@ -27,6 +27,7 @@ HEAD = """# What you taught the agent while it filled forms (`jobagent hitl`). T
 # entries closest to that question.
 # Reply "rule: <how to answer questions like this>" to save an instruction for every company (company: any);
 # a plain reply is saved as that company's answer. Edit or delete entries freely (`jobagent learned` lists them).
+# A literal confirmation of the posting's qualifications is application-specific, never reusable across roles.
 """
 
 
@@ -74,15 +75,29 @@ def _write(entries: list[dict]) -> None:
         raise
 
 
+def application_only(question: str) -> bool:
+    """A yes/no attestation about unstated requirements depends on the current JD."""
+    return bool(re.search(r'(?i)\b(?:meet|meets|satisfy|satisfies|fulfill|fulfil)\b', question) and
+                re.search(r'(?i)\b(?:qualifications?|requirements?|criteria)\b', question))
+
+
+def reusable(entry: dict, question: str = '') -> bool:
+    """Explicit instructions can evaluate each JD; an old aggregate literal cannot."""
+    return bool(entry.get('instructions')) or not any(application_only(q) for q in
+        [question, entry['question'], *(entry.get('seen') or [])])
+
+
 def add(question: str, options: list[str], answer: str, company: str, portal: str, rule: str = "") -> dict:
     """Keep the candidate's reply. A rule replaces an earlier rule for the same question; a plain answer replaces the
-    same company's earlier answer."""
+    same company's earlier answer. Aggregate qualification literals remain current-application replies and are not stored."""
     if rule:
         item = {"question": question, "seen": [question], "answer": "", "instructions": rule, "company": "any",
                 "learned_from": f"{company} ({portal}), {now():%Y-%m-%d}"}
     else:
         item = {"question": question, "seen": [question], "answer": answer, "options": options[:30] or None,
                 "company": company, "portal": portal, "date": now().strftime("%Y-%m-%d")}
+        if application_only(question):
+            return {**item, 'scope': 'current_application', 'stored': False}
     with _locked():
         entries = [e for e in load() if not (e["question"] == question and e.get("company") == item["company"])]
         entries.append(item)
@@ -130,7 +145,7 @@ def relevant(label: str, company: str, k: int = 3, entries: list[dict] | None = 
     """The learned entries closest to a form question: wording match and meaning (embeddings), at most k, only those
     reasonably close. A plain answer from another company is kept only when it is a near-exact wording match (the
     planner is told it was given elsewhere)."""
-    entries = load() if entries is None else entries
+    entries = [e for e in (load() if entries is None else entries) if reusable(e, label)]
     if not entries:
         return []
     q = _clean(label)

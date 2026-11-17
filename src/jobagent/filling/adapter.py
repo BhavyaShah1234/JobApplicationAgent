@@ -57,7 +57,8 @@ def _saved_matches(fields, eligible, company):
     for field in fields:
         question=norm(field.label)
         if question in matches:continue
-        entries=[e for e in eligible if not needs_entity_binding(field.label,field.section,field.help) or e.get('instructions')]
+        entries=[e for e in eligible if learned.reusable(e,field.label) and
+                 (not needs_entity_binding(field.label,field.section,field.help) or e.get('instructions'))]
         exact=[e for e in entries if question in [norm(t) for t in [e['question'],*(e.get('seen') or [])]]]
         matches[question]=exact[:3]
         if not exact and entries:pending.append((field,entries))
