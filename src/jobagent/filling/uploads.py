@@ -88,8 +88,11 @@ class UploadProof:
             form_owned=bool(getattr(self,'form_owned',False) and self.native.evaluate('(n,form)=>form.isConnected && n.form===form && !!n.name && !n.disabled',self.form))
             if evidence['retained'] and (not self.widget or getattr(self,'initially_inside',False) or form_owned):
                 self.method='native bytes';return True
-            if evidence['name'] not in self.before and self.widget and self.widget.evaluate('''(box,name)=>box.isConnected &&
-                (box.innerText||'').includes(name) && !box.querySelector('[aria-invalid=true],[role=alert]')''',evidence['name']):
+            if evidence['name'] not in self.before and self.widget and self.widget.evaluate('''(box,name)=>{
+                const visible=e=>!!(e.getBoundingClientRect().width&&e.getBoundingClientRect().height)&&getComputedStyle(e).visibility!=='hidden';
+                return box.isConnected && (box.innerText||'').includes(name) &&
+                    ![...box.querySelectorAll('[aria-invalid=true],[role=alert]')].some(visible);
+            }''',evidence['name']):
                 self.method='dispatched bytes and widget acknowledgement';return True
         except Exception:
             pass

@@ -76,6 +76,25 @@ def test_workday_field_boundary_can_acknowledge_dispatched_bytes_after_clearing_
     finally:proof.close()
 
 
+def test_cleared_upload_accepts_acknowledgement_with_hidden_live_announcements(page,tmp_path):
+    from jobagent.filling.uploads import UploadProof
+    pdf=tmp_path/'resume.pdf';pdf.write_bytes(b'%PDF-1.4 source-bound resume fixture')
+    page.set_content('''<div data-automation-id=formField-resume><label>Resume</label>
+      <input type=file onchange="ack.textContent=this.files[0].name;this.value=''">
+      <div id=live hidden style="display:none"><div role=alert>resume.pdf successfully uploaded</div></div>
+      <div id=ack></div></div>''')
+    native=page.locator('input');proof=UploadProof(pdf,native)
+    try:
+        proof.bind(native);native.set_input_files(str(pdf))
+        assert native.evaluate('e=>e.files.length')==0
+        assert proof.verify() and proof.method=='dispatched bytes and widget acknowledgement'
+        # A real, visible error still invalidates those exact dispatched bytes.
+        page.locator('[role=alert]').evaluate("e=>e.textContent='Upload rejected'")
+        page.locator('#live').evaluate("e=>{e.hidden=false;e.style.display='block'}")
+        assert not proof.verify()
+    finally:proof.close()
+
+
 def test_one_school_portal_instruction_is_read_before_any_extra_row_is_created(page):
     from jobagent.filling.adapter import _portal_education_facts
     from jobagent.filling.facts import Fact
