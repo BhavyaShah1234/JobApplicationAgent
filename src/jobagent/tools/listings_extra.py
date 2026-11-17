@@ -86,13 +86,15 @@ def collect_kpmg(board: dict, company: str, queries, get_html, get_json, pause, 
     endpoint = template.geturl().rstrip('/')+'/page-templates/google/get-jobs.php'
     found = {}
     for query in queries or ['']:
+        seen_query=set()
         for page in range(1,21):
             data=get_json(endpoint+'?'+urlencode({'ajax':'1','keyword':query,'spage':page})) or {}
             rows=parse_kpmg((data.get('postings') or {}).get('jobs',''),base,company)
-            before=len(found)
+            before=len(seen_query)
+            seen_query.update(row.url for row in rows)
             found.update({row.url:row for row in rows})
             pagination=data.get('pagination') or ''
-            if not rows or (page>1 and len(found)==before) or not pagination:
+            if not rows or (page>1 and len(seen_query)==before) or not pagination:
                 break
             nav=lh.fromstring(pagination)
             if not nav.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," pagination-next ")]/a[@data-href]'):

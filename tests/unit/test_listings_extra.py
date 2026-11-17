@@ -66,6 +66,7 @@ def test_kpmg_queries_and_pages_the_published_search_endpoint():
 
 @pytest.mark.parametrize('additional,expected', [(['Austin, TX'],['Reno, NV, United States','Austin, TX']),
                                               (['Vancouver, BC, Canada'],['Reno, NV, United States','Vancouver, BC, Canada']),
+                                              ([],['2 Locations']),
                                               (['Unresolved office'],['2 Locations'])])
 def test_workday_location_expansion_never_lets_one_known_office_hide_an_unknown(additional,expected):
     row=Listing('Acme','Software Engineer','https://acme.wd5.myworkdayjobs.com/en-US/Careers/job/Reno/Engineer_R1',
@@ -74,3 +75,16 @@ def test_workday_location_expansion_never_lets_one_known_office_hide_an_unknown(
         assert url=='https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/Careers/job/Reno/Engineer_R1'
         return {'jobPostingInfo':{'location':'Reno, NV','country':{'descriptor':'United States'},'additionalLocations':additional}}
     assert listings.workday_locations(row,get_json=get)==expected
+
+
+def test_overlapping_searches_do_not_stop_before_a_later_page_with_new_jobs():
+    calls=[]
+    def get(url):
+        q=parse_qs(urlparse(url).query);query=q['keyword'][0];page=int(q['spage'][0]);calls.append((query,page))
+        more=page<(2 if query=='First' else 3)
+        return {'postings':{'jobs':kpmg_card(page)},'pagination':
+                '<ul><li class="pagination-next"><a data-href="'+str(page+1)+'">Next</a></li></ul>' if more else ''}
+    rows=E.collect_kpmg({'url':'https://www.kpmguscareers.com/job-search'},'KPMG',['First','Second'],
+                       lambda _:'<input id="template-url" value="/theme">',get,lambda:None,lambda _:None)
+    assert calls==[('First',1),('First',2),('Second',1),('Second',2),('Second',3)]
+    assert {x.req_id for x in rows}=={'1','2','3'}

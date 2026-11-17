@@ -125,9 +125,13 @@ def workday_locations(item: Listing, get_json=_json) -> list[str]:
     data=get_json(f'https://{parsed.netloc}/wday/cxs/{tenant}/{site}{path}') or {}
     info=data.get('jobPostingInfo') or {}
     primary=info.get('location') or ''
+    additional=info.get('additionalLocations') or []
+    count=int(re.match(r'\d+', ' '.join(item.locations))[0])
+    if not primary or 1+len(additional)<count:
+        return item.locations  # a country or a partial office list cannot establish every advertised location
     country=info.get('country') or {}
     if isinstance(country,dict):country=country.get('descriptor') or ''
-    values=[', '.join(x for x in [primary,country] if x)] + list(info.get('additionalLocations') or [])
+    values=[', '.join(x for x in [primary,country] if x)] + list(additional)
     # Every expanded office must be explicit enough to classify; never let one known US city hide unknown offices.
     from jobagent.tools.locations import from_text
     values=list(dict.fromkeys(x for x in values if isinstance(x,str) and x.strip()))
