@@ -11,7 +11,7 @@ from .education import STUDY_COMPONENTS
 
 DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_ack',
                         'outside_activity','employer_personal_ties','immigration_support'})
-PURPOSE_BOUND=DECLARATIONS | {'owner_identifier'}
+PURPOSE_BOUND=DECLARATIONS | {'owner_identifier','work_documentation'}
 DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys()
 
 
@@ -33,6 +33,7 @@ def family(text):
       ('future_contact',r'future (?:job |employment )?opportunit|talent community'),
       ('privacy_consent',r'privacy|data processing'),
       ('on_site',r'on site|onsite|work (?:from|in|at).*office'),
+      ('work_documentation',r'\b(?:can|could|will|would) you (?:provide|present|produce|supply|furnish|show)\b.*\b(?:documentation|documents?|proof|evidence)\b.*\b(?:identity|identification|right to work|eligibility to work|work eligibility|employment eligibility|work authorization)\b'),
       ('sponsorship',r'sponsor'),('work_authorization',r'legally authorized|eligible to work|authorized to work'),
       ('residency',r'(?:resident|reside|live) (?:of|in) (?:the )?(?:state|california|arizona|new york|texas|united states)|resident of'),
       ('offer_deadline',r'offer.*deadline|competing.*deadline'),
@@ -129,6 +130,11 @@ def education_query_facts(field,facts,kind):
 def qualification_signature(text,kind):
     """Parameters matter: a related question family is not the same claim."""
     q=norm(text.replace('C++','cpp').replace('c++','cpp').replace('C#','csharp').replace('c#','csharp'))
+    if kind=='work_documentation':
+        # Identity documents and work-eligibility documents are distinct. A
+        # combined question needs an owner declaration covering both purposes.
+        return (bool(re.search(r'\bidentity\b|\bidentification\b',q)),
+                bool(re.search(r'right to work|eligibility to work|work eligibility|employment eligibility|work authorization',q)))
     if kind.startswith('clearance_'):
         levels=[]
         for name,pattern in [('ts sci',r'\bts sci\b|top secret.*sci'),('top secret',r'\btop secret\b'),
@@ -149,6 +155,9 @@ def qualification_signature(text,kind):
 
 def same_qualification(field,fact):
     kind=family(field.label)
+    if kind=='work_documentation':
+        return any(family(alias)==kind and qualification_signature(alias,kind)==
+                   qualification_signature(field.label,kind) for alias in fact.aliases)
     if kind=='owner_identifier':
         return any(identifier_key(alias)==identifier_key(field.label) for alias in fact.aliases
                    if family(alias)==kind)
