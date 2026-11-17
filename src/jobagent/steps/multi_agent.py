@@ -697,6 +697,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> d
     documents.begin(job_dir)       # fail closed: an in-progress record replaces the manifest before anything is generated
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
     template_text = (s.data_dir / "templates" / "resume.tex").read_text()
+    documents.validate_template(template_text)
     ctx = {"job_dir": job_dir, "jd": jd, "company": (s.state_dir / "companies" / f"{slug}.md").read_text(),
            "r": T.parse(template_text),
            "jd_text": (job_dir / "jd.txt").read_text() if (job_dir / "jd.txt").exists() else "",

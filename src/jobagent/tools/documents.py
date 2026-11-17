@@ -54,6 +54,17 @@ def _template_problem(produced_with: str | None) -> str:
     return ""
 
 
+def validate_template(text: str) -> None:
+    """Reject a syntactically broken source before paying for a writer to repair locked content."""
+    import tempfile
+    from jobagent.tools import tailor
+    with tempfile.TemporaryDirectory(prefix="jobagent-template-") as directory:
+        pages, error = tailor.compile_pdf(text, Path(directory))
+    if not pages or error:
+        raise ValueError("DATA_DIR/templates/resume.tex does not compile; fix the source template before tailoring: "
+                         + (error or "no PDF was produced"))
+
+
 def reset(job_dir: Path, names=STALE) -> None:
     """Remove the previous build's outputs before a new one starts, so that whatever is on disk afterwards was made by it."""
     for name in names:

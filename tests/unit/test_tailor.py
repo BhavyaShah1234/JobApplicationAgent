@@ -338,4 +338,3 @@ def test_a_field_name_is_not_a_named_tool():
 def test_summary_fallback_is_content_without_template_formatting(source):
     from jobagent.tools.tailor import summary_text
     assert summary_text(source) == "Built Python systems that improved throughput by 20%."
-

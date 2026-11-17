@@ -132,6 +132,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
     company = (s.state_dir / "companies" / f"{company_slug}.md").read_text()
     template_text = (s.data_dir / "templates" / "resume.tex").read_text()
+    documents.validate_template(template_text)
     r = T.parse(template_text)
     from jobagent.tools import skillgraph as SG
     graph = SG.for_tailor(job_dir, jd, r)                       # related skills (step 4c) and this job's review artifact

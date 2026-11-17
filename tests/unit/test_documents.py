@@ -184,6 +184,7 @@ def stub_run_job(monkeypatch, tmp_path, final):
     (d / "jd.json").write_text(JobDescription(title="Engineer", company="Acme").model_dump_json())
     monkeypatch.setattr(M, "get_settings", lambda: SimpleNamespace(state_dir=state, data_dir=data))
     monkeypatch.setattr(M.T, "parse", lambda s: object())
+    monkeypatch.setattr(D, "validate_template", lambda text: None)  # these graph/lifecycle fixtures are not real TeX
     monkeypatch.setattr(M, "build_graph", lambda: SimpleNamespace(invoke=lambda *a, **k: final))
     monkeypatch.setattr(M.ats_sites, "write_summary", lambda *a, **k: {"average": None, "scores": {}, "sites": [], "missing": [],
                                                                        "complete": False})
