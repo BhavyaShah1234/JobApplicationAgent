@@ -106,7 +106,8 @@ def choice(f, values):
             return specific[0] if specific else values[0]
         return None
     if f.kind=='checkboxes' or f.multiple:
-        parts=[x.strip() for x in values[0].split(';') if x.strip()]
+        parts=forms.selection_parts(values[0],f.label)
+        values=['; '.join(parts),*values[1:]]
         picks=[forms.strict_option(x,f.options) for x in parts]
         if parts and all(x is not None for x in picks):return '; '.join(picks)
     if 'pronoun' in norm(f.label):

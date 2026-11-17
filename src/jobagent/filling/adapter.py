@@ -6,6 +6,48 @@ from .facts import compile_facts,Decision,Fact,key,norm,entity_scope
 from .planned import PlannedFiller,read_view
 
 
+def _portal_education_facts(facts, view):
+    """Apply an explicit one-school instruction while preserving original source IDs."""
+    import re
+    from dataclasses import replace
+    from datetime import datetime
+
+    if view is None:return facts
+    instruction=re.compile(r'\b(?:only|just) (?:your |the )?(?:most recent|latest) (?:college|university|school|degree)\b')
+    if not any(norm(b.get('section','')).startswith('education') and instruction.search(
+            re.sub(r'\bnot (?:only|just)\b','',norm(b.get('help','')))) for b in view.adds):return facts
+    present={entity_scope(f.section) for f in view.fields if (entity_scope(f.section) or ('',))[0]=='education'}
+    if len(present)>1:
+        raise ValueError('Portal requests only the most recent school but multiple education rows already exist; not filling extra rows')
+    groups={entity_scope(f.section) for f in facts if (entity_scope(f.section) or ('',))[0]=='education'}
+    if not groups:return facts
+    ranks={}
+    for group in groups:
+        dates=set()
+        for fact in facts:
+            if entity_scope(fact.section)!=group or fact.record or not any(norm(a) in {
+                    'end date','graduation date','graduation year','end year'} for a in fact.aliases):continue
+            if norm(fact.value) in ('present','current','ongoing'):
+                dates.add((9999,12));continue
+            for fmt in ('%B %Y','%b %Y','%Y-%m','%m/%Y','%Y-%m-%d','%m/%d/%Y','%Y'):
+                try:
+                    date=datetime.strptime(fact.value,fmt);dates.add((date.year,None if fmt=='%Y' else date.month));break
+                except ValueError:pass
+        dates={d for d in dates if d[1] is not None or not any(y==d[0] and m is not None for y,m in dates)}
+        if len(groups)>1 and len(dates)!=1:
+            raise ValueError('Most recent education cannot be selected unambiguously from its source dates')
+        ranks[group]=next(iter(dates)) if dates else (0,None)
+    year=max(v[0] for v in ranks.values());latest=[g for g,v in ranks.items() if v[0]==year]
+    if len(latest)>1:
+        if any(ranks[g][1] is None for g in latest):
+            raise ValueError('Most recent education is ambiguous within the same year')
+        month=max(ranks[g][1] for g in latest);latest=[g for g in latest if ranks[g][1]==month]
+    if len(latest)!=1:raise ValueError('Most recent education has tied source dates')
+    chosen=latest[0]
+    return [replace(f,section='Education 1') if entity_scope(f.section)==chosen else f
+            for f in facts if (entity_scope(f.section) or ('',))[0]!='education' or entity_scope(f.section)==chosen]
+
+
 def _saved_matches(fields, eligible, company):
     """Resolve literal saved questions before requesting semantic retrieval."""
     from jobagent.tools import learned
@@ -81,7 +123,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                 if conditional is not None:
                     facts.append(Fact('condition:'+str(field.id),[field.label],conditional.value,conditional.source,field.section,
                         instructions='Leave blank' if conditional.value=='' else ''))
-        return facts+list(ctx.get('_experimental_learned_facts',{}).values())
+        return _portal_education_facts(facts+list(ctx.get('_experimental_learned_facts',{}).values()),live.view if live else None)
 
     def sources(fields,decisions):
         if not fields:return {}

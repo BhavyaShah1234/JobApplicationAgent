@@ -204,6 +204,8 @@ FIELDS_JS = r"""(start) => {
     f.locator_ref=registry.epoch+':'+f.identity;
     e.setAttribute('data-jf-ref',f.locator_ref);
     f.invalid=e.getAttribute('aria-invalid')==='true' || !!(e.validity && !e.validity.valid);
+    if(f.kind==='combobox')f.multiple=e.getAttribute('aria-multiselectable')==='true'||
+      (!!e.closest('[data-uxi-widget-type=multiselect]')&&/\bskills\b|(?:select|check|choose) all/i.test(f.label));
     f.required=!!f.required || required(e,f.label);
     f.calendar=e.type!=='date' && e.tagName==='INPUT' &&
       (!!e.closest('.react-datepicker-wrapper,[data-datepicker]') || /(?:^|[\s_-])(?:datepicker|date-picker|input[-_]date|date[-_]input)(?:[\s_-]|$)/i.test(e.className||''));
@@ -377,7 +379,17 @@ FIELDS_JS = r"""(start) => {
       if(groups.every(Boolean) && new Set(groups.map(x=>x.toLowerCase())).size===1)ownedSection=groups[0];
       break;
     }
-    adds.push({id: adds.length, text: tx, section: ownedSection}); }
+    let help='';
+    for(let owner=b.parentElement;owner&&!owner.matches('form,body,html');owner=owner.parentElement){
+      const groups=[...owner.querySelectorAll('h2,h3,h4,[role=heading],[class*=header] > p')]
+        .map(h=>clean(h.innerText).match(/^(Education|Work Experience|Employment History)(?: \d+)?$/i)?.[1]?.toLowerCase()).filter(Boolean);
+      const unique=new Set(groups);
+      if(unique.size>1)break;
+      if(unique.size===1&&clean(ownedSection).replace(/ \d+$/,'').toLowerCase()===groups[0]){
+        help=caption(owner).slice(0,4000);break;
+      }
+    }
+    adds.push({id: adds.length, text: tx, section: ownedSection, help}); }
   const errors = all('[role=alert], [aria-invalid=true], [class*=error i], [id*=error i], [data-automation-id*=error i]')
       .filter(vis).map(e => clean(e.innerText)).filter(t => t && t.length < 300);
   const headings = all('h1, h2, h3, [data-automation-id=pageHeader], [aria-current=step]')
@@ -881,10 +893,18 @@ def in_range(option: str, x: float) -> bool:
     return False
 
 
-def same_value(want: str, got: str, kind: str, question: str = "") -> bool:
+def selection_parts(value: str, question: str = "") -> list[str]:
+    """Render a supplied skills list as choices; commas in other answers stay literal."""
+    pattern = r",(?![^()]*\))" if ';' not in value and re.search(r'(?i)\bskills\b',question) else ';'
+    return [x.strip() for x in re.split(pattern,value) if x.strip()]
+
+
+def same_value(want: str, got: str, kind: str, question: str = "", multiple: bool = False) -> bool:
     """The page shows the value that was meant (read-back check)."""
     if kind in ('combobox', 'select') and PHONE_CODE_Q.search(question):
         return phone_code_option(want, [got]) is not None
+    if multiple and kind in ('combobox','select'):
+        return {_norm(x) for x in selection_parts(want,question)} == {_norm(x) for x in got.split(';') if x.strip()}
     if kind in ('combobox','select','radio','buttons') and is_identity(question):
         return any(_norm(v)==_norm(got) or identity_option(v.strip(),[got],person=bool(PERSON_Q.search(question))) is not None
                    for v in want.split(' | ') if v.strip())
@@ -1131,6 +1151,23 @@ def close_option(answer: str, options: list[str]) -> str | None:
     return best if best is not None and (fuzz.ratio(a, _norm(best)) >= 94 or _norm(best) == a) else None
 
 
+def _clear_search_picker(page, loc) -> None:
+    box=loc.locator("xpath=ancestor::*[@data-automation-id='multiSelectContainer'][1]")
+    pills=box.locator('[data-automation-id=selectedItem]')
+    count=pills.count()
+    if count>64:raise FillError('Too many selected items to clear safely in one operation')
+    for _ in range(count):
+        before=pills.count()
+        if not before:break
+        try:
+            pills.first.focus();page.keyboard.press('Delete')
+        except Exception:pass
+        if pills.count()==before:
+            box.locator('[data-automation-id=DELETE_charm]').first.click(timeout=3000)
+        page.wait_for_timeout(100)
+    if pills.count():raise FillError('The old search-picker selection could not be cleared')
+
+
 def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[str, str], tie_break=None,
                strict: bool = False, close: bool = False, before_upload=None, upload_confirmation=None, alternatives=()) -> str:
     """Put `answer` into the field. Returns what was chosen (the option text for choice fields)."""
@@ -1142,10 +1179,12 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             raise challenge.Blocked("Form changed after verification; field requires review")
         f = matches[0]
     frame, loc = view.frames[f.frame], locate(view, f)
+    if f.kind=='combobox' and f.multiple:answer='; '.join(selection_parts(answer,f.label))
     tagged=loc.get_attribute('data-jf')
     if tagged is not None and tagged.isdigit() and int(tagged)!=f.id:f=replace(f,id=int(tagged))
     if f.kind == "combobox" and f.value and not f.invalid:
         same = (phone_code_option(answer, [f.value]) is not None if PHONE_CODE_Q.search(f.label)
+                else same_value(answer,f.value,f.kind,f.label,multiple=True) if f.multiple
                 else _norm(answer) == _norm(f.value) if is_identity(f.label)
                 else already_shows(answer, f.value, f.kind))
         if same:
@@ -1267,12 +1306,13 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                     errors.append(f"{variant}: {str(e)[:60]}")
                     page.keyboard.press("Escape")
         raise FillError("no variant offered: " + "; ".join(errors)[:300])
-    if f.kind == "combobox" and ";" in answer and loc.get_attribute("data-uxi-widget-type") == "selectinput":
+    if f.kind == "combobox" and f.multiple and ";" in answer and loc.get_attribute("data-uxi-widget-type") == "selectinput":
         # a multi-value search picker (Workday skills): add each value the site knows; skip the ones it doesn't
         added = []
+        if f.value:_clear_search_picker(page,loc)
         for item in [x.strip() for x in answer.split(";") if x.strip()]:
             try:
-                one = Field(**{**f.__dict__, "options": []})
+                one = Field(**{**f.__dict__, "options": [], "value": "", "multiple": False})
                 added.append(fill_field(page, view, one, item, files, None, strict=True))
             except Exception:
                 page.keyboard.press("Escape")
@@ -1329,17 +1369,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         if f.value and loc.get_attribute("data-uxi-widget-type") == "selectinput":
             # a single-choice Workday picker that already holds something else (an earlier run's pick): its chip
             # sits over the input, so remove it before choosing
-            box = loc.locator("xpath=ancestor::*[@data-automation-id='multiSelectContainer'][1]")
-            pill = box.locator("[data-automation-id=selectedItem]")  # "Other, press delete to clear value."
-            for _ in range(3):
-                if not pill.count():
-                    break
-                try:
-                    pill.first.focus()
-                    page.keyboard.press("Delete")
-                except Exception:
-                    box.locator("[data-automation-id=DELETE_charm]").first.click(timeout=5000, force=True)
-                page.wait_for_timeout(700)
+            _clear_search_picker(page,loc)
         opts = _open_options(frame, loc, page)
         if " > " in answer and loc.get_attribute("data-uxi-widget-type") == "selectinput":
             # "Category > meaning": open the category, then the entry that means the rest
@@ -1734,7 +1764,7 @@ def click_open_application(page: Page, view: PageView, pattern: re.Pattern, *, e
     from jobagent.tools import challenge
     if challenge.guard(page):
         view = read_page(page)
-    fields_on_page = bool(view.fields)
+    fields_on_page = bool(view.fields) or not view.coverage.complete
     for text in view.buttons:
         if not pattern.search(text):
             continue

@@ -19,7 +19,7 @@ class UploadProof:
     @staticmethod
     def widget_for(element):
         handle=element.evaluate_handle('''e=>{
-            const field=e.parentElement?.closest('fieldset,[data-field-path],[data-field-entry-id],.file-upload,.form-field,.form-group');
+            const field=e.parentElement?.closest('fieldset,[data-field-path],[data-field-entry-id],[data-automation-id^=formField-],.file-upload,.form-field,.form-group');
             if(field && field.querySelectorAll('input[type=file]').length<=1 &&
                ![...field.querySelectorAll('input:not([type=file]):not([type=hidden]),select,textarea,[role=combobox]')].some(c=>c!==e))return field;
             let candidate=null;

@@ -11,7 +11,14 @@ Candidate fields, uploads and application navigation prevent this narrow filter-
 Before planning, the filler opens form disclosures through safe section controls, including a separate Expand all
 sections link. It leaves answers unchanged and never clicks a default submit button merely because it looks like
 a section heading. Remaining collapsed sections with candidate controls make extraction incomplete and block
-readiness. Upload icons use their own accessible label references; header language menus remain navigation.
+readiness; they also prevent startup from mistaking a final Apply button for navigation on an apparently empty form.
+Upload icons use their own accessible label references; header language menus remain navigation.
+
+When a portal explicitly requests only the most recent university, the application-local source set selects it
+by its provided dates and retains the original source IDs. It neither adds the other schools nor rewrites the
+profile. Missing or tied recency and extra existing rows stop for review. Skills in a declared multi-select are
+separate choices; a single comma-filled chip is not verified as several selections. Workday upload verification
+uses the isolated form field, including its acknowledgement, while retaining dispatched-byte checks.
 
 ## Run it
 
@@ -122,7 +129,7 @@ emails, when requested, come from the matching company row in `/app/data/asu_con
 - A range option holds the file's value: GPA 4.0 -> "3.75+" (`forms.in_range`).
 - "How did you hear": choose the offered employee-referral option; text fields receive "Referred by employee".
   Required employee details come from the matching company row in `asu_contacts.csv` (`referrals.answer_for`).
-  If a complete list has no employee option, a saved owner choice for that company can supply an offered fallback.
+  If the observed list has no employee option, a saved owner choice for that company can supply an offered fallback.
   Another company's answer, a global learned answer, or an unavailable choice cannot override that policy.
 - Address fields: use the job's cached, geocoded address; enforced before filling and after replanning.
 - Repeated entries: at most one per resume role / degree on file (`apply.entry_room`).

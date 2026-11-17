@@ -73,6 +73,24 @@ def test_an_unlabelled_style_submit_input_named_apply_is_not_clicked_either():
     assert state["sent"] is False
 
 
+def test_collapsed_required_controls_do_not_make_final_apply_a_startup_action():
+    html='''<form onsubmit="window.sent=true;return false"><section>
+      <h2><button aria-expanded=false>Profile</button></h2><div hidden><input type=email required></div>
+      </section><button type=submit>Apply</button></form>'''
+    state,view=start(html,allow_error=True)
+    assert not state['sent'] and 'remain collapsed' in view.error
+
+
+def test_startup_opens_sections_through_expand_all_and_leaves_final_apply_alone():
+    html='''<form onsubmit="window.sent=true;return false">
+      <a role=button onclick="panel.hidden=false;heading.setAttribute('aria-expanded','true')">Expand all sections</a>
+      <section><h2><button id=heading aria-expanded=false>Profile</button></h2>
+      <div id=panel hidden><label>Email<input type=email></label></div></section>
+      <button type=submit>Apply</button></form>'''
+    state,view=start(html)
+    assert not state['sent'] and len(view.fields)==1 and view.coverage.complete
+
+
 def test_a_final_apply_button_in_a_form_with_a_select_and_textarea_is_not_clicked():
     state, _ = start("<form onsubmit=\"window.sent = true; return false;\"><select name=s><option>Yes</option></select>"
                      "<textarea name=t></textarea><button>Apply</button></form>")     # a button's default type is submit

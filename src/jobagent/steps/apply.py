@@ -1449,6 +1449,12 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
             signed = True
             response = page.goto(url, wait_until="domcontentloaded")  # back to the posting, signed in
             continue
+        if getattr(getattr(view,'coverage',None),'collapsed',[]):
+            from jobagent.tools import disclosures
+            if disclosures.expand(page,view,log):
+                continue
+            raise RuntimeError('Application sections remain collapsed and no non-submitting disclosure control is available; '
+                               'startup did not click Apply or plan answers')
         _require_application_page(view)
         if len([f for f in view.fields if f.kind != "file"]) >= 3 and not pw:
             return view

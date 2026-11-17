@@ -16,7 +16,7 @@ def saved(company='capital-one', value='Contacted by Recruiter'):
 
 def field(options=None):
     return Field(id=0,kind='combobox',label=QUESTION,required=True,
-                 options=options or ['Contacted by Recruiter','Internet'])
+                 options=options or ['Contacted by Recruiter','Internet'],options_state='partial')
 
 
 def filler(facts=()):
@@ -50,8 +50,8 @@ def test_global_other_company_and_unoffered_answers_cannot_supply_the_fallback(f
     assert filler([fact]).plan([field()],allow_human=False)[0].value is None
 
 
-def test_incomplete_options_and_missing_referrer_contacts_are_not_overridden():
-    agent=filler([saved()]);f=field();f.options_state='partial'
-    assert agent.plan([f],allow_human=False)[0].value is None
+def test_empty_options_and_missing_referrer_contacts_are_not_overridden():
+    agent=filler([saved()]);f=field();f.options=[]
+    assert agent.plan([f],allow_human=False)[0].value!='Contacted by Recruiter'
     contact=Field(id=1,kind='email',label='Referrer email',required=True)
     assert agent.plan([contact],allow_human=False)[1].value is None

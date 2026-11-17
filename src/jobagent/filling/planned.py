@@ -135,7 +135,7 @@ class PlannedFiller:
                 if policy is not None:
                     d=Decision(policy.get('value') or None,'saved referral policy',reason=policy.get('flag',''))
                     label=re.sub(re.escape(company),'company',f.label,flags=re.I) if company else f.label
-                    if referrals.SOURCE.search(label) and f.options and f.options_state=='complete' and not referrals._referral_option(f.options,company):
+                    if referrals.SOURCE.search(label) and f.options and not referrals._referral_option(f.options,company):
                         source_fallback.add(f.id)
                         saved=self._saved_source_fallback(f)
                         if saved is not None:d=saved
@@ -387,7 +387,7 @@ class PlannedFiller:
                                 Path(files[decision.value]).read_bytes()).hexdigest()
                         except Exception:
                             return False
-                    return forms.same_value(self.rendered.get(key(f),decision.value),f.value,f.kind,f.label)
+                    return forms.same_value(self.rendered.get(key(f),decision.value),f.value,f.kind,f.label,f.multiple)
                 todo=[f for f in view.fields if not unchanged(f) and self.failures.get(key(f),0)<2]
                 if todo or potential:
                     forms.discover_options(page,view,fields=todo)
@@ -445,9 +445,9 @@ class PlannedFiller:
                             if actual is None and f.kind!='file':
                                 after=live.capture();actual=next((x for x in after.fields if key(x)==key(f)),None)
                             for pause in (100,200,400):
-                                if actual is None or forms.same_value(chosen,actual.value,f.kind,f.label):break
+                                if actual is None or forms.same_value(chosen,actual.value,f.kind,f.label,f.multiple):break
                                 page.wait_for_timeout(pause);actual=live.refresh(f)
-                            valid=actual is not None and forms.same_value(chosen,actual.value,f.kind,f.label)
+                            valid=actual is not None and forms.same_value(chosen,actual.value,f.kind,f.label,f.multiple)
                             if actual:valid=valid and not actual.invalid
                             if f.kind=='file':
                                 valid=bool(proof and proof.verify()) and (actual is None or not actual.invalid)
