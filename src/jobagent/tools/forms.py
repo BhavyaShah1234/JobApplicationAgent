@@ -130,13 +130,23 @@ FIELDS_JS = r"""(start) => {
       return l ? clean(l.innerText) : clean(b.value); });
     return around(e, labels) || question(e); };
   const section = e => {
+    const ae = anchor(e);
+    // Legacy repeating sections expose a real row number beside each row,
+    // and name the owning group through aria-labelledby rather than h-tags.
+    const row=ae.closest('.rcmSectionComponent[id$=":_sectionComponent"]');
+    const group=row && row.closest('[role=group][aria-labelledby]');
+    const title=group && byIds(group.getAttribute('aria-labelledby'),group);
+    const entity=title && title.match(/^(Education|Work Experience|Employment History)(?:\s*\([^)]*\))?$/i);
+    const number=row && row.getRootNode().getElementById(row.id.replace(/_sectionComponent$/,'_rowNum'));
+    const index=number && clean(number.textContent).match(/^Row number (\d+)$/i);
+    if(entity && index && Number(index[1])>0 && number.parentElement===row.parentElement)
+      return (/^Education$/i.test(entity[1])?'Education':'Work Experience')+' '+Number(index[1]);
     // the nearest heading above the field (e.g. "Work Experience 2", "Voluntary Self-Identification")
     // headings only: a legend is a field's own label (Workday's "To*" date), not a section
     const hs = all('h1, h2, h3, h4, h5, [role=heading], [class*=header] > p, [class*=title] > p').filter(h => vis(h)
       && (/^H[1-5]$/.test(h.tagName) || h.getAttribute('role')==='heading' || /^(education|work experience|employment history|languages)(?: \d+)?$/i.test(clean(h.innerText)))
       && !h.closest('[role=dialog],[role=listbox],[role=menu],[class*=datepicker i],[class*=calendar i]'));
     let best = '';
-    const ae = anchor(e);
     for (const h of hs) {
       if(h.tagName==='P' && !h.parentElement?.parentElement?.contains(e))continue;
       if (anchor(h).compareDocumentPosition(ae) & Node.DOCUMENT_POSITION_FOLLOWING) best = clean(h.innerText);
@@ -371,10 +381,16 @@ FIELDS_JS = r"""(start) => {
   // "Add" / "Add Another" buttons (Workday work experience, education, languages): the planner may ask for entries
   const adds = [];
   for (const b of all('button, [role=button]')) {
-    const tx = clean(b.innerText || b.getAttribute('aria-label'));
-    if (!/^add( another)?\b/i.test(tx) || !vis(b) || !shown(b) || tx.length > 40) continue;
+    const tx = clean(b.innerText || b.getAttribute('aria-label')).replace(/[\uE000-\uF8FF]/g,'').trim();
+    if (!/^add( another)?\b/i.test(tx) || !vis(b) || !shown(b) || tx.length > 40 || b.disabled ||
+        b.getAttribute('aria-disabled')==='true' || (b.tagName==='BUTTON'&&b.form&&b.type!=='button') ||
+        (b.tagName==='A'&&b.getAttribute('href')&&!/^#/.test(b.getAttribute('href')))) continue;
     b.setAttribute('data-jf-add', String(adds.length));
     let ownedSection=section(b) || clean(b.getAttribute('aria-label'));
+    const group=b.closest('[role=group][aria-labelledby]');
+    const title=group && byIds(group.getAttribute('aria-labelledby'),group);
+    const entity=title && title.match(/^(Education|Work Experience|Employment History)(?:\s*\([^)]*\))?$/i);
+    if(entity)ownedSection=entity[1];
     // A shared Add another toolbar may sit outside the entry header's owner.
     // Associate it with the nearest ancestor containing only one entity group.
     for(let owner=b.parentElement;owner && !owner.matches('form,body,html');owner=owner.parentElement){

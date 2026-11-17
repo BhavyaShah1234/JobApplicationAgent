@@ -14,7 +14,7 @@ from .facts import Decision, Fact, choice, key, norm, resolve, from_fact, scope_
 from .discovery import Discovery
 from .uploads import UploadProof
 from .live_view import LiveView
-from .routing import route,resolve_routed,binding_valid,field_packet,word_limits,unlisted_school,needs_entity_binding,PURPOSE_BOUND,DETERMINISTIC_BOUND
+from .routing import route,resolve_routed,binding_valid,evidence_allows,field_packet,word_limits,unlisted_school,needs_entity_binding,PURPOSE_BOUND,DETERMINISTIC_BOUND
 
 
 def read_view(page):
@@ -209,7 +209,7 @@ class PlannedFiller:
                     kind,_,arg=m.lookup.partition(':')
                     tokens={'web':r'web|search','place':r'place|address|geocod','maps':r'map|route|distance'}
                     if not (f and arg.strip() and kind in tokens and re.search(tokens[kind],allowed)
-                            and all(scope_allows(f,x) for x in bound) and len(looked_up)<3):continue
+                            and all(evidence_allows(f,x,routes[f.id]) for x in bound) and len(looked_up)<3):continue
                     if m.lookup not in self.lookup_cache and len(self.lookup_cache)>=3:continue
                     if m.lookup not in self.lookup_cache:self.lookup_cache[m.lookup]=self.lookup_resolver(m.lookup)
                     content=self.lookup_cache[m.lookup]
@@ -253,9 +253,9 @@ class PlannedFiller:
                 ids=list(dict.fromkeys([*m.fact_ids,*([m.fact_id] if m.fact_id else [])]))
                 bound=[facts[x] for x in ids if x in facts]
                 quoted=bool(m.quote.strip() and m.quote in self.narrative_sources.get(m.source,''))
-                if not f or len(bound)!=len(ids) or not all(scope_allows(f,x) for x in bound):continue
+                if not f or len(bound)!=len(ids) or not all(evidence_allows(f,x,routes[f.id]) for x in bound):continue
                 if bound and not binding_valid(f,bound,m.value or (from_fact(f,bound[0]).value if len(bound)==1 else '') or '',routes[f.id]):continue
-                if not bound and (not quoted or owner_only(f) or routes[f.id].family in PURPOSE_BOUND or
+                if not bound and (not quoted or owner_only(f) or entity_scope(f.section) or routes[f.id].family in PURPOSE_BOUND or
                                   (f.kind!='textarea' and m.source not in ('resume','cover_letter'))):continue
                 if not bound and routes[f.id].family=='test_score':
                     from .routing import family

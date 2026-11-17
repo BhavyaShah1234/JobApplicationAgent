@@ -58,7 +58,7 @@ def family(text):
       ('study_school',r'where (?:did|do) you study.*(?:school|university|institution)'),
       ('discipline',r'(?:please specify|what is).*degree field of study'),
       ('school',r'school|university|institute'),('degree',r'\bdegree\b'),
-      ('discipline',r'discipline|field of study|\bmajor\b'),
+      ('discipline',r'discipline|(?:field|area) of study|\bmajor\b'),
       ('gpa',r'\bgpa\b|grade point'),
       ('country',r'country.*(?:resid|live)|country where'),
       ('start_date',r'when can you start|earliest start|available start|date available|available to start'),
@@ -368,8 +368,18 @@ def resolve_routed(field,facts,route_info=None):
     return None
 
 
+def evidence_allows(field,fact,route_info):
+    if scope_allows(field,fact):return True
+    # Explicitly named global degree questions are the sole cross-row
+    # projection here. Their candidates were selected from that degree above.
+    return bool(fact.target_key is None and not entity_scope(field.section) and fact.authority=='owner' and
+        (entity_scope(fact.section) or ('',))[0]=='education' and route_info.family in {'degree','discipline','education_level'} and
+        degree_level(field.label) is not None and fact.id in route_info.fact_ids)
+
+
 def binding_valid(field,bound,value,route_info):
     if any(x.id not in route_info.fact_ids for x in bound):return False
+    if not all(evidence_allows(field,x,route_info) for x in bound):return False
     protected=PURPOSE_BOUND | {'external_sharing','clearance_eligibility','clearance_held','arbitration','read_ack','privacy_consent','future_contact','sms_consent','ai_consent','sponsorship','work_authorization'}
     if route_info.family in protected:
         if not bound or any(fact_family(x)!=route_info.family for x in bound):return False

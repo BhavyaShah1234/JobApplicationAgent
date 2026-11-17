@@ -215,6 +215,10 @@ def from_fact(f, fact):
     format_hint=(f.format or '').upper()
     needs_day=f.kind=='date' or 'DD' in format_hint
     needs_month_year='MM' in format_hint and ('YY' in format_hint)
+    if (needs_day or needs_month_year or format_hint in ('YYYY','YY')) and not f.required and \
+            (entity_scope(fact.section) or ('',))[0]=='employment' and 'End Date' in fact.aliases and \
+            norm(fact.value) in {'present','current','ongoing'}:
+        return Decision('',fact.source,fact.id,'ongoing employment has no end date')
     if needs_day or needs_month_year or format_hint in ('YYYY','YY'):
         parsed=None
         for fmt in ('%Y-%m-%d','%m/%d/%Y','%B %d, %Y'):
@@ -322,7 +326,7 @@ def compile_facts(data, raw_jd, reference_date=''):
                 row_section=f'{group} {i}' if group else ''
                 aliases={'school':['School','University','Institute'], 'degree':['Degree'], 'field':['Field of Study','Major'],
                          'from':['From Date','Start Date'], 'start':['From Date','Start Date'],
-                         'end':['End Date'], 'to':['End Date'], 'company':['Company','Company Name','Employer','Employer Name'], 'title':['Job Title'],
+                         'end':['End Date'], 'to':['End Date'], 'company':['Company','Company Name','Employer','Employer Name'], 'title':['Job Title','Position Title'],
                          'current':['Current','Currently work here','I currently work here','Current position'],
                          'description':['Description','Responsibilities','Role Description'], 'gpa':['GPA','Grade Point Average'],
                          'city':['City'], 'state':['State','Province'], 'country':['Country'], 'region':['Region','World region']}

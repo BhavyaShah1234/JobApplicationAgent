@@ -39,3 +39,11 @@ def test_the_employment_rule_never_supplies_an_unknown_month_or_an_education_day
     f=date_fact(facts('2026'));assert from_fact(Field(id=0,kind='date',label='Start Date'),f).value is None
     f=date_fact(facts(education=True),'Education 1')
     assert from_fact(Field(id=0,kind='date',label='Start Date'),f).value is None
+
+
+def test_ongoing_employment_clears_an_optional_end_date_without_inventing_one():
+    from jobagent.filling.facts import Fact
+    fact=Fact('current.end',['End Date'],'Present','resume/role1',section='Work Experience 1')
+    d=from_fact(Field(id=0,kind='text',label='End Date',format='MM/DD/YYYY'),fact)
+    assert d.value=='' and d.fact_id=='current.end'
+    assert from_fact(Field(id=0,kind='date',label='End Date',required=True),fact).value is None
