@@ -107,3 +107,22 @@ def test_real_file_queue_wait_is_linked_to_its_job_and_then_resumes(tmp_path):
         thread.join(timeout=6)
     assert result == ['fixture-code'] and not data.hitl_pending(s)
     assert data.pipeline(s)[0]['state'] == 'done'
+
+
+def test_job_directory_discovered_after_the_initial_url_is_exposed(tmp_path):
+    from jobagent.progress import update
+    s = settings(tmp_path)
+    path = str(s.outputs_dir / 'company/123')
+    with execution(new=True, url='https://example.test/job/123', plan=['scrape', 'documents']):
+        log = RunLog('run', directory=s.state_dir / 'logs', quiet=True)
+        try:
+            progress(log, 'scrape', 'running')
+            update(job='123', job_dir=path, company='Company')
+            progress(log, 'scrape', 'done')
+            progress(log, 'documents', 'running')
+            jobs = data.pipeline(s)
+            assert len(jobs) == 1
+            assert jobs[0]['job_dir'] == jobs[0]['identity'] == path
+            assert jobs[0]['active']
+        finally:
+            log.close()

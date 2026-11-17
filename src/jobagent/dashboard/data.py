@@ -232,7 +232,7 @@ def pipeline(settings, hours: float = 72, limit: int = 30) -> list[dict]:
             j = jobs.setdefault(key, {"job": r.get("job", ""), "url": "", "title": "", "company": "", "plan": [], "stages": {}, "trail": [],
                                       "first": r["ts"], "last": r["ts"], "active": False,
                                       'identity': identity, 'execution_id': r.get('execution_id', ''), 'job_dir': r.get('job_dir', '')})
-            for k in ("job", "url", "title", "company", 'browser_mode'):
+            for k in ("job", "url", "title", "company", 'browser_mode', 'job_dir'):
                 if r.get(k):
                     j[k] = r[k]
             if r.get("plan"):
