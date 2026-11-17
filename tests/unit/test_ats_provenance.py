@@ -72,6 +72,33 @@ def test_the_payload_is_stored_with_the_score_and_surfaced_in_the_summary(store,
 
 # --- repeated observations ----------------------------------------------------------------------------------------------
 
+def test_a_real_written_report_survives_observation_and_reaches_the_writer(store, monkeypatch):
+    from jobagent.steps import ats
+    from jobagent.state import JobDescription
+    report = "Skills Gaps:\n1. Explain the existing project's measurable impact."
+    recommendation = "Describe existing project impact without inventing results."
+    monkeypatch.setitem(ats_sites.SITES, "skillsfirst", lambda *a: ats_sites.SiteScore(
+        "skillsfirst", None, True, breakdown={"feedback_only": True, "report": report}, advice=[recommendation],
+    ))
+    feedback = ats.evaluate(store, JobDescription(title="Engineer", company="Acme"), "JD", 0, ("skillsfirst",))
+    assert feedback["completed"] == ["skillsfirst"]
+    assert feedback["scores"] == {}  # written feedback never becomes a numeric score
+    assert recommendation in feedback["advice"]
+    raw = json.loads(db.connect().execute("SELECT raw FROM ats_runs").fetchone()[0])
+    assert raw["breakdown"]["report"] == report
+    assert raw["breakdown"]["observations"][0]["ok"] is True
+
+
+@pytest.mark.parametrize("report", [None, "", "   "])
+def test_an_empty_written_report_does_not_count_as_completed(store, monkeypatch, report):
+    monkeypatch.setitem(ats_sites.SITES, "skillsfirst", lambda *a: ats_sites.SiteScore(
+        "skillsfirst", None, True, breakdown={"feedback_only": True, "report": report},
+    ))
+    result, = ats_sites.score_all(store / "resume.pdf", "JD", sites=("skillsfirst",))
+    assert not result.breakdown.get("feedback_only")
+    assert result.breakdown["status"] == "incomplete"
+    assert result.breakdown["observations"][0]["ok"] is False
+
 def test_repeated_scores_are_kept_unaltered_next_to_their_average(store, monkeypatch):
     monkeypatch.setitem(ats_sites.REPEATS, "hireflow", 2)
     fake_site(monkeypatch, "hireflow", [60.0, 80.0])

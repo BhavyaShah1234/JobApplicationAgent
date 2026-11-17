@@ -587,7 +587,11 @@ def observe(name: str, pg, named, jd_text: str, title: str, company: str, finger
             r = SITES[name](pg, named, jd_text, title, company)
             payload = getattr(_payload, "last", None) or payload_record(name, jd_text, jd_text)
             results.append(r)
-            observations.append({"run": i + 1, "started_at": started, "seconds": round(time.monotonic() - t0, 1), "ok": r.score is not None,
+            complete = r.score is not None or (
+                name in FEEDBACK_ONLY_SITES and r.breakdown.get("feedback_only")
+                and isinstance(r.breakdown.get("report"), str) and bool(r.breakdown["report"].strip())
+            )
+            observations.append({"run": i + 1, "started_at": started, "seconds": round(time.monotonic() - t0, 1), "ok": bool(complete),
                                  "payload": payload, "result": copy.deepcopy(r.to_dict())})
         except Exception as e:
             status = getattr(e, "status", "error")
@@ -600,7 +604,8 @@ def observe(name: str, pg, named, jd_text: str, title: str, company: str, finger
     payload = next((o["payload"] for o in observations if o.get("payload")), None) or payload_record(name, jd_text, jd_text)
     meta = {"job_fingerprint": fingerprint, "provider_version": provider_version(name), "payload": payload,
             "observations": observations}
-    if len(scored) == need:
+    if len(scored) == need or (name in FEEDBACK_ONLY_SITES and len(results) == need
+                               and all(o["ok"] for o in observations)):
         first = results[0]
         agg = SiteScore(first.site, first.score, first.job_specific, list(first.missing), {**first.breakdown, **meta},
                         list(first.advice))
