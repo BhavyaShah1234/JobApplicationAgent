@@ -132,6 +132,9 @@ manager would. Label actual correctness problems severity=error and optional ref
 Broad or combined category headings are intentional: a term need only fit ONE named component. An AI tool belongs
 under AI & Development Tools; workflow and monitoring systems can belong under Distributed Systems. A more specific
 heading is a preference, not an error. Never demand a single canonical taxonomy. Report findings for their owning agent:
+Review CURRENT RESUME and DISPLAYED PROJECTS only; template skills and candidate repos are source context, not text
+necessarily printed on the page. Selected short project descriptions intentionally use two complete sentences;
+full descriptions use three. Do not demand expansion of a valid short variant.
 - projects: a CANDIDATE (especially one marked TEMPLATE, the candidate's own showcase) fits the posting clearly
   better than a project on the page; a description that doesn't match its repo summary; a title that is a bare repo
   slug; a description under 3 sentences;
@@ -177,7 +180,7 @@ class State(TypedDict, total=False):
     history: Annotated[list, operator.add]
 
 
-def _context(ctx: dict, f: T.Filled | None, project_state: str | None) -> str:
+def _context(ctx: dict, f: T.Filled | None, project_state: str | None, *, visible_only: bool = False) -> str:
     """What every agent sees about the current resume."""
     r = ctx["r"]
     parts = [T.facts_block(), "TEMPLATE SKILLS (the candidate's own): " +
@@ -191,9 +194,14 @@ def _context(ctx: dict, f: T.Filled | None, project_state: str | None) -> str:
             lines.append(f"role_{e.role}: {role.title} at {role.company} ({role.dates})")
             lines += [f"  {k}. {b.text}" for k, b in enumerate(e.bullets, 1)]
         parts.append("CURRENT RESUME\nSummary: " + f.summary + "\nExperience:\n" + "\n".join(lines) +
-                     "\nTechnical Skills:\n" + "\n".join(f"- {s.category}: {', '.join(s.render())}" for s in f.skills))
+                     "\nTechnical Skills:\n" + "\n".join(f"- {s.category}: {', '.join(s.render())}" for s in f.skills if s.render()))
     if project_state:
-        parts.append("PROJECTS:\n" + "\n".join(f"{i}. {p}" for i, p in enumerate(A.project_paragraphs(project_state), 1)))
+        if visible_only:
+            parts.append("DISPLAYED PROJECTS:\n" + "\n".join(
+                f"{i}. {p['title']} ({p['variant']}): {p['text']}" for i, p in
+                enumerate(_displayed_projects(json.loads(project_state)), 1)))
+        else:
+            parts.append("PROJECTS:\n" + "\n".join(f"{i}. {p}" for i, p in enumerate(A.project_paragraphs(project_state), 1)))
     if ctx.get("candidates"):
         known = set(P.known_entries(r.tex))
         parts.append("CANDIDATE REPOS (for the Projects section):\n" + "\n".join(
@@ -467,10 +475,10 @@ def check_layout(state: State) -> dict:
         state.get("skills_padding_attempted", False), invalid=bool(empty))
     tasks["skills"] += skill_tasks
     for fd in reviewed_content.get("content_findings", []):
-        if fd.agent != "skills":
-            tasks[fd.agent].append(fd.issue)
-        elif fd.severity == "suggestion":
+        if fd.severity == "suggestion":
             log(f"content review suggestion (no automatic rewrite): {fd.issue}")
+        elif fd.agent != "skills":
+            tasks[fd.agent].append(fd.issue)
     if pages == 1 and not err and not state.get("reviewed"):
         # Vision runs once per cycle; semantic findings above are bound to each
         # visible content revision, so later edits cannot bypass the review.
@@ -541,7 +549,7 @@ def content_review(ctx: dict, f: T.Filled) -> list:
            "basic": ctx["jd"].basic_qualifications, "preferred": ctx["jd"].preferred_qualifications,
            "skills": ctx["jd"].technical_skills}
     msgs = [SystemMessage(REVIEW_PROMPT),
-            HumanMessage(f"POSTING: {json.dumps(job)}\n\n" + _context(ctx, f, proj.read_text() if proj.exists() else None))]
+            HumanMessage(f"POSTING: {json.dumps(job)}\n\n" + _context(ctx, f, proj.read_text() if proj.exists() else None, visible_only=True))]
     try:
         out = llm.structured_invoke(llm.writer(4000, timeout=120, model=ctx["models"]["router"]), Review, msgs,
                                     log=ctx["log"], deadline_s=180)
@@ -552,16 +560,20 @@ def content_review(ctx: dict, f: T.Filled) -> list:
         raise
 
 
+def _displayed_projects(st: dict) -> list[dict]:
+    short = set(st.get("short", []))
+    return [{"title": e.get("title"), "stack": e.get("stack"),
+             "variant": "short, two sentences" if e.get("repo") in short and e.get("short") else "full, three sentences",
+             "text": e.get("short") if e.get("repo") in short and e.get("short") else e.get("paragraph")}
+            for e in st.get("ranked", [])[:st.get("kept", 0)]]
+
+
 def _content_hash(ctx: dict, f: T.Filled) -> str:
     """Bind a semantic review to visible content, not an earlier layout pass."""
     path = ctx["job_dir"] / "projects.json"
-    st = json.loads(path.read_text()) if path.exists() else {}
-    short = set(st.get("short", []))
-    visible = [{"title": e.get("title"), "stack": e.get("stack"),
-                "text": e.get("short") if e.get("repo") in short and e.get("short") else e.get("paragraph")}
-               for e in st.get("ranked", [])[:st.get("kept", 0)]]
+    visible = _displayed_projects(json.loads(path.read_text()) if path.exists() else {})
     value = {"summary": f.summary, "roles": [(e.role, [b.text for b in e.bullets]) for e in f.roles],
-             "skills": [(s.category, s.render()) for s in f.skills], "projects": visible}
+             "skills": [(s.category, s.render()) for s in f.skills if s.render()], "projects": visible}
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 

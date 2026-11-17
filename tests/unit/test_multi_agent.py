@@ -70,6 +70,53 @@ def test_review_requires_explicit_severity_and_never_pads_invalid_or_unreviewed_
     assert M._skill_review_tasks({"content_error": "Reviewer unavailable"}, "Optional padding", False)[0] == []
 
 
+def test_review_context_and_fingerprint_agree_on_displayed_variants(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    f = _review_fixture()
+    f.skills.append(M.T.SkillLine(category="Omitted empty category", terms=["Omitted empty category"]))
+    st = {"kept": 1, "short": ["owner/project"], "ranked": [
+        {"repo": "owner/project", "title": "Project", "stack": ["Python"],
+         "paragraph": "Hidden full variant.", "short": "Displayed first sentence. Displayed second sentence."},
+        {"repo": "owner/omitted", "title": "Omitted project", "paragraph": "Not selected."}]}
+    (tmp_path / "projects.json").write_text(json.dumps(st))
+    monkeypatch.setattr(M.T, "facts_block", lambda: "Owner facts")
+    ctx = {"r": SimpleNamespace(skills=[], roles=[]), "job_dir": tmp_path}
+    prompt = M._context(ctx, f, json.dumps(st), visible_only=True)
+    assert "Displayed second sentence." in prompt and "short, two sentences" in prompt
+    assert "Hidden full variant" not in prompt and "Omitted project" not in prompt
+    assert "Omitted empty category" not in prompt
+    fingerprint = M._content_hash(ctx, f)
+    st["ranked"][0]["paragraph"] = "Another hidden variant."
+    (tmp_path / "projects.json").write_text(json.dumps(st))
+    f.skills[-1].category = "Another omitted category"
+    f.skills[-1].terms = ["Another omitted category"]
+    assert M._content_hash(ctx, f) == fingerprint
+    st["ranked"][0]["short"] = "Changed visible text. Still two sentences."
+    (tmp_path / "projects.json").write_text(json.dumps(st))
+    assert M._content_hash(ctx, f) != fingerprint
+
+
+def test_optional_non_skill_findings_do_not_trigger_automatic_rewrites(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    f = _review_fixture()
+    ctx = {"r": SimpleNamespace(roles=[], skills=[]), "jd": None, "job_dir": tmp_path, "log": lambda _: None}
+    monkeypatch.setattr(M, "render", lambda _: (f, "tex", [], 1, ""))
+    monkeypatch.setattr(M.T, "fill_checks", lambda *a: ([], []))
+    monkeypatch.setattr(M.T, "duplicates", lambda *a: [])
+    monkeypatch.setattr(M.T, "quality", lambda *a: [])
+    monkeypatch.setattr(M, "summary_issues", lambda *a: [])
+    monkeypatch.setattr(M, "hard_issues", lambda *a: [])
+    monkeypatch.setattr(M.layout, "check", lambda _: SimpleNamespace(issues=[], short_skills=False, free_pt=0))
+    findings = [M.Finding(agent="experience", severity="suggestion", issue="Optional wording refinement"),
+                M.Finding(agent="projects", severity="error", issue="Description contradicts repository evidence")]
+    monkeypatch.setattr(M, "_reviewed_content", lambda *a: {"content_findings": findings, "semantic_hard": []})
+    result = M.check_layout({"ctx": ctx, "f": f, "reviewed": True})
+    assert result["tasks"] == {"projects": [findings[1].issue]}
+
+
 def test_known_semantic_defects_and_unreviewed_edits_never_consume_ats_scans(tmp_path, monkeypatch):
     import pytest
     f = _review_fixture();ctx = {"job_dir": tmp_path, "jd": None, "jd_text": "JD", "sites": ("hireflow",), "log": lambda _: None}
