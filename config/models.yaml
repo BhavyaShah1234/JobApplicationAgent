@@ -2,3 +2,4 @@
 # model_writer: devstral2-123b
 # llm_max_retries: 4
 # llm_timeout_s: 600
+# llm_structured_method: function_calling  # json_mode and json_schema remain available fallbacks

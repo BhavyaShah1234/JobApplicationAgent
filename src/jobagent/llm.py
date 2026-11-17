@@ -116,7 +116,7 @@ class LLMConfigError(StructuredError):
     once, with no retries and no other output method tried."""
 
 
-_METHODS = ("json_schema", "function_calling", "json_mode")
+_METHODS = ("function_calling", "json_mode", "json_schema")
 # model -> methods it ran out of tokens in (some models loop in json_schema mode until the cap): tried last from then on
 _LOOPS: dict[str, set[str]] = {}
 
@@ -250,7 +250,7 @@ class deadline:
         DEADLINE.reset(self._tok)
 
 
-def structured_invoke(model: ChatOpenAI, schema: type[BaseModel], messages: list, first: str = "json_schema",
+def structured_invoke(model: ChatOpenAI, schema: type[BaseModel], messages: list, first: str | None = None,
                       log=None, deadline_s: float | None = None) -> BaseModel:
     """Call `model` for a `schema` instance, robust to models that lack a structured-output method or answer empty.
 
@@ -267,6 +267,9 @@ def structured_invoke(model: ChatOpenAI, schema: type[BaseModel], messages: list
     from langchain_core.messages import HumanMessage
 
     s = get_settings()
+    first = first or s.llm_structured_method
+    if first not in _METHODS:
+        raise ValueError(f"Unsupported structured-output method: {first}")
     started = time.monotonic()
     own = started + (deadline_s if deadline_s is not None else s.llm_call_deadline_s)
     stop_at = min(own, DEADLINE.get() or float("inf"))

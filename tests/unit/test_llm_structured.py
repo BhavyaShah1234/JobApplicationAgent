@@ -9,8 +9,25 @@ from jobagent import llm
 
 
 @pytest.fixture(autouse=True)
-def fresh_memory():
+def fresh_memory(monkeypatch):
     llm._LOOPS.clear()  # which methods hung or looped is remembered per model name across calls
+    # Existing fallback tests intentionally exercise JSON-schema first. Production preference is tested separately.
+    monkeypatch.setattr(llm.get_settings(), "llm_structured_method", "json_schema")
+
+
+def test_function_calling_is_the_default_and_schema_is_last_fallback(monkeypatch):
+    from jobagent.config import Settings
+    assert Settings(_env_file=None).llm_structured_method == "function_calling"
+    monkeypatch.setattr(llm.get_settings(), "llm_structured_method", "function_calling")
+    model = FakeModel({"function_calling": [bad_request()], "json_mode": ['{"name":"fast"}'], "json_schema": []})
+    assert llm.structured_invoke(model, Out, [HumanMessage("x")]).name == "fast"
+    assert model.calls == ["function_calling", "json_mode"]
+
+
+def test_explicit_output_method_overrides_configured_preference(monkeypatch):
+    monkeypatch.setattr(llm.get_settings(), "llm_structured_method", "function_calling")
+    model = FakeModel({"json_schema": [Out(name="explicit")]})
+    assert llm.structured_invoke(model, Out, [HumanMessage("x")], first="json_schema").name == "explicit"
 
 
 class Out(BaseModel):

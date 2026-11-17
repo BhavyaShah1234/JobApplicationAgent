@@ -14,7 +14,7 @@ CONFIG_FILES = ("models", "forms", "ats", "browser", "queue", "learning", "loggi
 CONCERN = {                      # which file each setting belongs to
     "models": ["openai_base_url", "ollama_base_url", "model_planner", "model_vision", "model_fast", "model_embed", "model_writer",
                "fallback_planner", "fallback_vision", "fallback_fast", "fallback_embed", "llm_max_retries", "llm_timeout_s",
-               "llm_call_deadline_s", "llm_max_calls", "llm_rate_retries"],
+               "llm_call_deadline_s", "llm_max_calls", "llm_rate_retries", "llm_structured_method"],
     "forms": ["filling_strategy", "apply_max_pages"],
     "ats": ["ats_shortfall", "ats_target"],
     "browser": ["chrome_channel", "headless"],
@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     # Retry policy for Voyager (429 token budget / 503 capacity)
     llm_max_retries: int = Field(default=4, ge=0, le=20)
     llm_timeout_s: float = Field(default=600.0, gt=0)
+    # Voyager writers repeatedly stalled in JSON-schema mode during live acceptance. Prefer tool output;
+    # callers or deployments may explicitly select another supported mode without changing retry budgets.
+    llm_structured_method: Literal["function_calling", "json_schema", "json_mode"] = "function_calling"
     # F19: bounds on one `structured_invoke` (across all its methods and retries): wall-clock seconds, calls, and how many times
     # a rate limit / capacity error is waited out before the call gives up
     llm_call_deadline_s: float = Field(default=900.0, gt=0)

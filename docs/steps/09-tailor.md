@@ -87,8 +87,9 @@ flowchart TD
 Notes on the diagrams:
 
 - **The model** is `settings.model_writer` (`MODEL_WRITER`): Voyager's `devstral2-123b` since 2026-11-02, `glm-5-3`
-  before. Calls go through `llm.structured_invoke`, which falls back across json_schema, function calling and plain
-  JSON and remembers a mode a model hangs or loops in. Every prompt ends with today's date in America/Phoenix
+  before. Calls go through `llm.structured_invoke`, which prefers function calling (configurable via
+  `llm_structured_method`) and falls back across plain JSON and JSON schema within the same retry/deadline budget.
+  It remembers a mode a model hangs or loops in. Every prompt ends with today's date in America/Phoenix
   (`jobagent.clock`), so "present", "latest" and "recent" mean the same thing everywhere.
 - **A failed model call** (timeout, token limit, connection error) costs one round, not the whole job.
 - **"Squeezed"**: TeX shrinks spacing to fit a nearly full page without warning; `compile_pdf` turns that warning on
