@@ -47,6 +47,9 @@ def family(text):
       ('current_employer',r'current (?:or previous )?(?:company|employer)|who is your.*employer'),
       ('current_title',r'(?:current|previous).*job title'),
       ('languages',r'language skill|^languages$|^language$'),
+      ('education_level',r'highest.*(?:education|degree)'),
+      ('education_completion',r'level of completion|current education status'),
+      ('discipline',r'(?:please specify|what is).*degree field of study'),
       ('school',r'school|university|institute'),('degree',r'\bdegree\b'),
       ('discipline',r'discipline|field of study|\bmajor\b'),
       ('gpa',r'\bgpa\b|grade point'),
@@ -55,7 +58,7 @@ def family(text):
       ('signature_date',r'^date$|signature date|date signed|today s date'),
       ('portfolio_link',r'portfolio|(?:personal|other) website|^website$'),('email',r'\bemail\b|e mail'),('phone',r'\bphone\b|telephone|\bmobile\b'),
       ('preferred_name',r'preferred name|what.*call you|nickname'),
-      ('legal_name',r'legal name|^full name$|^name$'),
+      ('legal_name',r'legal name|^full name$|^name$|^typed signature$|^electronic signature$'),
       ('location',r'current location|where.*(?:located|based)|location city|city.*state.*resid'),
     ]
     return next((kind for kind,pat in rules if re.search(pat,q)), 'other')
@@ -72,6 +75,33 @@ class Route:
 
 def fact_family(fact):
     return family(fact.aliases[0] if fact.aliases else fact.id)
+
+
+def degree_level(value):
+    """An education level, not an assertion that two different degrees are equivalent."""
+    q=norm(value)
+    for level,pattern in [(4,r'\b(?:phd|ph d|doctorate|doctoral)\b'),
+                          (3,r'\b(?:master|masters|ms|msc|m sc)\b'),
+                          (2,r'\b(?:bachelor|bachelors|btech|b tech|bs|bsc)\b'),
+                          (1,r'\bassociate\b'),(0,r'\bhigh school\b')]:
+        if re.search(pattern,q):return level
+    return None
+
+
+def education_query_facts(field,facts,kind):
+    """Explicit global degree questions can read the named owner record outside a UI row."""
+    degrees=[x for x in facts if x.authority=='owner' and not x.record and
+             (entity_scope(x.section) or ('',))[0]=='education' and 'Degree' in x.aliases]
+    if entity_scope(field.section):degrees=[x for x in degrees if scope_allows(field,x)]
+    if kind=='education_level':return degrees
+    q=norm(field.label)
+    requested=degree_level(q)
+    if requested is None or kind not in ('degree','discipline'):return None
+    groups={x.section for x in degrees if degree_level(x.value)==requested}
+    # Degree qualifications need their own degree AND subject, not another
+    # record's field. A field-of-study question needs only that named field.
+    return [x for x in facts if x.authority=='owner' and x.section in groups and
+            (('Field of Study' in x.aliases and not x.record) if kind=='discipline' else True)]
 
 
 
@@ -132,6 +162,8 @@ def needs_entity_binding(label,section='',help_text='',kind=''):
 
 def candidates(field,facts):
     kind=family(field.label)
+    projected=education_query_facts(field,facts,kind)
+    if projected is not None:return projected
     allowed=[x for x in facts if scope_allows(field,x)]
     party=contact_party(field.label+' '+field.section+' '+field.help)
     if kind in ('email','phone','legal_name','preferred_name','current_employer','current_title','country','location','languages','residency','clearance_held','clearance_eligibility','experience_years','work_authorization','sponsorship','pronouns','gender','race','hispanic','veteran','disability'):
@@ -193,6 +225,20 @@ def route(field,facts):
 def resolve_routed(field,facts,route_info=None):
     r=route_info or route(field,facts);bank={x.id:x for x in facts};selected=[bank[i] for i in r.fact_ids]
     owner=[x for x in selected if x.authority=='owner']
+    if r.family=='education_level' and owner:
+        levels=[degree_level(x.value) for x in owner]
+        if any(level is None for level in levels):return Decision(None,reason='unknown degree level')
+        highest=max(levels);top=[x for x in owner if degree_level(x.value)==highest]
+        options=[o for o in field.options if degree_level(o)==highest]
+        if len(options)==1:
+            return Decision(options[0],'; '.join(x.source for x in top),','.join(x.id for x in top),'highest named owner degree')
+    if r.family=='education_completion' and len(owner)==1 and norm(owner[0].value) in {
+            'completed a graduate degree','completed an undergraduate degree','graduated','completed'}:
+        options=[o for o in field.options if norm(o) in {'graduated','completed'}]
+        if len(options)==1:return Decision(options[0],owner[0].source,owner[0].id,'explicit completed education status')
+    if r.family=='legal_name':
+        full=[x for x in owner if x.id.endswith('/full') and not x.record and not x.instructions]
+        if len(full)==1:return from_fact(field,full[0])
     if r.family in DECLARATIONS:
         # A current-job answer sheet takes precedence over reusable sources.
         # Equivalent duplicate facts are fine; conflicting declarations are not.

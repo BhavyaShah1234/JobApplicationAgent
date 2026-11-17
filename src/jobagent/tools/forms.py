@@ -255,7 +255,8 @@ FIELDS_JS = r"""(start) => {
     const radios = [...g.querySelectorAll('[role=radio]')].filter(e => e.tagName !== 'INPUT' && vis(e) && shown(e));
     if (!radios.length || g.querySelector('input[type=radio]') || !shown(g)) continue;
     const q = byIds(g.getAttribute('aria-labelledby'), g) || clean(g.getAttribute('aria-label')) || question(g);
-    const opts = radios.map(e => clean(e.getAttribute('aria-label') || e.innerText));
+    const opts = radios.map(e => byIds(e.getAttribute('aria-labelledby'), e) ||
+      clean(e.getAttribute('aria-label') || e.innerText));
     add(g, {kind:'radio',label:q,required:required(g,q),options:opts,
       value:opts.filter((o,k) => radios[k].getAttribute('aria-checked') === 'true').join('; ')});
     radios.forEach((e,k) => {e.setAttribute('data-jf',String(n-1));e.setAttribute('data-jf-opt',String(k));});
