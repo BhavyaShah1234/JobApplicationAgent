@@ -59,6 +59,8 @@ def register(app: typer.Typer, console) -> None:
         log(f"skills: {len(g.of_kind('role'))} role(s), {len(g.of_kind('duty'))} duty(ies), {len(g.of_kind('skill'))} skill(s); "
             f"{stats['postings']} new posting(s), {stats['skipped']} already known, {stats['failed']} failed; "
             f"{'saved as version ' + str(g.version) if changed else 'nothing changed'}")
+        if stats['category_defaults']:
+            log(f"skills: {stats['category_defaults']} unknown legacy category(ies) recorded as generic 'tool'; identities and edges preserved")
         for name in skipped:
             log(f"skills: no role fits '{name}'; left out")
         for rid in stats["roles_without_postings"]:

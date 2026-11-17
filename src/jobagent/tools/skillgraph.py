@@ -23,6 +23,7 @@ import time
 from contextlib import contextmanager
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Literal
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -169,8 +170,9 @@ class Graph:
     def add(self, kind: str, name: str, category: str = "", source: str = "") -> str:
         nid = self.node_id(kind, name)
         n = self.nodes.setdefault(nid, {"id": nid, "kind": kind, "name": name.strip(), "aliases": [], "category": "", "sources": []})
-        if category in CATEGORIES and not n["category"]:
+        if category in CATEGORIES and (not n["category"] or n.get('category_defaulted')):
             n["category"] = category
+            n.pop('category_defaulted',None)
         if source and source not in n["sources"]:
             n["sources"].append(source)
         return nid
@@ -372,7 +374,8 @@ def resolve(g: Graph, kind: str, name: str, embed, threshold: float) -> str | No
 
 class SkillOut(BaseModel):
     name: str = Field(max_length=60, description="Exactly one of the posting's technologies, spelled as the posting spells it")
-    category: str = Field(default="tool", description="language, framework, database, cloud, tool or method")
+    category: Literal['language','framework','database','cloud','tool','method'] = Field(
+        default="tool", description="language, framework, database, cloud, tool or method")
 
 
 class DutyOut(BaseModel):
@@ -533,7 +536,14 @@ def build(g: Graph, roles: list[dict], postings: list[tuple[dict, str]], *, ask=
     titles = {r["id"]: r.get("title", r["id"]) for r in roles if r.get("id")}
     for rid, title in titles.items():
         ensure_role(g, rid, title)
-    stats = {"postings": 0, "skipped": 0, "failed": 0, "roles_without_postings": []}
+    stats = {"postings": 0, "skipped": 0, "failed": 0, "roles_without_postings": [], "category_defaults": 0}
+    # Older unrestricted model output could be silently discarded by Graph.add, leaving blank categories.
+    # Preserve every identity/edge/ownership boundary; use the existing generic default when the old category is unknown.
+    for node in g.of_kind('skill'):
+        if node.get('category') not in CATEGORIES:
+            node['category']='tool'
+            node['category_defaulted']=True
+            stats['category_defaults']+=1
     for i, (jd, rid) in enumerate(postings, 1):
         try:
             log(f"skills: {i}/{len(postings)} {jd.get('company', '')} - {jd.get('title', '')} ({rid})")

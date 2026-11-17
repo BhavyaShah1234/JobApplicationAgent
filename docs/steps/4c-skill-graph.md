@@ -11,6 +11,10 @@ e.g.  ML Engineer --> model training --> PyTorch, TensorFlow, HuggingFace
 
 Two skills are neighbours when they share a duty; edge weights count the postings that support a link.
 
+Model categories must be one of `language`, `framework`, `database`, `cloud`, `tool`, or `method`. A build migrates blank
+legacy categories to the generic `tool` default and records that fallback explicitly. A later classified observation can replace
+the default. This migration preserves skill identity, ownership and edges.
+
 **Growing it.** `jobagent skills build` reads the roles file and every saved posting (`outputs/*/*/jd.json`; the role is the queue's match,
 else the first role whose title pattern fits), asks the fast model once per posting to group the posting's technologies by duty, merges
 near-identical DUTY names by embedding similarity (`skills_duty_merge`), then folds duplicate duties with one extra call. Skills are
