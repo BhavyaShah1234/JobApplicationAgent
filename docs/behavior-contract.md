@@ -15,6 +15,8 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
 
 **Always**
 - Verify every filled value by reading it back; a required field that is unanswered, unverified, or showing a control's own prompt blocks readiness.
+- Determine requiredness from the original caption bound to the control, before truncating its display text. A long
+  definition must not hide its final required marker, and another question's marker must not make a neighbour required.
 - Treat a page whose frames or regions could not be read as not ready.
 - Return a resumable `blocked_by=page_start` result when the bounded startup wait finds neither an application
   nor an opening control. Preserve the checkpoint; an empty careers shell alone never triggers challenge fallback.

@@ -156,6 +156,11 @@ FIELDS_JS = r"""(start) => {
   const star = q => /[*✱∗＊⁎]\s*$|[*✱∗＊⁎]\s|\(required\)/i.test(q||'');
   const required = (e, q) => {
     if(e.required || e.getAttribute('aria-required')==='true' || star(q))return true;
+    // question() truncates display labels. Inspect the same field's original
+    // caption so a long legal definition cannot hide its final required marker.
+    const field=e.closest('[data-automation-id^=formField-]');
+    const own=field && field.querySelector(':scope > label, :scope > legend, :scope > fieldset > legend, label');
+    if(own && (star(caption(own)) || star(getComputedStyle(own,'::after').content.replace(/["']/g,''))))return true;
     const box=e.closest('[data-field-path],[data-field-entry-id],fieldset,[class*=fieldEntry i]') || e.parentElement;
     const labels=[...(e.labels||[]),...(box ? box.querySelectorAll('legend,label') : [])];
     return labels.some(l=>{

@@ -45,6 +45,24 @@ def selected_search_picker(page, label, prefill, options, multiple=False):
       </script>'''.replace('LABEL', label).replace('OPTIONS', json.dumps(options)).replace('PREFILL', json.dumps(prefill)).replace('MULTIPLE',json.dumps(multiple)))
 
 
+@pytest.mark.parametrize('marker', ['*', 'css'])
+def test_long_question_keeps_its_own_required_marker_before_display_truncation(page, marker):
+    long_label = 'Please read this definition before answering. ' * 12 + 'Were you referred?'
+    css_class = 'required' if marker == 'css' else ''
+    marker = '' if marker == 'css' else marker
+    page.set_content(f'''<style>.required::after {{content:'*'}}</style>
+      <div data-automation-id=formField-required><fieldset><legend class="{css_class}">{long_label}{marker}</legend>
+      <div><button type=button aria-haspopup=listbox>Select One</button>
+      <input style="display:none" aria-label="internal search"></div></fieldset></div>
+      <div data-automation-id=formField-optional><fieldset><legend>Optional explanation</legend>
+      <input></fieldset></div>''')
+    fields = forms.read_page(page).fields
+    assert len(fields) == 2
+    assert len(fields[0].label) <= 300
+    assert fields[0].required
+    assert not fields[1].required
+
+
 def test_skills_are_separate_choices_and_replace_old_chips_only_once(page):
     from jobagent.filling.facts import choice
     selected_search_picker(page,'Type to Add Skills','Old skill',['Python','Go','Kubernetes'],multiple=True)
