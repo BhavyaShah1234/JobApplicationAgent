@@ -1480,6 +1480,10 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             option.first.click(timeout=8000)
         finally:
             page.wait_for_timeout(1200 if loc.get_attribute('data-uxi-widget-type')=='selectinput' else 50)
+        # Some portals commit validation on blur, after rendering the chosen
+        # text. Readback must still require their invalid state to clear.
+        if loc.count()==1:
+            loc.blur(timeout=1200)
         # Carvana's GPA multi-select keeps its options open after selection and
         # intercepts the next field. Close its own trigger, without clicking elsewhere.
         if (loc.get_attribute("id") or "").endswith("_multiselect") and shadow_locator(frame, '[role="option"]:visible').count():

@@ -25,7 +25,10 @@ READ = r'''(e,kind)=>{
  const clean=t=>(t||'').replace(/\s+/g,' ').trim();
  const root=e.getRootNode(),tag=e.getAttribute('data-jf');
  const members=[...root.querySelectorAll('[data-jf]')].filter(x=>x.getAttribute('data-jf')===tag&&x.hasAttribute('data-jf-opt'));
- const label=x=>clean(x.labels?.[0]?.innerText||x.closest('label')?.innerText||x.value);
+ const byIds=(x,attr)=>clean((x.getAttribute(attr)||'').split(/\s+/)
+  .map(id=>x.getRootNode().getElementById(id)?.innerText||'').join(' '));
+ const label=x=>byIds(x,'aria-labelledby')||clean(x.getAttribute('aria-label')||
+  x.labels?.[0]?.innerText||x.closest('label')?.innerText||x.value||x.innerText);
  let value=e.isContentEditable?clean(e.innerText):(e.value||'');
  if(kind==='select')value=[...e.selectedOptions].map(x=>clean(x.text)).join('; ');
  if(kind==='checkbox')value=e.checked||e.getAttribute('aria-checked')==='true'?'checked':'';

@@ -475,7 +475,7 @@ class PlannedFiller:
                             if actual is None and f.kind!='file':
                                 after=live.capture();actual=next((x for x in after.fields if key(x)==key(f)),None)
                             for pause in (100,200,400):
-                                if actual is None or forms.same_value(chosen,actual.value,f.kind,f.label,f.multiple):break
+                                if actual is None or (not actual.invalid and forms.same_value(chosen,actual.value,f.kind,f.label,f.multiple)):break
                                 page.wait_for_timeout(pause);actual=live.refresh(f)
                             valid=actual is not None and forms.same_value(chosen,actual.value,f.kind,f.label,f.multiple)
                             if actual:valid=valid and not actual.invalid
