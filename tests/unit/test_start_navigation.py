@@ -336,3 +336,54 @@ def test_signed_in_successfactors_masthead_picker_does_not_block_portalcareer_na
 def test_candidate_language_question_remains_a_field_and_final_apply_stays_protected():
     state, view = start('<form onsubmit="window.sent=true;return false"><label>Language<select><option>English</option></select></label><button>Apply</button></form>')
     assert not state['sent'] and len(view.fields) == 1 and view.fields[0].label.startswith('Language')
+
+
+WD_LISTING = 'https://example.wd1.myworkdayjobs.com/Careers/job/Remote/Engineer_R123'
+WD_HTML = ('<h2 data-automation-id="jobPostingHeader">Engineer</h2>'
+           '<div data-automation-id="jobPostingDescription">Job description</div>'
+           '<a data-automation-id="adventureButton" href="'+WD_LISTING+'/apply" '
+           'onclick="event.preventDefault(); '+OPEN_ON_CLICK+'">Apply</a>')
+
+
+def test_workday_listing_runs_the_native_chooser_instead_of_loading_an_empty_parent_route():
+    # Loading /apply has no form: only the real click handler opens this SPA chooser.
+    state, view = start(WD_HTML, url=WD_LISTING, routes={WD_LISTING+'/apply': '<h1>Careers</h1>'})
+    assert state['opened'] and not state['sent'] and len(view.fields) == 3
+    assert WD_LISTING+'/apply' not in state['requests']
+
+
+@pytest.mark.parametrize('change', ['other_host', 'wrong_component', 'cross_origin', 'other_job', 'review', 'native_form'])
+def test_workday_native_entry_exception_does_not_apply_to_arbitrary_links_or_forms(change):
+    url = WD_LISTING;html = WD_HTML
+    if change == 'other_host':
+        html=html.replace('example.wd1.myworkdayjobs.com','jobs.example.test');url=url.replace('example.wd1.myworkdayjobs.com','jobs.example.test')
+    elif change == 'wrong_component':html=html.replace('adventureButton','finalApply')
+    elif change == 'cross_origin':html=html.replace('href="'+WD_LISTING,'href="https://other.wd1.myworkdayjobs.com/Careers/job/Remote/Engineer_R123')
+    elif change == 'other_job':html=html.replace('href="'+WD_LISTING,'href="'+WD_LISTING.replace('R123','R999'))
+    elif change == 'review':
+        html=html.replace(WD_LISTING,WD_LISTING+'/apply/review');url+='/apply/review'
+    elif change == 'native_form':html='<form>'+html+'</form>'
+    with sync_playwright() as pw:
+        b=pw.chromium.launch(channel='chrome',headless=True);page=b.new_page()
+        page.route('**/*',lambda r:r.fulfill(status=200,content_type='text/html',body=html));page.goto(url)
+        view=forms.read_page(page);link=page.get_by_role('link',name='Apply',exact=True)
+        assert not forms._workday_listing_entry(view,link)
+        assert not page.evaluate('!!window.opened')
+        b.close()
+
+
+def test_workday_native_entry_is_forbidden_when_candidate_fields_are_present():
+    state,view=start(WD_HTML+'<input placeholder="Candidate email" type=email>',url=WD_LISTING,
+                     routes={WD_LISTING+'/apply':FORM3})
+    assert not state['opened'] and not state['sent']
+    assert WD_LISTING+'/apply' in state['requests']
+
+
+def test_a_detached_iframe_is_not_reused_for_startup_buttons():
+    with sync_playwright() as pw:
+        b=pw.chromium.launch(channel='chrome',headless=True);page=b.new_page()
+        page.set_content('<h1>Careers</h1><iframe srcdoc="<button>Apply</button>"></iframe>')
+        page.frame_locator('iframe').get_by_role('button',name='Apply').wait_for()
+        view=forms.read_page(page);page.locator('iframe').evaluate('(e)=>e.remove()')
+        assert forms.click_open_application(page,view,re.compile('^Apply$')) is None
+        b.close()

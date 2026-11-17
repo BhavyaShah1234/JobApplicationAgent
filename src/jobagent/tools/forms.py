@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from playwright.sync_api import Frame, Page
+from playwright.sync_api import Frame, Page, Error as PlaywrightError
 from rapidfuzz import fuzz, process
 from jobagent.tools.shadow import locator as shadow_locator, field_element
 
@@ -1679,14 +1679,22 @@ def _visible_buttons(view: PageView, text: str):
     accessible name doesn't: "Apply")."""
     name = re.compile(rf"^\s*{re.escape(text)}\s*$", re.I)
     for frame in view.frames.values():
-        btn = frame.get_by_role("button", name=name)
-        if not btn.count():
-            btn = frame.get_by_role("link", name=name)
-        if not btn.count() and getattr(frame.page.context, 'jobagent_shadow_selectors', False):
-            btn = shadow_locator(frame, 'button, [role=button], a, [role=link]').filter(has_text=name)
-        btn = btn.filter(visible=True)
-        if btn.count():
-            yield btn.first
+        try:
+            if getattr(frame, 'is_detached', lambda: False)():
+                continue
+            btn = frame.get_by_role("button", name=name)
+            if not btn.count():
+                btn = frame.get_by_role("link", name=name)
+            if not btn.count() and getattr(frame.page.context, 'jobagent_shadow_selectors', False):
+                btn = shadow_locator(frame, 'button, [role=button], a, [role=link]').filter(has_text=name)
+            btn = btn.filter(visible=True)
+            if btn.count():
+                yield btn.first
+        except PlaywrightError:
+            if not getattr(frame, 'is_detached', lambda: False)():
+                raise
+            # Navigation can remove an iframe after the snapshot. The next
+            # startup iteration reads the new document; never use its old UI.
 
 
 def _press(page: Page, btn) -> None:
@@ -1763,11 +1771,35 @@ def _successfactors_listing_entry(page: Page, view: PageView, button, expected_u
     }""", expected_url))
 
 
+def _workday_listing_entry(view: PageView, button) -> bool:
+    """The published Workday Apply link opens a client-side chooser.
+
+    Loading its parent /apply address skips that chooser and can leave an empty
+    router outlet. Only the observed listing component on a complete, fieldless
+    Workday job page may run this event; ordinary links still load by address.
+    """
+    if view.fields or not view.coverage.complete:
+        return False
+    return bool(button.evaluate(r"""e => {
+      const here = new URL(location.href), to = new URL(e.href || location.href);
+      if (window !== window.top || !here.hostname.endsWith('.myworkdayjobs.com') ||
+          e.tagName !== 'A' || e.getAttribute('data-automation-id') !== 'adventureButton' ||
+          e.form || e.closest('form') || !here.pathname.includes('/job/') ||
+          /\/apply(?:\/|$)/.test(here.pathname) || to.origin !== here.origin ||
+          to.pathname !== here.pathname.replace(/\/$/, '') + '/apply' || to.search || to.hash) return false;
+      const header = document.querySelector('[data-automation-id="jobPostingHeader"]');
+      const description = document.querySelector('[data-automation-id="jobPostingDescription"]');
+      return !!header?.textContent.trim() && !!description?.textContent.trim() &&
+        header.getBoundingClientRect().width > 0;
+    }"""))
+
+
 def click_open_application(page: Page, view: PageView, pattern: re.Pattern, *, expected_url: str | None = None) -> str | None:
     """Startup: open the application (Apply, Apply Manually, Continue application). Navigation only, and only what can be
     established as navigation:
     - a control that belongs to a form with fields to fill is that form's own control: never acted on here;
-    - a real link to another page is followed by loading its address (no click handler runs);
+    - a real link to another page is followed by loading its address (no click handler runs), except the recognised
+      fieldless Workday listing component that opens the client-side application chooser;
     - any other control is clicked only while the page has no application fields at all (nothing for it to send);
       with fields on the page it is left to the planner, the filler and the reviewed submission path (step 13)."""
     from jobagent.tools import challenge
@@ -1785,6 +1817,9 @@ def click_open_application(page: Page, view: PageView, pattern: re.Pattern, *, e
             if info["sends"]:
                 continue
             if info["href"]:
+                if _workday_listing_entry(view, btn):
+                    _press(page, btn)
+                    return text
                 try:
                     page.goto(info["href"], wait_until="domcontentloaded")
                 except Exception:
