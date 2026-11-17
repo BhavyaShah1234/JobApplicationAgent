@@ -283,7 +283,7 @@ def compile_facts(data, raw_jd, reference_date=''):
                 row_section=f'{group} {i}' if group else ''
                 aliases={'school':['School','University','Institute'], 'degree':['Degree'], 'field':['Field of Study','Major'],
                          'from':['From Date','Start Date'], 'start':['From Date','Start Date'],
-                         'end':['End Date'], 'to':['End Date'], 'company':['Company Name','Employer'], 'title':['Job Title'],
+                         'end':['End Date'], 'to':['End Date'], 'company':['Company','Company Name','Employer','Employer Name'], 'title':['Job Title'],
                          'current':['Current','Currently work here','I currently work here','Current position'],
                          'description':['Description','Responsibilities','Role Description'], 'gpa':['GPA','Grade Point Average'],
                          'city':['City'], 'state':['State','Province'], 'country':['Country']}
