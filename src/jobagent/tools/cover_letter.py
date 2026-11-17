@@ -64,6 +64,8 @@ The letter must match the resume exactly in substance:
   RESUME. Reuse its numbers unchanged and never add new ones; you may rephrase. Write employer, project, degree
   and tool names exactly as the resume does, never abbreviated (no "TGen" for "Translational Genomics Research
   Institute").
+- Never claim credentials missing from the resume, including generic closing phrases such as "my certifications".
+  A certification mentioned in the posting or company profile is not the candidate's credential.
 - Facts about the company come only from the COMPANY PROFILE (cite them in `evidence`).
 - Structure, 3-4 paragraphs, 280-380 words in total, first person:
   1. The role (posting's title) and why this company: one specific fact from the company profile tied to what
@@ -98,6 +100,12 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
     known_numbers = set(re.findall(r"\d+(?:\.\d+)?", sources))
     issues = []
     for k, p in enumerate(letter.paragraphs, 1):
+        if not re.search(r"(?i)\b(?:certifications?|certificates?|certified)\b", resume) and re.search(
+                r"(?i)\bmy\s+(?:(?:background|skills|qualifications|experience|knowledge|expertise|education|training)"
+                r"\s*(?:,\s*(?:and\s+)?|and\s+|&\s+))*certifications?\b|"
+                r"\bI\s+(?:(?:also|currently)\s+)?(?:hold|have|earned|obtained|possess|maintain)\s+"
+                r"[^.!?;\n]{0,80}\bcertificat(?:ion|e)s?\b|\bI\s+am\s+(?:[\w-]+\s+){0,5}certified\b", p.text):
+            issues.append(f"paragraph {k}: a candidate certification is claimed but no certification appears in the resume")
         for n in re.findall(r"\d+(?:\.\d+)?", p.text):
             if n not in known_numbers:
                 issues.append(f"paragraph {k}: the number {n!r} is not in the resume, posting or company profile")

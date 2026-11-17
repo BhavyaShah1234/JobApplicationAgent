@@ -117,6 +117,29 @@ def test_optional_non_skill_findings_do_not_trigger_automatic_rewrites(tmp_path,
     assert result["tasks"] == {"projects": [findings[1].issue]}
 
 
+def test_project_source_mismatch_blocks_and_each_edit_keeps_its_own_repository_context(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    f = _review_fixture()
+    st = {"kept": 2, "short": [], "ranked": [
+        {"repo": "owner/sandbox", "title": "Sandbox", "paragraph": "Provides report archetypes.", "stack": ["Python"]},
+        {"repo": "owner/reports", "title": "Reports", "paragraph": "Provides report archetypes.", "stack": ["Python"]}]}
+    (tmp_path / "projects.json").write_text(json.dumps(st))
+    ctx = {"r": SimpleNamespace(skills=[], roles=[]), "job_dir": tmp_path,
+           "cards": {"owner/sandbox": {"summary": "Isolated code execution in containers."},
+                     "owner/reports": {"summary": "Report generation using archetypes."}}}
+    monkeypatch.setattr(M.T, "facts_block", lambda: "Owner facts")
+    prompt = M._context(ctx, f, json.dumps(st))
+    assert 'repo=owner/sandbox; title=Sandbox' in prompt
+    assert 'SOURCE FOR THIS REPO ONLY: Isolated code execution in containers.' in prompt
+    assert 'SOURCE FOR THIS REPO ONLY: Report generation using archetypes.' in prompt
+    monkeypatch.setattr(M, 'content_review', lambda *a: [M.Finding(agent='projects', severity='error',
+        issue='Sandbox paragraph borrowed the report project features')])
+    review = M._reviewed_content(ctx, f, {})
+    assert review['semantic_hard'] == ['projects: Sandbox paragraph borrowed the report project features']
+
+
 def test_known_semantic_defects_and_unreviewed_edits_never_consume_ats_scans(tmp_path, monkeypatch):
     import pytest
     f = _review_fixture();ctx = {"job_dir": tmp_path, "jd": None, "jd_text": "JD", "sites": ("hireflow",), "log": lambda _: None}

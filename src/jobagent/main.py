@@ -467,7 +467,7 @@ def tailor_cmd(
         rj, how = wf.run("resume", lambda: M.run_job(d, company, {k: model for k in M.DEFAULT_MODELS}, sites, log=log),
                          inputs={"jd": jd_sha, "jd_text": txt_sha, "template": template_sha, "profile": profile_sha, "model": model,
                                  "sites": list(sites), "skills": _skill_inputs(d, s), "document_provenance": 1,
-                                 "project_content_validation": 1, "versioned_content_review": 2},
+                                 "project_content_validation": 1, "versioned_content_review": 3},
                          outputs=["resume.pdf", "resume.tex", "filled.json"], force=force, log=log,
                          check=lambda r: None if r.get("produced") else (r.get("failure") or "no valid resume was produced"))
         log(f"resume ({how}): average {rj['average']} {rj['scores']}, {rj['pages']} page(s), hard issues {rj['hard_issues']}")
@@ -476,7 +476,8 @@ def tailor_cmd(
                 and rj["template_sha256"] == documents.template_fingerprint()):
             # Do not spend another model call when the source changed during generation.
             cl, how = wf.run("cover_letter", lambda: cover_letter(d, company, log=log),
-                             inputs={"resume_tex": W.sha_file(d / "resume.tex"), "profile": profile_sha, "model": model},
+                             inputs={"resume_tex": W.sha_file(d / "resume.tex"), "profile": profile_sha, "model": model,
+                                     "candidate_credentials": 1},
                              outputs=["cover_letter.pdf", "cover_letter.tex"], force=force, log=log)
             log(f"cover letter ({how}): {cl['words']} words, {len(cl['issues'])} issue(s)")
         res = documents.assess(d, resume=rj, letter=cl, ats={"average": rj["average"], "complete": rj["average_complete"],

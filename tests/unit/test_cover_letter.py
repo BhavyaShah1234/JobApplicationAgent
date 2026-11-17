@@ -52,6 +52,25 @@ def test_consistency_flags_new_numbers_and_tools():
     assert any("'70'" in i for i in issues) and any("Snowflake" in i for i in issues)
 
 
+@pytest.mark.parametrize('claim', [
+    'I look forward to discussing how my background, skills, and certifications align with this role.',
+    'I hold a professional certification.',
+    'I am professionally certified.',
+])
+def test_job_or_company_certifications_do_not_authorize_candidate_credentials(claim):
+    issues = CL.consistency(letter('Introduction.', 'Experience.', claim), CL.resume_text(RESUME),
+                            JD.model_copy(update={'preferred_qualifications': ['Professional certification preferred']}),
+                            'The company values certifications.')
+    assert any('candidate certification' in issue for issue in issues)
+
+
+def test_credential_guard_preserves_supported_credentials_and_company_facts():
+    assert not CL.consistency(letter('Introduction.', 'Experience.', 'My certification is relevant.'),
+                              'Professional certification.', JD, '')
+    assert not CL.consistency(letter('Introduction.', 'Experience.', 'The company values certifications.'),
+                              CL.resume_text(RESUME), JD, 'The company values certifications.')
+
+
 def test_render_fills_every_slot_and_skips_url_ids():
     template = "<<RECIPIENT>>|Re: <<SUBJECT>>|<<SALUTATION>>|<<BODY>>|<<CLOSING>>,"
     out = CL.render(template, letter("A & B 10%.", "Two.", "Three."), JD)

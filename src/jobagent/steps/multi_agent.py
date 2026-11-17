@@ -126,6 +126,8 @@ Each paragraph: exactly 3 COMPLETE sentences, aiming for 330-370 characters (har
 the system built (stack named), the wow factor (a result or scale). Finish the final sentence; never cut a sentence
 to reach the character limit. The title is a real project name, never the bare repo slug. Use the posting's keywords the TASKS
 ask for. No dashes as punctuation; "by N%". Never invent degrees, employers or dates.""".replace("{PMIN}", str(T.PARAGRAPH_MIN)).replace("{PMAX}", str(T.PARAGRAPH_MAX))
+PROJECTS_EDIT_PROMPT += "\nEach indexed project's repo identity and its OWN source card bind its description. Never borrow " \
+    "features, interfaces, supported counts or results from another project, even when editing several at once."
 
 REVIEW_PROMPT = """You are the VALIDATOR of a resume team. Check the CURRENT RESUME for this posting the way a hiring
 manager would. Label actual correctness problems severity=error and optional refinements severity=suggestion.
@@ -135,9 +137,10 @@ heading is a preference, not an error. Never demand a single canonical taxonomy.
 Review CURRENT RESUME and DISPLAYED PROJECTS only; template skills and candidate repos are source context, not text
 necessarily printed on the page. Selected short project descriptions intentionally use two complete sentences;
 full descriptions use three. Do not demand expansion of a valid short variant.
-- projects: a CANDIDATE (especially one marked TEMPLATE, the candidate's own showcase) fits the posting clearly
-  better than a project on the page; a description that doesn't match its repo summary; a title that is a bare repo
-  slug; a description under 3 sentences;
+- projects: a description that contradicts its OWN repository source is an error. A preferred alternative project,
+  more posting-specific wording, or a preferred descriptive title is a suggestion. Do not confuse one repo's features
+  with another's. Estimated impact metrics allowed by the candidate's claims policy are not contradictions;
+  unsupported product features or feature counts are different. Sentence-ending and bare-slug checks also run in code;
 - experience: bullets that don't fit their employer, repeat each other, or miss the posting's main duties;
 - skills: tools placed under a category that does not describe them (for example ML frameworks under Frontend or
   deployment platforms under Databases); an empty category; soft skills listed. Report only these correctness problems, never
@@ -196,12 +199,21 @@ def _context(ctx: dict, f: T.Filled | None, project_state: str | None, *, visibl
         parts.append("CURRENT RESUME\nSummary: " + f.summary + "\nExperience:\n" + "\n".join(lines) +
                      "\nTechnical Skills:\n" + "\n".join(f"- {s.category}: {', '.join(s.render())}" for s in f.skills if s.render()))
     if project_state:
+        st = json.loads(project_state)
+        cards = dict(ctx.get('cards') or {})
+        cards.update({c['full_name'].casefold(): c for _, c in ctx.get('candidates', [])})
+        sources = {e.get('repo', '').casefold(): cards.get(e.get('repo', '').casefold(), {}).get('summary', '')[:1400]
+                   for e in st.get('ranked', [])[:st.get('kept', 0)]}
         if visible_only:
             parts.append("DISPLAYED PROJECTS:\n" + "\n".join(
-                f"{i}. {p['title']} ({p['variant']}): {p['text']}" for i, p in
-                enumerate(_displayed_projects(json.loads(project_state)), 1)))
+                f"{i}. repo={p['repo']}; title={p['title']}; stack={p['stack']} ({p['variant']}): {p['text']}\n"
+                f"SOURCE FOR THIS REPO ONLY: {sources.get((p['repo'] or '').casefold(), '') or 'Not available'}"
+                for i, p in enumerate(_displayed_projects(st), 1)))
         else:
-            parts.append("PROJECTS:\n" + "\n".join(f"{i}. {p}" for i, p in enumerate(A.project_paragraphs(project_state), 1)))
+            parts.append("PROJECTS:\n" + "\n".join(
+                f"{i}. repo={e.get('repo')}; title={e.get('title')}; full={e.get('paragraph')}; short={e.get('short')}\n"
+                f"SOURCE FOR THIS REPO ONLY: {sources.get(e.get('repo', '').casefold(), '') or 'Not available'}"
+                for i, e in enumerate(st.get('ranked', [])[:st.get('kept', 0)], 1)))
     if ctx.get("candidates"):
         known = set(P.known_entries(r.tex))
         parts.append("CANDIDATE REPOS (for the Projects section):\n" + "\n".join(
@@ -562,7 +574,7 @@ def content_review(ctx: dict, f: T.Filled) -> list:
 
 def _displayed_projects(st: dict) -> list[dict]:
     short = set(st.get("short", []))
-    return [{"title": e.get("title"), "stack": e.get("stack"),
+    return [{"repo": e.get("repo"), "title": e.get("title"), "stack": e.get("stack"),
              "variant": "short, two sentences" if e.get("repo") in short and e.get("short") else "full, three sentences",
              "text": e.get("short") if e.get("repo") in short and e.get("short") else e.get("paragraph")}
             for e in st.get("ranked", [])[:st.get("kept", 0)]]
@@ -586,7 +598,7 @@ def _reviewed_content(ctx: dict, f: T.Filled, state: dict) -> dict:
             findings, error = content_review(ctx, f), ""
         except Exception as exc:
             findings, error = [], f"skills content review unavailable ({type(exc).__name__})"
-    hard = [f"skills: {fd.issue}" for fd in findings if fd.agent == "skills" and fd.severity == "error"]
+    hard = [f"{fd.agent}: {fd.issue}" for fd in findings if fd.agent in {"skills", "projects"} and fd.severity == "error"]
     if error:
         hard.append(error)
     return {"content_hash": fingerprint, "content_findings": findings, "content_error": error, "semantic_hard": hard}
