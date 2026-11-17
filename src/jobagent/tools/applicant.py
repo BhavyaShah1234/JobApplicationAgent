@@ -44,12 +44,15 @@ def eligibility_facts(data: dict | None = None) -> dict:
         return True if s in ("yes", "y", "true") else False if s in ("no", "n", "false") else None
 
     facts = {"us_citizen": None, "permanent_resident": False, "authorized": None, "needs_sponsorship": None, "clearance": None,
-             "citizenship": ""}
+             "citizenship": "", "visa_status": "", "needs_immigration_support": None}
     for _, e in entries(data):
         q = (e.get("question") or "").lower()
         a = e.get("answer")
         if "authorized to work" in q and facts["authorized"] is None:
             facts["authorized"] = yes_no(a)
+        elif ("immigration support" in q or "immigration-related support" in q or "immigration related support" in q) and \
+                re.search(r'\byou\b.{0,60}\b(?:need|require)\b|^\s*(?:need|require)\b',q):
+            facts["needs_immigration_support"] = yes_no(a)
         elif "sponsorship" in q and "require" in q:
             v = yes_no(a)
             if v is not None:
@@ -60,6 +63,7 @@ def eligibility_facts(data: dict | None = None) -> dict:
         elif "citizenship" in q or "visa status" in q:
             if isinstance(a, dict):
                 cit, visa = str(a.get("citizenship") or "").strip(), str(a.get("visa_status") or "").lower()
+                facts["visa_status"] = visa
                 if cit:
                     facts["citizenship"] = cit
                     facts["us_citizen"] = None if cit.lower() in UNKNOWN_CITIZENSHIP else cit.lower() in ("us", "u.s.", "usa", "u.s.a.", "united states", "united states of america",

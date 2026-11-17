@@ -1743,6 +1743,12 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
     result["flags"] = [e for e in record if e["flag"] or e["error"] or not e.get("verified")]
     # reaching the review screen is not being ready to send: required fields, uploads and page errors decide that
     blockers = blockers_of(record) + coverage_blockers(result["pages"])
+    from jobagent.tools import eligibility
+    eligibility_verdict=eligibility.assess_job(job_dir)
+    eligibility_blockers=eligibility.review_blockers(job_dir,eligibility_verdict)
+    result['eligibility']={'level':eligibility_verdict.level,'reasons':eligibility_verdict.reasons,
+                           'override_applied':eligibility_verdict.level!='ok' and not eligibility_blockers}
+    blockers += eligibility_blockers
     result["extraction_complete"] = all(p.get("extraction", {}).get("complete", True) for p in result["pages"])
     if result["state"] == "blocked":
         blockers.insert(0, result.get("reason", "the run is blocked"))
@@ -1763,6 +1769,12 @@ def report(result: dict, jd: dict) -> str:
              f"- URL: {result['url']}", f"- State: **{result['state']}** (never submitted)"]
     if result["state"] == "blocked":
         lines.append(f"- **Blocked** ({result.get('blocked_by', '')}): {result.get('reason', '')}")
+    eligibility_info=result.get('eligibility') or {}
+    if eligibility_info.get('level','ok')!='ok':
+        lines += ['', '## Eligibility', '',
+                  f"- Result: **{eligibility_info['level']}**" +
+                  (' (explicit override for this posting)' if eligibility_info.get('override_applied') else '')]
+        lines += [f"- {x['requirement']}: {x['why']} — {x['quote']}" for x in eligibility_info.get('reasons',[])]
     lines.append("- Ready to submit: **yes**" if result.get("ready_to_submit") else "- Ready to submit: **NOT ready**")
     lines += [f"  - {b}" for b in result.get("blockers", [])]
     others = ", ".join(f"{n} {k}" for k, n in result.get("outcomes", {}).items() if k != "verified")

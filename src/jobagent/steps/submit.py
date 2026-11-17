@@ -288,6 +288,9 @@ def live_blockers(page: Page, view: forms.PageView, records: list[dict] = (), jo
     out += [f"{f.label[:60]}: required and empty" for f in view.fields if f.required and not f.value and f.kind != "file"]
     known = [p.name for p in (job_dir.glob("*.pdf") if job_dir and job_dir.exists() else [])]
     out += forms.upload_blockers(page, view, list(records), known)
+    if job_dir is not None:
+        from jobagent.tools import eligibility
+        out += eligibility.review_blockers(job_dir)
     return out + [f"the page shows an error: {e[:80]}" for e in view.errors[:3]]
 
 

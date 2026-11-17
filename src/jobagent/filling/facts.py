@@ -9,6 +9,13 @@ def norm(s):
     return re.sub(r'[^a-z0-9]+', ' ', str(s).lower()).strip()
 
 
+def expanded_immigration_support(text):
+    q=norm(text)
+    return bool(re.search(r'\bsponsor\w*\b|\bimmigration (?:related )?support\b',q) and
+        (re.search(r'(?<!not )\b(?:include|includes|count|counts)\b.{0,180}\b(?:opt|cpt)\b',q) or
+         re.search(r'\b(?:opt|cpt)\b.{0,50}(?<!not )\bcounts?\b',q)))
+
+
 @dataclass
 class Fact:
     id: str
@@ -220,10 +227,20 @@ def from_fact(f, fact):
 
 
 def resolve(f, facts):
+    label=re.sub(r'(?i)\((?:optional|if applicable)\)', '', f.label).strip()
+    suffix=' '.join(f.options)
+    if suffix and label.endswith(suffix):label=label[:-len(suffix)].strip()
+    matches = [x for x in facts if not x.record and norm(label) in map(norm, x.aliases)
+               and scope_allows(f,x)]
+    sheets=[x for x in matches if x.id.startswith('application.answer.')]
+    explicit_human=[x for x in matches if x.source=='human']
+    expanded=expanded_immigration_support(f.label)
+    if expanded and not any(x.authority=='owner' for x in matches):
+        return Decision(None,reason='explicit owner evidence missing')
     # A combined sponsorship question is an OR, not a synonym of the current-
     # sponsorship question. A negative answer requires both timeframes to be No.
     q=norm(f.label)
-    if 'sponsor' in q and 'now' in q and 'future' in q and 'or' in q.split() and not re.search(r'\bnot\b|\bwithout\b',q):
+    if not (expanded or sheets or explicit_human) and 'sponsor' in q and 'now' in q and 'future' in q and 'or' in q.split() and not re.search(r'\bnot\b|\bwithout\b',q):
         timed={'now':[],'future':[]}
         for fact in facts:
             name=norm(fact.aliases[0]) if fact.aliases else ''
@@ -236,12 +253,6 @@ def resolve(f, facts):
             value='Yes' if any(norm(x.value) in ('yes','true') for x in bound) else 'No'
             return Decision(choice(f,[value]),'; '.join(x.source for x in bound),','.join(x.id for x in bound),'current OR future sponsorship')
         return Decision(None,reason='missing sponsorship timeframe evidence')
-    label=re.sub(r'(?i)\((?:optional|if applicable)\)', '', f.label).strip()
-    suffix=' '.join(f.options)
-    if suffix and label.endswith(suffix):label=label[:-len(suffix)].strip()
-    matches = [x for x in facts if not x.record and norm(label) in map(norm, x.aliases)
-               and scope_allows(f,x)]
-    sheets=[x for x in matches if x.id.startswith('application.answer.')]
     if sheets:matches=sheets
     human=[x for x in matches if x.source=='human']
     if len(human)==1:matches=human

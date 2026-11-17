@@ -8,6 +8,9 @@ candidate may override it for one posting (`--ignore-eligibility`), and the queu
 """
 
 import re
+import hashlib
+import json
+from pathlib import Path
 from dataclasses import dataclass, field
 
 # (requirement, pattern). Each pattern is matched against sentences of the posting; the matching sentence is quoted back.
@@ -26,6 +29,10 @@ NO_SPONSORSHIP = re.compile(
     r"(?i)\b(unable|not\s+able|cannot|can'?t|will\s+not|won'?t|does\s+not|do\s+not|not\s+in\s+a\s+position)\s+(to\s+)?sponsor\b|(will\s+not|won'?t|unable\s+to|cannot|can'?t|does\s+not|do\s+not|not\s+able\s+to|not\s+offer|no)\s+(provide\s+|offer\s+)?"
     r"(visa\s+|immigration\s+|employment\s+)?sponsorship|without\s+(the\s+need\s+for\s+)?(visa\s+|immigration\s+)?sponsorship|"
     r"not\s+(currently\s+)?(sponsoring|eligible\s+for\s+sponsorship)|sponsorship\s+is\s+not\s+(available|offered|provided)")
+NO_IMMIGRATION_SUPPORT = re.compile(
+    r"(?i)\b(?:will\s+not|cannot|can't|won't|does\s+not|do\s+not|unable\s+to)\s+"
+    r"(?:(?:offer|provide)\s+(?:any\s+)?immigration(?:[-\s]+related)?\s+support|"
+    r"sponsor\b[^.;\n]{0,120}\b(?:or|nor)\s+(?:offer|provide)\s+(?:any\s+)?immigration(?:[-\s]+related)?\s+support)")
 US_PERSON = re.compile(r"(?i)(\bITAR\b|export[- ]controlled|export\s+control\s+(laws|regulations)|\bU\.?S\.?\s+persons?\b)")
 # An either/or is only an alternative when "or" joins the two ("citizen or permanent resident"); "and" makes it a second requirement.
 ALTERNATIVE = re.compile(r"(?i)(citizens?(hip)?|national)\b(?:(?!\band\b)[^.;]){0,40}\bor\b[^.;]{0,40}(?P<alt>permanent\s+resident|green\s*card|lawful\s+permanent|"
@@ -60,6 +67,37 @@ class Verdict:
 
     def text(self) -> str:
         return "; ".join(f"{r['requirement']}: {r['why']} (\"{r['quote'][:140]}\")" for r in self.reasons)
+
+
+def assess_job(job_dir: Path) -> Verdict:
+    """Current profile plus explicit answers owned by this posting, never generated resume claims."""
+    from jobagent.tools import applicant
+    from jobagent.filling.routing import answer_sheet_facts
+    from jobagent.filling.facts import expanded_immigration_support, norm
+    job_dir=Path(job_dir);facts=applicant.eligibility_facts()
+    sheet=job_dir/'application'/'answers.md'
+    if sheet.exists():
+        declarations=[x.value for x in answer_sheet_facts(sheet.read_text()) if not x.record and
+                      any(expanded_immigration_support(a) for a in x.aliases)]
+        values={norm(x) for x in declarations}
+        if values:
+            facts['needs_immigration_support']=True if values<={'yes','true'} else False if values<={'no','false'} else None
+    text=job_dir/'jd.txt'
+    return screen(text.read_text() if text.exists() else '',facts)
+
+
+def review_blockers(job_dir: Path, verdict: Verdict | None = None) -> list[str]:
+    """Recheck at review/approval; an explicit override belongs to this exact posting text."""
+    job_dir=Path(job_dir);text=job_dir/'jd.txt'
+    if not text.exists():return []
+    verdict=verdict or assess_job(job_dir)
+    if verdict.level=='ok':return []
+    saved=job_dir/'eligibility.json'
+    try:override=json.loads(saved.read_text())
+    except (OSError,ValueError):override={}
+    if isinstance(override,dict) and override.get('ignored') is True and override.get('jd_sha256')==hashlib.sha256(text.read_bytes()).hexdigest():
+        return []
+    return [f'eligibility {verdict.level}: {verdict.text()}; review the quoted requirement before submission']
 
 
 def _sentences(text: str) -> list[tuple[str, str]]:
@@ -126,6 +164,17 @@ def screen(text: str, facts: dict) -> Verdict:
                 add("blocked", "no sponsorship", quote, "the employer will not sponsor, and your file says you will need sponsorship")
             elif sponsor is None:
                 add("review", "no sponsorship", quote, "the employer will not sponsor; your file does not say whether you need it")
+        if NO_IMMIGRATION_SUPPORT.search(s):
+            support=facts.get('needs_immigration_support')
+            exception=bool(re.search(r'(?i)\bexcept\b|\bother than\b|\bexcluding\b',s))
+            if support is True:
+                add('review' if exception else 'blocked','immigration-related support',quote,
+                    'the employer limits immigration-related support, which your file says you need' +
+                    ('; an exception requires review' if exception else ''))
+            elif support is None and not (citizen is True or permanent):
+                add('review','immigration-related support',quote,
+                    'a No to visa sponsorship does not settle the broader immigration-documentation requirement; '
+                    'confirm whether support is needed' + (f" (saved status: {facts['visa_status']})" if facts.get('visa_status') else ''))
         if US_PERSON.search(s) and not (citizen is True or permanent):
             add("review", "export control (U.S. person)", quote, "restricted to U.S. persons (citizens, permanent residents): check you qualify")
     return v

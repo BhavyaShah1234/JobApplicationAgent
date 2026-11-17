@@ -6,14 +6,15 @@ must match their exact purpose; sharing a boolean value proves nothing.
 from dataclasses import dataclass,asdict,replace
 import json,re
 from rapidfuzz import fuzz
-from .facts import norm,Decision,Fact,from_fact,choice,entity_scope,scope_allows,owner_only
+from .facts import norm,Decision,Fact,from_fact,choice,entity_scope,scope_allows,owner_only,expanded_immigration_support
 
 DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_ack',
-                        'outside_activity','employer_personal_ties'})
+                        'outside_activity','employer_personal_ties','immigration_support'})
 
 
 def family(text):
     q=norm(text)
+    if expanded_immigration_support(text):return 'immigration_support'
     rules=[
       ('government_referral',r'(?:were you|have you been|are you) referred.*government|government.*(?:were you|have you been|are you) referred'),
       ('government_relationship',r'are you related.*government|do you have.*(?:relatives|family members).*government'),

@@ -49,10 +49,12 @@ class Pipeline:
         """Screen the posting's hard requirements (citizenship, clearance, sponsorship) against the candidate's own file before any
         document or form work is spent. `blocked` stops the job as needs_review with the quoted sentence (override per posting with
         --ignore-eligibility; the queue never overrides); `review` is logged and recorded and the job continues."""
-        from jobagent.tools import applicant, eligibility, jobqueue
+        from jobagent.tools import eligibility, jobqueue
         text = (d / "jd.txt").read_text() if (d / "jd.txt").exists() else ""
-        verdict = eligibility.screen(text, applicant.eligibility_facts())
-        (d / "eligibility.json").write_text(json.dumps({"level": verdict.level, "reasons": verdict.reasons, "ignored": bool(ignored)}, indent=1))
+        verdict = eligibility.assess_job(d)
+        import hashlib
+        (d / "eligibility.json").write_text(json.dumps({"level": verdict.level, "reasons": verdict.reasons, "ignored": bool(ignored),
+                                                      "jd_sha256": hashlib.sha256((d/'jd.txt').read_bytes() if (d/'jd.txt').exists() else b'').hexdigest()}, indent=1))
         if verdict.level == "ok":
             return None
         note = "eligibility: " + verdict.text()

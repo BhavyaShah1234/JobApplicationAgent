@@ -99,3 +99,46 @@ def test_an_outside_work_answer_cannot_serve_as_an_ethics_acknowledgement():
     outside = Fact('outside', [q], 'No', 'applicant/history')
     assert route(field(q), [outside]).family == 'outside_activity'
     assert resolve_routed(field(ACK), [outside]).value is None
+
+
+SUPPORT = ('Will you, now or in the future, require immigration support or sponsorship? '
+           'Immigration related support does include documentation needed for F-1 OPT, STEM OPT and CPT.')
+
+
+def test_generic_no_sponsorship_is_not_an_answer_to_expanded_opt_documentation_support():
+    from jobagent.filling.facts import resolve
+    facts = [Fact('now', ['Will you now require sponsorship?'], 'No', 'applicant/work_authorization'),
+             Fact('future', ['Will you in the future require sponsorship?'], 'No', 'applicant/work_authorization')]
+    f = field(SUPPORT)
+    assert route(f, facts).family == 'immigration_support'
+    assert resolve(f, facts).value is None and resolve_routed(f, facts).value is None
+    planner = PlannedFiller(facts, lambda _: pytest.fail('allow_human is false'), source_resolver=lambda *_: {})
+    assert planner.plan([f], allow_human=False)[0].value is None
+
+
+def test_the_current_owner_support_answer_overrides_generic_sponsorship_timeframes():
+    from jobagent.filling.facts import resolve
+    facts = [Fact('now', ['Will you now require sponsorship?'], 'No', 'applicant/work_authorization'),
+             Fact('future', ['Will you in the future require sponsorship?'], 'No', 'applicant/work_authorization'),
+             Fact('application.answer.1', [SUPPORT], 'Yes', 'applicant/application/answers.md')]
+    assert resolve(field(SUPPORT), facts).fact_id == 'application.answer.1'
+    result = resolve_routed(field(SUPPORT), facts)
+    assert (result.value, result.fact_id) == ('Yes', 'application.answer.1')
+
+
+def test_exact_current_job_answer_precedes_combined_sponsorship_composition():
+    from jobagent.filling.facts import resolve
+    q = 'Will you now or in the future require sponsorship?'
+    facts = [Fact('now', ['Will you now require sponsorship?'], 'No', 'applicant/work_authorization'),
+             Fact('future', ['Will you in the future require sponsorship?'], 'No', 'applicant/work_authorization'),
+             Fact('application.answer.1', [q], 'Yes', 'applicant/application/answers.md')]
+    result = resolve(field(q), facts)
+    assert (result.value, result.fact_id) == ('Yes', 'application.answer.1')
+
+
+@pytest.mark.parametrize('q', [
+    'Will you require visa sponsorship? F-1 OPT does not count as sponsorship.',
+    'Do you need sponsorship? This does not include F-1 OPT or CPT.',
+])
+def test_a_portals_opt_exclusion_is_not_mistaken_for_inclusion(q):
+    assert route(field(q), []).family == 'sponsorship'
