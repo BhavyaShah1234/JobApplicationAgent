@@ -172,6 +172,21 @@ def test_a_real_link_to_another_page_is_followed_by_address_not_clicked_even_wit
     assert "https://jobs.example.test/handler-ran" not in state["requests"]     # its click handler never ran: the address was loaded
 
 
+@pytest.mark.parametrize('glyph',['»','›','→'])
+def test_decorated_apply_now_link_opens_application_instead_of_planning_an_alert_question(glyph):
+    state,view=start('<label>How often to receive a job alert?<input type=number></label>'
+                     '<a href="https://jobs.example.test/application" onclick="window.sent=true">Apply now '+glyph+'</a>',
+                     routes={'https://jobs.example.test/application':FORM3})
+    assert state['url']=='https://jobs.example.test/application' and len(view.fields)==3
+    assert not state['sent']
+
+
+def test_decorated_apply_now_does_not_send_a_short_form():
+    state,view=start('<form onsubmit="window.sent=true;return false"><label>Email<input type=email></label>'
+                     '<button>Apply now »</button></form>')
+    assert len(view.fields)==1 and not state['sent']
+
+
 SF_URL = "https://careers.example.test/career?career_ns=job_listing&career_job_req_id=123"
 SF_ENTRY = "checkDpcs2AndProceed({isUserLoggedIn: false, jobReqId: 123, jobSecKey: '123', isApplyWithLinkedIn:false, elementId: 'applyButton_top', evtSrc:'Apply'}); return false;"
 
