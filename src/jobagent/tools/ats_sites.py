@@ -1,7 +1,7 @@
 """Step 10: online ATS checkers, driven in the agent's browser (AutoApplyMax and Jobalytics with the agent's free
 accounts, created with the user's approval 2026-10-28; HireFlow and ResumeAtlas need none). SkillsFirst uses the
 saved ASU organization account for automated, job-specific written feedback. Jobscan, SkillSyncer and ATSAlign
-use Google sign-in. The default numeric average uses AutoApplyMax, HireFlow, Jobscan, ATSAlign and ATS Friendly;
+use Google sign-in. The default numeric average uses AutoApplyMax, HireFlow, ResumeAtlas, ATSAlign and ATS Friendly;
 SkillsFirst adds written feedback. Other registered sites remain available on request.
 
 - SkillsFirst: resume PDF + job description -> Skills Gap Analysis recommendations, without a numeric score.
@@ -483,7 +483,7 @@ SITES = {
 AVERAGE_SITES = (
     "autoapplymax",
     "hireflow",
-    "jobscan",
+    "resumeatlas",
     "atsalign",
     "atsfriendly",
 )

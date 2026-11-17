@@ -332,7 +332,7 @@ def test_resumeatlas_cache_rejects_scores_from_sample_parser(score_store):
 
 
 def test_five_job_specific_scorers_are_the_default_average():
-    assert ats_sites.AVERAGE_SITES == ("autoapplymax", "hireflow", "jobscan", "atsalign", "atsfriendly")
+    assert ats_sites.AVERAGE_SITES == ("autoapplymax", "hireflow", "resumeatlas", "atsalign", "atsfriendly")
     assert ats_sites.numeric_sites(ats_sites.DEFAULT_SITES) == ats_sites.AVERAGE_SITES
     assert "skillsfirst" in ats_sites.DEFAULT_SITES
     assert "applycove" not in ats_sites.DEFAULT_SITES

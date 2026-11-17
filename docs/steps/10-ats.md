@@ -8,7 +8,7 @@ Every score is recorded, and the cover letter is written afterwards from the fin
 > **Current integration:** eleven registered adapters. Jobscan, SkillSyncer and ATSAlign use saved Google sign-in;
 > ATS Friendly restores its login automatically. Limited sites run initially and on the final resume, with cached
 > results scoped to both resume and posting. The default numeric average uses exactly five sites:
-> AutoApplyMax, HireFlow, Jobscan, ATSAlign and ATS Friendly. SkillsFirst supplies written feedback separately.
+> AutoApplyMax, HireFlow, ResumeAtlas, ATSAlign and ATS Friendly. SkillsFirst supplies written feedback separately.
 
 The five scores have equal weight. All five must be available for the same resume and JD; a missing score
 produces an incomplete result (`average: null`), without substituting zero or averaging fewer sites.
@@ -113,8 +113,10 @@ The agent's own local scorer was removed at the user's request: every score now 
 | Resume Optimizer Pro | not enabled | Public checker gave parsing feedback; signed-in job matching led into its separate resume rewriting flow |
 
 The registry contains eleven adapters, including SkillsFirst's written-feedback adapter. Both tailoring paths use
-Jobscan, ATSAlign and ATS Friendly on the initial and final resume, and AutoApplyMax and HireFlow during refinement.
-SkillsFirst supplies writing advice. Jobalytics, SkillSyncer, Novoresume, ResumeAtlas and ApplyCove remain on request.
+ResumeAtlas, ATSAlign and ATS Friendly on the initial and final resume, and AutoApplyMax and HireFlow during refinement.
+SkillsFirst supplies writing advice. Jobalytics, Jobscan, SkillSyncer, Novoresume and ApplyCove remain on request.
+The owner requested replacing Jobscan after its free scans were exhausted and it rejected a disposable-email signup.
+The replacement is explicit in the saved panel; scores from different panel definitions are not the same benchmark.
 ResumeAtlas reads the completed report pane, excluding the landing page's sample
 score; older cache rows from the sample-score parser are ignored.
 Jobscan waits for its animated Match Rate to settle before recording it; older cache rows from the immediate-read
