@@ -95,6 +95,16 @@ def percent_range(text):
 def choice(f, values):
     if f.kind not in ('select', 'combobox', 'radio', 'buttons', 'checkboxes'):
         return values[0]
+    if forms.PHONE_CODE_Q.search(f.label):
+        specific = [v for v in values if re.search(r'[A-Za-z].*\+\d', v)]
+        for value in specific or values:
+            if hit := forms.phone_code_option(value, f.options):
+                return hit
+        if f.kind == 'combobox' and f.options_state != 'complete':
+            # Prefer the country+prefix derived from this phone record over an
+            # ambiguous prefix when a lazy picker needs a search string.
+            return specific[0] if specific else values[0]
+        return None
     if f.kind=='checkboxes' or f.multiple:
         parts=[x.strip() for x in values[0].split(';') if x.strip()]
         picks=[forms.strict_option(x,f.options) for x in parts]
@@ -258,7 +268,7 @@ def compile_facts(data, raw_jd, reference_date=''):
                            'full': ['Preferred name', 'Preferred full name']},
         'Phone': {'number': ['Phone', 'Primary Phone', 'Phone Number'],
                   'extension': ['Phone Extension'], 'device_type': ['Phone Device Type'],
-                  'country':['Phone Country'], 'country_code':['Phone Country Code','Dial Code']},
+                  'country':['Phone Country'], 'country_code':['Phone Country Code','Country Phone Code','Dial Code']},
     }
     for section, entry in entries(data):
         value = entry.get('answer'); q = entry['question']; source = f'applicant/{section}/{q}/answer'
@@ -275,8 +285,11 @@ def compile_facts(data, raw_jd, reference_date=''):
                 aliases=component_aliases.get(q, {}).get(component,[f'{q} {component.replace("_"," ")}'])
                 v=value[component]
                 if isinstance(v,(str,bool,int,float)):
+                    variants = []
+                    if q == 'Phone' and component == 'country_code' and value.get('country'):
+                        variants = [f"{value['country']} ({v})", str(value['country'])]
                     facts.append(Fact(source+'/'+component, aliases, str(v), source+'/'+component,
-                                      instructions=entry.get('instructions',''),tools=tools))
+                                      variants=variants, instructions=entry.get('instructions',''),tools=tools))
         elif isinstance(value,list) and value and all(isinstance(x,dict) for x in value):
             for i,row in enumerate(value,1):
                 group='Education' if q=='Degrees' else 'Work Experience' if q=='Work history' else 'Reference' if norm(q) in ('reference','references') else 'Referral' if norm(q) in ('referral','referrals') else ''

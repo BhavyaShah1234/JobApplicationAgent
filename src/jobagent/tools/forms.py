@@ -829,6 +829,35 @@ def lower_variant(want: str, got: str) -> bool:
     return not (_norm(first) == _norm(got) or close_option(first, [got]) == got)
 
 
+PHONE_CODE_Q = re.compile(r"(?i)country.*phone|phone.*country|(?:phone|calling|dial(?:l?ing)?)\s*(?:country\s*)?code")
+
+
+def phone_code_option(answer: str, options: list[str]) -> str | None:
+    """Match a dial prefix and/or its supplied country, preserving ambiguity.
+
+    +1 alone cannot choose between multiple countries. A country supplied in
+    the same phone record can distinguish United States (+1) from Canada (+1).
+    """
+    def parts(value):
+        value = value.strip()
+        if re.fullmatch(r"\+?\d{1,4}", value):
+            return "", value.lstrip("+")
+        match = re.search(r"\+(\d{1,4})\)?\s*$", value)
+        return (value[:match.start()].rstrip(" ("), match[1]) if match else (value, "")
+    country, code = parts(answer)
+    if not country and not code:
+        return None
+    hits = []
+    for option in options:
+        offered_country, offered_code = parts(option)
+        if code and code != offered_code:
+            continue
+        if country and not already_shows(country, offered_country, "select"):
+            continue
+        hits.append(option)
+    return hits[0] if len(hits) == 1 else None
+
+
 def in_range(option: str, x: float) -> bool:
     """A range option ("3.75+", "3.4 - 3.70", "Below 3.4", "2-5 years") holds x."""
     o = option.lower().replace("–", "-")
@@ -843,6 +872,8 @@ def in_range(option: str, x: float) -> bool:
 
 def same_value(want: str, got: str, kind: str, question: str = "") -> bool:
     """The page shows the value that was meant (read-back check)."""
+    if kind in ('combobox', 'select') and PHONE_CODE_Q.search(question):
+        return phone_code_option(want, [got]) is not None
     if kind in ('combobox','select','radio','buttons') and is_identity(question):
         return any(_norm(v)==_norm(got) or identity_option(v.strip(),[got],person=bool(PERSON_Q.search(question))) is not None
                    for v in want.split(' | ') if v.strip())
@@ -996,9 +1027,17 @@ def discover_options(page: Page, view: PageView, log=print, *, fields=None) -> N
             continue
         try:
             loc = locate(view, f)
+            search_picker = loc.get_attribute("data-uxi-widget-type") == "selectinput"
+            if search_picker and f.value and PHONE_CODE_Q.search(f.label):
+                # Reading this selected search picker used to delete its chip.
+                # The known option is partial evidence; a different source value
+                # can still search for its own country at fill time.
+                f.options = [f.value]
+                f.options_state = 'partial'
+                continue
             f.options = _open_options(view.frames[f.frame], loc, page)
             f.options_state = 'partial'
-            if loc.get_attribute("data-uxi-widget-type") == "selectinput" and len(f.options) <= 15:
+            if search_picker and not f.value and len(f.options) <= 15:
                 f.options = _expand_categories(page, view.frames[f.frame], loc, f.options)
         except Exception as e:
             log(f"forms: options of \"{f.label[:50]}\" unreadable: {type(e).__name__}")
@@ -1094,6 +1133,12 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
     frame, loc = view.frames[f.frame], locate(view, f)
     tagged=loc.get_attribute('data-jf')
     if tagged is not None and tagged.isdigit() and int(tagged)!=f.id:f=replace(f,id=int(tagged))
+    if f.kind == "combobox" and f.value:
+        same = (phone_code_option(answer, [f.value]) is not None if PHONE_CODE_Q.search(f.label)
+                else _norm(answer) == _norm(f.value) if is_identity(f.label)
+                else already_shows(answer, f.value, f.kind))
+        if same:
+            return f.value
     if f.kind == "file":
         path = files.get(answer) or answer
         name = path.rsplit("/", 1)[-1]
@@ -1294,12 +1339,14 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             page.wait_for_timeout(1200)
             opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
         geographic=bool(re.search(r'(?i)location|\bcity\b|where.*located',f.label)) and not is_identity(f.label)
-        pick = (lambda ans, o: (literal_identity_option(ans, o, person=bool(PERSON_Q.search(f.label))), 0)) if is_identity(f.label) else \
+        pick = (lambda ans, o: (phone_code_option(ans, o), 0)) if PHONE_CODE_Q.search(f.label) else \
+            (lambda ans, o: (literal_identity_option(ans, o, person=bool(PERSON_Q.search(f.label))), 0)) if is_identity(f.label) else \
             (lambda ans, o: (strict_option(ans, o) or (strict_place(ans,o) if geographic else None), 0)) if strict else \
             (lambda ans, o: (close_option(ans, o), 0)) if close else match_option
         candidates=list(dict.fromkeys([answer,*[str(a) for a in alternatives if a and not OTHER_OPTION.match(str(a))]]))
         def offered(options):
-            return next((hit for candidate in candidates if (hit:=pick(candidate,options)[0]) is not None),None)
+            return next((hit for candidate in candidates if (hit:=pick(candidate,options)[0]) is not None
+                         and (not PHONE_CODE_Q.search(f.label) or phone_code_option(answer, [hit]) is not None)),None)
         opt=offered(opts) if opts else None
         if opt is None and (loc.evaluate("e => e.tagName") == "INPUT"):
             # a search box: type the answer (or its first words) and pick from what the site suggests

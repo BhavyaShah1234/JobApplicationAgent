@@ -5,6 +5,32 @@ import yaml
 from jobagent.tools.forms import SUBMIT, NEXT, match_option, same_value
 
 
+def test_phone_country_prefix_matching_keeps_country_and_prefix_evidence():
+    from jobagent.tools.forms import phone_code_option
+    options = ['United States of America (+1)', 'Canada (+1)', 'India (+91)']
+    assert phone_code_option('+1', options) is None  # shared prefixes do not pick a country arbitrarily
+    assert phone_code_option('United States (+1)', options) == options[0]
+    assert phone_code_option('Canada (+1)', options) == options[1]
+    assert phone_code_option('+91', options) == options[2]
+    assert not same_value('+1', 'United States of America (+11)', 'combobox', 'Country Phone Code')
+    assert same_value('+1', options[0], 'combobox', 'Country Phone Code')
+
+
+def test_compiled_phone_prefix_uses_only_the_country_in_its_own_phone_record():
+    from jobagent.filling.facts import compile_facts, resolve
+    from jobagent.tools.forms import Field
+    facts = compile_facts({'contact': [{'question': 'Phone', 'answer': {
+        'country': 'United States', 'country_code': '+1', 'number': '2025550100',
+    }}], 'address': [{'question': 'Current address', 'answer': {'country': 'Canada'}}]}, '')
+    field = Field(id=0, kind='combobox', label='Country Phone Code', options_state='partial',
+                  options=['Canada (+1)'])
+    assert resolve(field, facts).value == 'United States (+1)'  # search for the sourced country
+    field.options = ['Canada (+1)', 'United States of America (+1)']
+    assert resolve(field, facts).value == 'United States of America (+1)'
+    field.options_state = 'complete'; field.options = ['Canada (+1)']
+    assert resolve(field, facts).value is None
+
+
 def test_country_synonyms_match_the_pages_option():
     opts = ["Select...", "Canada", "United States of America", "India"]
     assert match_option("USA", opts)[0] == "United States of America"

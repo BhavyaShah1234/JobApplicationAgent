@@ -18,6 +18,65 @@ def page():
         browser.close()
 
 
+def selected_search_picker(page, label, prefill, options):
+    """A Workday-like single-select chip, including its real Delete behavior."""
+    import json
+    page.set_content('''<label for=pick>LABEL</label>
+      <div data-automation-id=multiSelectContainer>
+        <ul id=chips data-automation-id=selectedItemList></ul>
+        <input id=pick role=combobox data-uxi-widget-type=selectinput>
+        <div id=menu hidden></div>
+      </div><script>
+      window.selectionWrites=0;window.deleteWrites=0;window.opens=0;
+      const labels=OPTIONS;
+      function chip(text){chips.innerHTML='';if(!text)return;
+        const li=document.createElement('li');const item=document.createElement('div');
+        item.dataset.automationId='selectedItem';item.tabIndex=0;item.textContent=text;
+        const del=document.createElement('button');del.dataset.automationId='DELETE_charm';
+        del.setAttribute('aria-label','Delete '+text);del.onclick=()=>{li.remove();deleteWrites++};
+        item.onkeydown=e=>{if(e.key==='Delete'){li.remove();deleteWrites++}};
+        item.append(del);li.append(item);chips.append(li)}
+      for(const text of labels){const opt=document.createElement('div');opt.setAttribute('role','option');
+        opt.dataset.automationId='promptOption';opt.textContent=text;
+        opt.onclick=()=>{chip(text);selectionWrites++;menu.hidden=true};menu.append(opt)}
+      pick.onclick=()=>{menu.hidden=false;opens++};
+      document.addEventListener('keydown',e=>{if(e.key==='Escape')menu.hidden=true});
+      chip(PREFILL);
+      </script>'''.replace('LABEL', label).replace('OPTIONS', json.dumps(options)).replace('PREFILL', json.dumps(prefill)))
+
+
+@pytest.mark.parametrize('prefill', ['United States of America (+1)', 'India (+91)', ''])
+def test_search_picker_preserves_correct_phone_prefix_and_can_replace_wrong_or_empty_one(page, prefill):
+    from jobagent.filling.facts import compile_facts, resolve
+    options = ['United States of America (+1)', 'Canada (+1)', 'India (+91)']
+    selected_search_picker(page, 'Country Phone Code', prefill, options)
+    view = forms.read_page(page); field = view.fields[0]
+    forms.discover_options(page, view)
+    assert forms.read_page(page).fields[0].value == prefill
+    if prefill:
+        assert page.evaluate('selectionWrites+deleteWrites+opens') == 0
+    facts = compile_facts({'contact': [{'question': 'Phone', 'answer': {
+        'country': 'United States', 'country_code': '+1',
+    }}]}, '')
+    answer = resolve(field, facts).value
+    chosen = forms.fill_field(page, view, field, answer, {}, strict=True)
+    actual = forms.read_page(page).fields[0].value
+    assert chosen == actual == options[0]
+    if prefill == options[0]:
+        assert page.evaluate('selectionWrites+deleteWrites+opens') == 0
+
+
+def test_discovering_prefilled_source_does_not_select_or_clear_its_other_options(page):
+    selected_search_picker(page, 'How Did You Hear About Us?', 'Internet', ['Internet', 'Employee Referral'])
+    view = forms.read_page(page); forms.discover_options(page, view)
+    assert view.fields[0].options == ['Internet', 'Employee Referral']
+    assert forms.read_page(page).fields[0].value == 'Internet'
+    assert page.evaluate('selectionWrites+deleteWrites') == 0
+    # A preserved prefill still has to change when the actual source says so.
+    assert forms.fill_field(page, view, view.fields[0], 'Employee Referral', {}, strict=True) == 'Employee Referral'
+    assert forms.read_page(page).fields[0].value == 'Employee Referral'
+
+
 def test_unseen_aria_radios_and_contenteditable_are_filled_and_read_back(page):
     page.set_content('''<h1>Candidate details</h1><span id="q_opaque">Preferred workplace</span>
       <div role="radiogroup" aria-labelledby="q_opaque" aria-required="true">
