@@ -169,3 +169,26 @@ def test_blocked_application_preserves_checkpoint(tmp_path, monkeypatch):
     assert result['resumable']
     assert result['fields'] == fields
     assert result['verified'] == 1
+
+
+def test_fieldless_startup_preserves_checkpoint_without_inventing_a_bot_challenge(tmp_path, monkeypatch):
+    import json
+    from jobagent.steps import apply
+
+    out = tmp_path / 'application'
+    out.mkdir()
+    fields = [{'label': 'First name', 'answer': 'Candidate', 'verified': True}]
+    checkpoint = json.dumps({'fields': fields, 'pages': [{'title': 'Earlier page'}]})
+    (out / 'checkpoint.json').write_text(checkpoint)
+    monkeypatch.setattr(apply, '_run', lambda *args, **kwargs: (_ for _ in ()).throw(
+        apply.FormNotReady('no application form and no Apply button')))
+    result = apply.run(Page(), tmp_path, 'example')
+    assert result['state'] == 'blocked' and result['blocked_by'] == 'page_start'
+    assert result['resumable'] and not result['ready_to_submit']
+    assert result['desktop_fallback_requested'] is False
+    assert result['fields'] == fields and result['verified'] == 1
+    assert result['pages'] == [{'title': 'Earlier page'}]
+    assert (out / 'checkpoint.json').read_text() == checkpoint
+    assert apply.exit_code(result) == apply.EXIT_BLOCKED
+    assert 'secret' not in (out / 'application.json').read_text()
+    assert 'Nothing was submitted' in (out / 'application.md').read_text()

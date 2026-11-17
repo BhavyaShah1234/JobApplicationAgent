@@ -1056,6 +1056,10 @@ class PlannerFailed(RuntimeError):
     `unplanned`), and the run ends `blocked`, never in review."""
 
 
+class FormNotReady(RuntimeError):
+    """Startup exhausted its loading wait without finding an application or an opening control."""
+
+
 # Exit codes of `jobagent apply` / `submit` (what shell chains and the queue see). 3 is "the posting is unavailable"
 # (tools/availability.EXIT_UNAVAILABLE).
 EXIT_OK, EXIT_FAILED, EXIT_BLOCKED, EXIT_NOT_READY = 0, 1, 4, 5
@@ -1469,7 +1473,7 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
             empty += 1  # still loading (clicks don't wait for the next page), or really nothing here
             if empty >= 10:  # a slow portal can show its form's spinner for half a minute
                 screenshot(page, "/app/state/logs/apply-start.png")
-                raise RuntimeError(f"no application form and no Apply button on {page.url} (buttons: "
+                raise FormNotReady(f"no application form and no Apply button on {challenge.safe_url(page.url)} (buttons: "
                                    f"{view.buttons[:12]}; an Apply control that belongs to a form with fields is never "
                                    "clicked at startup; screenshot state/logs/apply-start.png)")
     return forms.read_page(page)
@@ -1527,6 +1531,20 @@ def _guarded_run(page: Page, job_dir: str | Path, company: str, *args, **kwargs)
             (out / "application.md").write_text(f"# Application unavailable\n\nState: {exc.status}\n\n"
                                                 f"{exc}\n\nNothing was submitted.\n")
             raise
+        except FormNotReady as exc:
+            checkpoint = out / "checkpoint.json"
+            result = json.loads(checkpoint.read_text()) if checkpoint.exists() else {"fields": [], "pages": []}
+            result.update(state="blocked", blocked_by="page_start", reason=str(exc),
+                          url=challenge.safe_url(page.url), ready_to_submit=False, blockers=[str(exc)],
+                          resumable=True, desktop_fallback_requested=False,
+                          verified=sum(bool(f.get('verified')) for f in result['fields']))
+            result['flags'] = [f for f in result['fields'] if not f.get('verified')]
+            (out / "application.json").write_text(json.dumps(result, indent=2))
+            (out / "application.md").write_text(
+                f"# Application blocked at startup\n\n{exc}\n\n"
+                "The page did not expose a usable application. The checkpoint was preserved; "
+                "inspect the page and retry when it is ready. No bot challenge was inferred. Nothing was submitted.\n")
+            return result
         except challenge.Blocked as exc:
             checkpoint = out / "checkpoint.json"
             result = json.loads(checkpoint.read_text()) if checkpoint.exists() else {"fields": [], "pages": []}

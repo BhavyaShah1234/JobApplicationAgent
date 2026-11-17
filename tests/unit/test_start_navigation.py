@@ -104,6 +104,11 @@ def test_an_apply_link_opens_the_application():
     assert state["opened"] is True and len(view.fields) >= 3
 
 
+def test_fieldless_careers_shell_has_a_typed_recoverable_startup_failure():
+    with pytest.raises(A.FormNotReady, match="no application form and no Apply button"):
+        start('<h1>Careers</h1><p>Loading application</p>', url='https://example.com/careers')
+
+
 def test_an_apply_button_outside_any_form_opens_the_application():
     state, view = start(f"<button type=button onclick=\"{OPEN_ON_CLICK}\">Apply now</button>")
     assert state["opened"] is True and len(view.fields) >= 3

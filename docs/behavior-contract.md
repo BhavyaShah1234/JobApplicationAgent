@@ -16,6 +16,8 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
 **Always**
 - Verify every filled value by reading it back; a required field that is unanswered, unverified, or showing a control's own prompt blocks readiness.
 - Treat a page whose frames or regions could not be read as not ready.
+- Return a resumable `blocked_by=page_start` result when the bounded startup wait finds neither an application
+  nor an opening control. Preserve the checkpoint; an empty careers shell alone never triggers challenge fallback.
 - Confirm that an Add action exposed a new source-backed row before clicking Add again. Hidden native date parts
   count through their own discovered composite question; unrelated hidden required questions remain blockers.
 - Record what was sent: a frozen payload and one attempt row per click; a possibly-sent application is never filled or clicked again.
