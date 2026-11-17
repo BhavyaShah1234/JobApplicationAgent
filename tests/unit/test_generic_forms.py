@@ -95,6 +95,24 @@ def test_cleared_upload_accepts_acknowledgement_with_hidden_live_announcements(p
     finally:proof.close()
 
 
+def test_resumeatlas_sample_and_personal_report_must_have_different_owners(page):
+    from jobagent.tools.ats_providers import resumeatlas_result
+    sample = '''<div class=ref-dash><div class=ref-dash-verdict-pct>56%</div>
+      <div><div><h3>Missing from resume</h3></div><ul><li>Sample missing</li></ul></div>
+      <div><div><h3>Needs stronger evidence</h3></div><ul><li>Sample weak</li></ul></div>
+      <div><div><h3>Already demonstrated</h3></div><ul><li>Sample shown</li></ul></div></div>'''
+    page.set_content('<section aria-label="Sample analysis report">'+sample+'</section>')
+    with pytest.raises(RuntimeError, match='sample previews are excluded'):
+        resumeatlas_result(page)
+    # The same classes remain on screen alongside the completed personal pane.
+    page.locator('body').evaluate('(e,html)=>e.insertAdjacentHTML("beforeend",html)',
+        '<section aria-label="Your analysis report">'+sample.replace('56%', '81%').replace('Sample ', 'Actual ')+'</section>')
+    result = resumeatlas_result(page)
+    assert result['score'] == 81 and result['missing'] == ['Actual missing', 'Actual weak']
+    assert result['breakdown']['matched'] == ['Actual shown']
+    assert 'Sample ' not in result['breakdown']['report']
+
+
 def test_one_school_portal_instruction_is_read_before_any_extra_row_is_created(page):
     from jobagent.filling.adapter import _portal_education_facts
     from jobagent.filling.facts import Fact

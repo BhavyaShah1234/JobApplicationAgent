@@ -70,6 +70,17 @@ def test_cli_reports_and_persists_complete_or_incomplete_mean(job, monkeypatch, 
     assert "written feedback" in result.output
 
 
+def test_cli_discloses_partial_posting_scope_with_the_average(job, monkeypatch):
+    monkeypatch.setattr(ats_sites, 'score_all', lambda *a, **kw: [])
+    monkeypatch.setattr(ats_sites, 'write_summary', lambda *a, **kw: {
+        'scores': SCORES, 'sites': list(SCORES), 'average': 68.5, 'complete': True,
+        'truncated_posting': {'resumeatlas': {'word_limit': 650, 'jd_words_sent': 650, 'jd_words_total': 948}},
+    })
+    result = CliRunner().invoke(app, ['ats', str(job)])
+    assert result.exit_code == 0
+    assert 'resumeatlas 650/948 words' in result.output
+
+
 @pytest.mark.parametrize("failed", [None, "resumeatlas"])
 def test_single_writer_final_average_requires_every_selected_site(job, monkeypatch, failed):
     from types import SimpleNamespace

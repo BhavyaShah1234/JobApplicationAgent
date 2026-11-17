@@ -44,8 +44,11 @@ def _wait_report(page, site: str, ready, timeout_s=120):
 
 
 def resumeatlas_result(page) -> dict:
-    # The marketing SVG contains a permanent sample verdict of 56%. It is not the user's result.
-    report = page.locator(".ref-dash")
+    # The interactive sample and personal report use the SAME score classes.
+    # The provider explicitly labels their enclosing regions differently.
+    report = page.locator('[aria-label="Your analysis report"] .ref-dash')
+    if report.count() != 1 or not report.is_visible():
+        raise RuntimeError("ResumeAtlas: no completed personal report; sample previews are excluded")
     score = _score(report.locator(".ref-dash-verdict-pct").inner_text(), r"(\d{1,3})\s*%", "ResumeAtlas")
 
     def skills(label):
@@ -58,7 +61,7 @@ def resumeatlas_result(page) -> dict:
     return _result(
         "resumeatlas", score, page, missing + weak,
         weak_evidence=weak, matched=skills("Already demonstrated"),
-        parser_version=2, jd_word_limit=650, report=report.inner_text(),
+        parser_version=3, jd_word_limit=650, report=report.inner_text(),
     )
 
 

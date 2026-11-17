@@ -300,7 +300,9 @@ def test_resumeatlas_uses_completed_report_and_only_skill_chips():
 
     page, report = Mock(), Mock()
     page.url = "https://resumeatlas.io/check-resume-against-job-description"
-    page.locator.side_effect = lambda selector: report if selector == ".ref-dash" else ReportPage("56% sample")
+    page.locator.side_effect = lambda selector: report if selector == '[aria-label="Your analysis report"] .ref-dash' else ReportPage("56% sample")
+    report.count.return_value = 1
+    report.is_visible.return_value = True
     report.locator.return_value.inner_text.return_value = "91%"
     report.inner_text.return_value = "Completed report; If you have this experience, add evidence."
     rows = {}
@@ -317,7 +319,7 @@ def test_resumeatlas_uses_completed_report_and_only_skill_chips():
     assert result["score"] == 91
     assert result["missing"] == ["SQL", "RAG"]
     assert result["breakdown"]["matched"] == ["Python"]
-    assert result["breakdown"]["parser_version"] == 2
+    assert result["breakdown"]["parser_version"] == 3
 
 
 def test_resumeatlas_cache_rejects_scores_from_sample_parser(score_store):
@@ -327,6 +329,9 @@ def test_resumeatlas_cache_rejects_scores_from_sample_parser(score_store):
     assert ats_sites.cached(score_store / "resume.pdf", "resumeatlas", "JD") is None
     score.score = 91
     score.breakdown["parser_version"] = 2
+    ats_sites.record(score_store, score.site, 0, score.score, [], score.to_dict())
+    assert ats_sites.cached(score_store / "resume.pdf", "resumeatlas", "JD") is None
+    score.breakdown['provider_version'] = ats_sites.provider_version('resumeatlas')
     ats_sites.record(score_store, score.site, 0, score.score, [], score.to_dict())
     assert ats_sites.cached(score_store / "resume.pdf", "resumeatlas", "JD").score == 91
 

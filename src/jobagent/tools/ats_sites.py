@@ -62,9 +62,10 @@ class SiteScore:
 # F20: the posting text each provider's input box actually receives. A provider that takes only part of a long posting scores a
 # DIFFERENT requirement set than one that takes all of it, so what was sent is measured, hashed and recorded with the score.
 JD_LIMITS = {"autoapplymax": 8000, "hireflow": 8000, "resumeatlas": 8000, "atsfriendly": 8000}   # None/absent: the full text
+JD_WORD_LIMITS = {"resumeatlas": 650}
 # Bump a provider's version when its adapter or parser changes in a way that can change its scores: a recorded score of another
 # version is not reused (limited-scan sites keep scans only for the version that made them).
-PROVIDER_VERSIONS = {"jobscan": 2, "resumeatlas": 2}      # every other provider: 1
+PROVIDER_VERSIONS = {"jobscan": 2, "resumeatlas": 3}      # every other provider: 1
 _payload = threading.local()
 
 
@@ -77,12 +78,18 @@ def jd_payload(site: str, jd_text: str) -> str:
     for `score_all` to record (`payload_record`)."""
     limit = JD_LIMITS.get(site)
     sent = jd_text if limit is None or len(jd_text) <= limit else jd_text[:limit]
+    if word_limit := JD_WORD_LIMITS.get(site):
+        words = list(re.finditer(r'\S+', sent))
+        if len(words) > word_limit:
+            sent = sent[:words[word_limit - 1].end()]
     _payload.last = payload_record(site, jd_text, sent)
     return sent
 
 
 def payload_record(site: str, jd_text: str, sent: str) -> dict:
     return {"jd_chars_total": len(jd_text), "jd_chars_sent": len(sent), "limit": JD_LIMITS.get(site),
+            "jd_words_total": len(jd_text.split()), "jd_words_sent": len(sent.split()),
+            "word_limit": JD_WORD_LIMITS.get(site),
             "truncated": len(sent) < len(jd_text), "jd_sha256": hashlib.sha256(jd_text.encode()).hexdigest(),
             "sent_sha256": hashlib.sha256(sent.encode()).hexdigest()}
 
@@ -194,17 +201,26 @@ def resumeatlas(pg, resume_pdf: Path, jd_text: str, title: str = "", company: st
     pg.locator("input[type=file]").first.set_input_files(str(resume_pdf))
     pg.wait_for_timeout(3000)
     pg.get_by_placeholder(re.compile("Senior GenAI", re.I)).fill(title or "Software Engineer")
-    pg.locator("textarea:visible").nth(1).fill(jd_payload("resumeatlas", jd_text))
+    box = pg.locator("textarea:visible").nth(1)
+    sent = jd_payload("resumeatlas", jd_text)
+    box.fill(sent)
+    # Record the actual control value, including any additional client-side cap.
+    actual = box.input_value()
+    _payload.last = payload_record("resumeatlas", jd_text, actual)
+    if actual != sent:
+        raise SiteError("ResumeAtlas: job-description input changed unexpectedly; no scan spent")
     if re.search(r"FREE CREDITS\s*0\s*/", _body(pg), re.I):
         from jobagent.tools.ats_accounts import AutomationBlocked
         raise AutomationBlocked("ResumeAtlas: no free checks left this month", "quota_exhausted")
+    if pg.locator('[aria-label="Your analysis report"] .ref-dash').count():
+        raise SiteError("ResumeAtlas: a previous report is still present before this scan; refusing an unbound result")
     pg.get_by_role("button", name=re.compile("analyze my resume", re.I)).first.click()
     for _ in range(60):
         pg.wait_for_timeout(3000)
         body = _body(pg)
-        check_scan_blockers(body, "ResumeAtlas")
-        if "Comparing it to the job description" not in body and pg.locator(".ref-dash-verdict-pct:visible").count():
+        if pg.locator('[aria-label="Your analysis report"] .ref-dash-verdict-pct:visible').count():
             return SiteScore(**ats_providers.resumeatlas_result(pg))
+        check_scan_blockers(body, "ResumeAtlas")
     else:
         screenshot(pg, "/app/state/logs/ats-resumeatlas-fail.png")
         raise SiteError("ResumeAtlas: no verdict on the page")

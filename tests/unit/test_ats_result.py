@@ -74,6 +74,17 @@ def test_review_summary_and_learning_snapshot_agree(tmp_path):
     assert summary["resume_sha256"] == snap["resume_pdf_sha256"] == ats_result.sha256_file(d / "resume.pdf")
 
 
+def test_review_line_discloses_a_provider_word_limit(tmp_path):
+    d, conn = make(tmp_path)
+    split_rounds(conn, d)
+    row = conn.execute("SELECT id,raw FROM ats_runs WHERE site='resumeatlas'").fetchone()
+    raw = json.loads(row['raw'])
+    raw['breakdown']['payload'] = {'truncated': True, 'word_limit': 650,
+                                    'jd_words_total': 948, 'jd_words_sent': 650}
+    conn.execute('UPDATE ats_runs SET raw=? WHERE id=?', (json.dumps(raw), row['id']));conn.commit()
+    assert 'partial JD scoring: resumeatlas 650/948 words' in ats_result.line(d, conn)
+
+
 def test_the_last_round_alone_is_not_the_five_site_average(tmp_path):
     """The previous review line averaged only the final round's rows: 73.3 from three sites, not 70.0 from all five."""
     d, conn = make(tmp_path)

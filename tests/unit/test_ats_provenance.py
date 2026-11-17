@@ -70,6 +70,65 @@ def test_the_payload_is_stored_with_the_score_and_surfaced_in_the_summary(store,
     assert g["provenance"]["autoapplymax"]["payload"]["truncated"]
 
 
+def test_resumeatlas_word_cap_preserves_the_exact_prefix_and_records_both_units():
+    import hashlib
+    text = '  ' + '\n\t'.join(f'word{i}' for i in range(800))
+    sent = ats_sites.jd_payload('resumeatlas', text)
+    rec = ats_sites._payload.last
+    assert len(sent.split()) == 650 and text.startswith(sent)
+    assert sent.endswith('word649')
+    assert rec['word_limit'] == 650 and rec['jd_words_total'] == 800 and rec['jd_words_sent'] == 650
+    assert rec['truncated'] and rec['sent_sha256'] == hashlib.sha256(sent.encode()).hexdigest()
+    assert ats_sites.jd_payload('resumeatlas', '  short\nposting  ') == '  short\nposting  '
+    assert not ats_sites._payload.last['truncated']
+
+
+def test_resumeatlas_word_truncation_reaches_the_authoritative_summary(store, monkeypatch):
+    text = 'word ' * 800
+    (store/'jd.txt').write_text(text)
+    fake_site(monkeypatch, 'resumeatlas', [71.0])
+    result, = ats_sites.score_all(store/'resume.pdf', text, sites=('resumeatlas',), title='Engineer', company='Acme')
+    ats_sites.record(store, result.site, 0, result.score, result.missing, result.to_dict())
+    summary = ats_result.gather(store, ('resumeatlas',))
+    assert summary['complete']
+    assert summary['truncated_posting']['resumeatlas']['jd_words_sent'] == 650
+    assert summary['provenance']['resumeatlas']['provider_version'] == 3
+
+
+def test_resumeatlas_does_not_spend_a_scan_when_the_control_changes_the_payload(tmp_path):
+    from unittest.mock import Mock
+    page = Mock()
+    page.locator.return_value.nth.return_value.input_value.return_value = 'unexpected client truncation'
+    with pytest.raises(ats_sites.SiteError, match='no scan spent'):
+        ats_sites.resumeatlas(page, tmp_path/'resume.pdf', 'Complete posting', 'Engineer')
+    page.get_by_role.assert_not_called()
+    assert ats_sites._payload.last['sent_sha256'] != ats_sites._payload.last['jd_sha256']
+
+
+def test_resumeatlas_does_not_reuse_a_report_present_before_the_scan(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+    page = Mock()
+    page.locator.return_value.nth.return_value.input_value.return_value = 'JD'
+    page.locator.return_value.count.return_value = 1
+    monkeypatch.setattr(ats_sites, '_body', lambda _: 'One scan available')
+    with pytest.raises(ats_sites.SiteError, match='previous report'):
+        ats_sites.resumeatlas(page, tmp_path/'resume.pdf', 'JD', 'Engineer')
+    page.get_by_role.assert_not_called()
+
+
+def test_resumeatlas_accepts_a_new_personal_report_after_the_last_credit(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+    page = Mock()
+    page.locator.return_value.nth.return_value.input_value.return_value = 'JD'
+    page.locator.return_value.count.side_effect = [0, 1]  # absent before click; new personal report after it
+    text = iter(['One scan available', 'Available scans: 0'])
+    monkeypatch.setattr(ats_sites, '_body', lambda _: next(text))
+    monkeypatch.setattr(ats_sites.ats_providers, 'resumeatlas_result', lambda _: {
+        'site': 'resumeatlas', 'score': 81, 'job_specific': True})
+    assert ats_sites.resumeatlas(page, tmp_path/'resume.pdf', 'JD', 'Engineer').score == 81
+    page.get_by_role.return_value.first.click.assert_called_once()
+
+
 # --- repeated observations ----------------------------------------------------------------------------------------------
 
 def test_a_real_written_report_survives_observation_and_reaches_the_writer(store, monkeypatch):

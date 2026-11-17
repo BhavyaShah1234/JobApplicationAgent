@@ -16,6 +16,11 @@ produces an incomplete result (`average: null`), without substituting zero or av
 missing sites, average, resume SHA-256 and posting fingerprint. Explicit `--site` selections produce a custom
 average of the requested numeric sites; SkillsFirst never contributes a number.
 
+ResumeAtlas accepts at most 650 words. The adapter sends that exact prefix, checks
+the input's readback before spending a scan, and records both word and character
+counts and hashes. The saved summary and review/CLI output identify partial-JD
+scoring; its score is not described as an evaluation of the full posting.
+
 > **Historical benchmark (2026-11-02).** The resume builder was the **multi-agent team with devstral2-123b for every agent**
 > (`jobagent tailor`; section agents + a validator + the ATS router, see "Multi-agent builder" below). It is scored
 > every round on AutoApplyMax, Jobalytics and HireFlow (HireFlow averaged over 2 runs). No setup has reached a 90

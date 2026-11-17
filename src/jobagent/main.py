@@ -670,12 +670,15 @@ def ats_cmd(
         for tip in s.advice + s.breakdown.get("template", []):
             console.print(f"   advice: {tip}", highlight=False)
     summary = ats_sites.write_summary(d, {s.site: s.score for s in results}, selected)
+    from jobagent.tools.ats_result import scope_note
     count, total = len(summary["scores"]), len(summary["sites"])
     if summary["complete"]:
         console.print(f"ATS average ({count}/{total} sites): {summary['average']}/100", highlight=False)
     else:
         console.print(f"ATS average incomplete ({count}/{total} sites); "
                       f"missing: {', '.join(summary['missing']) or 'no numeric sites selected'}", highlight=False)
+    if note := scope_note(summary):
+        console.print(f'ATS scope: {note}', highlight=False)
     console.print(f"Summary: {d / 'ats_summary.json'}", highlight=False)
 
 

@@ -106,18 +106,30 @@ def gather(job_dir: Path | None, sites=ats_sites.AVERAGE_SITES, conn=None, fresh
     return summary
 
 
+def scope_note(summary: dict) -> str:
+    """Describe providers that evaluated a prefix rather than the whole posting."""
+    parts = []
+    for site, payload in summary.get('truncated_posting', {}).items():
+        unit = 'words' if payload.get('word_limit') else 'chars'
+        sent = payload.get('jd_words_sent' if unit == 'words' else 'jd_chars_sent', '?')
+        total = payload.get('jd_words_total' if unit == 'words' else 'jd_chars_total', '?')
+        parts.append(f'{site} {sent}/{total} {unit}')
+    return 'partial JD scoring: ' + ', '.join(parts) if parts else ''
+
+
 def line(job_dir: Path, conn=None) -> str:
     """The review packet's ATS line, from the authoritative result."""
     g = gather(job_dir, conn=conn)
     if not g["scores"]:
         return "no ATS scores recorded for this resume version"
     shown = json.dumps(g["scores"])
+    scope = '; ' + scope_note(g) if g.get('truncated_posting') else ''
     if g["complete"]:
-        return f"average {g['average']:.1f} over {len(g['sites'])} required sites {shown}"
+        return f"average {g['average']:.1f} over {len(g['sites'])} required sites {shown}" + scope
     return (f"average unavailable (null): {len(g['scores'])} of {len(g['sites'])} required sites scored this resume version "
             f"{shown}; missing {', '.join(g['missing'])}"
             + (f"; manual score(s) for {', '.join(g['unidentified'])} have no job identity: record again with `jobagent ats-record`"
-               if g.get("unidentified") else ""))
+               if g.get("unidentified") else "") + scope)
 
 
 COVER = re.compile(r"(?i)cover")
