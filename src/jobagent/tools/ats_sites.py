@@ -1,7 +1,7 @@
 """Step 10: online ATS checkers, driven in the agent's browser (AutoApplyMax and Jobalytics with the agent's free
 accounts, created with the user's approval 2026-10-28; HireFlow and ResumeAtlas need none). SkillsFirst uses the
 saved ASU organization account for automated, job-specific written feedback. Jobscan, SkillSyncer and ATSAlign
-use Google sign-in. The default numeric average uses AutoApplyMax, HireFlow, ResumeAtlas, ATSAlign and ATS Friendly;
+use Google sign-in. The default numeric average uses AutoApplyMax, HireFlow, SkillSyncer, ATSAlign and ATS Friendly;
 SkillsFirst adds written feedback. Other registered sites remain available on request.
 
 - SkillsFirst: resume PDF + job description -> Skills Gap Analysis recommendations, without a numeric score.
@@ -65,7 +65,7 @@ JD_LIMITS = {"autoapplymax": 8000, "hireflow": 8000, "resumeatlas": 8000, "atsfr
 JD_WORD_LIMITS = {"resumeatlas": 650}
 # Bump a provider's version when its adapter or parser changes in a way that can change its scores: a recorded score of another
 # version is not reused (limited-scan sites keep scans only for the version that made them).
-PROVIDER_VERSIONS = {"jobscan": 2, "resumeatlas": 3, "skillsyncer": 2}      # every other provider: 1
+PROVIDER_VERSIONS = {"jobscan": 2, "resumeatlas": 3, "skillsyncer": 3}      # every other provider: 1
 _payload = threading.local()
 
 
@@ -500,7 +500,7 @@ SITES = {
 AVERAGE_SITES = (
     "autoapplymax",
     "hireflow",
-    "resumeatlas",
+    "skillsyncer",
     "atsalign",
     "atsfriendly",
 )

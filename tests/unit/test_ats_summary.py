@@ -8,11 +8,11 @@ from jobagent.main import app
 from jobagent.tools import ats_sites
 
 
-SCORES = {"autoapplymax": 76, "hireflow": 53.5, "resumeatlas": 81, "atsalign": 85, "atsfriendly": 47}
+SCORES = {"autoapplymax": 76, "hireflow": 53.5, "skillsyncer": 81, "atsalign": 85, "atsfriendly": 47}
 
 
 def test_five_site_mean_excludes_other_sites():
-    summary = ats_sites.score_summary({**SCORES, "jobalytics": 100, "skillsyncer": 100, "jobscan": 100, "skillsfirst": None})
+    summary = ats_sites.score_summary({**SCORES, "jobalytics": 100, "resumeatlas": 100, "jobscan": 100, "skillsfirst": None})
     assert summary["average"] == 68.5
     assert summary["complete"]
     assert summary["scores"] == SCORES
@@ -20,16 +20,16 @@ def test_five_site_mean_excludes_other_sites():
 
 @pytest.mark.parametrize("invalid", [None, float("nan"), float("inf"), True, -1, 101])
 def test_incomplete_scores_do_not_change_the_denominator(invalid):
-    summary = ats_sites.score_summary({**SCORES, "resumeatlas": invalid})
+    summary = ats_sites.score_summary({**SCORES, "skillsyncer": invalid})
     assert summary["average"] is None
     assert not summary["complete"]
-    assert summary["missing"] == ["resumeatlas"]
+    assert summary["missing"] == ["skillsyncer"]
 
 
 def test_zero_is_a_valid_score_and_duplicate_sites_do_not_count_twice():
-    summary = ats_sites.score_summary({"resumeatlas": 0}, ("resumeatlas", "resumeatlas", "skillsfirst"))
+    summary = ats_sites.score_summary({"skillsyncer": 0}, ("skillsyncer", "skillsyncer", "skillsfirst"))
     assert summary["average"] == 0
-    assert summary["sites"] == ["resumeatlas"]
+    assert summary["sites"] == ["skillsyncer"]
     assert summary["complete"]
 
 
@@ -41,7 +41,7 @@ def job(tmp_path):
     return tmp_path
 
 
-@pytest.mark.parametrize("failed", [None, "resumeatlas"])
+@pytest.mark.parametrize("failed", [None, "skillsyncer"])
 def test_cli_reports_and_persists_complete_or_incomplete_mean(job, monkeypatch, failed):
     requested = []
 
@@ -74,14 +74,14 @@ def test_cli_discloses_partial_posting_scope_with_the_average(job, monkeypatch):
     monkeypatch.setattr(ats_sites, 'score_all', lambda *a, **kw: [])
     monkeypatch.setattr(ats_sites, 'write_summary', lambda *a, **kw: {
         'scores': SCORES, 'sites': list(SCORES), 'average': 68.5, 'complete': True,
-        'truncated_posting': {'resumeatlas': {'word_limit': 650, 'jd_words_sent': 650, 'jd_words_total': 948}},
+        'truncated_posting': {'skillsyncer': {'word_limit': 650, 'jd_words_sent': 650, 'jd_words_total': 948}},
     })
     result = CliRunner().invoke(app, ['ats', str(job)])
     assert result.exit_code == 0
-    assert 'resumeatlas 650/948 words' in result.output
+    assert 'skillsyncer 650/948 words' in result.output
 
 
-@pytest.mark.parametrize("failed", [None, "resumeatlas"])
+@pytest.mark.parametrize("failed", [None, "skillsyncer"])
 def test_single_writer_final_average_requires_every_selected_site(job, monkeypatch, failed):
     from types import SimpleNamespace
     from jobagent.steps import ats
@@ -111,7 +111,7 @@ def test_single_writer_final_average_requires_every_selected_site(job, monkeypat
     assert result["average_missing"] == ([] if failed is None else [failed])
 
 
-@pytest.mark.parametrize("failed", [None, "resumeatlas"])
+@pytest.mark.parametrize("failed", [None, "skillsyncer"])
 def test_multi_agent_final_average_drops_a_stale_limited_score(job, monkeypatch, failed):
     from types import SimpleNamespace
     from jobagent.steps import multi_agent as multi

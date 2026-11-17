@@ -3,6 +3,7 @@
 import re
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeout, expect
 
@@ -41,6 +42,24 @@ def _wait_report(page, site: str, ready, timeout_s=120):
         check_scan_blockers(text, site)
         page.wait_for_timeout(700)
     raise RuntimeError(f"{site}: no completed report within {timeout_s}s")
+
+
+def _wait_settled_report(page, site, snapshot, timeout_s=120):
+    """A completed report must stop changing before its animated score is read."""
+    previous=None;unchanged_since=time.monotonic();deadline=unchanged_since+timeout_s
+    while time.monotonic()<deadline:
+        text=_text(page);current=snapshot(text)
+        try:check_scan_blockers(text,site)
+        except AutomationBlocked as exc:
+            # The final permitted scan can show zero remaining credits while its
+            # actual report animates. Other blockers still require attention.
+            if exc.status!='quota_exhausted' or current is None:raise
+        if current is not None:
+            if current!=previous:previous,unchanged_since=current,time.monotonic()
+            elif time.monotonic()-unchanged_since>=2:return
+        else:previous=None;unchanged_since=time.monotonic()
+        page.wait_for_timeout(700)
+    raise RuntimeError(f'{site}: no settled personal report within {timeout_s}s')
 
 
 def resumeatlas_result(page) -> dict:
@@ -195,23 +214,15 @@ def jobscan_result(page) -> dict:
 
 
 def _wait_jobscan_report(page) -> None:
-    previous = None
-    unchanged_since = time.monotonic()
-
-    def stable(text):
-        nonlocal previous, unchanged_since
+    def snapshot(text):
         match = re.search(r"Match Rate\s+(\d{1,3})(?!\d)", text)
         if "/match-report/" not in page.url or not match:
-            return False
+            return None
         # The report animates its score upward. It can already contain all skill rows
         # while the displayed number is still changing, so wait for it to settle.
-        current = (int(match[1]), text.split("Resume Report", 1)[-1])
-        if current != previous:
-            previous, unchanged_since = current, time.monotonic()
-            return False
-        return time.monotonic() - unchanged_since >= 2
+        return int(match[1]), text.split("Resume Report", 1)[-1]
 
-    _wait_report(page, "Jobscan", stable)
+    _wait_settled_report(page, "Jobscan", snapshot)
 
 
 def jobscan(page, resume_pdf: Path, jd_text: str, title="", company="") -> dict:
@@ -277,6 +288,20 @@ def _paste_rich_text(page, editor, text):
     return editor.inner_text()
 
 
+def _wait_skillsyncer_report(page):
+    def snapshot(text):
+        if re.search(r'(?i)this is too short to be a job posting',text):
+            raise RuntimeError('SkillSyncer rejected the job-description editor; no score was produced')
+        url=urlsplit(page.url)
+        match=re.search(r'Match Report\s+(\d{1,3})\s*%',text)
+        if url.hostname!='app.skillsyncer.com' or not re.fullmatch(r'/scans/[^/]+/?',url.path) or url.path.rstrip('/').endswith('/create') or not match:
+            return None
+        modal=page.get_by_role('button',name='Close modal',exact=True)
+        if modal.count() and modal.is_visible():return None
+        return int(match[1]),text.split('Match Report',1)[-1]
+    _wait_settled_report(page,'SkillSyncer',snapshot)
+
+
 def skillsyncer(page, resume_pdf: Path, jd_text: str, title="", company="") -> dict:
     if not title or not company:
         raise ValueError("SkillSyncer requires the posting's job title and company")
@@ -308,12 +333,7 @@ def skillsyncer(page, resume_pdf: Path, jd_text: str, title="", company="") -> d
     from jobagent.tools import ats_sites
     ats_sites._payload.last=ats_sites.payload_record('skillsyncer',jd_text,actual)
     page.get_by_role("button", name="Create Scan", exact=True).first.click(timeout=20_000)
-    def completed(text):
-        if re.search(r'(?i)this is too short to be a job posting',text):
-            raise RuntimeError('SkillSyncer rejected the job-description editor; no score was produced')
-        modal=page.get_by_role('button',name='Close modal',exact=True)
-        return (not modal.count() or not modal.is_visible()) and bool(re.search(r'Match Report\s+\d+\s*%',text))
-    _wait_report(page, "SkillSyncer", completed)
+    _wait_skillsyncer_report(page)
     return skillsyncer_result(page)
 
 

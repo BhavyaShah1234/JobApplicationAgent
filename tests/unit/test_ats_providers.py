@@ -107,6 +107,35 @@ def test_jobscan_waits_for_the_animated_score_to_settle(monkeypatch):
     assert page.clock >= 3.4
 
 
+@pytest.mark.parametrize('site', ['jobscan', 'skillsyncer'])
+def test_a_last_credit_report_must_settle_despite_zero_remaining_scans(monkeypatch,site):
+    class Animated(ReportPage):
+        clock=0;reads=0
+        def inner_text(self,**kw):
+            score=[48,65][min(self.reads,1)];self.reads+=1
+            header=f'Match Rate\n{score}\nResume Report' if site=='jobscan' else f'Match Report\n{score}\n%'
+            return header+'\nSQL\nAvailable scans: 0'
+        def wait_for_timeout(self,ms):self.clock+=ms/1000
+        def get_by_role(self,*a,**kw):return SimpleNamespace(count=lambda:0)
+    url='https://app.jobscan.co/match-report/123' if site=='jobscan' else 'https://app.skillsyncer.com/scans/123'
+    page=Animated('',url);monkeypatch.setattr(providers.time,'monotonic',lambda:page.clock)
+    wait=providers._wait_jobscan_report if site=='jobscan' else providers._wait_skillsyncer_report
+    wait(page)
+    assert page.reads>=5 and page.clock>=2.8
+
+
+def test_a_create_screen_cannot_hide_quota_exhaustion_behind_report_like_text():
+    page=ReportPage('Match Report\n65\n%\nAvailable scans: 0','https://app.skillsyncer.com/scans/create')
+    with pytest.raises(accounts.AutomationBlocked) as error:providers._wait_skillsyncer_report(page)
+    assert error.value.status=='quota_exhausted'
+
+
+def test_a_report_does_not_suppress_a_human_verification_blocker():
+    page=ReportPage('Match Rate\n65\nResume Report\nVerify that you are human','https://app.jobscan.co/match-report/123')
+    with pytest.raises(accounts.AutomationBlocked) as error:providers._wait_jobscan_report(page)
+    assert error.value.status=='human_required'
+
+
 def test_skillsyncer_distinguishes_missing_keywords_from_frequency_shortfalls():
     page = ReportPage("""Match Report
 57
@@ -337,7 +366,7 @@ def test_resumeatlas_cache_rejects_scores_from_sample_parser(score_store):
 
 
 def test_five_job_specific_scorers_are_the_default_average():
-    assert ats_sites.AVERAGE_SITES == ("autoapplymax", "hireflow", "resumeatlas", "atsalign", "atsfriendly")
+    assert ats_sites.AVERAGE_SITES == ("autoapplymax", "hireflow", "skillsyncer", "atsalign", "atsfriendly")
     assert ats_sites.numeric_sites(ats_sites.DEFAULT_SITES) == ats_sites.AVERAGE_SITES
     assert "skillsfirst" in ats_sites.DEFAULT_SITES
     assert "applycove" not in ats_sites.DEFAULT_SITES
