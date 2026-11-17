@@ -112,6 +112,28 @@ def parse_workday(data: dict, company: str, host: str, site: str) -> list[Listin
     return out
 
 
+def workday_locations(item: Listing, get_json=_json) -> list[str]:
+    """Expand a public Workday 'N Locations' placeholder using the posting's own detail response."""
+    parsed=urlparse(item.url)
+    board=board_of(item.url)
+    if not board or board['family']!='workday' or not re.fullmatch(r'\d+ locations?', ' '.join(item.locations),re.I):
+        return item.locations
+    tenant,_,site=board['token'].split('/')
+    path=parsed.path[parsed.path.find('/job/'):]
+    if not path.startswith('/job/'):
+        return item.locations
+    data=get_json(f'https://{parsed.netloc}/wday/cxs/{tenant}/{site}{path}') or {}
+    info=data.get('jobPostingInfo') or {}
+    primary=info.get('location') or ''
+    country=info.get('country') or {}
+    if isinstance(country,dict):country=country.get('descriptor') or ''
+    values=[', '.join(x for x in [primary,country] if x)] + list(info.get('additionalLocations') or [])
+    # Every expanded office must be explicit enough to classify; never let one known US city hide unknown offices.
+    from jobagent.tools.locations import from_text
+    values=list(dict.fromkeys(x for x in values if isinstance(x,str) and x.strip()))
+    return values if values and all(from_text(x) is not None for x in values) else item.locations
+
+
 def parse_dom(markup: str, base: str, company: str) -> list[Listing]:
     """Job links on a careers page: best effort, location unknown."""
     try:
@@ -147,6 +169,12 @@ def collect(careers: dict, company: str, queries: list[str] | None = None, log=p
         log(f"listings: {company}: no ATS board; {len(found)} job links on the careers page (location unknown)")
         return found
     fam, token = board["family"], board["token"]
+    if fam in ('ultipro','kpmg'):
+        from jobagent.tools.listings_extra import collect_ukg, collect_kpmg
+        pause = lambda: time.sleep(PAUSE_S)
+        if fam == 'ultipro':
+            return collect_ukg(board,company,get_json,pause,log)
+        return collect_kpmg(board,company,queries,get_html or _html,get_json,pause,log)
     if fam == "greenhouse":
         data = get_json(f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs")
         return parse_greenhouse(data, company)

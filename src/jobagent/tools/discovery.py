@@ -39,7 +39,8 @@ def load_preferences() -> dict:
 
 def discover(company: str, config: dict | None = None, conn=None, log=print, refresh: bool = False,
              resolver=careers_mod.resolve, collector=listings_mod.collect, judge="model", embed="model",
-             location_judge=None, limit: int | None = None, only_us: bool = True) -> Result:
+             location_judge=None, limit: int | None = None, only_us: bool = True,
+             detail_locations=listings_mod.workday_locations) -> Result:
     res = Result(company)
     config = config if config is not None else matching.load_roles()
     conn = conn or db.connect()
@@ -112,6 +113,17 @@ def discover(company: str, config: dict | None = None, conn=None, log=print, ref
                 elif embed_note and m.verdict == "skipped" and m.stage == "none" and m.reason.startswith("no target role fits"):
                     res.budget["unevaluated_semantic"] += 1       # the semantic check could not run: say so, do not imply "no fit"
                     m = matching.Match("skipped", "none", reason=f"not evaluated ({embed_note})", detail={"degraded": embed_note})
+            if (loc is not None and loc.verdict == 'ambiguous' and m.verdict != 'skipped'
+                    and x.portal == 'workday'):
+                try:
+                    expanded=detail_locations(x)
+                    if expanded != x.locations:
+                        x.locations=expanded
+                        loc=locations.classify(expanded,x.title,snippet=x.snippet,judge=location_judge)
+                except listings_mod.Blocked:
+                    log(f'discover: {company}: location detail refused for {x.title!r}; left for review')
+                except Exception as exc:
+                    log(f'discover: {company}: location detail failed ({type(exc).__name__}); left for review')
             outcome = jobqueue.enqueue(conn, x, m, loc)
             res.counts[outcome] = res.counts.get(outcome, 0) + 1
             if outcome == "queued":

@@ -43,7 +43,8 @@ ATS = [("workday", r"(^|\.)myworkdayjobs\.com$|(^|\.)myworkdaysite\.com$"), ("gr
        ("smartrecruiters", r"(^|\.)smartrecruiters\.com$"), ("icims", r"(^|\.)icims\.com$"),
        ("ultipro", r"(^|\.)ultipro\.com$|(^|\.)ukg\.com$"), ("oracle", r"(^|\.)oraclecloud\.com$"),
        ("taleo", r"(^|\.)taleo\.net$"), ("bamboohr", r"(^|\.)bamboohr\.com$"), ("workable", r"(^|\.)workable\.com$"),
-       ("jobvite", r"(^|\.)jobvite\.com$"), ("breezy", r"(^|\.)breezy\.hr$")]
+       ("jobvite", r"(^|\.)jobvite\.com$"), ("breezy", r"(^|\.)breezy\.hr$"),
+       ("kpmg", r"(^|\.)kpmguscareers\.com$")]
 
 
 def ats_of(url: str) -> str:
@@ -69,9 +70,15 @@ def board_of(url: str) -> dict | None:
         host = p.netloc.lower()
         site = next((x for x in parts if not re.fullmatch(r"[a-z]{2}[-_][A-Za-z]{2}", x)), "")
         token = f"{host.split('.')[0]}/{host.split('.')[1] if host.count('.') >= 2 else ''}/{site}"
+    elif family == "ultipro":
+        if len(parts) >= 3 and parts[1].lower() == "jobboard" and re.fullmatch(r"[\da-fA-F-]{36}", parts[2]):
+            token = "/".join(parts[:3])
+    elif family == "kpmg":
+        token = "us"
     if not token:
         return None
-    return {"family": family, "token": token, "url": f"{p.scheme}://{p.netloc}{'/' + parts[0] if parts else ''}"}
+    path = '/' + token if family == "ultipro" else ('/' + parts[0] if parts else '')
+    return {"family": family, "token": token, "url": f"{p.scheme}://{p.netloc}{path}"}
 
 
 def scan_for_board(markup: str, base: str) -> dict | None:
@@ -196,7 +203,9 @@ def cached(company: str) -> dict | None:
     p = _cache_path(company)
     try:
         data = json.loads(p.read_text())
-        if datetime.now(UTC) - datetime.fromisoformat(data["resolved_at"]) < TTL:
+        # Older misses on UKG/KPMG predate their adapters. Refresh those unknown boards once.
+        current = data.get('board') or data.get('resolver_version',0) >= 2
+        if current and datetime.now(UTC) - datetime.fromisoformat(data["resolved_at"]) < TTL:
             return data
     except Exception:
         pass
@@ -255,7 +264,7 @@ def resolve(company: str, website: str | None = None, log=print, refresh: bool =
                 log(f"careers: {company}: chosen by the model, please check: {found['url']}")
         except Exception as e:
             log(f"careers: {company}: model pick failed ({type(e).__name__})")
-    result = {"company": company, "url": "", "how": "none", "board": None, "blocked": False,
+    result = {"company": company, "url": "", "how": "none", "board": None, "blocked": False, "resolver_version": 2,
               "resolved_at": datetime.now(UTC).isoformat(timespec="seconds")}
     if found:
         final, markup, status, blocked = _get(found["url"])
