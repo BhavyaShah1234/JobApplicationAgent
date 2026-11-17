@@ -30,6 +30,19 @@ def test_workday_rows_get_the_sites_job_url_and_requisition_id():
     assert w.req_id == "JR0287686" and w.locations == ["US, California, Santa Clara"]
 
 
+def test_workday_spotlight_labels_do_not_merge_distinct_requisitions():
+    data = {"jobPostings": [
+        {"title": "Software Engineer", "externalPath": "/job/Phoenix/Software-Engineer_JR123",
+         "bulletFields": ["Spotlight Job", "JR123"]},
+        {"title": "Data Engineer", "externalPath": "/job/Phoenix/Data-Engineer_JR456",
+         "bulletFields": ["Spotlight Job", "JR456"]},
+        {"title": "ML Engineer", "externalPath": "/job/Phoenix/ML-Engineer",
+         "bulletFields": ["Full time", "R789"]},
+    ]}
+    rows = L.parse_workday(data, "Acme", "acme.wd1.myworkdayjobs.com", "Careers")
+    assert [r.req_id for r in rows] == ["JR123", "JR456", "R789"]
+
+
 def test_workday_is_searched_once_per_target_role_and_paged_until_short():
     calls = []
 

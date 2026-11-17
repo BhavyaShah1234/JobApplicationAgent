@@ -115,9 +115,14 @@ def parse_workday(data: dict, company: str, host: str, site: str) -> list[Listin
     for j in (data or {}).get("jobPostings", []):
         path = j.get("externalPath", "")
         bullets = j.get("bulletFields") or []
+        # Workday may prepend labels such as "Spotlight Job" to bulletFields.
+        # That shared label must never become a requisition identity for deduping.
+        leaf = path.rsplit("/", 1)[-1]
+        req_id = (leaf.rsplit("_", 1)[-1] if "_" in leaf else
+                  next((str(b) for b in bullets if re.fullmatch(r"(?=.*\d)[A-Za-z0-9][A-Za-z0-9.-]*", str(b))), ""))
         out.append(Listing(company, j.get("title", ""), f"https://{host}/en-US/{site}{path}",
                            [j["locationsText"]] if j.get("locationsText") else [], j.get("postedOn", ""),
-                           str(bullets[0]) if bullets else path.rsplit("_", 1)[-1], "", "workday"))
+                           req_id, "", "workday"))
     return out
 
 
