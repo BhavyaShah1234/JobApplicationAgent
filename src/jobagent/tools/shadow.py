@@ -48,17 +48,35 @@ def install(playwright, context):
 def prepare(frame):
     """Recover existing author closed roots without opening them to the site's own DOM queries."""
     frame.evaluate(SCRIPT)
-    if frame.evaluate("() => !!window.__jobagentShadowRecovered"):
+    state=getattr(frame,'_jobagent_shadow_state',None)
+    if state is None:
+        context=frame.page.context
+        try:session=context.new_cdp_session(frame)
+        except Exception:session=context.new_cdp_session(frame.page)
+        state={'session':session,'dirty':True,'closed':False}
+        frame._jobagent_shadow_state=state
+        def closed_in(node):
+            return node.get('shadowRootType')=='closed' or any(closed_in(child)
+                for name in ('children','shadowRoots') for child in node.get(name,[]))
+        def inserted(event):
+            if closed_in(event.get('root',event.get('node',{}))):
+                state['dirty']=True;state['closed']=True
+        session.on('DOM.shadowRootPushed',inserted)
+        session.on('DOM.childNodeInserted',inserted)
+        session.on('DOM.documentUpdated',lambda _:state.update(dirty=True))
+        session.send('DOM.enable')
+        def cleanup():
+            try:session.detach()
+            except Exception:pass  # the page/target may already have closed
+        frame.page.once('close',cleanup)
+    if not state['dirty'] and frame.evaluate("() => !!window.__jobagentShadowRecovered"):
         return
-    context = frame.page.context
-    try:
-        session = context.new_cdp_session(frame)
-    except Exception:
-        session = context.new_cdp_session(frame.page)
+    session=state['session'];state.update(dirty=False,closed=False)
     try:
         doc = session.send("DOM.getDocument", {"depth": -1, "pierce": True})
         def walk(node):
             if node.get("shadowRootType") == "closed" and node.get("backendNodeId"):
+                state['closed']=True
                 remote = session.send("DOM.resolveNode", {"backendNodeId": node["backendNodeId"]})["object"]
                 obj = remote.get("objectId")
                 if obj:
@@ -75,11 +93,18 @@ def prepare(frame):
                 walk(node["contentDocument"])
         walk(doc["root"])
         frame.evaluate("() => {window.__jobagentShadowRecovered=true}")
-    finally:
-        session.detach()
+    except Exception:
+        state['dirty']=True
+        raise
 
 
 def locator(frame, selector):
+    # Native Playwright selectors already pierce open roots. Use the custom
+    # engine only for proved closed roots; existing desktop documents can have
+    # an injected selector registry created by a previous client.
+    state=getattr(frame,'_jobagent_shadow_state',None)
+    if state is not None and not state['closed']:
+        return frame.locator(selector)
     if getattr(getattr(getattr(frame, "page", None), "context", None), "jobagent_shadow_selectors", False):
         return frame.locator("jobagent=" + selector)
     return frame.locator(selector)
