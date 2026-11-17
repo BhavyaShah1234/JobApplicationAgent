@@ -8,9 +8,9 @@ import { ANALYTICS } from "../test/mockFetch.js";
 
 test("the funnel shows each step with the share kept from the one above and a readable description", () => {
   render(<FunnelChart steps={ANALYTICS.funnel} />);
-  expect(screen.getByRole("img")).toHaveAccessibleName(/Postings found 3200/);
+  expect(screen.getByRole("img")).toHaveAccessibleName(/Postings found 3105/);
   expect(screen.getByText("Passed the US and role filters")).toBeInTheDocument();
-  expect(screen.getByText(/(^|\s)7% of previous/)).toBeInTheDocument();        // 220 of 3200
+  expect(screen.getByText(/(^|\s)7% of previous/)).toBeInTheDocument();        // 220 of 3105
   expect(screen.getByText(/(^|\s)75% of previous/)).toBeInTheDocument();       // 3 receipts of 4 submitted
   expect(screen.getByText(/(^|\s)3% of previous/)).toBeInTheDocument();        // 6 filled of 220 kept
 });

@@ -12,17 +12,16 @@ sources (`static/source.sha256`).
 
 | Tab | Shows | Source |
 |---|---|---|
-| Overview | what needs you (questions, applications to review), **Working now**: one card per job with its pipeline stages, a progress bar and the current step and iteration; recently finished jobs; totals; link to the noVNC browser view | job database, `state/hitl`, run logs |
+| Overview | one page with everything: headline numbers (questions waiting, applications to review, jobs working, postings found, submitted, reply rate, wait for your approval); **Working now** (a card per job with its stages, progress bar and the current step and iteration); recently finished jobs; then the analytics: the funnel from postings found to interviews, daily activity, **Discovery** (one bar for where every posting went, then places outside the US, top companies, roles, match scores), outcomes (labels, time to a reply, reply rate by portal / role / resume score with 95% intervals) and resume-score distributions | job database, `state/hitl`, run logs, `outcome_events`, `ats_runs`, via `tools/outcome_stats.py` |
 | Jobs | the same job cards with filters (working now, needs attention, finished) and a history of what each job did | `progress` records in the run logs |
 | Questions | what the agent is waiting on; a text box to answer (not for secrets) | `state/hitl/pending` |
 | Review | applications filled to their review screen: ready or not, blockers, hours waiting, and the exact command that opens each review | `tools/review_queue.py` |
 | Queue | discovered postings and their status, role, match score, note | `jobs` |
 | Runs | each run (step, job, start, lines, errors, last line, running) and its full log | `state/logs/*.jsonl` (step 22) |
 | Outcomes | counts by stage and the latest outcome mails per application | `outcome_events` |
-| Analytics | the funnel from postings found to interviews; daily activity; why postings were filtered out (by reason and place), by company, role and match score; outcome labels and reply rates with sample sizes and 95% intervals, by portal, role and resume-score band; median days to a reply (Kaplan-Meier); time waiting for your approval; checker-site score distribution | job database, `outcome_events`, `ats_runs`, via `tools/outcome_stats.py` |
 | Start a run | `jobagent run INPUTS --through scrape\|tailor\|apply --limit N` in the background | the `run` command (step 16) |
 
-**Analytics honesty.** Silence is never counted as a rejection: the outcome labels are the agent's own (pending inside the cutoff, ghosted after it as a weak negative), and a reply rate is shown as "k of n" with a Wilson 95% interval. A group with fewer than 15 resolved applications is drawn grey and a banner says the figures describe what happened, not what to expect, until there are enough applications. Charts are small hand-written SVG components (`frontend/src/charts`), no charting library.
+**Analytics honesty (on the Overview).** Silence is never counted as a rejection: the outcome labels are the agent's own (pending inside the cutoff, ghosted after it as a weak negative), and a reply rate is shown as "k of n" with a Wilson 95% interval. A group with fewer than 15 resolved applications is drawn grey and a banner says the figures describe what happened, not what to expect, until there are enough applications. Charts are small hand-written SVG components (`frontend/src/charts`), no charting library.
 
 **Pipeline progress.** Each job card shows its plan (scrape, research, documents, apply or submit, depending on how far the run goes), the state of every
 stage (done, running, failed, blocked, stalled, pending), a bar for the whole job, and inside the running stage the step and iteration: for the

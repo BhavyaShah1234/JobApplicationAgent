@@ -27,9 +27,9 @@ export const JOB = {
 
 export const ANALYTICS = {
   generated: "2026-11-17T10:00:00Z",
-  totals: { jobs: 3200, applications: 6, submitted: 4 },
+  totals: { jobs: 3105, applications: 6, submitted: 4 },
   funnel: [
-    { id: "discovered", label: "Postings found", n: 3200 },
+    { id: "discovered", label: "Postings found", n: 3105 },
     { id: "passed", label: "Passed the US and role filters", n: 220 },
     { id: "reached", label: "Application filled to review", n: 6 },
     { id: "submitted", label: "Submitted", n: 4 },
@@ -37,9 +37,9 @@ export const ANALYTICS = {
     { id: "responded", label: "Got a response", n: 1 },
     { id: "interview", label: "Interview or offer", n: 0 },
   ],
-  skips: [{ reason: "Outside the United States", n: 400 }, { reason: "No target role fits the title", n: 1800 }],
+  skips: [{ reason: "Outside the United States", n: 400 }, { reason: "No target role fits the title", n: 1800 }, { reason: "Title excluded (seniority and similar)", n: 400 }, { reason: "Other", n: 370 }],
   skip_places: [{ place: "London", n: 89 }],
-  jobs_by_status: { skipped: 2970, queued: 85 },
+  jobs_by_status: { skipped: 2970, queued: 85, needs_review: 50 },
   jobs_by_company: [{ company: "<b>Acme</b>", found: 100, kept: 10 }],
   jobs_by_role: [{ role: "swe", n: 160 }],
   score_hist: [{ label: "0.5–0.6", n: 3 }, { label: "0.6–0.7", n: 9 }],
@@ -50,6 +50,6 @@ export const ANALYTICS = {
     counts: { confirmation: 3, rejection: 1 }, labels: { pending: 2, negative: 1, ghosted: 0 }, resolved: 1, responded: 1,
     rate: { k: 1, n: 1, lo: 0.2, hi: 1 }, median_days: null, cutoff_days: 45, cutoff_basis: "default: too few responses", min_group: 15,
     by_portal: [{ key: "greenhouse", n: 3, resolved: 1, positive: 0, negative: 1, ghosted: 0, pending: 2, response_rate: 1, response_ci: [0.2, 1], positive_rate: 0, positive_ci: [0, 0.8], median_days: null, by_30d: null, too_few: true }],
-    by_role: [], by_ats: [],
+    by_role: [{ key: "swe", n: 4, resolved: 1, positive: 0, negative: 1, ghosted: 0, pending: 3, response_rate: 1, response_ci: [0.2, 1], positive_rate: 0, positive_ci: [0, 0.8], median_days: null, by_30d: null, too_few: true }], by_ats: [],
   },
 };

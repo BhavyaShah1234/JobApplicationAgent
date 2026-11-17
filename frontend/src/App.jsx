@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { get } from "./api.js";
 import { usePoll } from "./hooks.js";
-import Analytics from "./views/Analytics.jsx";
 import Browser from "./views/Browser.jsx";
 import Jobs from "./views/Jobs.jsx";
 import Outcomes from "./views/Outcomes.jsx";
@@ -12,7 +11,7 @@ import Review from "./views/Review.jsx";
 import Runs from "./views/Runs.jsx";
 import StartRun from "./views/StartRun.jsx";
 
-const TABS = [["overview", "Overview"], ["jobs", "Jobs"], ["browser", "Browser"], ["questions", "Questions"], ["review", "Review"], ["queue", "Queue"], ["runs", "Runs"], ["outcomes", "Outcomes"], ["analytics", "Analytics"], ["start", "Start a run"]];
+const TABS = [["overview", "Overview"], ["jobs", "Jobs"], ["browser", "Browser"], ["questions", "Questions"], ["review", "Review"], ["queue", "Queue"], ["runs", "Runs"], ["outcomes", "Outcomes"], ["start", "Start a run"]];
 
 export default function App() {
   const [tab, setTab] = useState((location.hash || "#overview").slice(1));
@@ -60,7 +59,6 @@ export default function App() {
         {tab === "queue" && <Queue />}
         {tab === "runs" && <Runs />}
         {tab === "outcomes" && <Outcomes />}
-        {tab === "analytics" && <Analytics />}
         {tab === "start" && !config.read_only && <StartRun onStarted={() => go("jobs")} />}
       </main>
     </>
