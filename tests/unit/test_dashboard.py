@@ -308,3 +308,36 @@ def test_every_api_route_answers(env):
     for path in ("overview", "queue", "applications", "review", "hitl", "runs", "outcomes", "pipeline", "config"):
         assert call(srv, "GET", f"/api/{path}")[0] == 200, path
     assert call(srv, "GET", "/api/run/does-not-exist")[0] == 404 and call(srv, "GET", "/api/run/..%2f..%2fjobs")[0] == 404
+
+
+# --- the agent's browser (noVNC) inside the page --------------------------------------------------------------------------------------
+
+def test_only_the_novnc_address_may_be_framed_and_its_reachability_is_reported(tmp_path):
+    import socket
+    s = Settings(**seed(tmp_path))
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    srv = make_server(s, "127.0.0.1", 0, novnc_url=f"http://127.0.0.1:{port}/vnc.html")
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+        c.request("GET", "/api/vnc", headers={"Cookie": f"jobagent_dashboard={srv.token}"})
+        r = c.getresponse()
+        assert json.loads(r.read()) == {"url": f"http://127.0.0.1:{port}/vnc.html", "reachable": True}
+        assert f"frame-src http://127.0.0.1:{port}" in r.getheader("Content-Security-Policy")
+        listener.close()
+        assert call(srv, "GET", "/api/vnc")[1]["reachable"] is False                         # nothing listens there any more
+        assert call(srv, "GET", "/api/config")[1]["novnc"] == f"http://127.0.0.1:{port}/vnc.html"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_without_a_novnc_address_nothing_may_be_framed(env):
+    _, srv, _ = env
+    c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+    c.request("GET", "/api/vnc", headers={"Cookie": f"jobagent_dashboard={srv.token}"})
+    r = c.getresponse()
+    assert json.loads(r.read()) == {"url": "", "reachable": False} and "frame-src 'none'" in r.getheader("Content-Security-Policy")

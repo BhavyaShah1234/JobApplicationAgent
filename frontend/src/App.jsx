@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { get } from "./api.js";
 import { usePoll } from "./hooks.js";
+import Browser from "./views/Browser.jsx";
 import Jobs from "./views/Jobs.jsx";
 import Outcomes from "./views/Outcomes.jsx";
 import Overview from "./views/Overview.jsx";
@@ -10,7 +11,7 @@ import Review from "./views/Review.jsx";
 import Runs from "./views/Runs.jsx";
 import StartRun from "./views/StartRun.jsx";
 
-const TABS = [["overview", "Overview"], ["jobs", "Jobs"], ["questions", "Questions"], ["review", "Review"], ["queue", "Queue"], ["runs", "Runs"], ["outcomes", "Outcomes"], ["start", "Start a run"]];
+const TABS = [["overview", "Overview"], ["jobs", "Jobs"], ["browser", "Browser"], ["questions", "Questions"], ["review", "Review"], ["queue", "Queue"], ["runs", "Runs"], ["outcomes", "Outcomes"], ["start", "Start a run"]];
 
 export default function App() {
   const [tab, setTab] = useState((location.hash || "#overview").slice(1));
@@ -50,8 +51,9 @@ export default function App() {
         </span>
       </header>
       <main>
-        {tab === "overview" && <Overview overview={overview} config={config} />}
-        {tab === "jobs" && <Jobs overview={overview} />}
+        {tab === "overview" && <Overview overview={overview} config={config} onWatch={() => go("browser")} />}
+        {tab === "jobs" && <Jobs overview={overview} onWatch={() => go("browser")} />}
+        {tab === "browser" && <Browser config={config} />}
         {tab === "questions" && <Questions config={config} onChange={reload} />}
         {tab === "review" && <Review />}
         {tab === "queue" && <Queue />}

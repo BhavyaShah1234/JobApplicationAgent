@@ -38,3 +38,4 @@ a{color:var(--acc)}.cmd{display:flex;gap:6px;align-items:flex-start}.cmd code{fl
 
 .err{color:var(--bad)}
 button:disabled{opacity:.55;cursor:default}
+iframe.vnc{width:100%;height:calc(100vh - 175px);min-height:480px;border:1px solid var(--line);border-radius:12px;background:#000}

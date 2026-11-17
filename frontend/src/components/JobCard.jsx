@@ -4,7 +4,9 @@ import Chip from "./Chip.jsx";
 import StageStep from "./StageStep.jsx";
 
 // One job: title, state, a bar for the whole pipeline, a box per stage, the current step in words, and a history on demand.
-export default function JobCard({ job: j }) {
+const BROWSER_STAGES = ["scrape", "apply", "submit"];                // the stages in which the agent is driving a web page
+
+export default function JobCard({ job: j, onWatch }) {
   const [open, setOpen] = useState(false);
   const cur = j.stages.find((s) => s.id === j.current);
   const done = j.state === "done";
@@ -40,10 +42,15 @@ export default function JobCard({ job: j }) {
           {cur.detail ? <span className="mut">{`  ·  ${cur.detail}`}</span> : null}
         </div>
       )}
-      <div style={{ marginTop: 10 }}>
+      <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
         <button type="button" className="act sec sm" onClick={() => setOpen(!open)}>
           {open ? "Hide history" : "History"}
         </button>
+        {onWatch && j.state === "running" && BROWSER_STAGES.includes(j.current) && (
+          <button type="button" className="act sm" onClick={onWatch}>
+            Watch the browser
+          </button>
+        )}
       </div>
       {open && (
         <ul className="trail">

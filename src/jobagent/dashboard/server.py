@@ -13,6 +13,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -27,6 +28,24 @@ CONTENT_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; cha
                  ".png": "image/png", ".ico": "image/x-icon", ".json": "application/json", ".map": "application/json", ".woff2": "font/woff2"}
 ASSET = re.compile(r"^[A-Za-z0-9._-]{1,120}$")
 CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+
+def frame_origin(url: str) -> str:
+    """The scheme://host:port of the noVNC address, the only place the page may embed (CSP frame-src); '' when there is none."""
+    u = urlparse(url or "")
+    return f"{u.scheme}://{u.netloc}" if u.scheme in ("http", "https") and u.netloc else ""
+
+
+def vnc_status(url: str) -> dict:
+    """Whether something is listening where noVNC should be (a quick TCP connect from this machine), so the page can say what is wrong."""
+    u = urlparse(url or "")
+    if not u.hostname:
+        return {"url": "", "reachable": False}
+    try:
+        socket.create_connection((u.hostname, u.port or (443 if u.scheme == "https" else 80)), timeout=0.6).close()
+        return {"url": url, "reachable": True}
+    except OSError:
+        return {"url": url, "reachable": False}
 NOT_BUILT = ("<!doctype html><meta charset=utf-8><title>Job agent</title><body style='font:16px system-ui;max-width:640px;margin:48px auto'>"
              "<h1 style='font-size:20px'>The dashboard front end is not built</h1><p>Run <code>scripts/build_dashboard.sh build</code> in the repository "
              "(it uses a Node container), then reload this page.</p></body>")
@@ -127,7 +146,8 @@ class Handler(BaseHTTPRequestHandler):
         if "Cache-Control" not in (headers or {}):
             self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", CSP)
+        origin = frame_origin(self.server.novnc_url)
+        self.send_header("Content-Security-Policy", CSP + (f"; frame-src {origin}" if origin else "; frame-src 'none'"))
         for k, v in (headers or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -158,6 +178,8 @@ class Handler(BaseHTTPRequestHandler):
             if not ASSET.match(name) or not f.is_file():
                 return self._json({"error": "not found"}, 404)
             return self._send(200, f.read_bytes(), CONTENT_TYPES.get(f.suffix, "application/octet-stream"), {"Cache-Control": "private, max-age=3600"})
+        if url.path == "/api/vnc":
+            return self._json(vnc_status(self.server.novnc_url))
         if url.path == "/api/config":
             return self._json({"read_only": self.server.read_only, "novnc": self.server.novnc_url})
         routes = {"/api/overview": lambda: {**data.overview(s), "read_only": self.server.read_only}, "/api/queue": lambda: data.queue(s), "/api/applications": lambda: data.applications(s),

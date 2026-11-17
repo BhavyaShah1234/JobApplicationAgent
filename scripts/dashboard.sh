@@ -10,13 +10,14 @@
 # readonly (default): data/, state/, outputs/ and config/ are mounted read-only; you can look at everything, nothing can be changed.
 # interactive: state/ and outputs/ are writable, so a question can be answered from the page and a run can be started from it (it reads
 #   .env for the keys); approving or submitting is still never done from the page.
-# Settings: JOBAGENT_HOME (folder with data/ state/ outputs/, default this checkout), DASHBOARD_PORT (8765), DASHBOARD_CONTAINER.
+# Settings: NOVNC_URL (where the agent's browser is served, shown in the Browser tab), JOBAGENT_HOME (folder with data/ state/ outputs/, default this checkout), DASHBOARD_PORT (8765), DASHBOARD_CONTAINER.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 HOME_DIR="$(cd "${JOBAGENT_HOME:-$PWD}" && pwd)"
 PORT="${DASHBOARD_PORT:-8765}"
 NAME="${DASHBOARD_CONTAINER:-jobagent-dashboard}"
 MODE="${DASHBOARD_MODE:-readonly}"
+NOVNC_URL="${NOVNC_URL:-http://localhost:6080/vnc.html}"      # the agent's browser view; the harness serves it on 6080 (NOVNC_PORT), another container may use 6082
 TAG="jobagent-harness:dashboard-$(git rev-parse --short HEAD)"
 
 case "${1:-start}" in
@@ -34,7 +35,7 @@ case "${1:-start}" in
     docker run -d --name "$NAME" --restart unless-stopped --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -e DASHBOARD_TOKEN_FILE=/dash/token \
       -v "$TOK_DIR:/dash" "${ENVF[@]}" "${EXTRA[@]}" \
       -v "$HOME_DIR/data:/app/data:ro" -v "$HOME_DIR/state:/app/state:$RW" -v "$HOME_DIR/outputs:/app/outputs:$RW" -v "$HOME_DIR/config:/app/config:ro" \
-      --entrypoint jobagent "$TAG" dashboard --host 127.0.0.1 --port "$PORT" "${FLAGS[@]}" >/dev/null
+      --entrypoint jobagent "$TAG" dashboard --host 127.0.0.1 --port "$PORT" --novnc-url "$NOVNC_URL" "${FLAGS[@]}" >/dev/null
     sleep 3
     docker ps --filter "name=^${NAME}$" --format '{{.Names}} {{.Status}}'
     "$0" url

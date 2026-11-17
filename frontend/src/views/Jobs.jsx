@@ -10,7 +10,7 @@ const FILTERS = [
   ["done", "Finished"],
 ];
 
-export default function Jobs({ overview }) {
+export default function Jobs({ overview, onWatch }) {
   const [f, setF] = useState("all");
   const { data } = usePoll("/api/pipeline", overview?.jobs_active ? 3000 : 7000);
   const rows = (data || []).filter(
@@ -25,7 +25,7 @@ export default function Jobs({ overview }) {
           </button>
         ))}
       </div>
-      {!data ? <p className="mut">Loading…</p> : rows.length ? rows.map((j) => <JobCard key={j.job || j.url} job={j} />) : <Empty>No jobs in this view yet.</Empty>}
+      {!data ? <p className="mut">Loading…</p> : rows.length ? rows.map((j) => <JobCard key={j.job || j.url} job={j} onWatch={onWatch} />) : <Empty>No jobs in this view yet.</Empty>}
     </div>
   );
 }

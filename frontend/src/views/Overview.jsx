@@ -27,7 +27,7 @@ function Stat({ n, label, hot }) {
   );
 }
 
-export default function Overview({ overview: o, config }) {
+export default function Overview({ overview: o, config, onWatch }) {
   const { data: jobs } = usePoll("/api/pipeline", o?.jobs_active ? 3000 : 7000);
   if (!o) return <p className="mut">Loading…</p>;
   const live = (jobs || []).filter((j) => j.active);
@@ -42,7 +42,7 @@ export default function Overview({ overview: o, config }) {
         <Stat n={o.jobs_active || 0} label="jobs working now" />
       </div>
       <h2>Working now</h2>
-      {live.length ? live.map((j) => <JobCard key={j.job || j.url} job={j} />) : <Empty>Nothing is running. Start a run from the Start tab or `jobagent run` in a terminal.</Empty>}
+      {live.length ? live.map((j) => <JobCard key={j.job || j.url} job={j} onWatch={onWatch} />) : <Empty>Nothing is running. Start a run from the Start tab or `jobagent run` in a terminal.</Empty>}
       {recent.length > 0 && (
         <>
           <h2>Recently finished</h2>
