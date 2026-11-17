@@ -64,14 +64,15 @@ def _navigate_json(page, url, matches, controller):
         try:
             with page.expect_response(matches, timeout=20000) as pending:
                 response = page.goto(url, wait_until='domcontentloaded', timeout=45000)
-                if challenge.detect(page):
+                block = challenge.detect(page)
+                if block and block.kind != 'unknown':
                     raise PlaywrightTimeout('Visible human verification')
                 if response and response.status >= 400:
                     raise L.Blocked('Workday careers page answered ' + str(response.status))
             return pending.value
         except PlaywrightTimeout as exc:
             block = challenge.detect(page)
-            if not block:
+            if not block or block.kind == 'unknown':
                 raise L.Blocked('No Workday response matching the requested page and filters') from exc
             try:
                 controller.wait(page, block)

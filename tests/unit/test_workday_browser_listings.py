@@ -36,6 +36,27 @@ def test_a_visible_verification_on_http_403_reaches_the_human_controller(monkeyp
     assert state['handoffs'] == 1
 
 
+def test_a_transient_blank_spa_waits_for_its_response_without_asking_a_human(monkeypatch):
+    from jobagent.tools import challenge
+    from jobagent.tools.listings_browser import _navigate_json
+    pending = SimpleNamespace(value=SimpleNamespace(status=200))
+
+    class Page:
+        @contextmanager
+        def expect_response(self, *args, **kwargs):
+            yield pending
+
+        def goto(self, *args, **kwargs):
+            return SimpleNamespace(status=200)
+
+    class Controller:
+        def wait(self, *args):
+            pytest.fail('A blank SPA is a loading state, not a human verification')
+
+    monkeypatch.setattr(challenge, 'detect', lambda page: challenge.Challenge('unknown', 'https://example.test', 'Page is blank or transitioning'))
+    assert _navigate_json(Page(), 'https://example.test', lambda r: True, Controller()) is pending.value
+
+
 def test_a_careers_result_that_is_a_posting_opens_its_search_board():
     careers = {'url': 'https://acme.wd5.myworkdayjobs.com/en-US/Careers/job/US-Arizona-Phoenix/Engineer_1?locations=a#detail',
                'board': {'family': 'workday', 'token': 'acme/wd5/Careers'}}
