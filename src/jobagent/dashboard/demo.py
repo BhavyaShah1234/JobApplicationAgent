@@ -11,7 +11,7 @@ def _ts(minutes_ago: float) -> str:
     return (datetime.now(UTC) - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def seed(root: Path, secret_question: bool = True) -> dict:
+def seed(root: Path, secret_question: bool = True, history: bool = False) -> dict:
     """Create the demo data under `root` and return the settings-style paths. Safe to call twice (existing rows are kept)."""
     from jobagent import db
     state, outputs, data = root / "state", root / "outputs", root / "data"
@@ -58,7 +58,49 @@ def seed(root: Path, secret_question: bool = True) -> dict:
         t = datetime.now().timestamp() - ago * 60
         os.utime(p, (t, t))
     _progress_logs(state)
+    if history:
+        _history(state / "jobs.sqlite")
     return {"state_dir": state, "outputs_dir": outputs, "data_dir": data}
+
+
+def _history(db_path: Path) -> None:
+    """Weeks of made-up activity for the Analytics tab: postings found and filtered, 24 submitted applications on three portals, their outcomes
+    (confirmations, replies, rejections, silence) and checker-site scores."""
+    import random
+
+    from jobagent import db
+    rnd = random.Random(7)
+    conn = db.connect(db_path)
+    reasons = ["location: London is outside the United States", "location: Toronto is outside the United States", "role: no target role fits the title",
+               "role: the title matches an exclude pattern", "location: Dublin is outside the United States"]
+    with conn:
+        for i in range(160):
+            status = rnd.choices(["skipped", "queued", "needs_review", "scraped", "closed"], [60, 15, 8, 12, 5])[0]
+            conn.execute("INSERT OR IGNORE INTO jobs (url, job_id, company, title, status, notes, role_id, match_score, discovered_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                         (f"https://jobs.example.test/h{i}", f"h{i}", rnd.choice(["Example Robotics", "Sample Cloud Co", "Demo Labs", "Fictional Systems", "Acme Corp", "Globex"]),
+                          f"Engineer {i}", status, rnd.choice(reasons) if status == "skipped" else "", None if status == "skipped" else rnd.choice(["swe", "ml", "robotics"]),
+                          None if status == "skipped" else round(rnd.uniform(0.55, 0.99), 2), _ts(rnd.uniform(60, 40 * 24 * 60)), _ts(rnd.uniform(60, 40 * 24 * 60))))
+        portals = ["greenhouse", "lever", "workday"]
+        for i in range(24):
+            days = rnd.uniform(1, 30)
+            ats = round(rnd.gauss(80, 7), 1)
+            cur = conn.execute("INSERT OR IGNORE INTO applications (job_dir, company, title, url, portal, state, filled_at, submitted_at, role_id, ats_average) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                               (f"outputs/hist/{i}", f"History Co {i % 8}", f"Engineer {i}", f"https://jobs.example.test/a{i}", rnd.choice(portals), "confirmed",
+                                _ts(days * 1440 + 90), _ts(days * 1440), rnd.choice(["swe", "ml"]), ats))
+            if not cur.rowcount:
+                continue
+            app = cur.lastrowid
+            conn.execute("INSERT INTO outcome_events (application_id, stage, message_id, subject, received_at, classifier, confidence) VALUES (?,?,?,?,?,?,?)",
+                         (app, "confirmation", f"<h{i}-c@example.test>", "We received your application", _ts(days * 1440 - 5), "rule", 0.9))
+            roll = rnd.random() + (0.12 if ats >= 80 else 0)
+            reply_in = rnd.uniform(2, 12) * 1440
+            if days * 1440 > reply_in + 1440 and roll > 0.62:
+                stage = rnd.choice(["interview", "recruiter_screen", "assessment"]) if roll > 0.8 else "rejection"
+                conn.execute("INSERT INTO outcome_events (application_id, stage, message_id, subject, received_at, classifier, confidence) VALUES (?,?,?,?,?,?,?)",
+                             (app, stage, f"<h{i}-r@example.test>", f"Update on your application ({stage})", _ts(days * 1440 - reply_in), "model", 0.85))
+            for site in ("autoapplymax", "jobalytics", "hireflow"):
+                conn.execute("INSERT INTO ats_runs (job_dir, site, round, score) VALUES (?,?,?,?)", (f"outputs/hist/{i}", site, 2, round(ats + rnd.uniform(-8, 8), 1)))
+    conn.close()
 
 
 def _progress_logs(state: Path) -> None:

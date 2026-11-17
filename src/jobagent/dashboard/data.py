@@ -4,7 +4,7 @@ and each application's result file. Every function returns plain JSON-able data 
 import json
 import re
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 MAX_LOG_BYTES = 2_000_000
@@ -256,3 +256,170 @@ def outcomes(settings, limit: int = 40) -> dict:
                                       "ORDER BY o.received_at DESC LIMIT ?", (limit,))}
     finally:
         conn.close()
+
+
+# --- analytics ---------------------------------------------------------------------------------------------------------------------
+
+def _day(text: str | None) -> str:
+    return (text or "")[:10]
+
+
+def _median(values: list[float]) -> float | None:
+    v = sorted(values)
+    return None if not v else (v[len(v) // 2] if len(v) % 2 else (v[len(v) // 2 - 1] + v[len(v) // 2]) / 2)
+
+
+def _hours(a: str | None, b: str | None) -> float | None:
+    try:
+        d = datetime.strptime(b, "%Y-%m-%dT%H:%M:%SZ") - datetime.strptime(a, "%Y-%m-%dT%H:%M:%SZ")
+        return d.total_seconds() / 3600 if d.total_seconds() >= 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _skip_kind(note: str | None) -> str:
+    n = (note or "").lower()
+    if n.startswith("location:"):
+        return "Outside the United States"
+    if n.startswith("role: no target role"):
+        return "No target role fits the title"
+    if n.startswith("role: the title matches an e"):
+        return "Title excluded (seniority and similar)"
+    return "Other"
+
+
+def _group_rows(groups) -> list[dict]:
+    return [{"key": g.key, "n": g.n, "resolved": g.resolved, "positive": g.positive, "negative": g.negative, "ghosted": g.ghosted, "pending": g.pending,
+             "response_rate": g.response_rate, "response_ci": g.response_ci, "positive_rate": g.positive_rate, "positive_ci": g.positive_ci,
+             "median_days": g.median_days, "by_30d": g.by_30d, "too_few": g.too_few} for g in groups]
+
+
+def analytics(settings, days: int = 45) -> dict:
+    """The numbers behind the Analytics tab: how many postings were found, filtered out and worked, how many applications went where, what came
+    back (outcome labels that count silence as unknown, not as rejection), how long each step takes, and how the resumes scored. Rates are
+    reported with their sample size and a confidence interval, and a group with too few resolved applications is flagged, never ranked."""
+    from jobagent.tools import outcome_stats as OS
+    empty = {"generated": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), "funnel": [], "skips": [], "skip_places": [], "jobs_by_status": {}, "jobs_by_company": [],
+             "jobs_by_role": [], "score_hist": [], "timeline": [], "outcomes": {"counts": {}, "labels": {}, "resolved": 0, "responded": 0, "rate": None,
+             "median_days": None, "cutoff_days": None, "cutoff_basis": "", "min_group": OS.MIN_GROUP, "by_portal": [], "by_role": [], "by_ats": []},
+             "ats": {"hist": [], "by_site": [], "jobs": 0}, "latency": {"discovery_to_fill_h": None, "fill_to_submit_h": None, "n_fill": 0, "n_submit": 0},
+             "totals": {"jobs": 0, "applications": 0, "submitted": 0}}
+    conn = ro_conn(settings)
+    if conn is None:
+        return empty
+    out = dict(empty)
+    try:
+        jobs = _rows(conn, "SELECT id, company, status, notes, role_id, match_score, discovered_at FROM jobs")
+        apps = _rows(conn, "SELECT id, job_id, state, portal, filled_at, submitted_at, decided_at FROM applications")
+        events = _rows(conn, "SELECT application_id, stage, received_at FROM outcome_events WHERE needs_review = 0")
+        total = len(jobs)
+        skipped = [j for j in jobs if j["status"] == "skipped"]
+        kept = [j for j in jobs if j["status"] != "skipped"]
+        filled_states = ("filled", "approved", "submission_in_progress", "submission_unknown", "submitted", "confirmed")
+        reached = [a for a in apps if a["state"] in filled_states]
+        submitted = [a for a in apps if a["submitted_at"]]
+        by_app: dict[int, set[str]] = {}
+        for e in events:
+            by_app.setdefault(e["application_id"], set()).add(e["stage"])
+        confirmed = [a for a in submitted if a["state"] == "confirmed" or "confirmation" in by_app.get(a["id"], set())]
+        responded = [a for a in submitted if by_app.get(a["id"], set()) & OS.RESPONSES]
+        further = [a for a in submitted if by_app.get(a["id"], set()) & {"interview", "offer"}]
+        out["funnel"] = [
+            {"id": "discovered", "label": "Postings found", "n": total},
+            {"id": "passed", "label": "Passed the US and role filters", "n": len(kept)},
+            {"id": "reached", "label": "Application filled to review", "n": len(reached)},
+            {"id": "submitted", "label": "Submitted", "n": len(submitted)},
+            {"id": "confirmed", "label": "Receipt confirmed", "n": len(confirmed)},
+            {"id": "responded", "label": "Got a response", "n": len(responded)},
+            {"id": "interview", "label": "Interview or offer", "n": len(further)}]
+        kinds: dict[str, int] = {}
+        places: dict[str, int] = {}
+        for j in skipped:
+            kinds[_skip_kind(j["notes"])] = kinds.get(_skip_kind(j["notes"]), 0) + 1
+            m = re.match(r"(?i)location:\s*(.+?) is outside", j["notes"] or "")
+            if m:
+                places[m.group(1)] = places.get(m.group(1), 0) + 1
+        out["skips"] = sorted(({"reason": k, "n": v} for k, v in kinds.items()), key=lambda x: -x["n"])
+        out["skip_places"] = sorted(({"place": k, "n": v} for k, v in places.items()), key=lambda x: -x["n"])[:8]
+        st: dict[str, int] = {}
+        for j in jobs:
+            st[j["status"]] = st.get(j["status"], 0) + 1
+        out["jobs_by_status"] = st
+        comp: dict[str, dict] = {}
+        for j in jobs:
+            c = comp.setdefault(j["company"] or "(unknown)", {"company": j["company"] or "(unknown)", "found": 0, "kept": 0})
+            c["found"] += 1
+            c["kept"] += j["status"] != "skipped"
+        out["jobs_by_company"] = sorted(comp.values(), key=lambda c: -c["found"])[:10]
+        roles: dict[str, int] = {}
+        for j in kept:
+            roles[j["role_id"] or "(none)"] = roles.get(j["role_id"] or "(none)", 0) + 1
+        out["jobs_by_role"] = sorted(({"role": k, "n": v} for k, v in roles.items()), key=lambda x: -x["n"])
+        bins = [0] * 6                                   # match score 0.5-1.0 in steps of 0.1 (the last bin is 1.0 only)
+        for j in kept:
+            if j["match_score"] is not None and j["match_score"] >= 0.5:
+                bins[min(5, int((j["match_score"] - 0.5) * 10))] += 1
+        out["score_hist"] = [{"label": f"{0.5 + i / 10:.1f}" + ("" if i == 5 else f"–{0.6 + i / 10:.1f}"), "n": n} for i, n in enumerate(bins)]
+        # activity per day over the last `days`
+        today = datetime.now(UTC).date()
+        window = [(today - timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
+        line = {d: {"day": d, "found": 0, "filled": 0, "submitted": 0, "responses": 0} for d in window}
+        for j in jobs:
+            if _day(j["discovered_at"]) in line:
+                line[_day(j["discovered_at"])]["found"] += 1
+        for a in apps:
+            for key, col in (("filled", "filled_at"), ("submitted", "submitted_at")):
+                if _day(a[col]) in line:
+                    line[_day(a[col])][key] += 1
+        for e in events:
+            if _day(e["received_at"]) in line and e["stage"] in OS.RESPONSES:
+                line[_day(e["received_at"])]["responses"] += 1
+        out["timeline"] = list(line.values())
+        # how long the human-in-the-loop steps take
+        job_found = {j["id"]: j["discovered_at"] for j in jobs}
+        d2f = [h for a in reached if (h := _hours(job_found.get(a["job_id"]), a["filled_at"])) is not None]
+        f2s = [h for a in submitted if (h := _hours(a["filled_at"], a["submitted_at"])) is not None]
+        out["latency"] = {"discovery_to_fill_h": _median(d2f), "fill_to_submit_h": _median(f2s), "n_fill": len(d2f), "n_submit": len(f2s)}
+        # resume scores from the checker sites
+        runs = _rows(conn, "SELECT job_dir, site, round, score FROM ats_runs WHERE score IS NOT NULL")
+        latest: dict[tuple[str, str], tuple[int, float]] = {}
+        for r in runs:
+            k = (r["job_dir"], r["site"])
+            if k not in latest or r["round"] >= latest[k][0]:
+                latest[k] = (r["round"], r["score"])
+        per_job: dict[str, list[float]] = {}
+        per_site: dict[str, list[float]] = {}
+        for (jd_, site), (_, score) in latest.items():
+            per_job.setdefault(jd_, []).append(score)
+            per_site.setdefault(site, []).append(score)
+        hist = [0] * 6                                    # <50, 50-60, ... 90-100
+        for v in per_job.values():
+            m = sum(v) / len(v)
+            hist[0 if m < 50 else min(5, int((m - 40) // 10))] += 1
+        out["ats"] = {"hist": [{"label": l, "n": n} for l, n in zip(["under 50", "50–60", "60–70", "70–80", "80–90", "90–100"], hist, strict=True)],
+                      "by_site": sorted(({"site": s, "mean": round(sum(v) / len(v), 1), "n": len(v)} for s, v in per_site.items()), key=lambda x: -x["mean"]),
+                      "jobs": len(per_job)}
+        # outcomes, with the agent's own delay-aware labels (silence is pending/ghosted, never silently a rejection)
+        evs = OS.load(conn)
+        as_of = datetime.now(UTC)
+        sts = OS.statuses(evs, as_of)
+        labels: dict[str, int] = {}
+        for s in sts.values():
+            labels[s.label] = labels.get(s.label, 0) + 1
+        resolved = labels.get("positive", 0) + labels.get("negative", 0) + labels.get("ghosted", 0)
+        replied = labels.get("positive", 0) + labels.get("negative", 0)
+        cutoff, basis = OS.ghost_cutoff_info(evs, as_of)
+        curve = OS.km_curve(OS.observations(evs, sts)) if evs else []
+        med = OS.km_median(curve) if curve else None
+        out["outcomes"] = {
+            "counts": {k: sum(1 for e in events if e["stage"] == k) for k in sorted({e["stage"] for e in events})}, "labels": labels,
+            "resolved": resolved, "responded": replied, "rate": ({"k": replied, "n": resolved, "lo": OS.wilson(replied, resolved)[0], "hi": OS.wilson(replied, resolved)[1]} if resolved else None),
+            "median_days": med, "cutoff_days": cutoff, "cutoff_basis": basis, "min_group": OS.MIN_GROUP,
+            "by_portal": _group_rows(OS.group_by(evs, sts, lambda a: a.portal)), "by_role": _group_rows(OS.group_by(evs, sts, lambda a: a.role_id)),
+            "by_ats": _group_rows(OS.group_by(evs, sts, lambda a: OS.band(a.ats_average)))}
+        out["totals"] = {"jobs": total, "applications": len(reached), "submitted": len(submitted)}
+    except sqlite3.Error:
+        return empty
+    finally:
+        conn.close()
+    return out

@@ -341,3 +341,41 @@ def test_without_a_novnc_address_nothing_may_be_framed(env):
     c.request("GET", "/api/vnc", headers={"Cookie": f"jobagent_dashboard={srv.token}"})
     r = c.getresponse()
     assert json.loads(r.read()) == {"url": "", "reachable": False} and "frame-src 'none'" in r.getheader("Content-Security-Policy")
+
+
+# --- analytics ----------------------------------------------------------------------------------------------------------------------
+
+def test_analytics_on_an_empty_state_is_empty_not_an_error(tmp_path):
+    s = Settings(state_dir=tmp_path / "s", outputs_dir=tmp_path / "o", data_dir=tmp_path / "d")
+    a = data.analytics(s)
+    assert a["funnel"] == [] and a["timeline"] == [] and a["outcomes"]["rate"] is None and a["totals"] == {"jobs": 0, "applications": 0, "submitted": 0}
+
+
+def test_analytics_funnel_skip_reasons_and_latency_come_from_the_database(tmp_path):
+    s = Settings(**seed(tmp_path, history=True))
+    a = data.analytics(s)
+    f = {x["id"]: x["n"] for x in a["funnel"]}
+    assert f["discovered"] > 100 and f["passed"] < f["discovered"] and f["submitted"] >= 20 and f["confirmed"] <= f["submitted"]
+    assert f["responded"] <= f["confirmed"] and f["interview"] <= f["responded"]
+    kinds = {x["reason"] for x in a["skips"]}
+    assert {"Outside the United States", "No target role fits the title"} <= kinds
+    assert {p["place"] for p in a["skip_places"]} & {"London", "Toronto", "Dublin"}
+    assert len(a["timeline"]) == 45 and sum(d["submitted"] for d in a["timeline"]) >= 20 and sum(d["found"] for d in a["timeline"]) > 50
+    assert a["latency"]["fill_to_submit_h"] is not None and a["latency"]["n_submit"] >= 20
+    assert a["ats"]["jobs"] == 24 and {x["site"] for x in a["ats"]["by_site"]} == {"autoapplymax", "jobalytics", "hireflow"}
+    assert sum(x["n"] for x in a["ats"]["hist"]) == 24 and len(a["score_hist"]) == 6
+
+
+def test_outcome_rates_carry_their_sample_size_and_small_groups_are_flagged(tmp_path):
+    s = Settings(**seed(tmp_path, history=True))
+    o = data.analytics(s)["outcomes"]
+    assert o["resolved"] > 0 and o["rate"]["n"] == o["resolved"] and 0 <= o["rate"]["lo"] <= o["rate"]["k"] / o["rate"]["n"] <= o["rate"]["hi"] <= 1
+    assert set(o["labels"]) <= {"pending", "positive", "negative", "ghosted"} and o["min_group"] == 15
+    assert o["by_portal"] and all(g["too_few"] == (g["resolved"] < 15) for g in o["by_portal"] + o["by_role"] + o["by_ats"])
+    assert o["cutoff_days"] and o["cutoff_basis"]
+
+
+def test_the_analytics_route_answers(env):
+    _, srv, _ = env
+    code, out = call(srv, "GET", "/api/analytics")
+    assert code == 200 and out["totals"]["jobs"] == 5 and out["funnel"][0] == {"id": "discovered", "label": "Postings found", "n": 5}

@@ -184,7 +184,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"read_only": self.server.read_only, "novnc": self.server.novnc_url})
         routes = {"/api/overview": lambda: {**data.overview(s), "read_only": self.server.read_only}, "/api/queue": lambda: data.queue(s), "/api/applications": lambda: data.applications(s),
                   "/api/review": lambda: data.review(s), "/api/hitl": lambda: data.hitl_pending(s), "/api/runs": lambda: data.runs(s),
-                  "/api/outcomes": lambda: data.outcomes(s), "/api/pipeline": lambda: data.pipeline(s)}
+                  "/api/outcomes": lambda: data.outcomes(s), "/api/pipeline": lambda: data.pipeline(s), "/api/analytics": lambda: data.analytics(s)}
         if url.path in routes:
             return self._json(routes[url.path]())
         if url.path.startswith("/api/run/"):

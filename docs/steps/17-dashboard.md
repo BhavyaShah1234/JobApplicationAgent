@@ -19,7 +19,10 @@ sources (`static/source.sha256`).
 | Queue | discovered postings and their status, role, match score, note | `jobs` |
 | Runs | each run (step, job, start, lines, errors, last line, running) and its full log | `state/logs/*.jsonl` (step 22) |
 | Outcomes | counts by stage and the latest outcome mails per application | `outcome_events` |
+| Analytics | the funnel from postings found to interviews; daily activity; why postings were filtered out (by reason and place), by company, role and match score; outcome labels and reply rates with sample sizes and 95% intervals, by portal, role and resume-score band; median days to a reply (Kaplan-Meier); time waiting for your approval; checker-site score distribution | job database, `outcome_events`, `ats_runs`, via `tools/outcome_stats.py` |
 | Start a run | `jobagent run INPUTS --through scrape\|tailor\|apply --limit N` in the background | the `run` command (step 16) |
+
+**Analytics honesty.** Silence is never counted as a rejection: the outcome labels are the agent's own (pending inside the cutoff, ghosted after it as a weak negative), and a reply rate is shown as "k of n" with a Wilson 95% interval. A group with fewer than 15 resolved applications is drawn grey and a banner says the figures describe what happened, not what to expect, until there are enough applications. Charts are small hand-written SVG components (`frontend/src/charts`), no charting library.
 
 **Pipeline progress.** Each job card shows its plan (scrape, research, documents, apply or submit, depending on how far the run goes), the state of every
 stage (done, running, failed, blocked, stalled, pending), a bar for the whole job, and inside the running stage the step and iteration: for the
