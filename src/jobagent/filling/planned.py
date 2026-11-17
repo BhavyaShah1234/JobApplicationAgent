@@ -306,6 +306,9 @@ class PlannedFiller:
         try:
             for round_no in range(max_rounds):
                 view=live.capture()
+                from jobagent.tools import disclosures
+                if disclosures.expand(page,view,getattr(self,'log',lambda _:None)):
+                    continue  # opening a section changes neither facts nor answers
                 if self.prepare_sources:self.facts=self.prepare_sources(view.fields)
                 # Add missing source-backed entity rows using the existing discovered controls.
                 added=False

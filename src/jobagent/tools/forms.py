@@ -195,7 +195,7 @@ FIELDS_JS = r"""(start) => {
   const add = (e, f) => {
     // Legacy SuccessFactors uses a region/div masthead rather than a header tag.
     // Its Language picker is navigation, not a candidate question.
-    if (e.closest('#headerNavBar, #rcmCareerLangDropDown')) return;
+    if (e.closest('#headerNavBar, #rcmCareerLangDropDown, .userInfoMenu, .rcmUserLangDropDown')) return;
     e.setAttribute('data-jf', String(n));
     if (e.getRootNode() instanceof ShadowRoot) shadowFields++;
     f.id = n++;
@@ -384,9 +384,12 @@ FIELDS_JS = r"""(start) => {
       .filter(vis).map(h => clean(h.innerText)).filter(Boolean).slice(0, 8);
   // Upload controls may mount a native input only after a button is clicked.
   for (const button of all('button,[role=button],a')) {      // legacy portals use links: "Click here to attach your Resume"
-    const text = clean(button.innerText || button.getAttribute('aria-label'));
-    if (!/^((click here to )?(choose (a )?file|browse( files)?|upload( (a |your )?(file|resume|cv|cover letter|document|attachment))?|attach( (a |your )?(file|resume|cv|cover letter|document|attachment))?))$/i.test(text)
-        || !vis(button) || !shown(button) || button.hasAttribute('data-jf')) continue;
+    const names=[button.innerText,button.getAttribute('aria-label'),
+      ...(button.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>byIds(id,button))];
+    const text=names.map(t=>clean(t).replace(/\s+(?:opens? a dialog|required)\s*$/ig,'').trim()).find(t=>
+      /^((click here to )?(choose (a )?file|browse( files)?|upload( (a |your )?(file|resume|cv|cover letter|document|attachment))?|attach( (a |your )?(file|resume|cv|cover letter|document|attachment))?))$/i.test(t));
+    if (!text || !vis(button) || !shown(button) || button.hasAttribute('data-jf') ||
+        (button.tagName==='BUTTON'&&button.form&&button.type!=='button')) continue;
     const box = button.closest('[data-field-path],[data-field-entry-id]') || button.closest('[class*=upload i],fieldset,.form-group,.form-field') || button.parentElement;
     if (!box || box.querySelector('input[type=file]')) continue;
     const label = box.querySelector('label,legend');
@@ -454,20 +457,23 @@ class Coverage:
     shadow_roots: int = 0                                 # open and recovered closed author roots read
     shadow_fields: int = 0                                # fields found inside them
     opaque: list = field(default_factory=list)            # custom elements whose content cannot be read (closed shadow roots)
+    collapsed: list = field(default_factory=list)         # application sections not yet opened
 
     @property
     def complete(self) -> bool:
-        return not self.unreadable and not self.opaque
+        return not self.unreadable and not self.opaque and not self.collapsed
 
     def problems(self) -> list[str]:
         out = [f"a frame could not be read ({u['url']}: {u['reason']})" for u in self.unreadable]
         out += [f"a region the reader cannot see into (custom element <{tag}>): any controls inside need a person or an adapter"
                 for tag in self.opaque]
+        out += [f"a form section remains collapsed: {label}" for label in self.collapsed]
         return out
 
     def summary(self) -> dict:
         return {"complete": self.complete, "frames_read": self.frames_read, "problems": self.problems(),
-                "challenge_frames": self.challenge_frames, "shadow_roots": self.shadow_roots, "shadow_fields": self.shadow_fields}
+                "challenge_frames": self.challenge_frames, "shadow_roots": self.shadow_roots, "shadow_fields": self.shadow_fields,
+                "collapsed_sections": self.collapsed}
 
 
 @dataclass
@@ -572,6 +578,11 @@ def read_page(page: Page) -> PageView:
         cov.shadow_roots += snap.get("shadowRoots", 0)
         cov.shadow_fields += snap.get("shadowFields", 0)
         cov.opaque += [x for x in snap.get("opaque", []) if x not in cov.opaque]
+        from jobagent.tools import disclosures
+        try:
+            cov.collapsed += [r['label'] for r in disclosures.inventory(f)]
+        except Exception as exc:
+            cov.unreadable.append({"url": _where(f.url), "reason": f"section discovery failed: {type(exc).__name__}"})
         n = snap["next"]
         for x in snap["fields"]:
             fields.append(Field(id=x["id"], kind=x["kind"], label=clean_label(x["label"]), required=bool(x.get("required")),

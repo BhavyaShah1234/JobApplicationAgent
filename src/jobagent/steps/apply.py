@@ -1631,6 +1631,11 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
     for _ in range(get_settings().apply_max_pages + 3):
         challenge.guard(page)
         view = forms.read_page(page)
+        from jobagent.tools import disclosures
+        for _section in range(24):
+            if not disclosures.expand(page, view, log):
+                break
+            view = forms.read_page(page)
         _require_application_page(view)
         if known is None:  # a new page (not a retry of a refused one)
             page_no += 1

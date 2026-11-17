@@ -8,6 +8,11 @@ three or more dropdowns are visible. Those controls are not applicant questions.
 navigation; the agent stops with an explicit navigation error before planning answers or asking the candidate.
 Candidate fields, uploads and application navigation prevent this narrow filter-only classification.
 
+Before planning, the filler opens form disclosures through safe section controls, including a separate Expand all
+sections link. It leaves answers unchanged and never clicks a default submit button merely because it looks like
+a section heading. Remaining collapsed sections with candidate controls make extraction incomplete and block
+readiness. Upload icons use their own accessible label references; header language menus remain navigation.
+
 ## Run it
 
 ```bash
