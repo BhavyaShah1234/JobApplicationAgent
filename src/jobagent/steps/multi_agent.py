@@ -89,6 +89,7 @@ class ProjectsOut(BaseModel):
 class Finding(BaseModel):
     agent: Literal["experience", "projects", "skills", "summary"]
     issue: str = Field(max_length=400, description="What is wrong and what to do, citing the text")
+    severity: Literal["error", "suggestion"] = Field(description="Error only for an actual correctness problem; a preference for a narrower category is a suggestion")
 
 
 class Review(BaseModel):
@@ -127,7 +128,10 @@ to reach the character limit. The title is a real project name, never the bare r
 ask for. No dashes as punctuation; "by N%". Never invent degrees, employers or dates.""".replace("{PMIN}", str(T.PARAGRAPH_MIN)).replace("{PMAX}", str(T.PARAGRAPH_MAX))
 
 REVIEW_PROMPT = """You are the VALIDATOR of a resume team. Check the CURRENT RESUME for this posting the way a hiring
-manager would and report only real problems, each for the agent that owns that section:
+manager would. Label actual correctness problems severity=error and optional refinements severity=suggestion.
+Broad or combined category headings are intentional: a term need only fit ONE named component. An AI tool belongs
+under AI & Development Tools; workflow and monitoring systems can belong under Distributed Systems. A more specific
+heading is a preference, not an error. Never demand a single canonical taxonomy. Report findings for their owning agent:
 - projects: a CANDIDATE (especially one marked TEMPLATE, the candidate's own showcase) fits the posting clearly
   better than a project on the page; a description that doesn't match its repo summary; a title that is a bare repo
   slug; a description under 3 sentences;
@@ -167,6 +171,7 @@ class State(TypedDict, total=False):
     content_findings: list
     content_error: str
     semantic_hard: list[str]
+    skills_padding_attempted: bool
     hard: list
     budget_feedback: dict            # initial limited-site feedback retained during unlimited-site refinements
     history: Annotated[list, operator.add]
@@ -384,6 +389,7 @@ def check_layout(state: State) -> dict:
     r, jd, job_dir, log = ctx["r"], ctx["jd"], ctx["job_dir"], ctx["log"]
     f, tex, problems, pages, err = render(state)
     tasks: dict[str, list[str]] = {a: [] for a in AGENTS}
+    padding_task = None
     if err:
         tasks["experience"].append(f"The LaTeX failed to compile ({err}); write plain text only.")
     if pages and pages > 1:
@@ -407,6 +413,8 @@ def check_layout(state: State) -> dict:
         tasks["projects"] += P.content_findings(st)
     if lay:
         for issue in lay.issues:
+            if issue.startswith("Technical Skills") and "fills only" in issue:
+                continue  # one grouped, optional padding task below; not N repeated repair demands
             agent = ("skills" if issue.startswith("Technical Skills") else
                      "projects" if issue.startswith(("the project", "text overflows")) else "experience")
             tasks[agent].append(issue)
@@ -417,9 +425,9 @@ def check_layout(state: State) -> dict:
                            if t.strip() and t.strip().lower() not in used]
                 for category, items in r.skills}
         pool = {category: terms for category, terms in pool.items() if terms}
-        if lay.short_skills:
+        if lay.short_skills and not state.get("skills_padding_attempted"):
             room = {k: f"about {round((1 - v) * 115)} more characters" for k, v in lay.skill_fill.items() if v < 0.85}
-            tasks["skills"].append(f"Short skills lines: {room}. Add a posting-relevant owned skill ONLY if it belongs "
+            padding_task = (f"Short skills lines: {room}. Add a posting-relevant owned skill ONLY if it belongs "
                                    f"in that category. Unused template skills, grouped by their source category: {pool}. "
                                    "Merge compatible categories or leave a shorter line if no fitting term is available. "
                                    "Never move an unrelated term into a category to fill space, and never wrap a category "
@@ -455,8 +463,14 @@ def check_layout(state: State) -> dict:
                 tasks["projects"].append(f"Project {i} is titled with its bare repo name '{e['title']}': give it a "
                                          "real project title and a full 3-sentence description.")
     reviewed_content = _reviewed_content(ctx, f, state) if pages == 1 and not err else {}
+    skill_tasks, padding_attempted = _skill_review_tasks(reviewed_content, padding_task,
+        state.get("skills_padding_attempted", False), invalid=bool(empty))
+    tasks["skills"] += skill_tasks
     for fd in reviewed_content.get("content_findings", []):
-        tasks[fd.agent].append(fd.issue)
+        if fd.agent != "skills":
+            tasks[fd.agent].append(fd.issue)
+        elif fd.severity == "suggestion":
+            log(f"content review suggestion (no automatic rewrite): {fd.issue}")
     if pages == 1 and not err and not state.get("reviewed"):
         # Vision runs once per cycle; semantic findings above are bound to each
         # visible content revision, so later edits cannot bypass the review.
@@ -473,7 +487,7 @@ def check_layout(state: State) -> dict:
     return {"f": f, "tasks": tasks, "layout_issues": [x for t in tasks.values() for x in t],
             "hard": hard_issues(ctx, f) + reviewed_content.get("semantic_hard", []),
             "layout_pass": state.get("layout_pass", 0) + 1, "history": [f"validator {n}"],
-            "reviewed": reviewed, **reviewed_content}
+            "reviewed": reviewed, "skills_padding_attempted": padding_attempted, **reviewed_content}
 
 
 SUMMARY_MAX = T.SUMMARY_MAX          # one definition (tools/tailor.py) for the schema, the prompts and this check (F18)
@@ -560,10 +574,20 @@ def _reviewed_content(ctx: dict, f: T.Filled, state: dict) -> dict:
             findings, error = content_review(ctx, f), ""
         except Exception as exc:
             findings, error = [], f"skills content review unavailable ({type(exc).__name__})"
-    hard = [f"skills: {fd.issue}" for fd in findings if fd.agent == "skills"]
+    hard = [f"skills: {fd.issue}" for fd in findings if fd.agent == "skills" and fd.severity == "error"]
     if error:
         hard.append(error)
     return {"content_hash": fingerprint, "content_findings": findings, "content_error": error, "semantic_hard": hard}
+
+
+def _skill_review_tasks(review: dict, padding: str | None, attempted: bool, invalid: bool = False) -> tuple[list[str], bool]:
+    errors = [fd.issue for fd in review.get("content_findings", []) if fd.agent == "skills" and fd.severity == "error"]
+    # Correctness gets the budget. Never reintroduce padding after repairing a
+    # category error, and never edit solely because a critic prefers finer labels.
+    tasks = list(errors)
+    if padding and not attempted and not errors and not invalid and not review.get("content_error"):
+        tasks.append(padding)
+    return tasks, bool(attempted or padding or errors or invalid)
 
 
 def after_layout(state: State) -> str:
@@ -652,7 +676,8 @@ def score(state: State) -> dict:
     proj = job_dir / "projects.json"
     new_best = {"avg": avg, "scores": ev["scores"], "f": f.model_copy(deep=True), "layout": n_layout, "hard": hard,
                 "tex": (job_dir / "resume.tex").read_text(), "pdf": (job_dir / "resume.pdf").read_bytes(),
-                "projects": proj.read_text() if proj.exists() else None, "filled": f.model_dump_json(indent=1) if hasattr(f, "model_dump_json") else None, "ev": ev}
+                "projects": proj.read_text() if proj.exists() else None, "filled": f.model_dump_json(indent=1) if hasattr(f, "model_dump_json") else None, "ev": ev,
+                "content_suggestions": [fd.issue for fd in state.get("content_findings", []) if fd.severity == "suggestion"]}
     last = f"KEPT: the scores are {ev['scores']} (average {avg})" if best else ""
     return {"best": new_best, "scores": ev["scores"], "ats_round": rnd + 1, "last": last,
             "budget_feedback": budget_feedback,
@@ -732,7 +757,7 @@ def route(state: State) -> dict:
         agent = "projects" if "project" in h or "blank" in h else "skills" if "skills" in h else "experience"
         tasks.setdefault(agent, []).append(f"Page problem to fix: {h}")
     ctx["log"]("routed: " + ", ".join(f"{a} {len(t)}" for a, t in tasks.items()))
-    return {"tasks": tasks, "layout_pass": 0, "reviewed": False}
+    return {"tasks": tasks, "layout_pass": 0, "reviewed": False, "skills_padding_attempted": False}
 
 
 def build_graph():
@@ -797,6 +822,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> d
             "reached": bool(best and avg is not None and avg >= TARGET),
             "pages": layout.page_count(job_dir / "resume.pdf") if best else None, "layout_issues": lay,
             "hard_issues": hard, "claims_issues": claims,
+            "content_suggestions": best.get("content_suggestions", []) if best else [],
             "coverage_limited": (T.feasibility(ctx["r"], ctx["jd"], len(ctx["r"].roles) * T.MAX_BULLETS)
                                  if best and ctx.get("r") is not None and ctx.get("jd") is not None else []),
             "produced": bool(best),

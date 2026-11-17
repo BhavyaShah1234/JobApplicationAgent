@@ -17,7 +17,7 @@ def test_semantic_review_is_bound_to_visible_content_and_retains_unchanged_findi
 
     def review(ctx, current):
         calls.append(current.skills[0].category)
-        return [M.Finding(agent="skills", issue="SAP BTP belongs under Platforms, not Databases")] if current.skills[0].category == "Databases" else []
+        return [M.Finding(agent="skills", severity="error", issue="SAP BTP belongs under Platforms, not Databases")] if current.skills[0].category == "Databases" else []
 
     monkeypatch.setattr(M, "content_review", review)
     ctx = {"job_dir": tmp_path}
@@ -45,6 +45,29 @@ def test_unavailable_content_review_blocks_without_rewriting_or_spending_scans(t
     assert review["content_error"] and review["semantic_hard"]
     assert M.after_layout({**review, "tasks": {"skills": ["layout advice"]}, "layout_pass": 1}) == "score"
     assert M.after_score({**review, "ctx": {"sites": ("hireflow",)}}) == "done"
+
+
+def test_category_refinements_are_advisory_and_padding_cannot_undo_an_error_repair(tmp_path, monkeypatch):
+    suggestion = M.Finding(agent="skills", severity="suggestion", issue="A narrower AI heading could be used")
+    monkeypatch.setattr(M, "content_review", lambda *a: [suggestion])
+    review = M._reviewed_content({"job_dir": tmp_path}, _review_fixture(), {})
+    assert review["semantic_hard"] == []
+    assert M._skill_review_tasks(review, None, False)[0] == []
+    assert M._skill_review_tasks(review, "Optional padding", False) == (["Optional padding"], True)
+    error = M.Finding(agent="skills", severity="error", issue="Move a language out of Databases")
+    tasks, attempted = M._skill_review_tasks({"content_findings": [error]}, "Optional padding", False)
+    assert tasks == [error.issue] and attempted
+    assert M._skill_review_tasks({"content_findings": []}, "Optional padding", attempted) == ([], True)
+
+
+def test_review_requires_explicit_severity_and_never_pads_invalid_or_unreviewed_skills():
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        M.Finding(agent="skills", issue="Unclassified finding")
+    assert M._skill_review_tasks({}, "Optional padding", False, invalid=True) == ([], True)
+    assert M._skill_review_tasks({"content_error": "Reviewer unavailable"}, "Optional padding", False)[0] == []
 
 
 def test_known_semantic_defects_and_unreviewed_edits_never_consume_ats_scans(tmp_path, monkeypatch):

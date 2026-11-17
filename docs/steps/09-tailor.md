@@ -186,8 +186,10 @@ All found while working on step 10 (details there); the gate results above are f
 
 During live acceptance on 2026-11-16, later padding edits were found to undo the first draft's skills-category review.
 The default multi-agent writer now fingerprints visible content and rechecks each changed candidate, retaining the
-same findings without another call when content is unchanged. Category errors and an unavailable semantic review
-block publication and consume no ATS scan. Physical fitting after review must also preserve the reviewed content.
+same findings without another call when content is unchanged. Actual category errors and an unavailable semantic review
+block publication and consume no ATS scan. Broad or combined headings are valid when a term fits a named component;
+optional refinements remain advisory. Cosmetic skills padding gets at most one pass and stops after a category repair,
+so it cannot repeatedly undo a correction. Physical fitting after review must also preserve the reviewed content.
 Project repairs have a separate 180-second total call budget; failed repairs retain their prior text and its hard findings.
 
 | Date | Change | Why |
