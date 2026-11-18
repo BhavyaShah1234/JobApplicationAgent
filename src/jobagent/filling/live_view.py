@@ -37,7 +37,8 @@ READ = r'''(e,kind)=>{
  if(kind==='file')value=[...(e.files||[])].map(x=>x.name).join(', ');
  if(kind==='combobox'){
   const widgetValue=(__JOBAGENT_WIDGET_VALUE__)(e);
-  if(widgetValue !== null)return {value:widgetValue,invalid:e.getAttribute('aria-invalid')==='true'||!!(e.validity&&!e.validity.valid)};
+  if(widgetValue !== null)return {value:widgetValue,invalid:e.getAttribute('aria-invalid')==='true'||
+    (e.matches('.select2-search__field')&&e.closest('.select2-selection--multiple')?.getAttribute('aria-invalid')==='true')||!!(e.validity&&!e.validity.valid)};
   if(e.tagName==='BUTTON')value=clean(e.innerText).replace(/^(select all that apply|select( an?)?( answer| option| one)?)\b\s*/i,'');
   const wd=e.closest('[data-automation-id=multiSelectContainer]');
   if(wd)value=[...wd.querySelectorAll('[data-automation-id=selectedItemList] li')].map(x=>clean(x.innerText)).join('; ');

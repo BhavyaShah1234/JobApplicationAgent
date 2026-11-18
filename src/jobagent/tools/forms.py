@@ -29,6 +29,13 @@ NEXT = re.compile(r"(?i)^\s*(next|continue|(?:save|skip) (and|&) continue|procee
 
 WIDGET_VALUE_JS = r"""e => {
   const clean = t => (t || '').replace(/\s+/g, ' ').trim();
+  const multi = e.matches('.select2-search__field') && e.closest('.select2-selection--multiple');
+  if (multi) {
+    const original = multi.closest('.select2-container')?.previousElementSibling;
+    if (original?.matches('select[multiple].select2-hidden-accessible'))
+      return [...original.selectedOptions].filter(o => o.value && !o.disabled).map(o => clean(o.text)).join('; ');
+    return [...multi.querySelectorAll('.select2-selection__choice[title]')].map(e => clean(e.title)).join('; ');
+  }
   if (e.matches('.select2-selection--single[role=combobox]')) {
     if (e.querySelector('.select2-selection__placeholder')) return '';
     return clean(e.querySelector('.select2-selection__rendered')?.innerText);
@@ -92,6 +99,14 @@ FIELDS_JS = r"""(start) => {
     const ff = e.closest('[data-automation-id^=formField-]');
     const fl = ff && ff.querySelector(':scope > label, :scope > legend, :scope > fieldset > legend, label');
     if (fl && caption(fl)) return caption(fl);
+    if (e.matches('.select2-search__field') && e.closest('.select2-selection--multiple')) {
+      const original = e.closest('.select2-container')?.previousElementSibling;
+      if (!original?.matches('select[multiple].select2-hidden-accessible')) return '';
+      // The search input is empty even when countries are selected. Its
+      // wrapping label contains the selected chips, not the question.
+      return byIds(original.getAttribute('aria-labelledby'), original) ||
+        [...original.labels].filter(l => !l.contains(original)).map(caption).join(' ') || nearLabel(original);
+    }
     if (e.matches('.select2-selection--single[role=combobox]')) {
       const labels = (e.getAttribute('aria-labelledby') || '').split(/\s+/)
         .map(id => e.getRootNode().getElementById(id))
@@ -241,7 +256,13 @@ FIELDS_JS = r"""(start) => {
     f.locator_ref=registry.epoch+':'+f.identity;
     e.setAttribute('data-jf-ref',f.locator_ref);
     f.invalid=e.getAttribute('aria-invalid')==='true' || !!(e.validity && !e.validity.valid);
+    const multi = e.matches('.select2-search__field') && e.closest('.select2-selection--multiple');
+    if (multi) {
+      f.invalid ||= multi.getAttribute('aria-invalid')==='true';
+      f.required ||= multi.getAttribute('aria-required')==='true';
+    }
     if(f.kind==='combobox')f.multiple=e.getAttribute('aria-multiselectable')==='true'||
+      !!multi ||
       (!!e.closest('[data-uxi-widget-type=multiselect]')&&/\bskills\b|(?:select|check|choose) all/i.test(f.label));
     f.required=!!f.required || required(e,f.label);
     f.calendar=e.type!=='date' && e.tagName==='INPUT' &&
@@ -298,7 +319,7 @@ FIELDS_JS = r"""(start) => {
     const t = (e.getAttribute('type') || '').toLowerCase();
     if (t === 'hidden' || t === 'submit' || t === 'image' || t === 'reset' || e.disabled) continue;
     if (e.getAttribute('aria-disabled') === 'true' || e.closest('.select2-container--disabled')) continue;
-    if (e.matches('select.select2-hidden-accessible:not([multiple])')) continue;
+    if (e.matches('select.select2-hidden-accessible')) continue;
     const select2 = e.closest('.select2-container');
     if (select2?.querySelector('.select2-selection--single[role=combobox]') && !e.matches('.select2-selection--single[role=combobox]')) continue;
     if (t === 'button' && e.getAttribute('aria-haspopup') !== 'listbox') continue;
@@ -1432,6 +1453,19 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         return opt
     if f.kind == "checkbox":
         want = _norm(answer) in ("checked", "yes", "true", "agree", "i agree", "accept")
+        if loc.evaluate("e => e.tagName==='INPUT' && e.type==='checkbox' && getComputedStyle(e).opacity==='0'"):
+            # Bootstrap-style checkboxes remain geometrically visible, while
+            # their associated label receives pointer events. Never force a
+            # click through an unrelated overlay or toggle a correct value.
+            label=loc.evaluate_handle('''e=>{
+                const labels=[...(e.labels||[])].filter(l=>{
+                    const r=l.getBoundingClientRect(),s=getComputedStyle(l);
+                    return r.width&&r.height&&s.display!=='none'&&s.visibility!=='hidden';});
+                return labels.length===1?labels[0]:null;
+            }''').as_element()
+            if label is not None:
+                if loc.is_checked()!=want:label.click(timeout=8000)
+                return "checked" if want else ""
         if loc.is_visible():
             loc.set_checked(want, timeout=8000)
         else:  # styled box: its label takes the click
