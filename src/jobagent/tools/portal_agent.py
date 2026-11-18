@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from playwright.sync_api import Page
 from pydantic import BaseModel, Field
 
-from jobagent import llm
+from jobagent import db, llm
 from jobagent.tools import verification
 from jobagent.tools import challenge
 
@@ -428,6 +428,9 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             continue
         if a.action == "click":
             nav_label = _label(frames, a)
+            if goal != "sign_out" and re.search(r"(?i)\b(?:sign|log)[\s-]*out\b", nav_label):
+                history.append("refused: signing out is outside this task; verify the existing account without ending its session")
+                continue
             pw_just_typed = any("{PASSWORD}" in h for h in history[-3:] if h.startswith("fill"))
             nav = "register" if NAV_REGISTER.search(nav_label) else "login" if NAV_LOGIN.search(nav_label.strip()) else None
             if nav and not pw_just_typed:
@@ -557,6 +560,38 @@ def signed_in_evidence(page: Page, values: dict) -> bool:
     return False
 
 
+def _readonly_application_identity(page: Page, email: str) -> bool:
+    """An application may show its signed-in email only in a disabled/read-only contact input.
+
+    Require the exact visible identity, a contact section and both account navigation links on this
+    portal's registrable domain. An editable/hidden input or a sign-out link alone is not evidence.
+    Only inspect the top-level application; a foreign embedded form cannot establish its identity.
+    """
+    origin = urlparse(page.url)
+    if not email or origin.scheme != "https" or not origin.hostname:
+        return False
+    try:
+        return bool(page.evaluate(r"""([email, domain]) => {
+          const visible = e => !!(e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
+          const els = s => [...document.querySelectorAll(s)].filter(visible);
+          if (document.querySelector('input[type=password]')) return false;
+          const identity = els('input[type=email],input[name*=email i],input[id*=email i]').some(e =>
+            e.type !== 'hidden' && (e.disabled || e.readOnly) && e.value.trim().toLowerCase() === email.toLowerCase());
+          if (!identity || !els('h1,h2,h3,[role=heading]').some(e =>
+              /^(?:contact(?:\s+information|\s+details)?|personal information)$/i.test(e.innerText.trim()))) return false;
+          const links = els('a[href]').filter(e => {
+            const u = new URL(e.href, location.href);
+            return u.protocol === 'https:' && (u.hostname === domain || u.hostname.endsWith('.' + domain));
+          });
+          return links.some(e => /^(?:(?:my|candidate|applicant)\s+)?profile$/i.test(e.innerText.trim()) &&
+              /profile|user\/details|my-?account/i.test(new URL(e.href).pathname)) &&
+            links.some(e => /^(?:(?:my|job)\s+)?applications$/i.test(e.innerText.trim()) &&
+              /applications|applicant|dashboard/i.test(new URL(e.href).pathname));
+        }""", [email, db.registrable_domain(origin.hostname)]))
+    except Exception:
+        return False
+
+
 def _shows_account(page: Page, values: dict) -> bool:
     """The page itself shows the account: its email or the candidate's first name."""
     keys = [values.get("EMAIL", ""), values.get("FIRST_NAME", "").split()[0] if values.get("FIRST_NAME") else ""]
@@ -584,7 +619,7 @@ def _shows_account(page: Page, values: dict) -> bool:
                     return True
             except Exception:
                 pass
-    return False
+    return _readonly_application_identity(page, values.get("EMAIL", ""))
 
 
 def _label(frames: dict, a: AuthAction) -> str:
