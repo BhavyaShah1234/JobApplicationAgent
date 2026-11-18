@@ -906,6 +906,7 @@ def apply_cmd(
 
 
 @app.command("submit")
+@job_command("submit")
 def submit_cmd(
     ctx: typer.Context,
     job_dir: str = typer.Argument(..., help="outputs/<company>/<job-id> with jd.json, resume.pdf (and cover_letter.pdf)."),
@@ -976,6 +977,9 @@ def submit_cmd(
         wf.mark("submit", "failed", error=f"unavailable: {gone.kind}")
         _stopped(job_dir, gone, "submit")
     sub = res.get("submission") or {"state": f"not submitted: the form ended '{res['state']}'"}
+    from jobagent.log import progress
+    progress(log, "apply", "done" if res.get("ready_to_submit") else "blocked",
+             detail="form filling finished; submission outcome is recorded separately")
     wf.mark("submit", "done" if sub.get("state") in ("submitted", "confirmed", "already_submitted", "skipped") else "failed",
             result={"state": sub.get("state")})
     console.print(f"submit: {sub.get('state')}; {res['verified']}/{len(res['fields'])} fields verified -> "

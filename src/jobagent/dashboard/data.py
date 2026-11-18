@@ -215,18 +215,47 @@ def pipeline(settings, hours: float = 72, limit: int = 30) -> list[dict]:
     now = datetime.now().timestamp()
     files = [p for p in sorted(d.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)[:150] if now - p.stat().st_mtime < hours * 3600]
     parsed = [(p, _parse_log(p)) for p in reversed(files)]
+    conn = ro_conn(settings)
+    try:
+        receipts = _rows(conn, "SELECT a.job_dir,a.company,a.title,a.state,a.submitted_at,a.confirmed_at,"
+                              "COALESCE(j.url,a.url) AS url FROM applications a LEFT JOIN jobs j ON j.id=a.job_id "
+                              "WHERE a.state IN ('submitted','confirmed') AND a.submitted_at IS NOT NULL") if conn else []
+    finally:
+        if conn:
+            conn.close()
+    def directory(value):
+        path = Path(value)
+        return str((path if path.is_absolute() else settings.outputs_dir.parent / path).resolve())
     url_job: dict[str, str] = {}                         # a record that names both its url and its job links the two names of one job
     for _, recs in parsed:
         for r in recs:
             if r.get("level") == "progress" and r.get("url") and r.get("job"):
-                url_job[r["url"]] = r.get('job_dir') or r["job"]
+                if r.get('job_dir'):
+                    url_job[r['url']] = directory(r['job_dir'])
+                else:
+                    url_job.setdefault(r['url'], f"{r['company']}:{r['job']}" if r.get('company') else f"url:{r['url']}")
+    for receipt in receipts:
+        url_job[receipt['url']] = directory(receipt['job_dir'])
+    identities, descriptions = {}, {}
+    for _, recs in parsed:
+        for r in recs:
+            if r.get('level') != 'progress' or not r.get('job'):
+                continue
+            identity = url_job.get(r.get('url', '')) or (directory(r['job_dir']) if r.get('job_dir') else None)
+            if identity:
+                identities.setdefault(r['job'], set()).add(identity)
+                descriptions.setdefault(identity, {}).update({k:r[k] for k in ('title','company','job_dir','url') if r.get(k)})
+    for receipt in receipts:
+        identities.setdefault(Path(receipt['job_dir']).name, set()).add(directory(receipt['job_dir']))
     jobs: dict[str, dict] = {}
     for p, recs in parsed:
         state = _log_state(p, recs, now)
         for r in recs:
             if r.get("level") != "progress" or not r.get("stage"):
                 continue
-            identity = r.get('job_dir') or url_job.get(r.get('url', ''), '') or (
+            known = identities.get(r.get('job'), set())
+            identity = url_job.get(r.get('url', '')) or (directory(r['job_dir']) if r.get('job_dir') else None) or (
+                next(iter(known)) if len(known) == 1 and not r.get('company') else None) or (
                 f"{r.get('company')}:{r['job']}" if r.get('company') and r.get('job') else r.get('job')) or f"url:{r.get('url', '')}"
             key = (identity, r.get('execution_id', 'legacy'))
             j = jobs.setdefault(key, {"job": r.get("job", ""), "url": "", "title": "", "company": "", "plan": [], "stages": {}, "trail": [],
@@ -245,6 +274,9 @@ def pipeline(settings, hours: float = 72, limit: int = 30) -> list[dict]:
     out = []
     pending = hitl_pending(settings)
     for j in jobs.values():
+        for key, value in descriptions.get(j['identity'], {}).items():
+            if not j.get(key):
+                j[key] = value
         j["trail"].sort(key=lambda e: (e["ts"], e['time_ns']))
         for e in j["trail"]:
             j["stages"][e["stage"]] = e                  # the latest record of each stage wins
@@ -290,6 +322,22 @@ def pipeline(settings, hours: float = 72, limit: int = 30) -> list[dict]:
         item.pop('_last_ns', None)
         latest.setdefault(item['identity'], item)
     out = list(latest.values())
+    # Logs describe attempts. A durable sent receipt determines the current
+    # job's submission state, including commands predating lifecycle events.
+    sent = {directory(r['job_dir']):r for r in receipts}
+    for item in out:
+        receipt = sent.get(item['identity'])
+        if not receipt:
+            continue
+        stamp = receipt['confirmed_at'] or receipt['submitted_at']
+        label = 'Email confirmed' if receipt['state'] == 'confirmed' else 'Portal received the application'
+        item.update(state='done', active=False, current=None, percent=100,
+                    company=receipt['company'], title=receipt['title'], url=receipt['url'],
+                    job_dir=directory(receipt['job_dir']), submission_state=receipt['state'],
+                    updated=max(item['updated'],stamp), question_ids=[],
+                    stages=[{'id':'submit','label':'Submit','status':'done','step':label,
+                             'i':None,'n':None,'detail':label,'ts':stamp}])
+    out.sort(key=lambda x:x['updated'],reverse=True)
     out.sort(key=lambda x: not x["active"])              # active jobs first, each group newest first
     return out[:limit]
 
