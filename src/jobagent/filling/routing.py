@@ -12,7 +12,8 @@ from .education import STUDY_COMPONENTS
 
 DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_ack',
                         'outside_activity','employer_personal_ties','immigration_support'})
-PURPOSE_BOUND=DECLARATIONS | {'owner_identifier','work_documentation','government_employment'}
+PURPOSE_BOUND=DECLARATIONS | {'owner_identifier','work_documentation','government_employment',
+    'age_threshold','work_restrictions','citizenship_countries','citizenship_status','visa_history'}
 DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys()
 
 GOVERNMENT_HISTORY=frozenset({'current or former government employee',
@@ -36,6 +37,10 @@ def family(text):
     if government_employment_question(text):return 'government_employment'
     if expanded_immigration_support(text):return 'immigration_support'
     rules=[
+      ('age_threshold',r'\bage (?:of )?\d+\b|\b\d+ years? (?:of age|old)\b'),
+      ('work_restrictions',r'\bnon (?:compete|competition|disclosure|solicitation)\b|\bnoncompete\b|restrictive covenant|(?:contract|agreement).*?(?:restrict|impact|interfere|prevent|limit).*?(?:work|employ|colleague)'),
+      ('visa_history',r'(?:in the past|\bever\b|previously|formerly|have you (?:been|held|had)).*?(?:\bvisas?\b|exchange visitor)'),
+      ('citizenship_countries',r'\b(?:country|countries|nationality)\b.*?(?:citizen|national|permanent residen)|\bcitizenship\b.*?\bcountr(?:y|ies)\b|^nationality$'),
       ('government_referral',r'(?:were you|have you been|are you) referred.*government|government.*(?:were you|have you been|are you) referred'),
       ('government_relationship',r'are you related.*government|do you have.*(?:relatives|family members).*government'),
       ('ethics_ack',r'(?:please acknowledge|do you acknowledge|confirm your understanding).*?(?:ethics|code of conduct)|(?:ethics|code of conduct).*?(?:please acknowledge|do you acknowledge|confirm your understanding)'),
@@ -52,6 +57,7 @@ def family(text):
       ('on_site',r'on site|onsite|work (?:from|in|at).*office'),
       ('work_documentation',r'\b(?:can|could|will|would) you (?:provide|present|produce|supply|furnish|show)\b.*\b(?:documentation|documents?|proof|evidence)\b.*\b(?:identity|identification|right to work|eligibility to work|work eligibility|employment eligibility|work authorization)\b'),
       ('sponsorship',r'sponsor'),('work_authorization',r'legally authorized|eligible to work|authorized to work'),
+      ('citizenship_status',r'\bcitizen(?:ship)?\b|\bnational\b|permanent resident|\brefugee\b|\basylee\b'),
       ('residency',r'(?:resident|reside|live) (?:of|in) (?:the )?(?:state|california|arizona|new york|texas|united states)|resident of'),
       ('offer_deadline',r'offer.*deadline|competing.*deadline'),
       ('office_preferences',r'location preference|office.*preference|locations.*(?:work|open|placed)'),
@@ -66,7 +72,7 @@ def family(text):
       ('account_status',r'currently.*client|(?:opened|have) an? account'),
       ('event_history',r'conferences?.*(?:attend|planning)|gatherings.*attend'),
       ('test_score',r'\b(?:sat|act|gre|gmat|toefl|ielts)\b.*(?:score|result)|(?:score|result).*\b(?:sat|act|gre|gmat|toefl|ielts)\b'),
-      ('current_employer',r'current (?:or previous )?(?:company|employer)|who is your.*employer'),
+      ('current_employer',r'^(?:\d+[a-z]? )?(?:(?:(?:what|who) (?:is|was) |(?:please )?(?:provide|enter|state) |name of )?(?:your )?(?:current (?:or previous )?(?:company|employer)|employer name|employer))(?: optional)?$'),
       ('current_title',r'(?:current|previous).*job title'),
       ('languages',r'language skill|^languages$|^language$'),
       ('education_level',r'highest.*(?:education|degree)'),
@@ -81,7 +87,7 @@ def family(text):
       ('skills',r'^(?:type to add |add |technical |your )?skills(?: optional)?$'),
       ('country',r'country.*(?:resid|live)|country where'),
       ('start_date',r'when can you start|earliest start|available start|date available|available to start'),
-      ('signature_date',r'^date$|signature date|date signed|today s date'),
+      ('signature_date',r'^(?:\d+[a-z]? )?(?:date|signature date|date signed|(?:please )?(?:enter )?today s date)(?: mm dd yyyy| yyyy mm dd)?$'),
       ('portfolio_link',r'portfolio|(?:personal|other) website|^website$'),('email',r'\bemail\b|e mail'),
       ('phone',forms.PHONE_CODE_Q.pattern+r'|\bphone\b|telephone|\bmobile\b'),
       ('preferred_name',r'preferred name|what.*call you|nickname'),
@@ -149,6 +155,18 @@ def education_query_facts(field,facts,kind):
 def qualification_signature(text,kind):
     """Parameters matter: a related question family is not the same claim."""
     q=norm(text.replace('C++','cpp').replace('c++','cpp').replace('C#','csharp').replace('c#','csharp'))
+    if kind=='age_threshold':
+        age=re.search(r'\bage (?:of )?(\d+)\b|\b(\d+) years? (?:of age|old)\b',q)
+        comparison=('lt' if re.search(r'under|younger than|less than',q) else
+                    'le' if re.search(r'or younger|and under',q) else
+                    'gt' if re.search(r'(?:over|older than|more than) (?:the )?(?:age (?:of )?)?\d+',q) else 'ge')
+        extras=tuple(w for w in ('authorized','experience','citizen','convicted','not') if re.search(r'\b'+w+r'\b',q))
+        return (int(age[1] or age[2]) if age else None,comparison,extras)
+    if kind=='citizenship_countries':
+        return (bool(re.search(r'citizen|nationality',q)),bool(re.search(r'permanent residen',q)),
+                bool(re.search(r'\bbirth\b|\bborn\b',q)),
+                bool(re.search(r'\b(?:previous|previously|former|formerly|past|ever)\b',q)),
+                bool(re.search(r'\b(?:not|no|never)\b',re.sub(r'^.*?please specify','',q))))
     if kind=='work_documentation':
         # Identity documents and work-eligibility documents are distinct. A
         # combined question needs an owner declaration covering both purposes.
@@ -174,6 +192,14 @@ def qualification_signature(text,kind):
 
 def same_qualification(field,fact):
     kind=family(field.label)
+    if kind in ('age_threshold','citizenship_countries'):
+        return any(family(alias)==kind and qualification_signature(alias,kind)==
+                   qualification_signature(field.label,kind) for alias in fact.aliases)
+    if kind in ('citizenship_status','work_restrictions','visa_history'):
+        # These predicates include parties, history windows and legal scope.
+        # Only an explicit matching owner declaration (or saved alias) proves
+        # them; a shared visa class or agreement type is insufficient.
+        return any(norm(alias)==norm(field.label) for alias in fact.aliases)
     if kind=='government_employment':
         if entity_scope(field.section) and not fact.section:return False
         if any(norm(alias)==norm(field.label) for alias in fact.aliases):return True

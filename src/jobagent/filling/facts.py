@@ -301,6 +301,8 @@ def compile_facts(data, raw_jd, reference_date=''):
         'Phone': {'number': ['Phone', 'Primary Phone', 'Phone Number'],
                   'extension': ['Phone Extension'], 'device_type': ['Phone Device Type'],
                   'country':['Phone Country'], 'country_code':['Phone Country Code','Country Phone Code','Dial Code']},
+        'Visa status / citizenship': {'visa_status':['Visa status','Current visa status'],
+                                      'citizenship':['Country of citizenship','Citizenship country','Nationality']},
     }
     for section, entry in entries(data):
         value = entry.get('answer'); q = entry['question']; source = f'applicant/{section}/{q}/answer'
