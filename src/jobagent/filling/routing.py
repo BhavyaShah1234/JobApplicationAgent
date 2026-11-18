@@ -12,12 +12,29 @@ from .education import STUDY_COMPONENTS
 
 DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_ack',
                         'outside_activity','employer_personal_ties','immigration_support'})
-PURPOSE_BOUND=DECLARATIONS | {'owner_identifier','work_documentation'}
+PURPOSE_BOUND=DECLARATIONS | {'owner_identifier','work_documentation','government_employment'}
 DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys()
+
+GOVERNMENT_HISTORY=frozenset({'current or former government employee',
+    'are you a current or former government employee',
+    'have you ever been a government employee', 'have you ever worked for the government'})
+
+
+def government_employment_question(text):
+    q=norm(text)
+    if q in GOVERNMENT_HISTORY:return True
+    # A denial of employment does not answer contractor or family history.
+    if re.search(r'\bcontract\w*|\bconsult\w*|\b(?:relative|family|spouse|partner|parent|child|referred|related|married)\b',q):return False
+    subject=r'\b(?:(?:are|were) you|have you (?:ever )?been)\s+'
+    modifiers=r'(?:(?:a|an|current|former|currently|previously|or|federal|state|local|us|united|states)\s+)*'
+    agency=r'(?:government|(?:us |united states )?department of defense|dod)\b'
+    return bool(re.search(subject+modifiers+r'(?:employee|employed) (?:of|by|with|at) (?:the )?'+agency,q) or
+                re.search(subject+modifiers+agency+r'\s+(?:employee|worker)\b',q))
 
 
 def family(text):
     q=norm(text)
+    if government_employment_question(text):return 'government_employment'
     if expanded_immigration_support(text):return 'immigration_support'
     rules=[
       ('government_referral',r'(?:were you|have you been|are you) referred.*government|government.*(?:were you|have you been|are you) referred'),
@@ -158,6 +175,14 @@ def qualification_signature(text,kind):
 
 def same_qualification(field,fact):
     kind=family(field.label)
+    if kind=='government_employment':
+        if entity_scope(field.section) and not fact.section:return False
+        if any(norm(alias)==norm(field.label) for alias in fact.aliases):return True
+        # Only an explicit all-history negative entails a narrower agency or
+        # date window. A broad Yes or current-only No proves neither.
+        return (not entity_scope(field.section) and fact.authority=='owner' and not fact.record and
+                not fact.instructions and norm(fact.value) in {'no','false'} and
+                any(norm(alias) in GOVERNMENT_HISTORY for alias in fact.aliases))
     if kind=='work_documentation':
         return any(family(alias)==kind and qualification_signature(alias,kind)==
                    qualification_signature(field.label,kind) for alias in fact.aliases)
