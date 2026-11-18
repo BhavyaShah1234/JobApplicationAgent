@@ -6,6 +6,7 @@ must match their exact purpose; sharing a boolean value proves nothing.
 from dataclasses import dataclass,asdict,replace
 import json,re
 from rapidfuzz import fuzz
+from jobagent.tools import forms
 from .facts import norm,Decision,Fact,from_fact,choice,entity_scope,scope_allows,owner_only,expanded_immigration_support,key
 from .education import STUDY_COMPONENTS
 
@@ -64,7 +65,8 @@ def family(text):
       ('country',r'country.*(?:resid|live)|country where'),
       ('start_date',r'when can you start|earliest start|available start|date available|available to start'),
       ('signature_date',r'^date$|signature date|date signed|today s date'),
-      ('portfolio_link',r'portfolio|(?:personal|other) website|^website$'),('email',r'\bemail\b|e mail'),('phone',r'\bphone\b|telephone|\bmobile\b'),
+      ('portfolio_link',r'portfolio|(?:personal|other) website|^website$'),('email',r'\bemail\b|e mail'),
+      ('phone',forms.PHONE_CODE_Q.pattern+r'|\bphone\b|telephone|\bmobile\b'),
       ('preferred_name',r'preferred name|what.*call you|nickname'),
       ('legal_name',r'legal name|^full name$|^name$|^typed signature$|^electronic signature$'),
       ('location',r'current location|where.*(?:located|based)|location city|city.*state.*resid'),
@@ -229,6 +231,14 @@ def candidates(field,facts):
     if exact:
         sheet=[x for x in exact if x.id.startswith('application.answer.')]
         return sheet or exact
+    if kind=='phone' and forms.PHONE_CODE_Q.search(field.label):
+        # Reworded dial-code questions need the code component, not the phone
+        # number/device/extension or the entire record. Its variants retain
+        # the country from that same phone record for shared prefixes like +1.
+        codes=[x for x in allowed if not x.record and any(
+            forms.PHONE_CODE_Q.search(a) and re.search(r'(?i)\bcode\b',a) for a in x.aliases)]
+        profile=[x for x in codes if x.source.startswith('applicant/')]
+        return profile or codes
     sheets=[x for x in allowed if x.id=='application.answers' and norm(field.label) in norm(x.value)]
     if sheets:return sheets
     typed=[x for x in allowed if fact_family(x)==kind and same_qualification(field,x)] if kind!='other' else []
