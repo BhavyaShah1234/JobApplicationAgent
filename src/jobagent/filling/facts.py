@@ -134,11 +134,18 @@ def choice(f, values):
         hits=[o for o in f.options if norm(o)==target]
         if len(hits)==1:return hits[0]
     if 'veteran' in norm(f.label) and norm(values[0]) in ('not a veteran','not veteran'):
+        if f.kind not in ('select','combobox','radio','buttons','checkboxes'):return values[0]
         binary=[o for o in f.options if norm(o)=='no']
         if len(binary)==1:return binary[0]
-        hits=[o for o in f.options if re.search(r'(?i)\bnot (?:a )?protected veteran\b',o)
-              and not re.search(r'(?i)decline|prefer not',o)]
+        # Non-veteran and non-protected veteran are different statuses. Prefer
+        # the explicit non-veteran answer and never affirm service by accident.
+        prefix=r'(?:(?:i am|i m|i identify as) )?'
+        hits=[o for o in f.options if re.fullmatch(prefix+r'not (?:a )?veteran|non veteran',norm(o))]
         if len(hits)==1:return hits[0]
+        hits=[o for o in f.options if re.fullmatch(prefix+r'not (?:a )?protected veteran',norm(o))]
+        if len(hits)==1:return hits[0]
+        if f.kind=='combobox' and not f.options and f.options_state!='complete':return values[0]
+        return None
     if re.search(r'(?i)disability',f.label) and norm(values[0]).startswith('no '):
         hits=[o for o in f.options if norm(o).startswith('no ')]
         if len(hits)==1:return hits[0]

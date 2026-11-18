@@ -14,7 +14,7 @@ DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_
                         'outside_activity','employer_personal_ties','immigration_support'})
 PURPOSE_BOUND=DECLARATIONS | {'owner_identifier','work_documentation','government_employment',
     'age_threshold','work_restrictions','citizenship_countries','citizenship_status','visa_history'}
-DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys() | {'education_summary'}
+DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys() | {'education_summary','veteran'}
 
 GOVERNMENT_HISTORY=frozenset({'current or former government employee',
     'are you a current or former government employee',
