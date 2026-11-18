@@ -1547,6 +1547,8 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 # handler without touching a stale trigger or its ARIA state.
                 page.keyboard.press("Escape")
         if single_select2:
+            if loc.count() == 1:
+                loc.blur(timeout=1200)
             return opt
         # Some portals commit validation on blur, after rendering the chosen
         # text. Readback must still require their invalid state to clear.
