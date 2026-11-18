@@ -374,6 +374,24 @@ def test_email_first_login_is_handed_to_account_agent_before_application_plannin
             b.close()
 
 
+@pytest.mark.parametrize("button", ["Apply", "Apply now", "Submit application"])
+def test_ambiguous_short_application_cannot_be_sent_by_the_account_agent(button):
+    with sync_playwright() as pw:
+        b = pw.chromium.launch(channel="chrome", headless=True)
+        try:
+            page = b.new_page()
+            page.set_content('<h1>Sign in</h1><form onsubmit="window.sent=true;return false;">'
+                             '<label>Email<input type=email></label><button>' + button + '</button></form>')
+            real_wait = page.wait_for_timeout
+            page.wait_for_timeout = lambda ms: real_wait(min(ms, 50))
+            calls = []
+            with pytest.raises(A.FormNotReady, match="mixes sign-in"):
+                A._start(page, "https://careers.example.test/apply", calls.append, lambda _: None, already_open=True)
+            assert not calls and not page.evaluate("!!window.sent")
+        finally:
+            b.close()
+
+
 def test_signed_in_successfactors_masthead_picker_does_not_block_portalcareer_navigation():
     html = (f'<div id="headerNavBar" role="region"><div id="rcmCareerLangDropDown"><a role="combobox" aria-label="Language">English</a></div></div>'
             f'<h1>Career Opportunities: Engineer (123)</h1><form id="careerform"><button onclick="{SF_ENTRY.replace("false", "true", 1)}">Apply</button></form>'

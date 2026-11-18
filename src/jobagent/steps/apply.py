@@ -1420,7 +1420,7 @@ def _authentication_page(view: forms.PageView) -> bool:
         return False
     f = view.fields[0]
     credential = f.kind == "email" or (f.kind == "text" and re.search(r"(?i)\b(e-?mail|user\s*name)\b", f.label))
-    heading = r"\s*(?:(?:log|sign)[\s-]*in(?:\s+(?:or|to|with|using|and)\b.*)?|create\s+(?:(?:an?|your)\s+)?account|register)[\s.!:]*"
+    heading = r"\s*(?:(?:log|sign)[\s-]*in(?:\s+(?:or|to|with|using|and)\b.*)?|create\s+(?:(?:an?|your)\s+)?account)[\s.!:]*"
     return bool(credential and any(re.fullmatch(heading, h, re.I) for h in view.headings))
 
 
@@ -1459,6 +1459,10 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
         response = None  # the status only describes the first load of a URL
         pw = any(f.kind == "password" for f in view.fields)
         if _authentication_page(view) and not signed:
+            if not pw and any(any(p.fullmatch(b.strip()) for p in START) or
+                              re.search(r"(?i)^(submit|send|finish|complete)\s+((my|your|this)\s+)?application\b", b.strip())
+                              for b in view.buttons):
+                raise FormNotReady("The email-only screen mixes sign-in with an application action; manual review is required")
             log("apply: the portal asks to sign in")
             auth = ensure_signed_in(page.url)
             if getattr(auth, "signed_in", True) is False:

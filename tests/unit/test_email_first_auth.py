@@ -5,14 +5,14 @@ from jobagent.tools import forms
 
 
 @pytest.mark.parametrize("heading", ["Log in or create account", "Login", "Sign in", "Sign-in to your account",
-                                     "Sign in with email", "Create an account", "Create your account", "Register"])
+                                     "Sign in with email", "Create an account", "Create your account"])
 def test_email_first_auth_is_recognized(heading):
     view = forms.PageView([forms.Field(0, "email", "Email *")], ["Continue"], [], [heading], {})
     assert apply._authentication_page(view)
 
 
 @pytest.mark.parametrize("heading", ["Application", "Contact information", "Enter your email", "Sign-in bonus questionnaire",
-                                     "How did you hear about us?", "Sign up for job alerts"])
+                                     "How did you hear about us?", "Sign up for job alerts", "Register"])
 def test_contact_email_is_not_sufficient_to_infer_authentication(heading):
     view = forms.PageView([forms.Field(0, "email", "Email *")], ["Apply"], [], [heading], {})
     assert not apply._authentication_page(view)
