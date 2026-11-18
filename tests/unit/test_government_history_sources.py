@@ -52,3 +52,13 @@ def test_employment_denial_cannot_establish_contracting_or_another_persons_histo
     field=Field(0,'select',label,section=section,options=['Yes','No'],options_state='complete')
     facts=[Fact('global',['Current or former government employee?'],'No','applicant')]
     assert PlannedFiller(facts,no_ask).plan([field],allow_human=False)[0].value is None
+
+
+def test_a_model_cannot_expand_an_employment_denial_to_contracting_history():
+    field=Field(0,'select','Are you a government employee or contractor?',
+                required=True,options=['Yes','No'],options_state='complete')
+    facts=[Fact('global',['Current or former government employee?'],'No','applicant')]
+    filler=PlannedFiller(facts,no_ask,model=object())
+    filler.invoke=lambda *a,**kw:pytest.fail('Missing contracting history needs owner evidence, not a model guess')
+    assert filler.plan([field],allow_human=False)[0].value is None
+    assert filler.model_calls==0

@@ -23,8 +23,7 @@ GOVERNMENT_HISTORY=frozenset({'current or former government employee',
 def government_employment_question(text):
     q=norm(text)
     if q in GOVERNMENT_HISTORY:return True
-    # A denial of employment does not answer contractor or family history.
-    if re.search(r'\bcontract\w*|\bconsult\w*|\b(?:relative|family|spouse|partner|parent|child|referred|related|married)\b',q):return False
+    if re.search(r'\b(?:relative|family|spouse|partner|parent|child|referred|related|married)\b',q):return False
     subject=r'\b(?:(?:are|were) you|have you (?:ever )?been)\s+'
     modifiers=r'(?:(?:a|an|current|former|currently|previously|or|federal|state|local|us|united|states)\s+)*'
     agency=r'(?:government|(?:us |united states )?department of defense|dod)\b'
@@ -178,6 +177,7 @@ def same_qualification(field,fact):
     if kind=='government_employment':
         if entity_scope(field.section) and not fact.section:return False
         if any(norm(alias)==norm(field.label) for alias in fact.aliases):return True
+        if re.search(r'\bcontract\w*|\bconsult\w*',norm(field.label)):return False
         # Only an explicit all-history negative entails a narrower agency or
         # date window. A broad Yes or current-only No proves neither.
         return (not entity_scope(field.section) and fact.authority=='owner' and not fact.record and
