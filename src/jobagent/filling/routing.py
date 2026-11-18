@@ -14,7 +14,7 @@ DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_
                         'outside_activity','employer_personal_ties','immigration_support'})
 PURPOSE_BOUND=DECLARATIONS | {'owner_identifier','work_documentation','government_employment',
     'age_threshold','work_restrictions','citizenship_countries','citizenship_status','visa_history'}
-DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys()
+DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys() | {'education_summary'}
 
 GOVERNMENT_HISTORY=frozenset({'current or former government employee',
     'are you a current or former government employee',
@@ -75,6 +75,7 @@ def family(text):
       ('current_employer',r'^(?:\d+[a-z]? )?(?:(?:(?:what|who) (?:is|was) |(?:please )?(?:provide|enter|state) |name of )?(?:your )?(?:current (?:or previous )?(?:company|employer)|employer name|employer))(?: optional)?$'),
       ('current_title',r'(?:current|previous).*job title'),
       ('languages',r'language skill|^languages$|^language$'),
+      ('education_summary',r'(?=.*\bhighest\b)(?=.*\b(?:degree|education)\b)(?=.*\b(?:field of study|major|subject)\b)'),
       ('education_level',r'highest.*(?:education|degree)'),
       ('education_completion',r'level of completion|current education status'),
       ('study_region',r'where (?:did|do) you study.*region'),
@@ -123,6 +124,14 @@ def degree_level(value):
 
 def education_query_facts(field,facts,kind):
     """Explicit global degree questions can read the named owner record outside a UI row."""
+    if kind=='education_summary':
+        if entity_scope(field.section):return []
+        exact=[x for x in facts if x.authority=='owner' and not x.record and
+               x.id.startswith('application.answer.') and norm(field.label) in map(norm,x.aliases)]
+        if exact:return exact
+        return [x for x in facts if x.authority=='owner' and not x.record and not x.instructions and
+                (entity_scope(x.section) or ('',))[0]=='education' and
+                any(a in x.aliases for a in ('Degree','Field of Study','End Date'))]
     if kind in STUDY_COMPONENTS:
         component=STUDY_COMPONENTS[kind]
         exact=[x for x in facts if x.authority=='owner' and not x.record and
@@ -331,6 +340,9 @@ def route(field,facts):
 def resolve_routed(field,facts,route_info=None):
     r=route_info or route(field,facts);bank={x.id:x for x in facts};selected=[bank[i] for i in r.fact_ids]
     owner=[x for x in selected if x.authority=='owner']
+    if r.family=='education_summary':
+        from .education import highest_completed_summary
+        return highest_completed_summary(field,owner)
     if r.family=='skills':
         projected=[x for x in selected if not x.record and x.id.endswith('/Skills/answer/selected')]
         if len(projected)==1:
