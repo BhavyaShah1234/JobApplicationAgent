@@ -62,6 +62,7 @@ def family(text):
       ('school',r'school|university|institute'),('degree',r'\bdegree\b'),
       ('discipline',r'discipline|(?:field|area) of study|\bmajor\b'),
       ('gpa',r'\bgpa\b|grade point'),
+      ('skills',r'^(?:type to add |add |technical |your )?skills(?: optional)?$'),
       ('country',r'country.*(?:resid|live)|country where'),
       ('start_date',r'when can you start|earliest start|available start|date available|available to start'),
       ('signature_date',r'^date$|signature date|date signed|today s date'),
@@ -263,7 +264,9 @@ def route(field,facts):
     catalogue={norm(o) for o in field.options}
     if kind in ('other','location') and re.search(r'(?i)location|located',field.label) and {'canada','india','japan'}<=catalogue:
         kind='country';found=candidates(replace(field,label='Country where you reside'),facts)
-    if kind in ('why_company','project','technical_experience','technical_interests'):
+    if kind=='skills':
+        sources=['resume','owner_rules','jd']
+    elif kind in ('why_company','project','technical_experience','technical_interests'):
         sources=['owner_rules','resume','jd','company']
     elif kind in ('start_date','signature_date'):sources=['owner_rules','clock']
     elif kind in PURPOSE_BOUND or kind in ('external_sharing','privacy_consent','future_contact','ai_consent','sms_consent','arbitration','read_ack','event_history','account_status','clearance_eligibility','clearance_held','sponsorship','work_authorization','residency'):
@@ -277,6 +280,16 @@ def route(field,facts):
 def resolve_routed(field,facts,route_info=None):
     r=route_info or route(field,facts);bank={x.id:x for x in facts};selected=[bank[i] for i in r.fact_ids]
     owner=[x for x in selected if x.authority=='owner']
+    if r.family=='skills':
+        projected=[x for x in selected if not x.record and x.id.endswith('/Skills/answer/selected')]
+        if len(projected)==1:
+            fact=projected[0];values=fact.value.split('; ')
+            selectors=('select','combobox','radio','buttons','checkboxes')
+            if field.kind in selectors and field.options_state=='complete':
+                values=list(dict.fromkeys(hit for value in values if (hit:=forms.strict_option(value,field.options)) is not None))
+                if not values:return Decision(None if field.required else '',fact.source,fact.id,'No sourced skills are offered')
+            if field.kind in selectors and field.kind!='checkboxes' and not field.multiple:values=values[:1]
+            return from_fact(field,replace(fact,value='; '.join(values)))
     if r.family in STUDY_COMPONENTS:
         exact=[x for x in owner if x.id.startswith('application.answer.')]
         context=[x for x in selected if x.id.startswith('form.education.selection:')]
@@ -287,7 +300,6 @@ def resolve_routed(field,facts,route_info=None):
         if len(values)!=1:return Decision(None,reason='explicit education evidence missing')
         result=from_fact(field,values[0])
         if result.value is None and r.family=='study_country':
-            from jobagent.tools import forms
             value,score=forms.match_option(values[0].value,field.options)
             if value is not None and score>=95:result=Decision(value)
         if result.value is None:return result

@@ -61,6 +61,7 @@ ENTITY_COMPONENTS = {
     'first name','given name','middle name','last name','family name','surname','full name','name',
     'email','email address','phone','phone number','primary phone','telephone','mobile',
     'phone country','phone country code','country phone code','dial code','phone device type','phone extension',
+    'skills','technical skills',
     'address','street address','address line 1','address line 2','city','town','state','province',
     'region','country','zip','zip code','postal code','post code','pincode','language','languages','years of relevant experience','years of experience',
 }
@@ -346,6 +347,18 @@ def compile_facts(data, raw_jd, reference_date=''):
             import json
             facts.append(Fact(source,[q,*entry.get('seen',[])],json.dumps(value,ensure_ascii=False),source,
                               instructions=entry.get('instructions',''),record=True,tools=tools))
+            rule=re.fullmatch(r'(?i)the ones most relevant to the job description,\s*at most (\d+)\.?',
+                              (entry.get('instructions') or '').strip()) if q=='Skills' else None
+            if rule and 1<=int(rule[1])<=50 and value and all(isinstance(s,str) and s.strip() for s in value):
+                # Rank only supplied skills; JD text can order them, never add
+                # qualifications. Keep the full record alongside this bounded
+                # projection so the transformation remains auditable.
+                skills=list(dict.fromkeys(s.strip() for s in value))
+                def mentions(skill):
+                    return len(re.findall(r'(?<![\w+#])'+re.escape(skill)+r'(?![\w+#])',raw_jd,re.I))
+                ranked=sorted(skills,key=lambda s:-mentions(s))[:int(rule[1])]
+                facts.append(Fact(source+'/selected',[q,*entry.get('seen',[])],
+                                  '; '.join(ranked),source+'/selected',tools=tools))
         elif isinstance(value, (str, bool, int, float)) or (value is None and entry.get('instructions')):
             # A saved literal can be conditional (e.g. "Yes only if the resume
             # lists an honour"). Let the common source checker apply that rule.

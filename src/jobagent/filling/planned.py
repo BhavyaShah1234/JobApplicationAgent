@@ -462,6 +462,8 @@ class PlannedFiller:
                         if f is None:continue
                         d=unlisted_school(f,fresh,self.facts) or decisions[old.id]
                         if d.value is None:
+                            if not f.required and (self.step,key(f)) in self.declined:
+                                self.cache[key(f)]=d
                             continue
                         try:
                             value=d.value
@@ -499,6 +501,7 @@ class PlannedFiller:
                                 held_sha=proof.expected if valid else None
                             if not valid:raise ValueError('control not accepted or exact readback unavailable')
                             readback=actual.value if actual else Path(files[value]).name
+                            self.failures.pop(key(f),None)
                             self.cache[key(f)]=d;self.rendered[key(f)]=readback;changed=True
                             row={'step':self.step,'field_key':key(f),'identity':f.identity,'label':f.label,'section':f.section,'answer':value,'readback':readback,
                                             'frame':f.frame,'kind':f.kind,'slot':f.slot,'required':f.required,'before':f.value,'chosen':chosen,
