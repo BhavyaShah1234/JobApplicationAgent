@@ -1626,11 +1626,57 @@ def _captions(label: str) -> list[str]:
     return list(dict.fromkeys(p[:40] for p in parts if len(p) > 2))
 
 
+REVIEW_ATTACHMENT_JS = r"""({captions, docRe}) => {
+  const norm=s=>(s||'').toLowerCase().replace(/[^a-z]/g,'');
+  const visible=e=>!e.closest('[hidden],[aria-hidden=true],[inert]')&&!!(e.getBoundingClientRect().width&&e.getBoundingClientRect().height)&&getComputedStyle(e).visibility!=='hidden';
+  const caption=e=>e.getAttribute('aria-label')||
+    (e.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>document.getElementById(id)?.innerText||'').join(' ');
+  const selector='[role=group][aria-labelledby],[role=group][aria-label],fieldset';
+  const groups=[...document.querySelectorAll(selector)].filter(e=>visible(e)&&captions.includes(norm(
+    e.tagName==='FIELDSET'?e.querySelector(':scope > legend')?.innerText:caption(e))));
+  if(groups.length!==1)return {n:groups.length,text:'',files:0};
+  const g=groups[0];
+  // A read-only section is a new rendering of the named document, not a
+  // substitute for an empty live input or a neighbouring upload component.
+  if(g.matches('[aria-invalid=true],[aria-busy=true]')||g.querySelector('input,select,textarea,[role=combobox]')||
+     [...g.querySelectorAll(selector)].some(e=>visible(e)&&caption(e).trim())||
+     [...g.querySelectorAll('[aria-invalid=true],[aria-busy=true],[role=progressbar],progress')].some(visible))
+    return {n:1,text:'',files:0};
+  const roles=['resume','cv','resumecv','curriculumvitae','coverletter'];
+  if([...g.querySelectorAll('h2,h3,h4,h5,label,legend,dt')].some(e=>{
+    const q=norm(e.innerText);return roles.includes(q)&&!captions.includes(q);
+  }))return {n:1,text:'',files:0};
+  const filename=new RegExp('^(?:'+docRe+')$','i');
+  const names=[...g.querySelectorAll('[data-automation-id="file-upload-item-name"],[data-file-name],[data-filename],a[download]')]
+    .filter(visible).map(e=>(e.innerText||e.getAttribute('data-file-name')||e.getAttribute('data-filename')||'').trim())
+    .filter(s=>filename.test(s));
+  return {n:1,text:names.join('\n'),files:0};
+}"""
+
+
+def _review_upload_scope(record):
+    """Only a typed document section can name its later read-only summary."""
+    roles={'resume':['resume','cv','resumecv','curriculumvitae'],'cover_letter':['coverletter']}
+    captions=roles.get(str(record.get('answer') or ''),[])
+    section=re.sub(r'[^a-z]','',str(record.get('section','')).lower())
+    return {'captions':captions,'frame':record.get('frame')} if section in captions else None
+
+
 def attachment_evidence(page: Page, view: PageView, field: "Field | None", others: list[str], known: list[str] = (),
-                        label: str = "") -> str:
+                        label: str = "", review_scope: dict | None = None) -> str:
     """What shows that THIS upload has a file: its own non-empty `files`, or a file name inside its own boundary (see
     above). `field` is the live control (None when its input is gone: then `label` is its recorded label); `others` are
     the captions of every other upload. A name in `known` only confirms evidence already inside the boundary."""
+    if field is None and review_scope:
+        frame=review_scope['frame']
+        frames=[view.frames[frame]] if frame in view.frames else [] if frame is not None else list(view.frames.values())
+        matches=[]
+        for current in frames:
+            try:r=current.evaluate(REVIEW_ATTACHMENT_JS,{'captions':review_scope['captions'],'docRe':DOC_NAME.pattern})
+            except Exception:continue
+            if r['n']:matches.append(r)
+        if len(matches)==1 and matches[0]['n']==1:
+            if evidence:=_evidence_in(matches[0],[]):return evidence
     own = _captions(field.label if field is not None else label)
     if field is None and not own:
         return ""
@@ -1699,7 +1745,8 @@ def _uploads(view: PageView, records: list[dict]) -> list[dict]:
                 u.setdefault("filled", e.get("filled", ""))
             continue
         for e in rs:                             # not provably any live control: stays an upload of its own
-            ups.append({"field": None, "label": e["label"], "required": bool(e.get("required")), "filled": e.get("filled", "")})
+            ups.append({"field": None, "label": e["label"], "required": bool(e.get("required")),
+                        "filled": e.get("filled", ""), "review_scope": _review_upload_scope(e)})
     return ups
 
 
@@ -1722,7 +1769,7 @@ def upload_blockers(page: Page, view: PageView, records: list[dict], known: list
             continue
         others = [c for j, cs in enumerate(caps) if j != i for c in cs]
         names = known + ([Path(u["filled"]).name] if u.get("filled") else [])
-        if attachment_evidence(page, view, u["field"], others, names, u["label"]):
+        if attachment_evidence(page, view, u["field"], others, names, u["label"],u.get('review_scope')):
             continue
         what = (caps[i] or ["an upload"])[0]
         out.append(f"{what}: required upload with no file attached" if u["field"] is not None
@@ -1941,5 +1988,5 @@ def widget_uploads(page: Page, view: PageView, records: list[dict]) -> list[dict
         if u["field"] is not None:
             continue
         others = [c for j, cs in enumerate(caps) if j != i for c in cs]
-        out.append({"label": u["label"], "observed": attachment_evidence(page, view, None, others, [], u["label"])})
+        out.append({"label": u["label"], "observed": attachment_evidence(page, view, None, others, [], u["label"],u.get('review_scope'))})
     return out
