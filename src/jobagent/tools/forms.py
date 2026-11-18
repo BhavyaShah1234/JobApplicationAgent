@@ -680,12 +680,16 @@ def read_page(page: Page) -> PageView:
     from jobagent.tools import referrals
     referrals.contextualize(fields)
     # Unique questions without author IDs can survive a React node replacement.
+    # Radio groups can have fresh generated IDs on every conditional render;
+    # their unique question, section and offered answers are the stable group.
     # Keep locator_ref tied to the actual node; identity is only for planning/audit.
     for g in fields:
-        if g.kind!='file' and g.identity.startswith('node:'):
+        choice_group = g.kind in ('radio','checkboxes') and bool(g.label.strip()) and bool(g.options)
+        if g.kind!='file' and (g.identity.startswith('node:') or choice_group):
             signature=(g.frame,g.kind,_norm(g.label),_norm(g.section))
             if sum((x.frame,x.kind,_norm(x.label),_norm(x.section))==signature for x in fields)==1:
-                g.identity='question:'+repr(signature[1:])
+                options = (tuple(g.options),) if g.kind in ('radio','checkboxes') else ()
+                g.identity='question:'+repr((*signature[1:],*options))
     seen: dict[tuple, int] = {}
     for g in fields:                      # uploads often share a native name ("file"): number them so none is lost
         if g.kind == "file":
