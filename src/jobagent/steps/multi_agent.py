@@ -350,7 +350,8 @@ def _fit(ctx: dict, f: T.Filled) -> tuple[str, list[str], int, str, int, int]:
     Returns (tex, problems, pages, err, kept, n_short)."""
     tex, problems = T.apply_fill(ctx["r"], f)
     job_dir = ctx["job_dir"]
-    fitted = P.fit(tex, job_dir, lambda t: T.compile_pdf(t, job_dir))
+    fitted = P.fit(tex, job_dir, lambda t: T.compile_pdf(t, job_dir),
+                   accept=lambda: P.project_layout_ok(job_dir / "resume.pdf"))
     if not fitted:
         return (tex, problems, *T.compile_pdf(tex, job_dir), 0, 0)
     tex, pages, err, kept, short = fitted

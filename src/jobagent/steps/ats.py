@@ -34,7 +34,8 @@ def render_keeping_projects(r: T.Resume, f: T.Filled, current_tex: str, job_dir:
     path = job_dir / "projects.json"
     if path.exists():
         st = json.loads(path.read_text())
-        fitted = P.fit(tex, job_dir, lambda t: T.compile_pdf(t, job_dir), start=(st["kept"], len(st["short"])))
+        fitted = P.fit(tex, job_dir, lambda t: T.compile_pdf(t, job_dir), start=(st["kept"], len(st["short"])),
+                       accept=lambda: P.project_layout_ok(job_dir / "resume.pdf"))
         if fitted:
             tex, pages, err, kept, short = fitted
             if pages == 1 and not err and (kept, sorted(short)) != (st["kept"], st["short"]):

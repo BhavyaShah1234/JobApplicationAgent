@@ -301,10 +301,21 @@ def layouts(n: int) -> list[tuple[int, int]]:
     return out
 
 
-def fit(base_tex: str, job_dir: Path, compile_pdf, start: tuple[int, int] | None = None):
+def project_layout_ok(pdf: Path) -> bool:
+    """A one-page candidate must also have readable project descriptions."""
+    from jobagent.tools import layout
+
+    checked = layout.check(pdf)
+    return checked.pages == 1 and not checked.one_line_projects
+
+
+def fit(base_tex: str, job_dir: Path, compile_pdf, start: tuple[int, int] | None = None, *, accept=None):
     """Re-fit the Projects section of `base_tex` from projects.json in `layouts` order (full paragraphs first;
     a short form only adds an extra project). Returns (tex, pages, err, kept, short) or None when the job has no
-    saved projects. `start` = (kept, n_short) to begin from (no more than the current page)."""
+    saved projects. `start` = (kept, n_short) to begin from (no more than the current page).
+    `accept` can reject a freshly compiled one-page candidate so the next layout is tried.
+    Exhausting the choices still returns the last draft for the caller's normal failure checks.
+    """
     path = job_dir / "projects.json"
     if not path.exists() or projects_span(base_tex) is None:
         return None
@@ -318,7 +329,7 @@ def fit(base_tex: str, job_dir: Path, compile_pdf, start: tuple[int, int] | None
         short = frozenset(e.repo for e in ranked[k - n_short:k])
         tex = apply(base_tex, render(ranked[:k], st["cards"], st["years"], st["macro"], short))
         pages, err = compile_pdf(tex)
-        if err or pages == 1:
+        if err or (pages == 1 and (accept is None or accept())):
             return tex, pages, err, k, short
     return tex, pages, err, MIN_PROJECTS, frozenset(e.repo for e in ranked[:MIN_PROJECTS])
 

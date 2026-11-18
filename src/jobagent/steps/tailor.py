@@ -163,7 +163,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
             proj.short = frozenset(e.repo for e in all_projects[k - n_short:k])
             tex = P.apply(base, proj.block())
             pages, err = T.compile_pdf(tex, job_dir)
-            if err or pages == 1:
+            if err or (pages == 1 and P.project_layout_ok(job_dir / "resume.pdf")):
                 break
         if len(proj.entries) < len(all_projects):
             log(f"  {len(proj.entries)} of {len(all_projects)} projects fit")
