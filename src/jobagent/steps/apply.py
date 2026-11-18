@@ -124,6 +124,9 @@ Think like the candidate filling in their own form, with common sense:
 - Each answer must answer ITS question: a person's name is never a salary, a URL is never a yes/no.
 
 Rules:
+- Do not claim source human, learned or lookup: those labels are assigned by the runtime after an actual event.
+  Use the supplied file's source, or source none with value '' and ask_human true when no supplied fact answers it.
+  To request an external lookup, set lookup and leave value '' until its results are supplied.
 - Application address fields and current location: use APPLICANT's job-specific
   "Current address" and "Current location (city)" entries consistently. These
   were prepared before opening the application. Correct prefilled address
@@ -500,6 +503,14 @@ def plan(fields: list[forms.Field], ctx: dict, model, log=print, feedback: str =
     answers = {}
     for f in fields:
         answer = getattr(out, f'field_{f.id}').model_copy(update={'id':f.id})
+        # These provenance labels are issued by resolve()/enforce() after a
+        # real answer, learned retrieval or lookup. A model cannot grant
+        # itself the exemption from the independent source checker.
+        if answer.source == 'human':
+            answer = answer.model_copy(update={'source':'none','value':'','ask_human':True,
+                'flag':'planner claimed a human answer; candidate confirmation required'})
+        elif answer.source in ('learned', 'lookup'):
+            answer = answer.model_copy(update={'source':'written'})
         if answer.source == 'already_filled' and not (f.value and forms.same_value(answer.value, f.value, f.kind,f.label)):
             answer.source = 'applicant' if in_applicant(answer.value, ctx.get('_applicant') or {}) else 'written'
         answers[f.id] = answer
