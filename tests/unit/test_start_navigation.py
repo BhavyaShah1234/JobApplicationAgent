@@ -109,6 +109,18 @@ def test_fieldless_careers_shell_has_a_typed_recoverable_startup_failure():
         start('<h1>Careers</h1><p>Loading application</p>', url='https://example.com/careers')
 
 
+@pytest.mark.parametrize('heading',['Apply','Job application'])
+def test_resumed_fieldless_application_step_is_handed_off_without_clicking(heading):
+    state,view=start('<h1>'+heading+'</h1><h2>Optional updates</h2>'
+        '<button type=button onclick="window.sent=true">Skip &amp; continue</button>')
+    assert not state['sent'] and not view.fields and 'Skip & continue' in view.buttons
+
+
+def test_fieldless_careers_pagination_is_not_an_application_resume():
+    state,view=start('<h1>Search jobs</h1><button onclick="window.sent=true">Next</button>',allow_error=True)
+    assert not state['sent'] and 'no application form' in view.error
+
+
 def test_an_apply_button_outside_any_form_opens_the_application():
     state, view = start(f"<button type=button onclick=\"{OPEN_ON_CLICK}\">Apply now</button>")
     assert state["opened"] is True and len(view.fields) >= 3

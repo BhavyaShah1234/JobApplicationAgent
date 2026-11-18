@@ -1499,6 +1499,10 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
             raise RuntimeError('Application sections remain collapsed and no non-submitting disclosure control is available; '
                                'startup did not click Apply or plan answers')
         _require_application_page(view)
+        if not view.fields and any(forms.NEXT.search(b) for b in view.buttons) and any(
+                re.fullmatch(r'(?i)(?:(?:job|your|my) )?application(?: progress)?|apply|my progress',h.strip())
+                for h in view.headings):
+            return view  # Resume an optional application step; startup never clicks its navigation.
         if len([f for f in view.fields if f.kind != "file"]) >= 3 and not pw:
             return view
         for pat in START:
