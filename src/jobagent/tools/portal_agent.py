@@ -578,7 +578,7 @@ def _readonly_application_identity(page: Page, email: str) -> bool:
           const identity = els('input[type=email],input[name*=email i],input[id*=email i]').some(e =>
             e.type !== 'hidden' && (e.disabled || e.readOnly) && e.value.trim().toLowerCase() === email.toLowerCase());
           if (!identity || !els('h1,h2,h3,[role=heading]').some(e =>
-              /^(?:contact(?:\s+information|\s+details)?|personal information)$/i.test(e.innerText.trim()))) return false;
+              /^(?:contact(?:\s+information|\s+details)?|personal information)$/i.test(e.innerText.split(/\r?\n/)[0].trim()))) return false;
           const links = els('a[href]').filter(e => {
             const u = new URL(e.href, location.href);
             return u.protocol === 'https:' && (u.hostname === domain || u.hostname.endsWith('.' + domain));

@@ -21,7 +21,7 @@ def browser():
     ("wrong-email", False), ("hidden", False), ("password", False),
     ("no-profile", False), ("no-applications", False), ("foreign-profile", False),
     ("foreign-applications", False), ("sibling-profile", True),
-    ("lookalike-profile", False), ("iframe-only", False),
+    ("lookalike-profile", False), ("iframe-only", False), ("status-heading", True),
 ])
 def test_readonly_application_email_requires_account_navigation(browser, variant, expected):
     page = browser.new_page()
@@ -34,6 +34,8 @@ def test_readonly_application_email_requires_account_navigation(browser, variant
                   "https://recruit.example.com.evil.net/profile" if variant == "lookalike-profile" else "/profile"
         apps = "https://other.example.net/applications" if variant == "foreign-applications" else "/applications"
         html = '<h1>Apply</h1><h2>Contact information</h2>'
+        if variant == "status-heading":
+            html = '<h1>Apply</h1><h2>Contact information<br>Auto-save unavailable for this section</h2>'
         if variant != "no-profile": html += f'<a href="{profile}">Profile</a>'
         if variant != "no-applications": html += f'<a href="{apps}">Applications</a>'
         html += f'<label>Email address<input type=email value="{email}" {attrs}></label>'

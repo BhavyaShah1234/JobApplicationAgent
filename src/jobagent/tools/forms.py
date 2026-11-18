@@ -27,6 +27,17 @@ SUBMIT = re.compile(r"(?i)^\s*(submit|send)\b|submit (my |your )?application|^\s
 TEXT_KINDS = ("date_parts", "text", "email", "tel", "url", "number", "date", "textarea", "spin", "password")
 NEXT = re.compile(r"(?i)^\s*(next|continue|save (and|&) continue|proceed|review( (my |your )?application)?)\b")
 
+WIDGET_VALUE_JS = r"""e => {
+  const clean = t => (t || '').replace(/\s+/g, ' ').trim();
+  if (e.matches('.select2-selection--single[role=combobox]')) {
+    if (e.querySelector('.select2-selection__placeholder')) return '';
+    return clean(e.querySelector('.select2-selection__rendered')?.innerText);
+  }
+  if (e.matches('.iti__selected-flag[role=combobox]'))
+    return clean(e.getAttribute('title')).replace(/:\s*(\+\d+)\s*$/, ' ($1)');
+  return null;
+}"""
+
 FIELDS_JS = r"""(start) => {
   const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
     return r.width > 1 && r.height > 1 && s.visibility !== 'hidden' && s.display !== 'none'; };
@@ -81,6 +92,13 @@ FIELDS_JS = r"""(start) => {
     const ff = e.closest('[data-automation-id^=formField-]');
     const fl = ff && ff.querySelector(':scope > label, :scope > legend, :scope > fieldset > legend, label');
     if (fl && caption(fl)) return caption(fl);
+    if (e.matches('.select2-selection--single[role=combobox]')) {
+      const labels = (e.getAttribute('aria-labelledby') || '').split(/\s+/)
+        .map(id => e.getRootNode().getElementById(id))
+        .filter(x => x && !e.contains(x) && !x.matches('[role=alert], [id$="-error"]') && caption(x));
+      const label = labels.find(x => x.matches('label,legend')) || labels[0];
+      if (label) return caption(label);
+    }
     let t = byIds(e.getAttribute('aria-labelledby'), e);
     if (!t && e.id) { const l = e.getRootNode().querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) t = caption(l); }
     if (!t) t = clean(e.getAttribute('aria-label'));
@@ -275,6 +293,10 @@ FIELDS_JS = r"""(start) => {
   for (const e of all(ctl)) {
     const t = (e.getAttribute('type') || '').toLowerCase();
     if (t === 'hidden' || t === 'submit' || t === 'image' || t === 'reset' || e.disabled) continue;
+    if (e.getAttribute('aria-disabled') === 'true' || e.closest('.select2-container--disabled')) continue;
+    if (e.matches('select.select2-hidden-accessible:not([multiple])')) continue;
+    const select2 = e.closest('.select2-container');
+    if (select2?.querySelector('.select2-selection--single[role=combobox]') && !e.matches('.select2-selection--single[role=combobox]')) continue;
     if (t === 'button' && e.getAttribute('aria-haspopup') !== 'listbox') continue;
     const dw = e.closest('[data-automation-id=dateInputWrapper]');
     if (dw) {
@@ -366,7 +388,8 @@ FIELDS_JS = r"""(start) => {
                   || (e.options[e.selectedIndex].parentElement.tagName === 'OPTGROUP' && e.options[e.selectedIndex].parentElement.disabled))}); continue; }
     if (role === 'combobox' || e.getAttribute('aria-haspopup') === 'listbox' || e.getAttribute('aria-autocomplete')) {
       const box = e.closest('[class*=control i]') || (e.parentElement && e.parentElement.closest('[data-automation-id]')) || e.parentElement;
-      const shownValue = e.tagName === 'BUTTON' ? clean(e.innerText).replace(/^(select all that apply|select( an?)?( answer| option| one)?)\b\s*/i, '') :
+      const widgetValue = (__JOBAGENT_WIDGET_VALUE__)(e);
+      const shownValue = widgetValue !== null ? widgetValue : e.tagName === 'BUTTON' ? clean(e.innerText).replace(/^(select all that apply|select( an?)?( answer| option| one)?)\b\s*/i, '') :
           clean((box && box.querySelector('[class*=singleValue i], [class*=single-value i], [class*=multiValue i], [data-automation-id=selectedItem]') || {}).innerText || e.value || '');
       add(e, {kind: 'combobox', label: q, required: required(e, q), value: /^select one$|^select\.\.\.$/i.test(shownValue) ? '' : shownValue}); continue; }
     if (role === 'spinbutton' || role === 'textbox' || e.isContentEditable || e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') {
@@ -455,7 +478,7 @@ FIELDS_JS = r"""(start) => {
     if (r.width >= 120 && r.height >= 24) opaque.push(h.tagName.toLowerCase());
   }
   return {shadowRoots: roots.length - 1, shadowFields, opaque: [...new Set(opaque)].slice(0, 10), fields: out, next: n, adds, buttons: [...new Set(buttons)].slice(0, 60), errors: [...new Set(errors)].slice(0, 20), headings};
-}"""
+}""".replace('__JOBAGENT_WIDGET_VALUE__', WIDGET_VALUE_JS)
 
 
 @dataclass
@@ -1224,6 +1247,11 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
     if f.kind=='combobox' and f.multiple:answer='; '.join(selection_parts(answer,f.label))
     tagged=loc.get_attribute('data-jf')
     if tagged is not None and tagged.isdigit() and int(tagged)!=f.id:f=replace(f,id=int(tagged))
+    if f.kind in TEXT_KINDS and loc.evaluate("e => (e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') && e.readOnly"):
+        current = loc.input_value()
+        if not f.invalid and current.strip() == answer.strip() and loc.get_attribute('aria-invalid') != 'true':
+            return current
+        raise FillError('The read-only field does not hold the exact sourced answer or is invalid')
     if f.kind == "combobox" and f.value and not f.invalid:
         same = (phone_code_option(answer, [f.value]) is not None if PHONE_CODE_Q.search(f.label)
                 else same_value(answer,f.value,f.kind,f.label,multiple=True) if f.multiple
