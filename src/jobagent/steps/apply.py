@@ -47,14 +47,14 @@ START = [re.compile(p, re.I) for p in (r"^apply manually$", r"^apply now(?:\s*[Â
 
 class Answer(BaseModel):
     id: int
-    why: str = PField("", max_length=200, description="One short line of reasoning first: which file / fact gives the "
+    why: str = PField("", description="One short line of reasoning first, preferably under 200 characters: which file / fact gives the "
                                                     "answer (for dates and ranges, compare the actual values)")
     value: str = PField(description="Text to type; for select/radio/combobox the option text exactly as listed; for "
                                     "checkboxes the chosen options joined with '; '; for a single checkbox 'checked' "
                                     "or ''; '' leaves the field as it is")
     source: Literal["applicant", "resume", "jd", "company", "written", "learned", "human", "lookup",
                     "already_filled", "none"]
-    flag: str = PField("", max_length=240, description="Why the user should check this at review; '' when the "
+    flag: str = PField("", description="Briefly, preferably under 240 characters, why the user should check this at review; '' when the "
                                                        "answer is plainly right")
     lookup: str = PField("", description="When the answer needs a lookup first (an APPLICANT entry's tools, e.g. "
                                          "a salary median or an office address): 'web: <query>', 'place: <address>' or "
