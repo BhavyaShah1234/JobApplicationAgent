@@ -1904,7 +1904,12 @@ def click_button(page: Page, view: PageView, pattern: re.Pattern) -> str | None:
     for text in view.buttons:
         if not pattern.search(text) or SUBMIT.search(text):
             continue
+        if pattern is NEXT and re.search(r'\bsubmit\b', text, re.I):
+            continue
         for btn in _visible_buttons(view, text):
+            if pattern is NEXT and (btn.get_attribute('role') == 'tab' or
+                                    btn.get_attribute('aria-current') in ('step', 'page', 'true')):
+                continue
             _press(page, btn)
             return text
     return None
