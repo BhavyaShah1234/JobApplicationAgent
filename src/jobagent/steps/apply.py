@@ -579,15 +579,37 @@ def in_applicant(value: str, data: dict) -> bool:
 
 def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, model, log) -> None:
     """A second look at the plan: answers a file doesn't really support are corrected or go to the candidate."""
-    from jobagent.filling.facts import owner_only,compile_facts,resolve as resolve_fact
+    from jobagent.filling.facts import owner_only,compile_facts,resolve as resolve_fact,entity_scope
+    from jobagent.filling.routing import family,resolve_routed,contact_party
+    literal_prefills = set()
+    facts = compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''),ctx.get('TODAY',''))
     for f in fields:
         a=answers.get(f.id)
+        contact_kind = family(f.label)
+        contact_name = bool(re.fullmatch(r'(?i)(?:(?:legal|preferred) )?(?:first|last|given|family|full) name\s*\*?',f.label))
+        contact = contact_kind in ('email','phone','legal_name','preferred_name') or contact_name
+        if a and a.source == 'already_filled' and contact:
+            proof = resolve_routed(f,facts)
+            if proof is None and contact_name and not entity_scope(f.section) and \
+                    contact_party(f.label+' '+f.section+' '+f.help)=='applicant':
+                proof = resolve_fact(f,facts)
+            bound = [fact for fact in facts if proof is not None and fact.id in proof.fact_id.split(',')]
+            same = (lambda left,right: forms.same_value(left,right,f.kind,f.label,f.multiple)) if contact_kind=='phone' else \
+                   (lambda left,right: left.strip()==right.strip())
+            # UI text alone is not owner evidence. Require one correctly scoped
+            # explicit contact fact; the phone renderer may use its own variants.
+            if (len(bound)==1 and bound[0].source.startswith('applicant/') and not bound[0].record
+                    and proof.value is not None and a.value and same(proof.value,a.value) and same(a.value,f.value)
+                    and any(same(value,a.value) for value in [bound[0].value,*bound[0].variants])):
+                answers[f.id] = a = a.model_copy(update={'source':'applicant','ask_human':False,
+                    'why':'Prefilled contact matches the scoped owner fact: '+bound[0].source})
+                literal_prefills.add(f.id)
         if a and owner_only(f) and a.source in ('resume','jd','company','written','already_filled','none'):
             answers[f.id]=a.model_copy(update={'value':'','ask_human':True,
                 'flag':(a.flag+' explicit owner answer required for preference, consent or sensitive history').strip()})
     rows = [f"{f.brief()}\n    PLANNED value={a.value!r} source={a.source} why={a.why!r}"
             for f in fields if (a := answers.get(f.id)) and a.value and a.source not in ("human", "learned", "lookup")
-            and f.kind != "file"]
+            and f.kind != "file" and f.id not in literal_prefills]
     if not rows:
         return
     # the checker sees the posting too (F30): an instruction like "use the JD's percentage" cannot be validated without it
@@ -596,7 +618,7 @@ def check(fields: list[forms.Field], answers: dict[int, Answer], ctx: dict, mode
         (f"\n\n== JD_PASSAGES ==\n{extra}" if extra else "")
     try:
         checked = [f for f in fields if (a := answers.get(f.id)) and a.value
-                   and a.source not in ('human','learned','lookup') and f.kind != 'file']
+                   and a.source not in ('human','learned','lookup') and f.kind != 'file' and f.id not in literal_prefills]
         schema = create_model('ApplicationFieldChecks', **{
             f'field_{f.id}': (Check, PField(..., description=f'Check ONLY field [{f.id}]: {f.label}')) for f in checked})
         out = llm.structured_invoke(model, schema, [SystemMessage(CHECK_PROMPT), HumanMessage(

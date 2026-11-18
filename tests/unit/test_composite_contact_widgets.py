@@ -28,13 +28,14 @@ function openMenu(combo, entries, chosen){options.innerHTML='';options.hidden=fa
  for(const [value,text] of entries){const li=document.createElement('div');li.setAttribute('role','option');li.textContent=text;
  li.onclick=()=>{chosen(value,text);selectionWrites++;combo.setAttribute('aria-expanded','false');options.hidden=true};options.append(li)}}
 const countryCombo=document.getElementById('country-combo'),stateCombo=document.getElementById('state-combo');
+countryCombo.removeAttribute('id');stateCombo.removeAttribute('id');
 countryCombo.onclick=()=>openMenu(countryCombo,[['US','United States'],['CA','Canada']],(value,text)=>{
  country.value=value;country.dispatchEvent(new Event('change',{bubbles:true}));document.getElementById('country-rendered').textContent=text;
  countryCombo.setAttribute('aria-invalid','false');state.disabled=false;document.getElementById('state-wrapper').classList.remove('select2-container--disabled');
  state.innerHTML=(value==='CA'?'<option value=ON>Ontario</option>':'<option value=TX>Texas</option><option value=AZ>Arizona</option>');
  document.getElementById('state-rendered').innerHTML='<span class=select2-selection__placeholder>Select a province/state</span>'});
 stateCombo.onclick=()=>openMenu(stateCombo,[...state.options].map(o=>[o.value,o.text]),(value,text)=>{
- state.value=value;state.dispatchEvent(new Event('change',{bubbles:true}));document.getElementById('state-rendered').textContent=text;stateCombo.setAttribute('aria-invalid','false')});
+ state.value=value;state.dispatchEvent(new Event('change',{bubbles:true}));document.getElementById('state-rendered').textContent=text;stateCombo.setAttribute('aria-invalid','false');stateCombo.setAttribute('aria-labelledby','state-rendered')});
 const phone=document.querySelector('.iti__selected-flag');
 phone.onclick=()=>openMenu(phone,[['US','United States (+1)'],['CA','Canada (+1)']],(_,text)=>{phone.title=text;phoneWrites++});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')options.hidden=true});
@@ -66,8 +67,11 @@ def test_select2_has_one_question_not_a_second_textbox_or_a_disabled_child(world
     assert view.fields[1].value=='United States (+1)'
 
 
-def test_select2_selected_values_and_labels_agree_in_snapshot_and_targeted_readback(world):
-    setup(world);live=LiveView(world.page,read_view);view=live.capture()
+@pytest.mark.parametrize('native_label_for', [False, True])
+def test_select2_selected_values_and_labels_agree_in_snapshot_and_targeted_readback(world,native_label_for):
+    setup(world)
+    if native_label_for:world.page.locator('#state-label').evaluate("e=>e.htmlFor='state'")
+    live=LiveView(world.page,read_view);view=live.capture()
     country=next(f for f in view.fields if f.label=='Country/Region')
     forms.fill_field(world.page,view,country,'United States',{},strict=True)
     snapshot=forms.read_page(world.page)

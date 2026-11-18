@@ -25,7 +25,7 @@ CAPTCHA_FRAME = re.compile(r"(?i)hcaptcha|recaptcha|google\.com/recaptcha|challe
 SUBMIT = re.compile(r"(?i)^\s*(submit|send)\b|submit (my |your )?application|^\s*finish\b|complete (my |your )?"
                     r"application|^\s*apply\s*$")
 TEXT_KINDS = ("date_parts", "text", "email", "tel", "url", "number", "date", "textarea", "spin", "password")
-NEXT = re.compile(r"(?i)^\s*(next|continue|save (and|&) continue|proceed|review( (my |your )?application)?)\b")
+NEXT = re.compile(r"(?i)^\s*(next|continue|(?:save|skip) (and|&) continue|proceed|review( (my |your )?application)?)\b")
 
 WIDGET_VALUE_JS = r"""e => {
   const clean = t => (t || '').replace(/\s+/g, ' ').trim();
@@ -96,8 +96,12 @@ FIELDS_JS = r"""(start) => {
       const labels = (e.getAttribute('aria-labelledby') || '').split(/\s+/)
         .map(id => e.getRootNode().getElementById(id))
         .filter(x => x && !e.contains(x) && !x.matches('[role=alert], [id$="-error"]') && caption(x));
-      const label = labels.find(x => x.matches('label,legend')) || labels[0];
-      if (label) return caption(label);
+      const original = e.closest('.select2-container')?.previousElementSibling;
+      const nativeLabels = original?.matches('select.select2-hidden-accessible') ? [...original.labels] : [];
+      const label = labels.find(x => x.matches('label,legend')) || nativeLabels[0] || labels[0];
+      // Select2 can rebuild its ARIA references with only the rendered value.
+      // That value is never the question; retain the owning static caption.
+      return label ? caption(label) : nearLabel(original?.matches('select.select2-hidden-accessible') ? original : e);
     }
     let t = byIds(e.getAttribute('aria-labelledby'), e);
     if (!t && e.id) { const l = e.getRootNode().querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) t = caption(l); }
@@ -1581,12 +1585,15 @@ SUBMIT_INPUT = "form input[type=submit], form button[type=submit]"
 
 
 def has_submit_input(page: Page) -> bool:
-    """The form has a submit control without a label (shown only once the form is complete, e.g. after a human
-    check)."""
+    """A visible form control can send the application; hidden future buttons and labelled non-final actions cannot."""
     for f in frames_of(page):
         try:
-            if shadow_locator(f, SUBMIT_INPUT).count():
-                return True
+            for control in shadow_locator(f, SUBMIT_INPUT).all()[:64]:
+                if not control.is_visible() or control.is_disabled():
+                    continue
+                label = control.evaluate("e => (e.innerText || e.value || e.getAttribute('aria-label') || '').trim()")
+                if not label or SUBMIT.search(label):
+                    return True
         except Exception:
             continue
     return False
