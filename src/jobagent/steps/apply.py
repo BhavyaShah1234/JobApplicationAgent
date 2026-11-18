@@ -1412,6 +1412,18 @@ def _require_application_page(view: forms.PageView) -> None:
                            "no application questions were planned or answered. Verify the posting's application link.")
 
 
+def _authentication_page(view: forms.PageView) -> bool:
+    """Recognize credentials before the application planner sees them, including email-first sign-in."""
+    if any(f.kind == "password" for f in view.fields):
+        return True
+    if len(view.fields) != 1:
+        return False
+    f = view.fields[0]
+    credential = f.kind == "email" or (f.kind == "text" and re.search(r"(?i)\b(e-?mail|user\s*name)\b", f.label))
+    heading = r"\s*(?:(?:log|sign)[\s-]*in(?:\s+(?:or|to|with|using|and)\b.*)?|create\s+(?:(?:an?|your)\s+)?account|register)[\s.!:]*"
+    return bool(credential and any(re.fullmatch(heading, h, re.I) for h in view.headings))
+
+
 def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = None, hitl=None,
            already_open: bool = False) -> forms.PageView:
     """Open the posting and get to the application form: click Apply / Apply Manually, sign in when asked.
@@ -1446,7 +1458,7 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
             raise gone
         response = None  # the status only describes the first load of a URL
         pw = any(f.kind == "password" for f in view.fields)
-        if pw and not signed:
+        if _authentication_page(view) and not signed:
             log("apply: the portal asks to sign in")
             auth = ensure_signed_in(page.url)
             if getattr(auth, "signed_in", True) is False:

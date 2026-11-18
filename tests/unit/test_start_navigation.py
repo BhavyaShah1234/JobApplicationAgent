@@ -324,6 +324,56 @@ def test_failed_portal_authentication_stops_before_treating_login_as_an_applicat
         b.close()
 
 
+@pytest.mark.parametrize("signed_in", [True, False])
+def test_email_first_login_is_handed_to_account_agent_before_application_planning(signed_in):
+    from types import SimpleNamespace
+
+    posting = "https://careers.example.test/jobs/123"
+    login = "https://accounts.example.test/login"
+    email_screen = ('<h1>Log in or create account</h1><form><label>Email *<input type=email required></label>'
+                    '<button>Continue</button></form>')
+    calls = []
+    with sync_playwright() as pw:
+        b = pw.chromium.launch(channel="chrome", headless=True)
+        try:
+            page = b.new_page()
+
+            def serve(route):
+                if route.request.url == posting:
+                    if calls and signed_in:
+                        route.fulfill(status=200, content_type="text/html", body="<h1>Application</h1>" + FORM3)
+                    else:
+                        route.abort()
+                elif route.request.url == login:
+                    route.fulfill(status=200, content_type="text/html", body=email_screen)
+                else:
+                    route.abort()
+
+            page.route("**/*", serve)
+            # Begin after Apply has opened the login page. All traffic is
+            # fulfilled locally, including startup's post-auth return to the job.
+            page.goto(login)
+            real_wait = page.wait_for_timeout
+            page.wait_for_timeout = lambda ms: real_wait(min(ms, 50))
+
+            def authenticate(url):
+                calls.append(url)
+                assert page.locator('input[type=email]').count() == 1
+                return SimpleNamespace(signed_in=signed_in)
+
+            if signed_in:
+                view = A._start(page, posting, authenticate, lambda _: None, already_open=True)
+                assert len(view.fields) == 3 and page.url == posting
+                assert not page.evaluate("!!window.sent")
+            else:
+                with pytest.raises(RuntimeError, match="sign-in did not complete"):
+                    A._start(page, posting, authenticate, lambda _: None, already_open=True)
+                assert page.url == login
+            assert calls == [login]
+        finally:
+            b.close()
+
+
 def test_signed_in_successfactors_masthead_picker_does_not_block_portalcareer_navigation():
     html = (f'<div id="headerNavBar" role="region"><div id="rcmCareerLangDropDown"><a role="combobox" aria-label="Language">English</a></div></div>'
             f'<h1>Career Opportunities: Engineer (123)</h1><form id="careerform"><button onclick="{SF_ENTRY.replace("false", "true", 1)}">Apply</button></form>'
