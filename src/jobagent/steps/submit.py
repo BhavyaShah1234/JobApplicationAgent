@@ -114,6 +114,7 @@ def _attachments(page: Page, view: forms.PageView, records: list[dict]) -> list[
     file in its native input. A control whose input is gone needs a live captured-dispatch proof tied to the same widget.
     Otherwise its file name is recorded as `unverified`, never attributed another file's bytes."""
     import base64
+    records = forms.upload_inventory_records(page, records)
     out = []
     for f in view.fields:
         if f.kind == "file":

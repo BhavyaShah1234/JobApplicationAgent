@@ -145,3 +145,27 @@ def test_select2_menu_is_closed_before_the_next_control_even_when_selection_remo
         assert world.page.locator('#choices').is_hidden()
     assert [world.page.locator('#'+key).input_value() for key in ['a','b']]==['Yes','Yes']
     assert world.page.evaluate('sent') is False
+@pytest.mark.parametrize('owned',[True,False])
+def test_searchable_single_picker_keeps_aria_label_and_uses_only_owned_search(world,owned):
+    world.setup('''<style>.select2-hidden-accessible{display:none}.select2-selection{display:inline-block;width:220px;height:35px}</style>
+    <h1>Application</h1><label><select class=select2-hidden-accessible><option></option></select>
+    <span class=select2-container><span id=school class="select2-selection select2-selection--single" role=combobox tabindex=0 aria-expanded=false aria-label="School name">
+    <span class=select2-selection__rendered></span></span></span></label>
+    <div id=popup hidden><input class=select2-search__field aria-controls=school-results><ul id=school-results role=listbox></ul></div>
+    <input id=unrelated value=untouched>
+    <script>school.onclick=()=>{school.setAttribute('aria-expanded','true');school.setAttribute('aria-owns','school-results');popup.hidden=false};
+    document.querySelector('.select2-search__field').oninput=e=>{document.getElementById('school-results').innerHTML=e.target.value.toLowerCase().includes('arizona')?'<li role="option">Arizona State University</li>':'';};
+    document.getElementById('school-results').onclick=e=>{if(e.target.role==='option'){document.querySelector('.select2-selection__rendered').textContent=e.target.textContent;popup.hidden=true;school.setAttribute('aria-expanded','false')}};</script>''')
+    world.page.goto('https://fixture.test/apply')
+    if not owned:
+        world.page.locator('.select2-search__field').evaluate("e=>e.setAttribute('aria-controls','another-list')")
+    view=forms.read_page(world.page);field=next(f for f in view.fields if f.kind=='combobox')
+    assert field.label=='School name' and field.value==''
+    if owned:
+        assert forms.fill_field(world.page,view,field,'Arizona State University',{})=='Arizona State University'
+        current=next(f for f in forms.read_page(world.page).fields if f.kind=='combobox')
+        assert current.label=='School name' and current.value=='Arizona State University'
+    else:
+        with pytest.raises(forms.FillError):forms.fill_field(world.page,view,field,'Arizona State University',{})
+        assert world.page.locator('.select2-search__field').input_value()==''
+    assert world.page.locator('#unrelated').input_value()=='untouched'

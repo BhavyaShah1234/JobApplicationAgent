@@ -11,7 +11,7 @@ from test_filling_strategy import world
 
 HTML='''<h1>Application</h1><form><div class=document-upload><label for=upload>Resume</label>
 <a id=download href="/download/current">Download resume.pdf</a><input id=upload type=file></div></form>
-<script>upload.onchange=()=>{const replacement=document.createElement('input');replacement.id='upload';replacement.type='file';upload.replaceWith(replacement)};</script>'''
+<script>function replaceUpload(){const old=document.getElementById('upload'),replacement=document.createElement('input');replacement.id='upload';replacement.type='file';replacement.onchange=replaceUpload;old.replaceWith(replacement)}upload.onchange=replaceUpload;</script>'''
 
 
 def setup(world,tmp_path,monkeypatch):
@@ -60,3 +60,45 @@ def test_original_filler_binds_opaque_server_proof_into_frozen_payload(world,tmp
     assert records[0]['field_key'][0]==world.page._jobagent_upload_proofs[-1].frame
     _,payload=freeze_payload(world.page,view,records)
     assert payload['identity']['resume_sha256']==hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_revisited_widget_has_one_current_attachment_and_server_changes_invalidate_approval(world,tmp_path,monkeypatch):
+    path,server=setup(world,tmp_path,monkeypatch)
+    monkeypatch.setattr(A,'plan',lambda fields,*a,**k:({f.id:A.Answer(id=f.id,value='resume',source='applicant') for f in fields},[]))
+    monkeypatch.setattr(A,'check',lambda *a:None);monkeypatch.setattr(A,'enforce',lambda *a:None)
+    monkeypatch.setattr(A,'consult_learned',lambda *a:None)
+    records=[]
+    for number in [1,2]:
+        view,_=A.fill_page(world.page,{'_applicant':{},'_jd':{}},{'resume':str(path)},object(),lambda _:None,records,number,{})
+    assert len(records)==2 and all(r['verified'] for r in records)
+    records[0]['required']=True
+    inventory=forms.upload_inventory_records(world.page,records)
+    assert len(inventory)==1 and inventory[0]['page']==2 and inventory[0]['required']
+    before,payload=freeze_payload(world.page,view,records)
+    assert len(payload['attachments'])==1
+    assert payload['identity']['resume_sha256']==hashlib.sha256(path.read_bytes()).hexdigest()
+    assert len(payload['reviewed'])==2
+    server['bytes']=b'%PDF-1.4 replaced with different contents under the same URL and filename'
+    after,changed=freeze_payload(world.page,view,records)
+    assert after!=before and changed['identity']['resume_sha256'] is None
+
+
+def test_distinct_widgets_with_matching_record_metadata_are_not_merged(world,tmp_path,monkeypatch):
+    path,server=setup(world,tmp_path,monkeypatch)
+    first=world.page.locator('.document-upload').element_handle()
+    world.page.locator('.document-upload').evaluate('e=>e.after(e.cloneNode(true))')
+    second=world.page.locator('.document-upload').nth(1).element_handle()
+    sha=hashlib.sha256(path.read_bytes()).hexdigest()
+    world.page._jobagent_upload_proofs=[SimpleNamespace(identity='same',frame='frame',expected=sha,widget=w) for w in [first,second]]
+    records=[{'kind':'file','verified':True,'identity':'same','field_key':['frame'],'held_file_sha256':sha,'label':'Resume','page':n} for n in [1,2]]
+    assert forms.upload_inventory_records(world.page,records)==records
+
+
+def test_positive_upload_notice_does_not_claim_attachment_or_hide_a_real_error(world):
+    world.setup('''<h1>Application</h1><div role=alert>Your resume was uploaded successfully.</div>
+    <div role=alert>Your resume was uploaded successfully, but another field is invalid.</div>
+    <div role=alert aria-invalid=true>Your file was uploaded successfully.</div>''')
+    world.page.goto('https://fixture.test/apply');view=forms.read_page(world.page)
+    assert 'Your resume was uploaded successfully.' not in view.errors
+    assert any('another field is invalid' in e for e in view.errors)
+    assert 'Your file was uploaded successfully.' in view.errors

@@ -112,11 +112,13 @@ FIELDS_JS = r"""(start) => {
         .map(id => e.getRootNode().getElementById(id))
         .filter(x => x && !e.contains(x) && !x.matches('[role=alert], [id$="-error"]') && caption(x));
       const original = e.closest('.select2-container')?.previousElementSibling;
-      const nativeLabels = original?.matches('select.select2-hidden-accessible') ? [...original.labels] : [];
+      const nativeLabels = original?.matches('select.select2-hidden-accessible') ? [...original.labels].filter(l => !l.contains(original)) : [];
       const label = labels.find(x => x.matches('label,legend')) || nativeLabels[0] || labels[0];
       // Select2 can rebuild its ARIA references with only the rendered value.
       // That value is never the question; retain the owning static caption.
-      return label ? caption(label) : nearLabel(original?.matches('select.select2-hidden-accessible') ? original : e);
+      return (label && caption(label)) || clean(e.getAttribute('aria-label')) ||
+        (original?.matches('select.select2-hidden-accessible') && byIds(original.getAttribute('aria-labelledby'), original)) ||
+        nearLabel(original?.matches('select.select2-hidden-accessible') ? original : e);
     }
     let t = byIds(e.getAttribute('aria-labelledby'), e);
     if (!t && e.id) { const l = e.getRootNode().querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) t = caption(l); }
@@ -462,6 +464,9 @@ FIELDS_JS = r"""(start) => {
     adds.push({id: adds.length, text: tx, section: ownedSection, help}); }
   const successfulUploadAlert=e=>{
     if(e.getAttribute('role')!=='alert' || e.getAttribute('aria-invalid')==='true' || e.getAttribute('aria-busy')==='true')return false;
+    // Informational upload toasts are not validation errors. Attachment bytes
+    // are still checked independently; this grants no upload proof.
+    if(/^Your (?:resume|cover letter|document|file) (?:was|has been) uploaded successfully[.!]?$/i.test(clean(e.innerText)))return true;
     const accepted=box=>{
       if(!/^\d+:_attach$/.test(box.id))return false;
       const status=box.querySelector('[id="'+CSS.escape(box.id.replace(/_attach$/,'_attachSuccess'))+'"]');
@@ -1525,14 +1530,25 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             return next((hit for candidate in candidates if (hit:=pick(candidate,options)[0]) is not None
                          and (not PHONE_CODE_Q.search(f.label) or phone_code_option(answer, [hit]) is not None)),None)
         opt=offered(opts) if opts else None
-        if opt is None and (loc.evaluate("e => e.tagName") == "INPUT"):
+        search = loc if loc.evaluate("e => e.tagName") == "INPUT" else None
+        if opt is None and single_select2:
+            # Select2's searchable single picker has a separate input in an
+            # owned popup. Never type into an unrelated open search field.
+            owned = (loc.get_attribute('aria-controls') or loc.get_attribute('aria-owns') or '').split()
+            searches = frame.locator('input.select2-search__field:visible')
+            candidates_search = [s for s in searches.all() if set(
+                (s.get_attribute('aria-controls') or s.get_attribute('aria-owns') or '').split()
+            ) & set(owned)]
+            if len(candidates_search) == 1:
+                search = candidates_search[0]
+        if opt is None and search is not None:
             # a search box: type the answer (or its first words) and pick from what the site suggests
             for probe in dict.fromkeys([*[a[:60] for a in candidates], " ".join(answer.split()[:3]), answer.split()[0] if answer else ""]):
                 if not probe:
                     continue
                 previous=frame.evaluate(OPTIONS_JS)
-                loc.fill("")
-                loc.type(probe, delay=0)
+                search.fill("")
+                search.type(probe, delay=0)
                 if loc.get_attribute("data-uxi-widget-type") == "selectinput":
                     loc.press("Enter")  # Workday searches on Enter
                 try:
@@ -1804,6 +1820,52 @@ def _ident(label: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[*\u2731\u2217\uff0a\u204e]|\(required\)", "", label, flags=re.I)).strip().lower()
 
 
+def upload_inventory_records(page: Page, records: list[dict]) -> list[dict]:
+    """One current attachment per proven physical widget, retaining the full review history elsewhere."""
+    proofs = getattr(page, '_jobagent_upload_proofs', [])
+
+    def same_widget(a, b):
+        try:
+            return bool(a and b and a.evaluate('(a,b)=>a.isConnected && b.isConnected && a===b', b))
+        except Exception:
+            return False
+
+    def widget(record):
+        if record.get('kind') != 'file' or not record.get('verified'):
+            return None
+        frame = (record.get('field_key') or [None])[0]
+        matched = [p for p in proofs if getattr(p, 'identity', None) == record.get('identity')
+                   and getattr(p, 'frame', None) == frame
+                   and getattr(p, 'expected', None) == record.get('held_file_sha256')]
+        if not matched:
+            return None
+        first = getattr(matched[0], 'widget', None)
+        return first if all(same_widget(first, getattr(p, 'widget', None)) for p in matched) else None
+
+    def role(label):
+        roles = [name for name, pattern in (
+            ('resume', r'\b(?:resume|cv|curriculum\s+vitae)\b'),
+            ('cover', r'\bcover[\s_-]*letter\b'), ('transcript', r'\btranscript\b'),
+        ) if re.search(pattern, label, re.I)]
+        return roles[0] if len(roles) == 1 else None
+
+    out, owners = [], []
+    for record in records:
+        owner = widget(record)
+        frame = (record.get('field_key') or [None])[0]
+        previous = next((i for i, old_owner, old_frame in owners
+                         if frame == old_frame and same_widget(owner, old_owner)
+                         and ((_ident(record['label']) and _ident(record['label']) == _ident(out[i]['label']))
+                              or (role(record['label']) and role(record['label']) == role(out[i]['label'])))), None)
+        if previous is not None:
+            out[previous] = {**record, 'required': bool(record.get('required') or out[previous].get('required'))}
+        else:
+            if owner is not None:
+                owners.append((len(out), owner, frame))
+            out.append(record)
+    return out
+
+
 def _uploads(view: PageView, records: list[dict]) -> list[dict]:
     """Every upload of the page: each live control, and each fill record that is provably none of them (see below)."""
     ups: list[dict] = []
@@ -1847,6 +1909,7 @@ def upload_blockers(page: Page, view: PageView, records: list[dict], known: list
     stays an upload of its own, with its own required flag, and is judged by the evidence at its one unambiguous
     caption; so a different control that now occupies its old position can neither absorb nor clear it. When a record
     joins, the stricter flag wins (required if either says required)."""
+    records = upload_inventory_records(page, records)
     known = [k for k in known if k]
     ups = _uploads(view, records)
     caps = [_captions(u["label"]) for u in ups]
@@ -2073,6 +2136,7 @@ def widget_uploads(page: Page, view: PageView, records: list[dict]) -> list[dict
     """The uploads that have no live file input any more (a widget that replaced its input with a file name, or a chooser
     with no native input): each with its label and the file name seen inside its own boundary ('' when none is shown).
     These can never be hashed, so the caller records them as unverified, but they must not vanish from the inventory."""
+    records = upload_inventory_records(page, records)
     ups = _uploads(view, records)
     caps = [_captions(u["label"]) for u in ups]
     out = []
