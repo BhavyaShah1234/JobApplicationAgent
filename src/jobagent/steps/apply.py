@@ -1198,6 +1198,7 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
     """Plan and fill every field on the current page, then read it all back. Repeats for fields that appear
     after answers (conditional questions), at most 3 rounds. `known`: this page's fields from an attempt the site
     refused; only those its errors name (or that didn't read back) are planned again, nothing is asked twice."""
+    from jobagent.filling.facts import key as fact_key
     err = " ".join(errors).lower()
     done: dict[tuple, dict] = {k: e for k, e in (known or {}).items() if not ((e["filled"] or e["answer"] or e.get("clear")) and (not e.get("verified") or e["label"][:25].lower().strip(" *") in err))}
     tie = _tie_break(model, log)
@@ -1289,7 +1290,8 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                      "options": f.options[:60], "before": f.value, "answer": a.value if a else "",
                      "why": a.why if a else "",
                      "source": a.source if a else "none", "flag": a.flag if a else "not answered by the planner",
-                     "filled": "", "error": "", "answered": a is not None, "frame": f.frame, "slot": f.slot,"identity":f.identity}
+                     "filled": "", "error": "", "answered": a is not None, "frame": f.frame, "slot": f.slot,"identity":f.identity,
+                     "field_key": list(fact_key(f))}
             clear_line2 = bool(
                 a
                 and ctx.get("_application_address")

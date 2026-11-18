@@ -11,6 +11,7 @@ class UploadProof:
         self.expected=hashlib.sha256(content).hexdigest();self.size=len(content);self.name=self.path.name
         self.native=None;self.widget=None;self.token=None;self.form=None
         self.method='';self.replaced_count=0
+        self.server_failures={}
         if trigger:
             self.widget=self.widget_for(trigger)
             self.form=trigger.evaluate_handle('e=>e.form||e.closest("form")').as_element()
@@ -26,7 +27,7 @@ class UploadProof:
             if(match && attachment?.id===match[1]+':_attach' &&
                attachment.querySelectorAll('[id$=":_attachIcon"]').length===1 &&
                !attachment.querySelector('input:not([type=hidden]):not([type=file]),select,textarea,[role=combobox]'))return attachment;
-            const field=e.parentElement?.closest('fieldset,[data-field-path],[data-field-entry-id],[data-automation-id^=formField-],.file-upload,.form-field,.form-group');
+            const field=e.parentElement?.closest('fieldset,[data-field-path],[data-field-entry-id],[data-automation-id^=formField-],.file-upload,.document-upload,.form-field,.form-group');
             if(field && field.querySelectorAll('input[type=file]').length<=1 &&
                ![...field.querySelectorAll('input:not([type=file]):not([type=hidden]),select,textarea,[role=combobox]')].some(c=>c!==e))return field;
             let candidate=null;
@@ -116,6 +117,38 @@ class UploadProof:
                         self.widget and element.evaluate('(e,box)=>box.isConnected && box.contains(e)',self.widget))
         except Exception:return False
 
+    def server_bytes_match(self):
+        """Read this widget's current same-origin download, never infer bytes from its filename."""
+        if not self.widget:return False
+        try:
+            urls=self.widget.evaluate('''(box,name)=>{
+                const names=[name.toLowerCase(),...['download','view','open'].map(x=>x+' '+name.toLowerCase())];
+                return [...new Set([...box.querySelectorAll('a[href]')].filter(a=>
+                    names.includes((a.textContent||'').replace(/\\s+/g,' ').trim().toLowerCase()) || a.getAttribute('download')===name
+                ).map(a=>{try{const u=new URL(a.getAttribute('href'),a.ownerDocument.location.href);
+                    return ['https:','http:'].includes(u.protocol)&&u.origin===a.ownerDocument.location.origin&&
+                        !u.username&&!u.password&&!u.href.includes('#')?u.href:null;}catch{return null}}).filter(Boolean))];
+            }''',self.name)
+            if len(urls)!=1:return False
+            url=urls[0]
+            if self.server_failures.get(url,0)>=3:return False
+            frame=self.widget.owner_frame()
+            if frame is None:return False
+            response=frame.page.request.get(url,timeout=5000,max_redirects=5)
+            try:
+                if not response.ok:
+                    self.server_failures[url]=self.server_failures.get(url,0)+1
+                    return False
+                length=response.headers.get('content-length')
+                if length and int(length)>5_000_000:return False
+                content=response.body()
+            finally:response.dispose()
+            self.server_failures[url]=0
+            return len(content)==self.size and hashlib.sha256(content).hexdigest()==self.expected
+        except Exception:
+            if 'url' in locals():self.server_failures[url]=self.server_failures.get(url,0)+1
+            return False
+
     def verify(self):
         if not self.native:return False
         try:
@@ -168,6 +201,8 @@ class UploadProof:
                     ![...box.querySelectorAll('[aria-invalid=true],[role=alert]')].some(e=>visible(e)&&!success(e));
             }''',evidence['name']):
                 self.method='dispatched bytes and widget acknowledgement';return True
+            if self.server_bytes_match():
+                self.method='dispatched bytes and current server attachment bytes';return True
         except Exception:
             pass
         return False
