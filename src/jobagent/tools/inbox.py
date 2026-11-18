@@ -402,23 +402,30 @@ class Inbox:
     def wait_for(self, predicate, criteria: str = "ALL", timeout_s: float = 180, poll_s: float = 5,
                  header_filter=None) -> Mail:
         """Poll the inbox until a message satisfies `predicate` (newest first). `header_filter(headers_only_mail)` decides
-        from the headers alone whether the message may be read at all: a rejected candidate's body is never retrieved."""
+        from the headers alone whether the message may be read at all: a rejected candidate's body is never retrieved.
+        Positive budgets are checked between IMAP operations; a nonpositive budget retains one immediate scan."""
         deadline = time.monotonic() + timeout_s
         seen: set[str] = set()
         while True:
+            if timeout_s > 0 and time.monotonic() >= deadline:
+                raise TimeoutError(f"no matching mail within {timeout_s}s")
             for uid in reversed(self.search(criteria)):
+                if timeout_s > 0 and time.monotonic() >= deadline:
+                    raise TimeoutError(f"no matching mail within {timeout_s}s")
                 if uid in seen:
                     continue
                 seen.add(uid)
                 head = self.fetch_headers(uid)
                 if header_filter is not None and not header_filter(head):
                     continue
+                if timeout_s > 0 and time.monotonic() >= deadline:
+                    raise TimeoutError(f"no matching mail within {timeout_s}s")
                 mail = self.fetch_text(head)
                 if predicate(mail):
                     return mail
-            if time.monotonic() > deadline:
+            if time.monotonic() >= deadline:
                 raise TimeoutError(f"no matching mail within {timeout_s}s")
-            time.sleep(poll_s)
+            time.sleep(min(poll_s, max(0, deadline - time.monotonic())))
             seen.clear()  # re-check: Gmail may deliver late into an existing UID range
 
     def wait_for_verification(self, site: str, since: datetime, kind: str = "portal",

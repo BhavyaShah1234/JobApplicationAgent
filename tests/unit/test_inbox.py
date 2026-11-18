@@ -161,3 +161,53 @@ def test_verification_search_starts_the_day_before(monkeypatch):
     except TimeoutError:
         pass
     assert seen["criteria"] == 'SINCE "02-Nov-2026"'
+
+
+def test_mail_deadline_stops_inside_a_long_header_scan(monkeypatch):
+    from jobagent.tools import inbox as module
+    clock=[0.0];headers=[];bodies=[]
+    monkeypatch.setattr(module.time,'monotonic',lambda:clock[0])
+    ib=Inbox.__new__(Inbox)
+    ib.search=lambda _:list(map(str,range(100)))
+    def fetch(uid):
+        headers.append(uid);clock[0]+=1
+        return _mail('Unrelated','',uid=uid)
+    ib.fetch_headers=fetch
+    ib.fetch_text=lambda head:bodies.append(head.uid)
+    with pytest.raises(TimeoutError):
+        ib.wait_for(lambda _:False,timeout_s=3,header_filter=lambda _:False)
+    assert headers==['99','98','97'] and bodies==[] and clock[0]==3
+
+
+def test_mail_deadline_does_not_fetch_a_body_after_header_work_exhausts_budget(monkeypatch):
+    from jobagent.tools import inbox as module
+    clock=[0.0];bodies=[]
+    monkeypatch.setattr(module.time,'monotonic',lambda:clock[0])
+    ib=Inbox.__new__(Inbox);ib.search=lambda _:['1']
+    def fetch(_):
+        clock[0]=4
+        return _mail('Verification','')
+    ib.fetch_headers=fetch;ib.fetch_text=lambda head:bodies.append(head.uid)
+    with pytest.raises(TimeoutError):ib.wait_for(lambda _:True,timeout_s=3,header_filter=lambda _:True)
+    assert bodies==[]
+
+
+def test_mail_poll_sleep_is_capped_by_remaining_budget(monkeypatch):
+    from jobagent.tools import inbox as module
+    clock=[0.0];sleeps=[]
+    monkeypatch.setattr(module.time,'monotonic',lambda:clock[0])
+    def sleep(seconds):sleeps.append(seconds);clock[0]+=seconds
+    monkeypatch.setattr(module.time,'sleep',sleep)
+    ib=Inbox.__new__(Inbox);ib.search=lambda _:[]
+    with pytest.raises(TimeoutError):ib.wait_for(lambda _:False,timeout_s=3,poll_s=20)
+    assert sleeps==[3] and clock[0]==3
+
+
+def test_zero_mail_budget_retains_one_header_scan_and_no_body_without_permission(monkeypatch):
+    from jobagent.tools import inbox as module
+    headers=[];bodies=[]
+    ib=Inbox.__new__(Inbox);ib.search=lambda _:['1']
+    def fetch(uid):headers.append(uid);return _mail('Unrelated','',uid=uid)
+    ib.fetch_headers=fetch;ib.fetch_text=lambda head:bodies.append(head.uid)
+    with pytest.raises(TimeoutError):ib.wait_for(lambda _:False,timeout_s=0,header_filter=lambda _:False)
+    assert headers==['1'] and bodies==[]
