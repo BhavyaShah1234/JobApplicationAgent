@@ -257,7 +257,7 @@ def pipeline(settings, hours: float = 72, limit: int = 30) -> list[dict]:
             identity = url_job.get(r.get('url', '')) or (directory(r['job_dir']) if r.get('job_dir') else None) or (
                 next(iter(known)) if len(known) == 1 and not r.get('company') else None) or (
                 f"{r.get('company')}:{r['job']}" if r.get('company') and r.get('job') else r.get('job')) or f"url:{r.get('url', '')}"
-            key = (identity, r.get('execution_id', 'legacy'))
+            key = (identity, r.get('execution_id') or p.stem)
             j = jobs.setdefault(key, {"job": r.get("job", ""), "url": "", "title": "", "company": "", "plan": [], "stages": {}, "trail": [],
                                       "first": r["ts"], "last": r["ts"], "active": False,
                                       'identity': identity, 'execution_id': r.get('execution_id', ''), 'job_dir': r.get('job_dir', '')})

@@ -82,3 +82,20 @@ def test_real_submit_cli_reports_its_canonical_job_lifecycle_before_guarded_retu
     rows=data.pipeline(s)
     assert len(rows)==1 and rows[0]['identity']==str(folder.resolve())
     assert rows[0]['company']=='First' and rows[0]['state']=='done' and not rows[0]['active']
+
+
+def test_legacy_commands_without_execution_ids_do_not_combine_failures_or_elapsed_time(tmp_path):
+    import os
+    from datetime import timedelta
+    s=Settings(state_dir=tmp_path/'state',outputs_dir=tmp_path/'outputs',data_dir=tmp_path/'data')
+    logs=s.state_dir/'logs';logs.mkdir(parents=True)
+    now=datetime.now(UTC)
+    for name,stage,start,end,status in [('old','documents',7200,7100,'failed'),('new','apply',60,0,'done')]:
+        rows=[{'ts':(now-timedelta(seconds=ago)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+               'level':'progress','job':'123','job_dir':str(s.outputs_dir/'first/123'),
+               'execution_id':'','stage':stage,'status':state} for ago,state in [(start,'running'),(end,status)]]
+        path=logs/(name+'.jsonl');path.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+        stamp=(now-timedelta(seconds=end)).timestamp();os.utime(path,(stamp,stamp))
+    jobs=data.pipeline(s)
+    assert len(jobs)==1 and jobs[0]['state']=='done'
+    assert jobs[0]['elapsed_s']==60 and [s['id'] for s in jobs[0]['stages']]==['apply']
