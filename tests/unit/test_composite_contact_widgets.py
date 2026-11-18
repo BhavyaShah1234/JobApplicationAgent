@@ -112,3 +112,36 @@ def test_readonly_email_requires_exact_sourced_value_and_a_valid_control(world,v
         with pytest.raises(forms.FillError,match='read-only'):
             forms.fill_field(world.page,view,field,'casey@example.test',{})
     assert world.page.evaluate('emailWrites')==0
+
+
+@pytest.mark.parametrize('already_open', [False,True])
+def test_select2_menu_is_closed_before_the_next_control_even_when_selection_remounts(world,already_open):
+    html='''<style>.select2-selection{display:inline-block;width:200px;height:40px}
+    #choices:not([hidden]){position:fixed;inset:0;background:white;z-index:100}</style>
+    <h1>Application</h1><label for=a>Linux experience</label>
+    <select id=a hidden><option>No</option><option>Yes</option></select>
+    <span class=select2-container><span class="select2-selection select2-selection--single" role=combobox tabindex=0 aria-expanded=false>
+    <span class=select2-selection__rendered>No</span></span></span>
+    <label for=b>Pipeline experience</label><select id=b hidden><option>No</option><option>Yes</option></select>
+    <span class=select2-container><span class="select2-selection select2-selection--single" role=combobox tabindex=0 aria-expanded=false>
+    <span class=select2-selection__rendered>No</span></span></span><div id=choices hidden role=listbox></div>
+    <button onclick="window.sent=true">Submit application</button><script>
+    window.sent=false;
+    function wire(combo){combo.onclick=()=>{if(combo.getAttribute('aria-expanded')==='true'){closeMenu();return}
+      choices.innerHTML='';choices.hidden=false;combo.setAttribute('aria-expanded','true');
+      for(const text of ['No','Yes']){let li=document.createElement('div');li.setAttribute('role','option');li.textContent=text;
+        li.onclick=()=>{combo.parentElement.previousElementSibling.value=text;
+          let replacement=combo.cloneNode(true);replacement.querySelector('.select2-selection__rendered').textContent=text;
+          combo.replaceWith(replacement);wire(replacement)};choices.append(li)}}}
+    function closeMenu(){choices.hidden=true;document.querySelectorAll('[aria-expanded]').forEach(e=>e.setAttribute('aria-expanded','false'))}
+    document.querySelectorAll('[role=combobox]').forEach(wire);
+    document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMenu()});</script>'''
+    world.setup(html);world.page.goto('https://fixture.test/apply')
+    view=forms.read_page(world.page)
+    assert len(view.fields)==2
+    if already_open:world.page.get_by_role('combobox').first.click()
+    for control in view.fields:
+        assert forms.fill_field(world.page,view,control,'Yes',{},strict=True)=='Yes'
+        assert world.page.locator('#choices').is_hidden()
+    assert [world.page.locator('#'+key).input_value() for key in ['a','b']]==['Yes','Yes']
+    assert world.page.evaluate('sent') is False

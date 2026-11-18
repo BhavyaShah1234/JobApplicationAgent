@@ -28,16 +28,25 @@ CONTACT_DETAILS = re.compile(
 PRONOMINAL_CONTACT = re.compile(
     r"(?i)\b(?:their|his|her|that person'?s)\b.{0,45}\b(?:name|e[- ]?mail|phone|address)\b"
 )
+SOURCE_FOLLOWUP = re.compile(
+    r"(?i)^\s*(?:if\s+[\"'“”‘’]?other[\"'“”‘’]?\s*[,;:]?\s*)?"
+    r"(?:other\s*[,;:]?\s*)?(?:please\s+)?(?:specify|select)(?:\s+here)?\s*[:*?.]*\s*$"
+)
 
 
 def contextualize(fields) -> None:
-    """Bind adjacent pronoun follow-ups to a selected employee source, never to the applicant."""
+    """Bind adjacent sourcing follow-ups within the same frame and section."""
     parent = None
     for field in fields:
+        field.source_followup = False
         if SOURCE.search(field.label):
-            parent = field if _referral_option([field.value]) else None
+            parent = field
         elif (parent is not None and field.frame == parent.frame
-              and field.section == parent.section and PRONOMINAL_CONTACT.search(field.label)):
+              and field.section == parent.section and SOURCE_FOLLOWUP.fullmatch(field.label)):
+            field.source_followup = True
+        elif (parent is not None and field.frame == parent.frame
+              and field.section == parent.section and _referral_option([parent.value])
+              and PRONOMINAL_CONTACT.search(field.label)):
             field.help = (field.help + f" Employee referrer details for {parent.label!r}: {parent.value}.").strip()
         else:
             parent = None
@@ -161,6 +170,8 @@ def _referral_option(options: list[str], company: str = '') -> str:
             leaf,
         ):
             rank = 80
+        elif leaf == "from a person":
+            rank = 20  # parent category; prefer an explicit employee option
         else:
             continue
 
@@ -183,7 +194,7 @@ def answer_for(field, contact: dict, company: str = "") -> dict | None:
 
     help_text = getattr(field, "help", "")
     context = f"{label} {help_text} {field.section}"
-    source = bool(SOURCE.search(label))
+    source = bool(SOURCE.search(label) or getattr(field, "source_followup", False))
 
     name_requested = bool(NAME.search(context))
     email_requested = bool(EMAIL.search(context))

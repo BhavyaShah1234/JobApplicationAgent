@@ -55,3 +55,43 @@ def test_empty_options_and_missing_referrer_contacts_are_not_overridden():
     assert agent.plan([f],allow_human=False)[0].value!='Contacted by Recruiter'
     contact=Field(id=1,kind='email',label='Referrer email',required=True)
     assert agent.plan([contact],allow_human=False)[1].value is None
+
+
+def test_person_category_precedes_other_but_explicit_employee_precedes_category():
+    from jobagent.tools import referrals
+    f=field(['Other','From a Person'])
+    assert referrals.answer_for(f, {})['value']=='From a Person'
+    f.options.append('Employee Referral')
+    assert referrals.answer_for(f, {})['value']=='Employee Referral'
+
+
+@pytest.mark.parametrize('caption', ['If "Other" please specify', 'Other please specify', 'Please specify'])
+def test_adjacent_source_explanation_uses_referral_policy(caption):
+    from jobagent.tools import referrals
+    parent=field(['Other']);parent.value='Other'
+    child=Field(id=1,kind='text',label=caption)
+    referrals.contextualize([parent,child])
+    assert referrals.answer_for(child,{})['value']=='Referred by employee'
+
+
+def test_adjacent_source_category_child_selects_an_offered_employee_answer():
+    from jobagent.tools import referrals
+    parent=field(['From a Person']);parent.value='From a Person'
+    child=Field(id=1,kind='combobox',label='Please select',options=['Recruiter','Employee Referral'])
+    referrals.contextualize([parent,child])
+    assert referrals.answer_for(child,{})['value']=='Employee Referral'
+
+
+@pytest.mark.parametrize('boundary', ['frame','section','unrelated','unbound','salary'])
+def test_generic_followup_cannot_borrow_a_source_across_a_boundary(boundary):
+    from jobagent.tools import referrals
+    parent=field(['Other']);parent.value='Other'
+    child=Field(id=1,kind='text',label='Please specify',help='How did you hear about us?')
+    if boundary=='frame':child.frame=1
+    if boundary=='section':child.section='Other section'
+    if boundary=='salary':child.label='Please specify your desired salary'
+    fields=[parent,child]
+    if boundary=='unbound':fields=[child]
+    if boundary=='unrelated':fields.insert(1,Field(id=2,kind='text',label='Favorite food'))
+    referrals.contextualize(fields)
+    assert referrals.answer_for(child,{}) is None

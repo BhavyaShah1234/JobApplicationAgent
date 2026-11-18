@@ -510,6 +510,7 @@ class Field:
     locator_ref: str = ''
     options_state: str = 'complete'
     option_values: list[str] = field(default_factory=list)
+    source_followup: bool = False  # assigned only by adjacent, same-section sourcing-question discovery
 
     def brief(self) -> str:
         opts = ""
@@ -1459,6 +1460,10 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 lab.click(timeout=8000)
         return "; ".join(chosen)
     if f.kind == "combobox":
+        single_select2 = loc.evaluate("e => e.matches('.select2-selection--single[role=combobox]')")
+        workday_picker = loc.get_attribute("data-uxi-widget-type") == "selectinput"
+        if single_select2 and loc.get_attribute("aria-expanded") == "true":
+            page.keyboard.press("Escape")
         if f.value and loc.get_attribute("data-uxi-widget-type") == "selectinput":
             # a single-choice Workday picker that already holds something else (an earlier run's pick): its chip
             # sits over the input, so remove it before choosing
@@ -1535,7 +1540,14 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         try:
             option.first.click(timeout=8000)
         finally:
-            page.wait_for_timeout(1200 if loc.get_attribute('data-uxi-widget-type')=='selectinput' else 50)
+            page.wait_for_timeout(1200 if workday_picker else 50)
+            if single_select2:
+                # Some Select2 integrations retain the menu, or replace the
+                # trigger after selection. Close via the widget's keyboard
+                # handler without touching a stale trigger or its ARIA state.
+                page.keyboard.press("Escape")
+        if single_select2:
+            return opt
         # Some portals commit validation on blur, after rendering the chosen
         # text. Readback must still require their invalid state to clear.
         if loc.count()==1:
