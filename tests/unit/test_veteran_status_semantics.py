@@ -36,3 +36,16 @@ def test_non_veteran_can_truthfully_deny_a_binary_protected_veteran_question(neg
 def test_source_resolver_cannot_expand_the_saved_status_to_affirmative_military_service():
     result=plan([AFFIRMATIVE],source_resolver=lambda *_:{0:Decision(AFFIRMATIVE,'applicant','veteran')})
     assert result.value is None
+
+
+@pytest.mark.parametrize('facts',[
+    [],
+    [Fact('a',['Veteran status'],'Not a veteran','applicant'),
+     Fact('b',['Veteran status'],'I am a protected veteran','applicant')],
+])
+def test_unknown_or_conflicting_status_stays_unknown_without_a_model_or_crash(facts):
+    def fail(*a,**kw):pytest.fail('Missing/conflicting personal status requires owner evidence')
+    filler=PlannedFiller(facts,fail,model=object());filler.invoke=fail
+    f=Field(0,'combobox','Veteran status',required=True,
+            options=['Not a veteran','I am a protected veteran'],options_state='complete')
+    assert filler.plan([f],allow_human=False)[0].value is None
