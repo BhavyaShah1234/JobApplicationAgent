@@ -1094,6 +1094,29 @@ class FormNotReady(RuntimeError):
     """Startup exhausted its loading wait without finding an application or an opening control."""
 
 
+class RateLimited(FormNotReady):
+    """An empty application answered HTTP 429; wait rather than invent a challenge."""
+    def __init__(self, url, retry_after=''):
+        self.retry_after=str(retry_after or '')[:160].replace('\n',' ').replace('\r',' ')
+        super().__init__(f'The portal returned HTTP 429 at {challenge.safe_url(url)}; retry later.'+
+                         (f' Server Retry-After: {self.retry_after}.' if self.retry_after else '')+
+                         ' No human-verification challenge was inferred.')
+
+
+def _check_start_rate_limit(page, response):
+    """Read an actual navigation status without issuing another network request."""
+    status=getattr(response,'status',None)
+    if status!=429:
+        try:
+            observed=page.evaluate("() => performance.getEntriesByType('navigation')[0]?.responseStatus || 0")
+            status=observed if type(observed) is int else status
+        except Exception:
+            pass  # older browsers and a navigation in progress may not expose this timing
+    if status==429:
+        headers=getattr(response,'headers',{}) or {}
+        raise RateLimited(page.url,headers.get('retry-after','') if isinstance(headers,dict) else '')
+
+
 # Exit codes of `jobagent apply` / `submit` (what shell chains and the queue see). 3 is "the posting is unavailable"
 # (tools/availability.EXIT_UNAVAILABLE).
 EXIT_OK, EXIT_FAILED, EXIT_BLOCKED, EXIT_NOT_READY = 0, 1, 4, 5
@@ -1475,7 +1498,10 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
         policy = getattr(page.context, 'jobagent_policy', None)
         if policy:
             policy(page)
-        if block := challenge.detect(page):
+        block = challenge.detect(page)
+        if not view.fields and (block is None or block.kind=='unknown'):
+            _check_start_rate_limit(page,response)
+        if block:
             # a bot check (Cloudflare "Verify you are human", a CAPTCHA) is the candidate's to solve in noVNC
             if hitl is None:
                 raise challenge.Blocked(f"a {block.kind} check blocks {challenge.safe_url(page.url)}: solve it in noVNC "
@@ -1591,10 +1617,12 @@ def _guarded_run(page: Page, job_dir: str | Path, company: str, *args, **kwargs)
         except FormNotReady as exc:
             checkpoint = out / "checkpoint.json"
             result = json.loads(checkpoint.read_text()) if checkpoint.exists() else {"fields": [], "pages": []}
-            result.update(state="blocked", blocked_by="page_start", reason=str(exc),
+            limited=isinstance(exc,RateLimited)
+            result.update(state="blocked", blocked_by="rate_limit" if limited else "page_start", reason=str(exc),
                           url=challenge.safe_url(page.url), ready_to_submit=False, blockers=[str(exc)],
                           resumable=True, desktop_fallback_requested=False,
                           verified=sum(bool(f.get('verified')) for f in result['fields']))
+            if limited:result['retry_after']=exc.retry_after
             result['flags'] = [f for f in result['fields'] if not f.get('verified')]
             (out / "application.json").write_text(json.dumps(result, indent=2))
             (out / "application.md").write_text(
@@ -1631,6 +1659,7 @@ def recover_desktop_form(page, log=print):
         block = challenge.detect(page)
         if forms.read_page(page).fields or (block and block.kind != 'unknown'):
             return
+        _check_start_rate_limit(page,None)
         page.wait_for_timeout(500)
     if challenge.detect(page) is not None:
         return
