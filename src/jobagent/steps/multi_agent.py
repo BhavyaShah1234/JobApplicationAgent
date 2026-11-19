@@ -272,8 +272,9 @@ def _invoke(ctx, stage, model, schema, messages, **kwargs):
 
 def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last: str) -> tuple[str, object]:
     """One section agent's call; returns (agent, output) or (agent, None) on failure."""
-    model = llm.writer(16000 if agent == "experience" else 4000 if agent == "projects" else 8000,
-                       timeout=120 if agent == "projects" else 600, model=ctx["models"][agent])
+    targeted = agent=='experience' and f is not None and not any(FULL_REWRITE.search(t) for t in tasks)
+    model = llm.writer(3000 if targeted else 16000 if agent == "experience" else 4000 if agent == "projects" else 8000,
+                       timeout=120 if targeted or agent == "projects" else 600, model=ctx["models"][agent])
     log, t0 = ctx["log"], time.monotonic()
     try:
         if agent == "projects":
@@ -285,7 +286,7 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
             # mode after length validation fails. Preserve the previous version
             # on failure; its hard findings still prevent publication.
             out = _invoke(ctx, agent, model, ProjectsOut, msgs, log=log, deadline_s=180)
-        elif agent == "experience" and f is not None and not any(FULL_REWRITE.search(t) for t in tasks):
+        elif targeted:
             # targeted edit: only the bullets the validators named (a full rewrite moves every orphan word)
             msgs = T.build_repair_prompt(ctx["r"], ctx["jd"], f, tasks + ([f"LAST ROUND: {last}"] if last else []))
             out = _invoke(ctx, agent, model, T.Repair, msgs, log=log)

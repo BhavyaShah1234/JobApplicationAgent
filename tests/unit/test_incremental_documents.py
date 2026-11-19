@@ -123,6 +123,17 @@ def test_review_only_code_changes_preserve_writer_cache_versions(tmp_path,monkey
     assert J.model_version('experience')!=writer
 
 
+def test_targeted_bullet_repair_uses_a_repair_budget_not_a_full_draft_budget(monkeypatch):
+    from jobagent.steps import multi_agent as M
+    seen=[]
+    monkeypatch.setattr(M.llm,'writer',lambda budget,**kwargs:seen.append(budget) or object())
+    monkeypatch.setattr(M.T,'build_repair_prompt',lambda *a:[])
+    monkeypatch.setattr(M.llm,'structured_invoke',lambda *a,**kw:M.T.Repair.model_construct(fixes=[]))
+    ctx={'models':{'experience':'m'},'r':None,'jd':None,'log':lambda _:None}
+    M._run_agent(ctx,'experience',object(),['role_0 bullet 1 states no result'],'')
+    assert seen==[3000]
+
+
 def panel_world(tmp_path,monkeypatch,scores):
     from jobagent.steps import multi_agent as M
     (tmp_path/'resume.pdf').write_bytes(b'valid-pdf-fixture')
