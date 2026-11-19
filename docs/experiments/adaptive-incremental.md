@@ -80,6 +80,8 @@ selection-cache lookup. Document prompts use the current local date rather than
 the current minute, and the exact normalized prompt is both sent and hashed.
 Source text and its dates are not rewritten. Small coverage gaps repair existing bullets or their JD-index annotations, with
 valid targets, retained prior coverage and a progress check before caching.
+Each proposed patch also passes the final bullet-quality checks before caching;
+it cannot introduce a new defect or leave an edited duty duplicated.
 Coverage-only metadata edits do not trigger a summary rewrite. The summary runs after visible changes to sections. Semantic review
 is scoped to section dependencies: changed skills recheck skills and summary;
 changed employer bullets recheck experience and summary. Failed calls are never
@@ -90,6 +92,8 @@ Source guards span the complete tailoring command and the cover-letter stage;
 an intervening profile, JD, template or resume edit invalidates publication while
 retaining the owner's edits. Review prompts receive the local date and relevant
 company context, so a mission clause is not treated as a previous-employer claim.
+The target job is explicitly labelled as the application destination; its resume
+headline is not interpreted as employment at that company.
 Policy-authorized overall and domain tenure is omitted only from semantic-review input
 when an owner-declared limit exists; the original summary is preserved, and its
 ceiling is enforced separately, including fractional amounts and an explicit
@@ -149,6 +153,12 @@ cheap reviews remain parallel. Queue wait is recorded separately in stage metric
 If a section fails, queued reviews stop before dispatch and diagnostics identify
 the failing section/model. A title-only project task offers only its requested
 indices and names; unrequested paragraphs and swaps cannot be applied.
+
+Shared company research reads bounded official PDF text directly rather than
+opening the browser PDF viewer. Cached and newly generated profiles pass the same
+official-citation gate as the CLI: incomplete caches are regathered, and a failed
+refresh preserves the last saved profile. These checks retain the existing
+official-domain policy.
 
 The external ATS panel runs after local resume validation, using the configured
 providers and their existing repeats, quotas and feedback-only distinctions.

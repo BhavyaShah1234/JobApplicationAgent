@@ -233,7 +233,7 @@ def summary_review_text(summary, declared_years, employers=()):
         employers: Source employers whose specific history still requires its dates.
 
     Returns:
-        Review-only prose with authorized tenure amounts replaced by policy markers.
+        Review-only prose that retains the experience and removes authorized numerical tenure.
     """
     if declared_years is None:return summary
     protected=re.compile(r'\b(?:post[- ]?(?:baccalaureate|doctoral|graduate)|bachelor\w*|master\w*|'
@@ -244,9 +244,11 @@ def summary_review_text(summary, declared_years, employers=()):
                                                for name in employers if name):continue
         part=re.sub(r'(?<![\w.])\d+(?:\.\d+)?\+?\s+(?:years?|yrs)\s+(?:of\s+)?'
                     r'(?:(?:professional|industry|total)\s+)?experience\b',
-                    'owner-declared experience',part,flags=re.I)
+                    'experience',part,flags=re.I)
+        part=re.sub(r'(?<![\w.])\d+(?:\.\d+)?\+?\s+(?:years?|yrs)\s+of\s+([^.!?]{1,80}?)\s+experience\b',
+                    r'\1 experience',part,flags=re.I)
         parts[i]=re.sub(r'(?<![\w.])\d+(?:\.\d+)?\+?\s+(?:years?|yrs)\b',
-                        'owner-declared tenure',part,flags=re.I)
+                        'experience',part,flags=re.I)
     return ''.join(parts)
 
 
@@ -291,7 +293,7 @@ def review(ctx, filled):
         'summary': {'summary': summary_for_review,
                     'roles':[role if dated_history else {k:v for k,v in role.items() if k!='dates'}
                              for role in roles], 'skills': skills,
-                    'projects': projects, 'job_identity':{name:jd.get(name) for name in ('title','company')}},
+                    'projects': projects, 'target_job_identity':{name:jd.get(name) for name in ('title','company')}},
     }
     education=re.search(r'\\section\{Education\}(.*?)(?=\\section\{|\\end\{document\})',
                         getattr(ctx['r'],'tex',''),re.S)
@@ -314,7 +316,11 @@ def review(ctx, filled):
             'of a combined heading. Broad accurate headings are valid. Do not request padding or finer categories.',
         'summary':'Check unsupported skills, credentials or employer/project achievements against the CURRENT '
             'sections and education, subject to the owner policy. Opening title, character length and the '
-            'declared experience ceiling are checked in code: do not review them. Numerical tenure explicitly '
+            'declared experience ceiling are checked in code: do not review them. '
+            'The opening title is a resume headline naming the TARGET job, not an assertion that the '
+            'candidate already holds that position or works for the target company. target_job_identity '
+            'describes the application destination, not employment history. Only an explicit statement '
+            'of employment there requires matching employer history. Numerical tenure explicitly '
             'authorized by the owner policy is separated from this review. Any remaining employer-specific or '
             'credential-qualified history must agree with its supplied source dates; do not impose those '
             'restrictions on policy-authorized overall or domain tenure. '

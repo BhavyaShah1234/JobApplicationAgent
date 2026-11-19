@@ -750,12 +750,15 @@ def duplicates(r: Resume, f: Filled, *, substantive: bool = False) -> list[str]:
     rewriting distinct duties. Returned as lines for the model and report."""
     stop = {"and", "the", "to", "for", "of", "a", "an", "in", "on", "with", "by", "into", "from"}
     if substantive:stop |= {'using','via'}
+    tokens=lambda text:re.findall(r'[a-z0-9]+(?:-[a-z0-9]+)*',text.lower().replace('‑','-')) if substantive else _words(text)
     items = [(e.role, k, b.text) for e in f.roles for k, b in enumerate(e.bullets)]
     out = []
     for x in range(len(items)):
         for y in range(x + 1, len(items)):
             (ra, ka, ta), (rb, kb, tb) = items[x], items[y]
-            wa, wb = _words(ta), _words(tb)
+            # A technical compound is one concept. Splitting real-time made
+            # the generic connector "for real-time constraints" a 4-word duty.
+            wa, wb = tokens(ta), tokens(tb)
             grams = lambda w: {tuple(w[i:i + 4]) for i in range(len(w) - 3) if not set(w[i:i + 4]) <= stop}
             shared = grams(wa) & grams(wb)
             if substantive:

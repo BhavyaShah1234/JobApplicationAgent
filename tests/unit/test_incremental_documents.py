@@ -287,12 +287,14 @@ def test_summary_review_receives_current_date_and_target_company_context(tmp_pat
         models[stage]=model_name
         return M.Review(findings=[])
     monkeypatch.setattr(I,'invoke',inspect)
-    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{'title':'Engineer','company':'Beta'}),
          'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None,
          'company':'Beta builds robots.'}
     review(ctx,M.T.Filled.model_construct(summary='Engineer interested in Beta.',roles=[],skills=[]))
     assert 'Today is ' in seen[0].content and 'not a claim of previous employment' in seen[0].content
     assert json.loads(seen[1].content)['company_context']=='Beta builds robots.'
+    assert json.loads(seen[1].content)['target_job_identity']=={'title':'Engineer','company':'Beta'}
+    assert 'resume headline' in seen[0].content and 'not employment history' in seen[0].content
     assert models['review:summary']==models['review:projects']==I.get_settings().model_planner
     assert models['review:skills']==models['review:experience']=='m'
 
@@ -318,7 +320,8 @@ def test_semantic_review_separates_policy_authorized_tenure_from_protected_histo
          'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None}
     filled=M.T.Filled.model_construct(summary=summary,roles=[M.T.FillRole.model_construct(role=0,bullets=[])],skills=[])
     review(ctx,filled)
-    assert ('owner-declared' in seen[0]['summary'])==masked
+    assert (seen[0]['summary']!=summary)==masked
+    assert 'owner-declared' not in seen[0]['summary']
     assert filled.summary==summary
     assert ('dates' in seen[0]['roles'][0]) is not masked
     if 'Python' in summary:assert 'Python' in seen[0]['summary']

@@ -122,13 +122,14 @@ def apply_incremental_repair(f, repair):
         by_role[fx.role].bullets[fx.bullet-1].duties=list(fx.duties)
 
 
-def validate_incremental_repair(f, jd, repair):
+def validate_incremental_repair(f, jd, repair, *, template):
     """Reject invalid targets, lost coverage and no-progress output before caching.
 
     Args:
         f: Current resume content, retained unchanged by this check.
         jd: Posting that defines the available duty indices.
         repair: Proposed in-place text and coverage edits.
+        template: Source roles and skills used by the final quality checks.
 
     Raises:
         ValueError: Targets or references are invalid, coverage is lost, or no edit changes anything.
@@ -150,6 +151,12 @@ def validate_incremental_repair(f, jd, repair):
            by_role[fx.role].bullets[fx.bullet-1].duties==fx.duties and
            by_role[fx.role].bullets[fx.bullet-1].original is None for fx in repair.fixes):
         raise ValueError('Repair made no text or coverage change; address the supplied findings')
+    previous=set(T.quality(template,jd,f))
+    if regressions:=[issue for issue in T.quality(template,jd,proposed) if issue not in previous]:
+        raise ValueError('Repair introduced quality defects: '+'; '.join(regressions[:2]))
+    repeated=[issue for issue in T.duplicates(template,proposed,substantive=True) if
+              any((int(role),int(bullet)) in targets for role,bullet in re.findall(r'role_(\d+) bullet (\d+)',issue))]
+    if repeated:raise ValueError('Repair leaves an edited duty duplicated: '+'; '.join(repeated[:2]))
 
 
 class ProjectSwap(BaseModel):
@@ -404,7 +411,7 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
                         'work rather than repeating the same duty with synonyms. Leave unrelated bullets alone.')
                 })))
                 out=_invoke(ctx,agent,model,IncrementalRepair,msgs,log=log,first='json_mode',
-                    validator=lambda repair:validate_incremental_repair(f,ctx['jd'],repair))
+                    validator=lambda repair:validate_incremental_repair(f,ctx['jd'],repair,template=ctx['r']))
             else:
                 out = _invoke(ctx, agent, model, T.Repair, msgs, log=log)
         else:
@@ -435,7 +442,7 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
     g = f.model_copy(deep=True)
     r = ctx["r"]
     if isinstance(outs.get('experience'),IncrementalRepair):
-        validate_incremental_repair(g,ctx['jd'],outs['experience'])
+        validate_incremental_repair(g,ctx['jd'],outs['experience'],template=r)
         apply_incremental_repair(g,outs['experience'])
     elif isinstance(outs.get("experience"), T.Repair):
         T.apply_repair(g, outs["experience"])

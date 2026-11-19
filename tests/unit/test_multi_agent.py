@@ -3,6 +3,12 @@
 from jobagent.steps import multi_agent as M
 
 
+def _coverage_template():
+    from types import SimpleNamespace
+    return SimpleNamespace(tex='',skills=[],roles=[SimpleNamespace(
+        title='Engineer',company='Acme',dates='2020',bullets=[])])
+
+
 def _coverage_repair_fixture():
     from jobagent.state import JobDescription
     jd=JobDescription(title='Engineer',company='Acme',responsibilities=[
@@ -20,7 +26,7 @@ def test_incremental_coverage_patch_changes_only_the_selected_annotation():
     from types import SimpleNamespace
     jd,f=_coverage_repair_fixture()
     repair=M.IncrementalRepair(fixes=[M.IncrementalBulletFix(role=0,bullet=1,text=f.roles[0].bullets[0].text,duties=[0,2])])
-    M.validate_incremental_repair(f,jd,repair)
+    M.validate_incremental_repair(f,jd,repair,template=_coverage_template())
     original=f.model_copy(deep=True)
     M.apply_incremental_repair(f,repair)
     assert f.roles[0].bullets[0].text==original.roles[0].bullets[0].text
@@ -37,16 +43,16 @@ def test_incremental_coverage_patch_rejects_lost_coverage_bad_targets_and_no_pro
             (0,1,[0,0],'distinct'),(0,1,[0],'no text or coverage change')]:
         repair=M.IncrementalRepair(fixes=[M.IncrementalBulletFix(role=role,bullet=bullet,
             text=f.roles[0].bullets[0].text,duties=duties)])
-        with pytest.raises(ValueError,match=message):M.validate_incremental_repair(f,jd,repair)
+        with pytest.raises(ValueError,match=message):M.validate_incremental_repair(f,jd,repair,template=_coverage_template())
     fix=M.IncrementalBulletFix(role=0,bullet=1,text=f.roles[0].bullets[0].text,duties=[0,2])
     with pytest.raises(ValueError,match='distinct existing'):
-        M.validate_incremental_repair(f,jd,M.IncrementalRepair(fixes=[fix,fix]))
+        M.validate_incremental_repair(f,jd,M.IncrementalRepair(fixes=[fix,fix]),template=_coverage_template())
 
 
 def test_small_coverage_gaps_use_the_incremental_patch_not_a_full_section_draft(tmp_path,monkeypatch):
     from types import SimpleNamespace
     jd,f=_coverage_repair_fixture();seen=[]
-    ctx={'incremental':True,'r':SimpleNamespace(roles=[SimpleNamespace(title='Engineer',company='Acme',dates='2020')]),
+    ctx={'incremental':True,'r':_coverage_template(),
          'jd':jd,'job_dir':tmp_path,'models':{'experience':'writer'},'log':lambda _:None}
     monkeypatch.setattr(M.llm,'writer',lambda *a,**kw:object())
     repair=M.IncrementalRepair(fixes=[M.IncrementalBulletFix(role=0,bullet=1,text=f.roles[0].bullets[0].text,duties=[0,2])])
@@ -99,7 +105,7 @@ def test_incremental_final_gate_keeps_unresolved_required_coverage_and_review_er
 def test_coverage_metadata_repair_does_not_dispatch_an_unnecessary_summary_rewrite(tmp_path,monkeypatch):
     from types import SimpleNamespace
     jd,f=_coverage_repair_fixture();calls=[]
-    ctx={'incremental':True,'r':SimpleNamespace(roles=[None]),'jd':jd,'job_dir':tmp_path,'log':lambda _:None}
+    ctx={'incremental':True,'r':_coverage_template(),'jd':jd,'job_dir':tmp_path,'log':lambda _:None}
     fix=M.IncrementalBulletFix(role=0,bullet=1,text=f.roles[0].bullets[0].text,duties=[0,2])
     def run(ctx,agent,current,tasks,last):
         calls.append((agent,current.roles[0].bullets[0].text))
@@ -112,6 +118,19 @@ def test_coverage_metadata_repair_does_not_dispatch_an_unnecessary_summary_rewri
     M.edit_sections(state)
     assert [a for a,_ in calls]==['experience','summary']
     assert calls[1][1]==fix.text
+
+
+def test_repair_cannot_replace_a_duplicate_with_a_new_result_or_tool_defect():
+    import pytest
+    jd,f=_coverage_repair_fixture()
+    bad=M.IncrementalRepair(fixes=[M.IncrementalBulletFix(role=0,bullet=1,
+        text='Wrote production Python software for object-oriented systems.',duties=[0,2])])
+    with pytest.raises(ValueError,match='states no result'):
+        M.validate_incremental_repair(f,jd,bad,template=_coverage_template())
+    bad.fixes[0].text=f.roles[0].bullets[1].text
+    bad.fixes[0].duties=[0,1,2]
+    with pytest.raises(ValueError,match='duplicated'):
+        M.validate_incremental_repair(f,jd,bad,template=_coverage_template())
 import pytest
 
 

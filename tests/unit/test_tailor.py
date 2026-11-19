@@ -104,6 +104,13 @@ def test_incremental_duplicate_check_requires_more_than_a_shared_technology_phra
     assert T.duplicates(T.parse(TEX),copied,substantive=True)
 
 
+def test_generic_technical_compound_connector_does_not_trigger_a_duty_rewrite():
+    f=_filled('Refactored C++ data pipelines, trimming heap allocations by 35% for real-time constraints.',
+              'Wrote production Rust software, accelerating robot control by 15% for real-time constraints.')
+    assert T.duplicates(T.parse(TEX),f)
+    assert T.duplicates(T.parse(TEX),f,substantive=True)==[]
+
+
 def test_quality_flags_academic_wording_and_missing_tech():
     f = _filled("Partnered with faculty to translate research goals into solutions.",
                 "Built Azure Data Factory pipelines, cutting failed runs 30%.")
