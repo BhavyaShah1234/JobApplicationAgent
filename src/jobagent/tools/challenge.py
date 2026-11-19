@@ -49,6 +49,8 @@ _TEXT_SIGNS = [
     ("cloudflare", re.compile(r"(?i)just a moment\.\.\.|checking (if the site connection is secure|your browser)|"
                               r"verify(ing)? you are (a )?human|performing security verification|cf-chl|ray id:.*cloudflare|performance & security by cloudflare")),
     ("google-unusual-traffic", re.compile(r"(?i)our systems have detected unusual traffic|/sorry/index")),
+    ("human-verification", re.compile(r"(?is)\bverification required\b.{0,1800}\b(?:slide right to secure your access|"
+                                       r"we detected unusual activity from your (?:device|network))\b")),
     ("perimeterx", re.compile(r"(?i)press (&|and) hold|px-captcha|please verify you are a human")),
     ("datadome", re.compile(r"(?i)datadome|captcha-delivery\.com")),
     ("access-denied", re.compile(r"(?i)^\s*access denied\b|you don.t have permission to access|request blocked|"
