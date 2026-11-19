@@ -377,6 +377,11 @@ def page_text(page: Page) -> str:
 def submitted_page(page: Page, before: str, shot: Path, timeout_s: float = 60) -> tuple[bool, str, list[str]]:
     """(confirmed, the thank-you sentence, errors) after Submit. Only a thank-you / received sentence that was NOT on
     the page before the click counts; it is screenshotted the moment it shows."""
+    from jobagent.tools import challenge
+
+    def ready_after_verification(p):
+        return bool(CONFIRMED_PAGE.search(page_text(p))) or challenge.page_ready(p)
+
     deadline = datetime.now() + timedelta(seconds=timeout_s)
     errors: list[str] = []
     while datetime.now() < deadline:
@@ -387,6 +392,11 @@ def submitted_page(page: Page, before: str, shot: Path, timeout_s: float = 60) -
             screenshot(page, str(shot))
             line = next((ln.strip() for ln in text.splitlines() if new[0] in ln), new[0])
             return True, line[:300], []
+        if challenge.guard(page, ready=ready_after_verification):
+            # Human verification can appear only after dispatch. Keep this same
+            # attempt open; resolving it never authorizes another Submit click.
+            deadline = datetime.now() + timedelta(seconds=timeout_s)
+            continue
         errors = forms.read_page(page).errors
     return False, "", errors
 

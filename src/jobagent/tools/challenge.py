@@ -209,12 +209,20 @@ def session(page, hitl, ready=page_ready, out_dir=None, log=print, policy=None, 
         _controllers.pop(page, None)
 
 
-def guard(page):
+def guard(page, *, ready=None):
+    """Preserve the session policy and limits; optionally check a stage-specific
+    destination (such as a receipt page) during this human handoff only."""
     controller = _controllers.get(page)
     if controller and controller.policy:
         controller.policy(page)
     if controller and (block := detect(page)):
-        controller.wait(page, block)
+        previous_ready = controller.ready
+        if ready is not None:
+            controller.ready = ready
+        try:
+            controller.wait(page, block)
+        finally:
+            controller.ready = previous_ready
         return True
     return False
 
