@@ -19,13 +19,13 @@ def test_success_survives_restart_but_prompt_schema_model_and_code_are_dependenc
     from jobagent.tools import incremental_documents as I
     calls=[]
     monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:calls.append(1) or Output(text='done'))
-    monkeypatch.setattr(I.job_context,'model_version',lambda:'v1')
+    monkeypatch.setattr(I.job_context,'model_version',lambda *args:'v1')
     def call(model='m',prompt='a'):
         return invoke(ArtifactCache(tmp_path),'experience',model,object(),Output,[HumanMessage(prompt)])
     call();call()
     assert len(calls)==1
     call(prompt='b');call(model='other')
-    monkeypatch.setattr(I.job_context,'model_version',lambda:'v2')
+    monkeypatch.setattr(I.job_context,'model_version',lambda *args:'v2')
     call()
     assert len(calls)==4
 
@@ -91,6 +91,36 @@ def test_project_reviewer_never_receives_search_vectors_or_readme_bodies(tmp_pat
     review(ctx,f)
     assert seen[0]['own_repo_sources']=={'owner/project':{'summary':'Built a robot.'}}
     assert len(json.dumps(seen[0]))<10000
+
+
+def test_every_scoped_reviewer_receives_the_existing_owner_claims_policy(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    policy='Up to 5+ years overall or in any domain the posting asks for.'
+    monkeypatch.setattr(M.T,'facts_block',lambda:policy)
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    seen=[]
+    def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
+        seen.append(json.loads(messages[1].content)['owner_claims_policy']);return M.Review(findings=[])
+    monkeypatch.setattr(I,'invoke',inspect)
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
+         'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None}
+    review(ctx,M.T.Filled.model_construct(summary='A summary.',roles=[],skills=[]))
+    assert seen==[policy]*4
+
+
+def test_review_only_code_changes_preserve_writer_cache_versions(tmp_path,monkeypatch):
+    from jobagent.tools import job_context as J
+    (tmp_path/'steps').mkdir();(tmp_path/'tools').mkdir()
+    (tmp_path/'steps/multi_agent.py').write_text('writer')
+    (tmp_path/'tools/tailor.py').write_text('policy')
+    review_code=tmp_path/'tools/incremental_documents.py';review_code.write_text('review v1')
+    monkeypatch.setattr(J,'Path',lambda _:SimpleNamespace(parents={1:tmp_path}))
+    writer,reviewer=J.model_version('experience'),J.model_version('review:experience')
+    review_code.write_text('review v2')
+    assert J.model_version('experience')==writer and J.model_version('review:experience')!=reviewer
+    (tmp_path/'tools/tailor.py').write_text('changed policy')
+    assert J.model_version('experience')!=writer
 
 
 def panel_world(tmp_path,monkeypatch,scores):

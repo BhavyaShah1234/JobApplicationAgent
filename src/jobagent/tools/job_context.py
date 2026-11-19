@@ -27,10 +27,18 @@ def snapshot(job_dir, *, company='', candidate=None, template='', claims=None):
     return {'version': VERSION, 'sources': sources, **manifest}
 
 
-def model_version():
+def model_version(stage=None):
     """Invalidate artifacts when generation/validation code changes, not just inputs."""
     root = Path(__file__).parents[1]
     names = ('steps/multi_agent.py', 'tools/tailor.py', 'tools/projects.py',
              'tools/cover_letter.py', 'tools/skillgraph.py', 'tools/incremental_documents.py',
              'tools/letter_attribution.py')
+    if stage in ('experience','projects','skills','summary'):
+        names=('steps/multi_agent.py','tools/tailor.py','tools/projects.py','tools/skillgraph.py')
+    elif stage=='project-selection':
+        names=('tools/projects.py','tools/repo_cards.py','tools/tailor.py')
+    elif stage=='letter':
+        names=('tools/cover_letter.py','tools/tailor.py')
+    elif stage=='letter-attribution':
+        names=('tools/letter_attribution.py','tools/cover_letter.py','tools/tailor.py')
     return digest({n: (root / n).read_text() for n in names if (root / n).exists()})
