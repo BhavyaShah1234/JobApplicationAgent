@@ -78,8 +78,10 @@ subsets, design intentions and the existing owner claims policy remain valid.
 Targeted project repairs can change the full description, displayed short form
 or generated title independently. Known template titles remain protected.
 
-Cover letters use the final resume and bind achievement sentences to exact quotes
-under their owning employer/project. Deterministic quote/number checks precede a
+Cover letters use the final resume. Each sentence selects an ID from the actual
+employer/project/company source inventory; the code assembles the prose and attaches
+the corresponding evidence. The model does not duplicate its prose or copy freehand
+evidence quotes. Deterministic identity/number checks precede a
 cached semantic attribution review. This prevents treating a matching number under
 another employer as evidence. It does not ask the owner to reconfirm generated
 duties/metrics: the standing declaration and existing claims policy remain in force.
@@ -92,7 +94,9 @@ SkillsFirst remains feedback-only. There is no baseline/intermediate external
 panel unless `--ats-refine` is explicitly requested. A missing required provider
 leaves the five-provider average incomplete. PDF/posting identities are checked
 around scoring; uploads use a private immutable PDF snapshot and rows keep that
-snapshot's PDF/JD identity even if the working files change. Rejected refinements restore the complete prior document bundle
+snapshot's PDF/JD identity even if the working files change. Refinements publish
+the selected candidate before scoring; unchanged text spends no extra scan.
+Rejected or failed refinements restore the complete prior document bundle
 and its own score identity. ATS scores remain a proxy, not factual validation or
 a hiring-outcome measure.
 

@@ -44,7 +44,7 @@ def sources(resume_tex, job_dir):
 
 def normalize(text):
     """Compare visible prose without LaTeX escaping or layout whitespace."""
-    return re.sub(r'\s+', ' ', T.to_plain(text)).strip().casefold()
+    return re.sub(r'\s+', ' ', T.DASH.sub(', ', T.to_plain(text))).strip().casefold()
 
 
 def check(letter, bank, cache, model_name, log):

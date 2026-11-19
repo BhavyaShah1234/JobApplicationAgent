@@ -265,6 +265,44 @@ def test_final_panel_once_without_refinement_and_missing_provider_stays_incomple
     assert history[0]['panel']['complete'] is False and history[0]['panel']['average'] is None
 
 
+@pytest.mark.parametrize('outcome',[90,70,'unavailable'])
+def test_optional_refinement_scores_the_selected_bundle_and_restores_rejected_or_failed_versions(tmp_path,monkeypatch,outcome):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import bundle
+    ctx,state,_=panel_world(tmp_path,monkeypatch,{})
+    def version(label):
+        return {'scores':{},'f':M.T.Filled.model_construct(roles=[],skills=[],summary=label),
+                'hard':[],'layout':0,'tex':label,'pdf':label.encode(),
+                'projects':json.dumps({'version':label}),'filled':json.dumps({'summary':label})}
+    old,new=version('old'),version('new');state['best']=old
+    bundle.publish(tmp_path,M._version_files(old))
+    def graph(**kwargs):
+        assert kwargs=={'start':'route'}
+        def run(*args,**kw):
+            bundle.publish(tmp_path,M._version_files(version('later-rejected-render')))
+            return {'best':new}
+        return SimpleNamespace(invoke=run)
+    monkeypatch.setattr(M,'build_graph',graph)
+    scans=[]
+    def scan(job,jd,text,rnd,sites,log,**kwargs):
+        scans.append((job/'resume.pdf').read_bytes())
+        assert kwargs['snapshot']['resume'].read_bytes()==scans[-1]
+        if rnd and outcome=='unavailable':raise RuntimeError('provider unavailable')
+        return {'scores':{'hireflow':outcome if rnd else 80},'missing':{},'advice':[],'completed':['hireflow']}
+    monkeypatch.setattr(M.A,'evaluate',scan)
+    if outcome=='unavailable':
+        with pytest.raises(RuntimeError,match='provider unavailable'):final_panel(ctx,state,('hireflow',),True)
+    else:
+        best,history=final_panel(ctx,state,('hireflow',),True)
+        assert best['pdf']==(b'new' if outcome==90 else b'old')
+        assert len(history)==2
+    assert scans==[b'old',b'new']
+    expected='new' if outcome==90 else 'old'
+    for name,content in M._version_files(version(expected)).items():
+        actual=(tmp_path/name).read_bytes() if isinstance(content,bytes) else (tmp_path/name).read_text()
+        assert actual==content
+
+
 def test_ats_detects_mutation_of_the_scored_pdf(tmp_path,monkeypatch):
     from jobagent.steps import multi_agent as M
     ctx,state,seen=panel_world(tmp_path,monkeypatch,{'hireflow':80})
@@ -315,6 +353,45 @@ def test_letter_cannot_transfer_metric_to_another_employer(monkeypatch):
     bank={'a':{'entity':'Alpha','text':'Cut latency by 30%.'},'b':{'entity':'Beta','text':'Built APIs.'}}
     issues=L.check(letter,bank,None,'m',lambda _:None)
     assert any('different employer' in i for i in issues)
+
+
+def test_incremental_letter_attaches_source_and_claim_in_code_without_duplicate_model_prose(monkeypatch):
+    from jobagent.tools import cover_letter as CL,incremental_documents as I
+    from pydantic import ValidationError
+    bank={'a':{'entity':'Alpha','text':'Reduced latency by 30%.','kind':'employment'}}
+    schema=CL.sourced_letter_schema(bank)
+    data={'salutation':'Dear Hiring Team,','closing':'Sincerely','paragraphs':[
+        {'sentences':[{'text':'I reduced latency by 30% at Alpha.','source_id':'a'}]},
+        {'sentences':[{'text':'I would value the opportunity.','source_id':''}]},
+        {'sentences':[{'text':'Thank you for considering my application.','source_id':''}]}]}
+    letter=CL.attach_sources(schema.model_validate(data),bank)
+    assert letter.paragraphs[0].bindings[0].claim==letter.paragraphs[0].text
+    assert letter.paragraphs[0].bindings[0].quote==bank['a']['text']
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(issues=[]))
+    assert L.check(letter,bank,None,'m',lambda _:None)==[]
+    data['paragraphs'][0]['sentences'][0]['source_id']='invented'
+    with pytest.raises(ValidationError):schema.model_validate(data)
+
+
+def test_attribution_uses_the_same_dash_normalization_as_letter_rendering(monkeypatch):
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(issues=[]))
+    paragraph=Paragraph(text='I built tooling, improving speed by 30%.',evidence=[],bindings=[
+        L.Binding(claim='I built tooling — improving speed by 30%.',source_id='a',quote='Improved speed by 30%.')])
+    assert L.check(Letter.model_construct(paragraphs=[paragraph]),
+                   {'a':{'entity':'Alpha','text':'Improved speed by 30%.'}},None,'m',lambda _:None)==[]
+
+
+def test_opt_in_project_prompt_has_no_fake_achievement_example_or_contradictory_feature_permission():
+    from jobagent.tools import projects as P
+    from jobagent.state import JobDescription
+    original=P.build_prompt([],JobDescription(title='Engineer',company='Fixture'),{})[0].content
+    incremental=P.build_prompt([],JobDescription(title='Engineer',company='Fixture'),{},grounded=True)[0].content
+    assert 'City traffic engineers' in original and 'invent plausible features' in original
+    assert 'City traffic engineers' not in incremental and 'invent plausible features' not in incremental
+    assert "repository's own supplied features" in incremental and 'impact estimates' in incremental
 
 
 def test_jd_metric_cannot_supply_a_candidate_achievement():

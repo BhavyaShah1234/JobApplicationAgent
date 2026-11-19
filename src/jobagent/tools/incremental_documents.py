@@ -115,10 +115,12 @@ def invoke(cache, stage, model_name, model, schema, messages, *, validator=None,
         try:
             cached=schema.model_validate(saved)
             if validator:validator(cached)
+            if log := kwargs.get('log'):log(f'document stage {stage}: cache hit')
             return cached
         except (ValueError, TypeError):
             cache.record({'stage':stage,'event':'cache_rejected'})
     started = time.monotonic()
+    if log := kwargs.get('log'):log(f'document stage {stage}: model {model_name}')
     from .model_metrics import ModelAudit
     audit=ModelAudit()
     original=getattr(model,'callbacks',None)
@@ -279,7 +281,17 @@ def final_panel(ctx, state, sites, refine=False):
         candidate = trial.get('best')
         if not candidate or candidate.get('hard'):
             bundle.publish(ctx['job_dir'], M._version_files(best)); break
-        new_ev, new_panel = evaluate(round_no)
+        if candidate['tex'] == best['tex']:
+            bundle.publish(ctx['job_dir'], M._version_files(best)); break
+        # The graph may have rendered a later rejected layout; score precisely
+        # the candidate it selected, then restore the full prior bundle on any
+        # failed external evaluation.
+        bundle.publish(ctx['job_dir'], M._version_files(candidate))
+        try:
+            new_ev, new_panel = evaluate(round_no)
+        except Exception:
+            bundle.publish(ctx['job_dir'], M._version_files(best))
+            raise
         better = (new_panel['complete'] and new_panel['average'] is not None and
                   (new_panel['average'] > panel['average'] or
                    new_panel['average'] >= panel['average'] - M.A.NOISE

@@ -74,7 +74,7 @@ EXAMPLE of the expected depth (a made-up project; never copy its content):
   ("cutting latency by 40%")."""
 
 
-def build_prompt(cands: list[tuple[float, dict]], jd: JobDescription, known: dict[str, tuple[str, str]]) -> list:
+def build_prompt(cands: list[tuple[float, dict]], jd: JobDescription, known: dict[str, tuple[str, str]], *, grounded=False) -> list:
     blocks = []
     for score, c in cands:
         lines = [f"## {c['full_name']} ({'own' if c['owned'] else 'shared, owned by someone else'}; relevance "
@@ -87,7 +87,17 @@ def build_prompt(cands: list[tuple[float, dict]], jd: JobDescription, known: dic
         blocks.append("\n".join(lines))
     job = {"title": jd.title, "responsibilities": jd.responsibilities, "basic": jd.basic_qualifications,
            "preferred": jd.preferred_qualifications, "technical_skills": jd.technical_skills}
-    return [SystemMessage(with_today(PROMPT.format(n_min=MIN_PROJECTS, n_max=MAX_PROJECTS))),
+    prompt = PROMPT.format(n_min=MIN_PROJECTS, n_max=MAX_PROJECTS)
+    if grounded:
+        # A concrete invented example was copied verbatim into a different
+        # repository during live validation. State the shape without supplying
+        # transferable fake achievements or contradicting the source reviewer.
+        start, end = prompt.index('EXAMPLE of the expected depth'), prompt.index('- Never use em dashes')
+        prompt = prompt[:start] + prompt[end:]
+        prompt = prompt.replace('You can invent plausible features or metrics that align with the job posting.',
+            'Describe each repository\'s own supplied features and results. The owner permits generated work '
+            'duties and impact estimates; that does not change a repository\'s product, interfaces or capabilities.')
+    return [SystemMessage(with_today(prompt)),
             HumanMessage(f"POSTING: {job}\n\nCANDIDATES:\n\n" + "\n\n".join(blocks))]
 
 
@@ -229,7 +239,7 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
     log("projects: top candidates: " + ", ".join(f"{c['full_name']} {s:.2f}" for s, c in cands))
     known = known_entries(r.tex)
     by_name = {c["full_name"].lower(): c for _, c in cands}
-    messages = build_prompt(cands, jd, known)
+    messages = build_prompt(cands, jd, known, **({'grounded':True} if cache is not None else {}))
     out, chosen = None, []
     for _ in range(3):
         try:

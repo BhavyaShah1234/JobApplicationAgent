@@ -11,9 +11,10 @@ import re
 import time
 import hashlib
 from pathlib import Path
+from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 from jobagent import llm
 from jobagent.clock import with_today
@@ -68,6 +69,37 @@ class AttributedParagraph(Paragraph):
 class AttributedLetter(Letter):
     """Keep the production letter schema unchanged outside the incremental strategy."""
     paragraphs: list[AttributedParagraph] = Field(min_length=3,max_length=4)
+
+
+def sourced_letter_schema(bank):
+    """Offer exact source IDs and write each sentence once, without freehand evidence copies."""
+    sentence = create_model('SourcedSentence',
+        text=(str, Field(min_length=1, max_length=900, description='One complete sentence, plain text')),
+        source_id=(Literal[tuple(['', *sorted(bank)])], Field(description=
+            'Owning source ID; empty only for interest, greetings or ordinary closing language')))
+    paragraph = create_model('SourcedParagraph',
+        sentences=(list[sentence], Field(min_length=1, max_length=6)))
+    return create_model('SourcedLetter',
+        salutation=(str, Field(max_length=80)),
+        paragraphs=(list[paragraph], Field(min_length=3, max_length=4)),
+        closing=(str, Field(max_length=30)))
+
+
+def attach_sources(draft, bank):
+    """Materialize exact claim/evidence bindings from the selected immutable sources."""
+    paragraphs = []
+    for paragraph in draft.paragraphs:
+        bindings = []
+        for sentence in paragraph.sentences:
+            if not sentence.source_id:
+                continue
+            if sentence.source_id not in bank:
+                raise ValueError('cover letter refers to an unknown source')
+            bindings.append(Binding(claim=sentence.text, source_id=sentence.source_id,
+                                    quote=bank[sentence.source_id]['text']))
+        paragraphs.append(AttributedParagraph(text=' '.join(s.text for s in paragraph.sentences),
+            evidence=list(dict.fromkeys(b.quote for b in bindings))[:6], bindings=bindings))
+    return AttributedLetter(salutation=draft.salutation, closing=draft.closing, paragraphs=paragraphs)
 
 
 PROMPT = """You write a one-page cover letter for the candidate whose tailored RESUME is given, for the given job.
@@ -190,22 +222,27 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
         bank = attribution.sources(resume_tex, job_dir)
         bank['company_context'] = {'entity':jd.company or '', 'text':company_md, 'kind':'company'}
         bank['posting_context'] = {'entity':'Job posting', 'text':jd.model_dump_json(), 'kind':'posting'}
+        source_schema = sourced_letter_schema(bank)
     feedback, best = "", None
     for attempt in range(1, rounds + 1):
         try:
             messages = build_prompt(resume, jd, company_md, feedback)
             if incremental:
                 import json
-                messages.append(HumanMessage('For every sentence about a candidate achievement, supply a bindings '
-                    'entry: claim = the exact complete sentence in the paragraph, source_id = its owning source ID, '
-                    'quote = exact supporting text from that source. Keep each achievement sentence about one source. '
-                    'Also bind sentences with numbers or explicit employer names. Company facts may cite company_context; '
+                messages.append(HumanMessage('Write paragraphs as lists of complete sentences, each with text and '
+                    'one source_id from ENTITY SOURCES. The code assembles the prose and attaches the actual source '
+                    'text; do not write the sentence or evidence twice. Keep each candidate achievement sentence '
+                    'about one employer/project source. Cite sentences with numbers or explicit employer names '
+                    'too; use an empty source_id only for interest, greetings and ordinary closing language. '
+                    'Company facts may cite company_context; '
                     'the position title may cite posting_context. Neither context establishes candidate achievements. '
                     'Do not borrow a number or technology from another employer.\nENTITY SOURCES:\n' + json.dumps(bank)))
                 # The template is part of the cache input even though only its
                 # locked layout/header is rendered after generation.
                 messages.append(HumanMessage('LETTER TEMPLATE VERSION: ' + hashlib.sha256(template.encode()).hexdigest()))
-                letter = invoke(cache, 'letter', get_settings().model_writer, model, AttributedLetter, messages, log=log)
+                draft = invoke(cache, 'letter', get_settings().model_writer, model, source_schema, messages,
+                               log=log, validator=lambda value: attach_sources(value, bank))
+                letter = attach_sources(draft, bank)
             else:
                 letter = llm.structured_invoke(model, Letter, messages, log=log)
         except Exception as e:  # timeout / token limit: next round
