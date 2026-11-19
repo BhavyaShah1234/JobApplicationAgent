@@ -37,6 +37,13 @@ the classifier, exact offered choices and completeness markers, source validatio
 batched missing-answer questions, entity binding, closed-root reader, upload
 proofs, navigation rules, desktop fallback and approval/submission guards.
 
+Literal owner declarations can retain confirmation provenance and no-invention
+cautions without becoming unresolved conditional rules. Only the closed note
+format is eligible; output directives, conditions and unknown instructions still
+require validation. Exact observed aliases do not hide conflicting same-purpose
+owner declarations. Citizenship lists and acquisition-time histories remain
+distinct questions, so a country-only answer cannot fill a request for dates.
+
 The new strategy watches question/help/choice mutations, including recovered
 shadow roots. Decisions depend on the full field schema and bound source facts.
 Narrative-backed answers also depend on their documents. Source-file changes

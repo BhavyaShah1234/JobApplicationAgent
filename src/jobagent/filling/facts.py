@@ -205,7 +205,25 @@ def choice(f, values):
     return None
 
 
+def declaration_notes_only(instructions):
+    """Recognize confirmation provenance and no-invention cautions, not answer rules.
+
+    Only a closed set of non-operative clauses can accompany literal answers.
+    Conditions, output directives and unknown prose still require rule validation.
+    The original instructions remain on the fact for audit and model context.
+    """
+    if not instructions:return False
+    clauses=[x.strip() for x in re.split(r'[.;\n]+',instructions) if x.strip()]
+    if not clauses or not any(re.match(r'(?i)^Owner (?:has )?confirmed\b',x) for x in clauses):return False
+    if re.search(r'(?i)\b(?:if|unless|except|otherwise|instead|until|when|must|use|enter|answer|select|choose|leave|change|replace)\b',instructions):return False
+    return all(re.fullmatch(r'(?i)(?:Owner (?:has )?confirmed\s+.+|Do not (?:invent|guess|fabricate)\s+.+)',x)
+               for x in clauses)
+
+
 def from_fact(f, fact):
+    if declaration_notes_only(fact.instructions):
+        from dataclasses import replace
+        return from_fact(f,replace(fact,instructions=''))
     if fact.instructions:
         if fact.reference_date and re.search(r"(?i)today(?:'s| s)?",fact.instructions) and not re.search(r'(?i)\bif\b|\bunless\b',fact.instructions):
             return from_fact(f,Fact(fact.id,fact.aliases,fact.reference_date,fact.source+'; clock '+fact.reference_date,fact.section,fact.variants,authority=fact.authority))

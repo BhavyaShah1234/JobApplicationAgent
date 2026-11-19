@@ -184,7 +184,8 @@ def qualification_signature(text,kind):
         return (bool(re.search(r'citizen|nationality',q)),bool(re.search(r'permanent residen',q)),
                 bool(re.search(r'\bbirth\b|\bborn\b',q)),
                 bool(re.search(r'\b(?:previous|previously|former|formerly|past|ever)\b',q)),
-                bool(re.search(r'\b(?:not|no|never)\b',re.sub(r'^.*?please specify','',q))))
+                bool(re.search(r'\b(?:not|no|never)\b',re.sub(r'^.*?please specify','',q))),
+                bool(re.search(r'\bwhen\b|\b(?:date|year|obtained|acquired|acquisition)\b',q)))
     if kind=='work_documentation':
         # Identity documents and work-eligibility documents are distinct. A
         # combined question needs an owner declaration covering both purposes.
@@ -304,7 +305,12 @@ def candidates(field,facts):
     exact=[x for x in allowed if norm(field.label) in [norm(a) for a in x.aliases]]
     if exact:
         sheet=[x for x in exact if x.id.startswith('application.answer.')]
-        return sheet or exact
+        if sheet:return sheet
+        if kind in PURPOSE_BOUND:
+            # An observed alias is not permission to hide a conflicting global
+            # declaration covering exactly the same predicate and parameters.
+            return [x for x in allowed if x in exact or (fact_family(x)==kind and same_qualification(field,x))]
+        return exact
     if kind=='location' and party=='applicant' and not entity_scope(field.section):
         city=[x for x in allowed if not x.record and any(
             norm(a)=='current location city' for a in x.aliases)]
@@ -404,7 +410,7 @@ def resolve_routed(field,facts,route_info=None):
         # A current-job answer sheet takes precedence over reusable sources.
         # Equivalent duplicate facts are fine; conflicting declarations are not.
         scoped=[x for x in owner if x.id.startswith('application.answer.')]
-        declared=[from_fact(field,x) for x in (scoped or owner) if not x.record and not x.instructions]
+        declared=[from_fact(field,x) for x in (scoped or owner) if not x.record]
         values={norm(x.value) for x in declared if x.value is not None}
         if len(values)==1 and all(x.value is not None for x in declared):return declared[0]
         return Decision(None,reason='explicit owner evidence missing' if not declared else 'conflicting owner declarations')
