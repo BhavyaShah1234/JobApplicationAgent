@@ -392,6 +392,7 @@ RESEARCH_TEST_COMPANIES = ["General Mills", "KPMG LLP", "DOWL", "Intel Corporati
 
 
 def _research_table(results, title: str) -> tuple[Table, bool]:
+    from jobagent.tools.research import usable_profile
     table = Table(title=title)
     for col in ("company", "website", "does", "mission", "products", "values", "news", "sources (official)", "time"):
         table.add_column(col)
@@ -402,7 +403,7 @@ def _research_table(results, title: str) -> tuple[Table, bool]:
             table.add_row(name, f"[red]{err}[/]", *[""] * 6, f"{secs:.0f}s")
             continue
         official = sum(1 for s in p.sources.values() if s["kind"] == "official")
-        bad = not p.website or not p.what_they_do or official == 0
+        bad = not usable_profile(p)
         failed |= bad
         table.add_row(name, p.website or "[red]—[/]", str(len(p.what_they_do)), str(len(p.mission)), str(len(p.products)),
                       str(len(p.values)), str(len(p.recent_news)),

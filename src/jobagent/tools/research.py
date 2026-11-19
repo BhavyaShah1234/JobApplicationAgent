@@ -142,6 +142,7 @@ def _news(query: str, n: int = 8) -> list[dict]:
 
 
 MIN_PAGE_TEXT = 300
+MAX_PDF_BYTES = 8 * 1024 * 1024
 _BOILERPLATE = re.compile(r"(?i)cookie|consent|privacy (policy|preferences|settings|signal)|do not sell|opt[- ]out|"
                           r"tracking technolog|ad targeting|targeted advertising|accept all|reject all|manage preferences|"
                           r"device visits|traffic sources|third[- ]party (providers|cookies|partners)|aggregated data|"
@@ -157,6 +158,21 @@ def strip_boilerplate(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not _BOILERPLATE.search(line)).strip()
 
 
+def _pdf_text(content: bytes) -> str:
+    """Read at most eight PDF pages without launching a browser PDF viewer."""
+    import subprocess
+    import tempfile
+
+    if len(content)>MAX_PDF_BYTES or b'%PDF-' not in content[:1024]:return ''
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.pdf') as file:
+            file.write(content);file.flush()
+            result=subprocess.run(['pdftotext','-f','1','-l','8','-layout',file.name,'-'],
+                                  capture_output=True,text=True,errors='replace',timeout=15)
+        return strip_boilerplate(result.stdout).strip() if result.returncode==0 else ''
+    except (OSError,subprocess.TimeoutExpired):return ''
+
+
 def _fetch(url: str) -> tuple[str, str]:
     """(final url, readable text) of a page; '' if it can't be fetched. JS-heavy or bot-shy sites (Intel, OpenAI)
     return little to a plain request, so those are loaded in a throwaway headless Chrome session instead."""
@@ -166,9 +182,15 @@ def _fetch(url: str) -> tuple[str, str]:
     try:
         r = httpx.get(url, headers=UA, follow_redirects=True, timeout=20)
         if r.status_code < 400:
-            final, text = str(r.url), trafilatura.extract(r.text, include_links=False) or ""
+            final=str(r.url)
+            content=getattr(r,'content',b'')
+            if ('application/pdf' in getattr(r,'headers',{}).get('content-type','').lower() or
+                    b'%PDF-' in content[:1024] or urlparse(final).path.lower().endswith('.pdf')):
+                return final,_pdf_text(content)
+            text = trafilatura.extract(r.text, include_links=False) or ""
     except Exception:
         pass
+    if urlparse(url).path.lower().endswith('.pdf'):return final,''
     text = strip_boilerplate(text)
     if len(text) >= MIN_PAGE_TEXT:
         return final, text
@@ -303,6 +325,8 @@ RESEARCH_PROMPT = """Write a company profile using ONLY the numbered sources bel
   products, services or brands (not slogans); values = stated values/culture; facts = only things that fit
   nowhere else.
 - Ignore cookie, privacy, legal and site-navigation text.
+- Prefer relevant official sources for core facts, mission and values. At least one supported company fact must
+  cite an official source; never attach an unrelated citation just to satisfy this requirement.
 - recent_news: up to 5 items taken ONLY from sources marked (news), about events in the last 12 months, newest
   first; leave out items describing older events; none if there are none.
 - headquarters: the HQ's city, state and country as a source states it (null if none does); sites: other named
@@ -344,6 +368,12 @@ def _valid(claims: list, ids: set[int]) -> list:
     return out
 
 
+def usable_profile(profile: CompanyProfile) -> bool:
+    """Apply the same source/completeness gate to a cached or newly written profile."""
+    return bool(profile.website and profile.what_they_do and
+                any(source.get('kind')=='official' for source in profile.sources.values()))
+
+
 def research(company: str, hint_text: str = "", refresh: bool = False, log=print) -> CompanyProfile:
     from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -354,12 +384,16 @@ def research(company: str, hint_text: str = "", refresh: bool = False, log=print
     root.mkdir(parents=True, exist_ok=True)
     path = root / f"{slug(company)}.json"
     if path.exists() and not refresh:
-        cached = CompanyProfile.model_validate_json(path.read_text())
-        if datetime.fromisoformat(cached.researched_at) > datetime.now(UTC) - timedelta(days=CACHE_DAYS):
-            return cached
+        try:
+            cached = CompanyProfile.model_validate_json(path.read_text())
+            if usable_profile(cached) and datetime.fromisoformat(cached.researched_at) > datetime.now(UTC) - timedelta(days=CACHE_DAYS):
+                return cached
+        except (OSError,ValueError,TypeError):pass
     website, sources = gather_sources(company, hint_text)
     if not sources:
         raise RuntimeError(f"no sources found for {company!r}")
+    if not website or not any(source['kind']=='official' for source in sources):
+        raise RuntimeError(f'No readable official company source found for {company!r}; research is incomplete')
     numbered = {i + 1: src for i, src in enumerate(sources)}
     text = "\n\n".join(f"[{i}] ({src['kind']}) {src['url']}\n{src['text'][:MAX_SOURCE_CHARS]}" for i, src in numbered.items())
     messages = [SystemMessage(with_today(RESEARCH_PROMPT)), HumanMessage(f"Company: {company}\n\nSources:\n{text}")]
@@ -405,6 +439,8 @@ def research(company: str, hint_text: str = "", refresh: bool = False, log=print
     profile.website = website
     profile.sources = {i: {k: v for k, v in numbered[i].items() if k != "text"} for i in sorted(cited)}
     profile.researched_at = datetime.now(UTC).isoformat(timespec="seconds")
+    if not usable_profile(profile):
+        raise RuntimeError(f'Company research for {company!r} did not cite a supported official source; profile not published')
     path.write_text(profile.model_dump_json(indent=2))
     path.with_suffix(".md").write_text(render_md(profile))
     log(f"research: {profile.name}: {len(profile.sources)} sources cited → {path.with_suffix('.md')}")

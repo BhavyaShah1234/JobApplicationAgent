@@ -89,6 +89,77 @@ def test_fetch_falls_back_to_browser_when_text_is_thin(monkeypatch):
     assert r._fetch("https://www.intel.com") == ("https://www.intel.com/content/www/us/en/homepage.html", "x" * 900)
 
 
+@pytest.mark.parametrize('url,content_type',[
+    ('https://assets.example.org/mission.pdf','application/pdf'),
+    ('https://assets.example.org/document','application/octet-stream')])
+def test_official_pdf_is_read_as_pdf_instead_of_a_browser_viewer(tmp_path,monkeypatch,url,content_type):
+    from types import SimpleNamespace
+    from jobagent.tools.tailor import compile_pdf
+    pages,error=compile_pdf(r'\documentclass{article}\begin{document}Acme builds reliable software. Our mission is accessible tools.\end{document}',tmp_path)
+    assert pages==1 and not error
+    response=SimpleNamespace(status_code=200,url=url,headers={'content-type':content_type},
+                             content=(tmp_path/'resume.pdf').read_bytes())
+    monkeypatch.setattr(r.httpx,'get',lambda *a,**kw:response)
+    monkeypatch.setattr(r,'_fetch_browser',lambda *a:pytest.fail('A PDF viewer cannot supply article text'))
+    final,text=r._fetch(url)
+    assert final==url and 'Acme builds reliable software.' in text and 'accessible tools' in text
+
+
+def test_invalid_and_oversized_pdfs_are_not_treated_as_official_text(monkeypatch):
+    import subprocess
+    monkeypatch.setattr(subprocess,'run',lambda *a,**kw:pytest.fail('Reject invalid input before launching the reader'))
+    assert r._pdf_text(b'<html>Verification required</html>')==''
+    assert r._pdf_text(b'%PDF-'+b'x'*r.MAX_PDF_BYTES)==''
+
+
+def _research_profile_fixture(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    from jobagent import llm
+    monkeypatch.setattr(r,'get_settings',lambda:SimpleNamespace(state_dir=tmp_path))
+    draft=r.ProfileDraft(name='Acme',what_they_do=[r.Cited(text='Builds software',sources=[1])],
+                         products=[r.Cited(text='Development tools',sources=[1])])
+    monkeypatch.setattr(llm,'structured',lambda *a,**kw:SimpleNamespace(invoke=lambda _:draft))
+    return tmp_path/'companies'/'acme.json'
+
+
+def test_incomplete_fresh_cache_is_refetched_then_the_valid_result_is_reused(tmp_path,monkeypatch):
+    from datetime import datetime,UTC
+    path=_research_profile_fixture(tmp_path,monkeypatch);path.parent.mkdir()
+    old=r.CompanyProfile(name='Acme',website='https://acme.example',
+        what_they_do=[r.Claim(text='Builds software',sources=[1])],sources={1:{'kind':'wikipedia','url':'https://example.org'}},
+        researched_at=datetime.now(UTC).isoformat())
+    path.write_text(old.model_dump_json());calls=[]
+    def gather(*a):
+        calls.append(1);return 'https://acme.example',[{'kind':'official','url':'https://acme.example/about','text':'Builds software and development tools.'}]
+    monkeypatch.setattr(r,'gather_sources',gather)
+    assert r.usable_profile(r.research('Acme',log=lambda _:None)) and len(calls)==1
+    assert r.usable_profile(r.research('Acme',log=lambda _:None)) and len(calls)==1
+
+
+def test_failed_refresh_preserves_the_last_good_profile_and_skips_model_work(tmp_path,monkeypatch):
+    from datetime import datetime,UTC
+    from jobagent import llm
+    path=_research_profile_fixture(tmp_path,monkeypatch);path.parent.mkdir()
+    old=r.CompanyProfile(name='Acme',website='https://acme.example',
+        what_they_do=[r.Claim(text='Builds software',sources=[1])],sources={1:{'kind':'official','url':'https://acme.example'}},
+        researched_at=datetime.now(UTC).isoformat())
+    original=old.model_dump_json();path.write_text(original);path.with_suffix('.md').write_text('Previous verified profile')
+    monkeypatch.setattr(r,'gather_sources',lambda *a:('https://acme.example',[
+        {'kind':'wikipedia','url':'https://example.org','text':'Builds software.'}]))
+    monkeypatch.setattr(llm,'structured',lambda *a,**kw:pytest.fail('No official input means no model call'))
+    with pytest.raises(RuntimeError,match='official company source'):r.research('Acme',refresh=True)
+    assert path.read_text()==original and path.with_suffix('.md').read_text()=='Previous verified profile'
+
+
+def test_a_profile_omitting_all_official_citations_is_not_published(tmp_path,monkeypatch):
+    path=_research_profile_fixture(tmp_path,monkeypatch)
+    monkeypatch.setattr(r,'gather_sources',lambda *a:('https://acme.example',[
+        {'kind':'wikipedia','url':'https://example.org','text':'Builds software and development tools.'},
+        {'kind':'official','url':'https://acme.example/about','text':'We build software and development tools.'}]))
+    with pytest.raises(RuntimeError,match='did not cite'):r.research('Acme')
+    assert not path.exists() and not path.with_suffix('.md').exists()
+
+
 def test_strip_boilerplate():
     text = ("Intel creates world-changing technology.\nIntel uses cookies and similar technologies to improve your "
             "experience.\nWe collect device information for ad targeting.\nAccept All\nCustomer first: we listen.")
