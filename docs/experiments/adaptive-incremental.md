@@ -80,9 +80,10 @@ The existing two-attempt outer control-repair limit remains in force; exhausted
 repairs produce a private screenshot for diagnosis and a blocker.
 
 Before expanding collapsed controls on a listing, startup can follow a published
-application address without executing its handler. This includes an outside-form
-menu button advertising a real HTTP(S) URL. Controls belonging to a form with
-visible fields remain excluded; fragment/script addresses cannot use this path.
+application link without executing its handler. Controls belonging to a form
+with visible fields remain excluded; fragment/script addresses cannot use this
+path. A button's nonstandard `href` is not a native link: some menu flows publish
+an inert fallback there and require their own supported entry mechanism.
 
 `application/adaptive-v1.json` stores serializable accepted decisions and field
 schemas. Restoration requires unique matching semantics and current evidence;

@@ -1535,7 +1535,7 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
         if getattr(getattr(view,'coverage',None),'collapsed',[]):
             # A listing can contain collapsed search filters or other utility
             # forms. A published application URL needs no disclosure clicks;
-            # load its address while keeping all scripts/submission guards off.
+            # load its address without executing scripts or bypassing submit guards.
             opened = next((label for pat in START if (label := forms.click_open_application(
                 page, view, pat, expected_url=url, navigation_only=True))), None)
             if opened:

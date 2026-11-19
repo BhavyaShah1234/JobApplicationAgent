@@ -81,12 +81,8 @@ def test_collapsed_required_controls_do_not_make_final_apply_a_startup_action():
     assert not state['sent'] and 'remain collapsed' in view.error
 
 
-@pytest.mark.parametrize('entry', [
-    '<a href="https://jobs.example.test/application" onclick="window.sent=true">Apply now</a>',
-    '<button aria-haspopup="true" href="https://jobs.example.test/application" '
-    'onclick="window.sent=true">Apply now</button>',
-])
-def test_published_application_address_precedes_unrelated_collapsed_search_filters(entry):
+def test_published_application_address_precedes_unrelated_collapsed_search_filters():
+    entry='<a href="https://jobs.example.test/application" onclick="window.sent=true">Apply now</a>'
     html = '''<form role=search onsubmit="window.sent=true;return false">
       <button aria-expanded=false aria-controls=filters>Show More Options</button>
       <div id=filters hidden><label>Location<input name=location></label></div></form>
@@ -94,6 +90,16 @@ def test_published_application_address_precedes_unrelated_collapsed_search_filte
     state, view = start(html, routes={'https://jobs.example.test/application': FORM3})
     assert state['url'] == 'https://jobs.example.test/application' and len(view.fields) == 3
     assert not state['sent'] and view.coverage.complete
+
+
+def test_nonstandard_menu_button_href_is_not_treated_as_a_native_application_link():
+    html = '''<form><button aria-expanded=false aria-controls=filters>Search filters</button>
+      <div id=filters hidden><input name=location></div></form>
+      <button aria-haspopup=true href="https://jobs.example.test/inert-fallback"
+      onclick="window.sent=true">Apply now</button>'''
+    state,view=start(html,allow_error=True)
+    assert 'remain collapsed' in view.error and not state['sent']
+    assert 'https://jobs.example.test/inert-fallback' not in state['requests']
 
 
 def test_a_published_button_address_inside_candidate_form_cannot_bypass_submission_guard():

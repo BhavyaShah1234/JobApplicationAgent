@@ -1997,11 +1997,9 @@ SENDS_FORM_JS = """e => {
   const fillable = form ? [...form.elements].filter(c => /^(INPUT|SELECT|TEXTAREA)$/.test(c.tagName)
       && !['hidden', 'submit', 'button', 'image', 'reset'].includes(c.type) && shown(c)).length : 0;
   let href = '';
-  // Some careers sites publish the application URL on a menu button. Read its
-  // address without executing the dropdown's scripts or submitting any form.
-  const address = e.tagName === 'A' || (e.tagName === 'BUTTON' && !form &&
-      ['true', 'menu'].includes(e.getAttribute('aria-haspopup')));
-  if (address && e.getAttribute('href')) {
+  // A button's nonstandard href can be an inert fallback for a scripted menu,
+  // rather than the actual application entry route. Only native links count.
+  if (e.tagName === 'A' && e.getAttribute('href')) {
     try {
       const to = new URL(e.getAttribute('href'), location.href), here = new URL(location.href);
       if (/^https?:$/.test(to.protocol) && to.origin + to.pathname + to.search !== here.origin + here.pathname + here.search)
