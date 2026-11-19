@@ -1,7 +1,10 @@
 """Employee-referral answers using the user's policy and company contacts."""
 
 import csv
+import json
 import re
+from pathlib import Path
+from urllib.parse import urlsplit
 
 from jobagent.config import get_settings
 
@@ -82,6 +85,30 @@ def company_keys(company: str) -> set[str]:
         return {key}
 
 
+def _company_email_domains(keys: set[str]) -> set[str]:
+    """Use only an unambiguous same-company researched website; never guess a domain from its name."""
+    from jobagent import db
+
+    state = getattr(get_settings(), "state_dir", None)
+    if state is None:
+        return set()
+    domains = set()
+    for path in (Path(state) / "companies").glob("*.json"):
+        try:
+            profile = json.loads(path.read_text())
+            if not isinstance(profile, dict) or company_key(profile.get("name", "")) not in keys:
+                continue
+            website = urlsplit(profile.get("website") or "")
+            if website.scheme != "https" or not website.hostname or website.username or website.password:
+                continue
+            domain = db.registrable_domain(website.hostname)
+            if domain:
+                domains.add(domain)
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+    return domains if len(domains) == 1 else set()
+
+
 def contact_for_company(company: str) -> dict:
     path = get_settings().data_dir / "asu_contacts.csv"
     if not path.exists():
@@ -89,6 +116,7 @@ def contact_for_company(company: str) -> dict:
 
     matches = []
     keys=company_keys(company)
+    domains = _company_email_domains(keys)
 
     with path.open(encoding="utf-8-sig", newline="") as handle:
         for row in csv.DictReader(handle):
@@ -101,21 +129,22 @@ def contact_for_company(company: str) -> dict:
             name = (row.get("name") or "").strip()
             name = name or " ".join(x for x in (first, last) if x)
 
-            email = ""
+            emails = []
             for column in ("email", "alternate_email"):
                 candidate = (row.get(column) or "").strip()
                 if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", candidate):
-                    email = candidate
-                    break
+                    emails.append(candidate)
+            corporate = [email for email in emails if email.rsplit("@", 1)[1].casefold() in domains]
+            email = next(iter(corporate or emails), "")
 
-            matches.append((matched != company_key(company), {
+            matches.append((not bool(corporate), matched != company_key(company), {
                 "name": name,
                 "first_name": first or (name.split()[0] if name else ""),
                 "last_name": last or (name.split()[-1] if name else ""),
                 "email": email,
             }))
 
-    matches=[contact for _,contact in sorted(matches,key=lambda item:item[0])]
+    matches=[contact for _,_,contact in sorted(matches,key=lambda item:item[:2])]
 
     return next(
         (contact for contact in matches if contact["name"] and contact["email"]),
