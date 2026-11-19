@@ -19,6 +19,7 @@ average rises (or holds within the noise while the page improves), else undone a
 import hashlib
 import json
 import operator
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -120,6 +121,16 @@ class ProjectEdit(BaseModel):
 class IncrementalProjectsOut(ProjectsOut):
     """Opt-in repairs can edit the displayed short form and generated title too."""
     projects: list[ProjectEdit] = Field(default_factory=list, max_length=4)
+
+
+def project_title_schema(targets):
+    """A title-only repair cannot rewrite descriptions or a different project."""
+    targets=tuple(sorted(set(targets)))
+    fix=create_model('ProjectTitleFix',project=(Literal[targets],Field(description='Requested project index')),
+                     title=(str,Field(min_length=1,max_length=70,description='Readable project name; not the repo slug')))
+    return create_model('ProjectTitlesOut',
+        projects=(list[fix],Field(min_length=len(targets),max_length=len(targets))),
+        swaps=(list[ProjectSwap],Field(default_factory=list,max_length=0)))
 
 
 class Finding(BaseModel):
@@ -308,13 +319,18 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
                 edit_prompt += ('\nIn projects edits, use short to repair a displayed short description, '
                     'title to repair a generated name, and paragraph for the full description. '
                     'Leave untargeted fields empty. Never change a known template title.')
+            title_matches=[re.match(r'Project (\d+) is titled with its bare repo name',task) for task in tasks] if ctx.get('incremental') else []
+            title_only=bool(ctx.get('incremental') and tasks and all(title_matches))
+            if title_only:
+                edit_prompt += '\nThis is a TITLE-ONLY repair: return the requested project numbers and new names. Do not rewrite descriptions or swap repositories.'
             msgs = [SystemMessage(with_today(edit_prompt)),
                     HumanMessage(_context(ctx, f, proj.read_text()) + "\n\nTASKS:\n" + "\n".join(f"- {t}" for t in tasks)
                                  + (f"\n\nLAST ROUND: {last}" if last else ""))]
             # A short paragraph repair must not spend ten minutes in a fallback
             # mode after length validation fails. Preserve the previous version
             # on failure; its hard findings still prevent publication.
-            schema = IncrementalProjectsOut if ctx.get('incremental') else ProjectsOut
+            schema = project_title_schema([int(match[1]) for match in title_matches]) if title_only else \
+                     IncrementalProjectsOut if ctx.get('incremental') else ProjectsOut
             out = _invoke(ctx, agent, model, schema, msgs, log=log, deadline_s=180)
         elif targeted:
             # targeted edit: only the bullets the validators named (a full rewrite moves every orphan word)
@@ -564,7 +580,8 @@ def check_layout(state: State) -> dict:
             if "/" not in e["title"] and e["title"].lower() == e["repo"].split("/")[-1].lower() and \
                     e["title"].lower() not in known_titles:
                 tasks["projects"].append(f"Project {i} is titled with its bare repo name '{e['title']}': give it a "
-                                         "real project title and a full 3-sentence description.")
+                                         + ("readable project name; keep both descriptions unchanged." if ctx.get('incremental') else
+                                            "real project title and a full 3-sentence description."))
     reviewed_content = _reviewed_content(ctx, f, state) if pages == 1 and not err else {}
     skill_tasks, padding_attempted = _skill_review_tasks(reviewed_content, padding_task,
         state.get("skills_padding_attempted", False), invalid=bool(empty))
@@ -693,7 +710,10 @@ def _reviewed_content(ctx: dict, f: T.Filled, state: dict) -> dict:
         try:
             findings, error = content_review(ctx, f), ""
         except Exception as exc:
-            findings, error = [], f"skills content review unavailable ({type(exc).__name__})"
+            from jobagent.tools.incremental_documents import ReviewUnavailable
+            error = str(exc) if ctx.get('incremental') and isinstance(exc,ReviewUnavailable) else \
+                    f"{'document' if ctx.get('incremental') else 'skills'} content review unavailable ({type(exc).__name__})"
+            findings = []
     hard = [f"{fd.agent}: {fd.issue}" for fd in findings if fd.agent in {"skills", "projects"} and fd.severity == "error"]
     if error:
         hard.append(error)

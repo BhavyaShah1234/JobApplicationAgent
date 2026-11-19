@@ -108,6 +108,49 @@ def test_long_reasoner_reviews_dispatch_serially_while_other_reviews_remain_inde
     assert peak==1 and len(calls)==2
 
 
+def test_failed_review_cancels_queued_reasoner_calls_and_reports_the_actual_failed_section(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(M.T,'facts_block',lambda:'Owner policy')
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace(model_name=kw['model']))
+    calls=[]
+    def generate(model,schema,messages,**kwargs):
+        if model.model_name==I.get_settings().model_planner:
+            calls.append(messages[0].content.split('Review ONLY ')[1].split('.')[0])
+            raise I.llm.StructuredError('provider timed out','timeout')
+        return M.Review(findings=[])
+    monkeypatch.setattr(I.llm,'structured_invoke',generate)
+    cache=ArtifactCache(tmp_path/'cache')
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
+         'models':{'router':'cheap-reviewer'},'cache':cache,'log':lambda _:None}
+    with pytest.raises(I.ReviewUnavailable) as error:
+        review(ctx,M.T.Filled.model_construct(summary='Engineer.',roles=[],skills=[]))
+    assert len(calls)==1
+    assert str(error.value).startswith(calls[0]+' content review unavailable')
+    assert 'timeout' in str(error.value)
+    assert all(e.get('ok') is not True for e in cache.events if e.get('cancelled_before_dispatch'))
+
+
+def test_title_only_repairs_cannot_generate_paragraphs_or_edit_other_projects(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M,ats as A
+    from pydantic import ValidationError
+    (tmp_path/'projects.json').write_text('{}')
+    monkeypatch.setattr(M.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(M,'_context',lambda *a,**kw:'Sources')
+    captured=[]
+    def generate(ctx,stage,model,schema,messages,**kwargs):
+        captured.append(schema)
+        return schema.model_validate({'projects':[{'project':2,'title':'Readable Project'}]})
+    monkeypatch.setattr(M,'_invoke',generate)
+    _,out=M._run_agent({'job_dir':tmp_path,'models':{'projects':'m'},'log':lambda _:None,'incremental':True},
+        'projects',None,["Project 2 is titled with its bare repo name 'project': give it a readable name."],'')
+    assert out is not None and out.projects[0].model_dump()=={'project':2,'title':'Readable Project'}
+    with pytest.raises(ValidationError):captured[0].model_validate({'projects':[{'project':1,'title':'Unrequested'}]})
+    st={'kept':2,'ranked':[{'title':'One','paragraph':'Keep one.'},{'title':'Two','paragraph':'Keep two.'}]}
+    result=json.loads(A.apply_project_fixes(json.dumps(st),out.projects))
+    assert result['ranked']==[st['ranked'][0],{'title':'Readable Project','paragraph':'Keep two.'}]
+
+
 def test_semantically_unbound_outputs_do_not_enter_the_cache(tmp_path,monkeypatch):
     from jobagent.tools import incremental_documents as I
     monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:Output(text='unbound'))

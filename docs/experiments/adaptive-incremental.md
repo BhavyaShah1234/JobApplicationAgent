@@ -103,6 +103,9 @@ after repeated live tool/schema retries; the shared bounded fallbacks remain in
 place. This preference does not change the current strategy.
 Long factual review requests share one provider dispatch slot after cache lookup;
 cheap reviews remain parallel. Queue wait is recorded separately in stage metrics.
+If a section fails, queued reviews stop before dispatch and diagnostics identify
+the failing section/model. A title-only project task offers only its requested
+indices and names; unrequested paragraphs and swaps cannot be applied.
 
 The external ATS panel runs after local resume validation, using the configured
 providers and their existing repeats, quotas and feedback-only distinctions.

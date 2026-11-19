@@ -155,8 +155,8 @@ def apply_project_fixes(state: str | None, fixes: list) -> str | None:
         if not 1 <= fx.project <= st["kept"]:
             continue
         entry = st["ranked"][fx.project - 1]
-        if len(fx.paragraph.strip()) >= 200:
-            entry["paragraph"] = T.no_dashes(fx.paragraph.strip())
+        if len(paragraph := getattr(fx,'paragraph','').strip()) >= 200:
+            entry["paragraph"] = T.no_dashes(paragraph)
         # The original advice schema has no short/title fields. Opt-in edits
         # can repair the actual short variant without changing the full one.
         if len(short := getattr(fx, 'short', '').strip()) >= 100:

@@ -4,7 +4,7 @@ import time
 import re
 import threading
 from contextlib import nullcontext
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Literal
 from pydantic import BaseModel, Field
@@ -32,6 +32,12 @@ class ProjectVerdict(BaseModel):
 class ProjectVerdicts(BaseModel):
     """Every proposed critical project error needs its own bound decision."""
     verdicts: list[ProjectVerdict] = Field(max_length=8)
+
+
+class ReviewUnavailable(RuntimeError):
+    """A bounded technical review failure, labelled with its actual section/model."""
+    def __init__(self, section, model, kind):
+        super().__init__(f'{section} content review unavailable: {model} ({kind})')
 
 
 def _words(text):
@@ -85,7 +91,7 @@ def adjudicate_projects(ctx, payload, findings):
         return checked
     result=invoke(ctx['cache'],'adjudicate:projects',model_name,llm.writer(6000,model=model_name),
                   ProjectVerdicts,messages,log=ctx['log'],deadline_s=180,validator=bind,
-                  request_lock=ctx.get('reasoner_lock'))
+                  request_lock=ctx.get('reasoner_lock'),request_abort=ctx.get('review_abort'))
     return bind(result)
 
 
@@ -108,7 +114,7 @@ def _document_messages(messages):
             for message in messages]
 
 
-def invoke(cache, stage, model_name, model, schema, messages, *, validator=None, request_lock=None, **kwargs):
+def invoke(cache, stage, model_name, model, schema, messages, *, validator=None, request_lock=None, request_abort=None, **kwargs):
     """Cache validated outputs only; exception paths and malformed entries never hit."""
     messages = _document_messages(messages)
     settings = get_settings()
@@ -133,21 +139,31 @@ def invoke(cache, stage, model_name, model, schema, messages, *, validator=None,
     original=getattr(model,'callbacks',None)
     instrumented=hasattr(model,'callbacks') and (original is None or isinstance(original,list))
     if instrumented:model.callbacks=[*(original or []),audit]
-    dispatch_wait = None
+    dispatch_wait = None; dispatched=False
     try:
         with request_lock or nullcontext():
             dispatch_wait = time.monotonic()-started if request_lock is not None else 0.0
-            result = llm.structured_invoke(model, schema, messages, **kwargs)
+            if request_abort is not None and request_abort.is_set():
+                raise RuntimeError('review cancelled after another section failed')
+            try:
+                dispatched=True
+                result = schema.model_validate(llm.structured_invoke(model, schema, messages, **kwargs))
+                if validator:validator(result)
+            except BaseException as exc:
+                if request_abort is not None:
+                    if not request_abort.is_set():
+                        request_abort.failure_info=(stage,model_name,getattr(exc,'kind',type(exc).__name__))
+                    request_abort.set()
+                raise
     finally:
         if instrumented:model.callbacks=original
-        info = llm.last_call()
+        info = llm.last_call() if dispatched else {}
         cache.record({'stage': stage, 'event': 'model_stage', 'seconds': time.monotonic()-started,
                       'model':model_name,'preferred_method':preferred,
                       'dispatch_wait_s':dispatch_wait,
+                      'cancelled_before_dispatch':not dispatched,
                       'writer_starts':audit.starts if instrumented else None,'reported_tokens':audit.tokens,
                       **{k:info.get(k) for k in ('calls','method','waited_s','ok')}})
-    result = schema.model_validate(result)
-    if validator:validator(result)
     cache.put(stage, inputs, result.model_dump(mode='json'))
     return result
 
@@ -158,6 +174,7 @@ def review(ctx, filled):
     # Two concurrent long Qwen reviews timed out in the live probe while small
     # requests remained healthy. Cache hits never acquire this dispatch lock.
     reasoner_lock = threading.Lock()
+    review_abort = threading.Event()
     path = ctx['job_dir'] / 'projects.json'
     projects = M._displayed_projects(json.loads(path.read_text()) if path.exists() else {})
     roles = [{'employer': ctx['r'].roles[e.role].company,
@@ -176,11 +193,11 @@ def review(ctx, filled):
         card=cards.get((project['repo'] or '').casefold(),{})
         if card.get('readme'):sources[project['repo']]['readme_excerpt']=card['readme'][:2500]
     payloads = {
-        'experience': {'roles': roles, 'jd': jd},
+        'experience': {'roles': roles},
         'projects': {'displayed': projects, 'own_repo_sources': sources},
         'skills': {'skills': skills, 'owned_template': ctx['r'].skills, 'graph': ctx.get('graph')},
         'summary': {'summary': filled.summary, 'roles': roles, 'skills': skills,
-                    'projects': projects, 'jd': jd},
+                    'projects': projects, 'job_identity':{name:jd.get(name) for name in ('title','company')}},
     }
     education=re.search(r'\\section\{Education\}(.*?)(?=\\section\{|\\end\{document\})',
                         getattr(ctx['r'],'tex',''),re.S)
@@ -221,15 +238,28 @@ def review(ctx, filled):
             HumanMessage(json.dumps(payloads[agent], ensure_ascii=False))]
         model_name = get_settings().model_planner if agent in ('projects','summary') else ctx['models']['router']
         reasoner = agent in ('projects','summary')
-        out = invoke(ctx['cache'], 'review:' + agent, model_name,
-                     llm.writer(6000 if reasoner else 4000, timeout=180 if reasoner else 120, model=model_name),
-                     M.Review, messages, log=ctx['log'], deadline_s=240 if reasoner else 180,validator=bound_agent,
-                     request_lock=reasoner_lock if reasoner else None)
-        bound_agent(out)
-        return adjudicate_projects({**ctx,'reasoner_lock':reasoner_lock},payloads[agent],out.findings) if agent=='projects' else out.findings
+        try:
+            out = invoke(ctx['cache'], 'review:' + agent, model_name,
+                         llm.writer(6000 if reasoner else 4000, timeout=180 if reasoner else 120, model=model_name),
+                         M.Review, messages, log=ctx['log'], deadline_s=240 if reasoner else 180,validator=bound_agent,
+                         request_lock=reasoner_lock if reasoner else None,request_abort=review_abort)
+            bound_agent(out)
+            return adjudicate_projects({**ctx,'reasoner_lock':reasoner_lock,'review_abort':review_abort},payloads[agent],out.findings) if agent=='projects' else out.findings
+        except Exception as exc:
+            review_abort.set()
+            raise ReviewUnavailable(agent,model_name,getattr(exc,'kind',type(exc).__name__)) from exc
 
     with ThreadPoolExecutor(4) as pool:
-        return [finding for findings in pool.map(with_context(one), payloads) for finding in findings]
+        pending={pool.submit(with_context(one),agent):agent for agent in payloads}
+        results={}
+        for future in as_completed(pending):
+            try:
+                results[pending[future]]=future.result()
+            except Exception as exc:
+                failure=getattr(review_abort,'failure_info',None)
+                if failure:raise ReviewUnavailable(failure[0].split(':')[-1],failure[1],failure[2]) from exc
+                raise
+        return [finding for agent in payloads for finding in results[agent]]
 
 
 def final_panel(ctx, state, sites, refine=False):
