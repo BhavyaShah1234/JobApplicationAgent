@@ -93,6 +93,11 @@ changed employer bullets recheck experience and summary. Failed calls are never
 cached. Completed section work survives interruption. Compilation and deterministic
 validity gates still run. `context-manifest.json` records source fingerprints using
 the same source-snapshot interface used by adaptive filling.
+Required coverage has a separate bounded repair before initial summary/review and
+after section edits. A coverage-only request must clear every feasible required gap;
+cosmetic progress cannot consume its result. It patches existing bullets when their
+capacity is sufficient, allowing growth within the normal role limits otherwise.
+Failure stops publication before spending unrelated summary/review calls.
 Source guards span the complete tailoring command and the cover-letter stage;
 an intervening profile, JD, template or resume edit invalidates publication while
 retaining the owner's edits. Review prompts receive the local date and relevant

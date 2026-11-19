@@ -154,7 +154,7 @@ def apply_incremental_repair(f, repair):
         by_role[fx.role].bullets[fx.bullet-1].duties=list(fx.duties)
 
 
-def validate_incremental_repair(f, jd, repair, *, template):
+def validate_incremental_repair(f, jd, repair, *, template, require_coverage=False):
     """Reject invalid targets, lost coverage and no-progress output before caching.
 
     Args:
@@ -162,6 +162,7 @@ def validate_incremental_repair(f, jd, repair, *, template):
         jd: Posting that defines the available duty indices.
         repair: Proposed in-place text and coverage edits.
         template: Source roles and skills used by the final quality checks.
+        require_coverage: Require this coverage-only request to clear all feasible required gaps.
 
     Raises:
         ValueError: Targets or references are invalid, coverage is lost, or no edit changes anything.
@@ -179,6 +180,9 @@ def validate_incremental_repair(f, jd, repair, *, template):
     covered=lambda v:{d for e in v.roles for b in e.bullets if b.original is None for d in b.duties if 0<=d<n}
     if lost:=covered(f)-covered(proposed):
         raise ValueError(f'Repair removed previously covered JD indices: {sorted(lost)}')
+    if require_coverage and (missing:=T.fill_checks(template,jd,proposed,len(template.roles)*T.MAX_BULLETS)[0]):
+        raise ValueError(f'Coverage-only repair must clear required JD indices {missing}; '
+                         'rewrite suitable existing bullets to support them, not just formatting')
     if all(by_role[fx.role].bullets[fx.bullet-1].text==fx.text and
            by_role[fx.role].bullets[fx.bullet-1].duties==fx.duties and
            by_role[fx.role].bullets[fx.bullet-1].original is None for fx in repair.fixes):
@@ -444,7 +448,8 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
                         'work rather than repeating the same duty with synonyms. Leave unrelated bullets alone.')
                 })))
                 out=_invoke(ctx,agent,model,incremental_repair_schema(ctx['jd']),msgs,log=log,first='json_mode',
-                    validator=lambda repair:validate_incremental_repair(f,ctx['jd'],repair,template=ctx['r']))
+                    validator=lambda repair:validate_incremental_repair(f,ctx['jd'],repair,template=ctx['r'],
+                                                                       require_coverage=ctx.get('_require_coverage',False)))
             else:
                 out = _invoke(ctx, agent, model, T.Repair, msgs, log=log)
         else:
@@ -464,6 +469,10 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
                     if invalid:
                         raise ValueError(f'Invalid duties IDs {invalid}; allowed JD item IDs are 0 through {n-1}, '
                                          'not role or original-bullet indices')
+                    if ctx.get('_require_coverage') and f is not None:
+                        proposed=_merge(ctx,f,{'experience':draft})
+                        missing=T.fill_checks(ctx['r'],ctx['jd'],proposed,len(ctx['r'].roles)*T.MAX_BULLETS)[0]
+                        if missing:raise ValueError(f'Coverage rewrite must cover required JD indices {missing}')
                 guards['validator']=valid_references
             out = _invoke(ctx, agent, model, schema, _section_messages(ctx, agent, f, tasks, last), log=log,**guards,
                           **({'first':'json_mode'} if ctx.get('incremental') and agent in ('experience','summary') else {}))
@@ -520,6 +529,38 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
     return g
 
 
+def ensure_incremental_coverage(ctx, f):
+    """Resolve required coverage before spending summary and semantic-review calls.
+
+    Args:
+        ctx: Current document context; the default strategy passes through unchanged.
+        f: Current resume, whose unrelated bullets are retained for a small patch.
+
+    Returns:
+        A resume covering every feasible required item. No call occurs without gaps.
+
+    Raises:
+        RuntimeError: The bounded coverage request fails or leaves a required gap.
+    """
+    if not ctx.get('incremental'):return f
+    template,jd=ctx['r'],ctx['jd'];slots=len(template.roles)*T.MAX_BULLETS
+    missing=T.fill_checks(template,jd,f,slots)[0]
+    if not missing:return f
+    required=set(T.coverage_target(jd,slots)[0])
+    covered={d for role in f.roles for bullet in role.bullets if bullet.original is None for d in bullet.duties}
+    capacity=sum(len(role.bullets) for role in f.roles)*T.ITEMS_PER_BULLET
+    tasks=[f'REQUIRED JD item indices not covered by any NEW bullet: {missing}.']
+    if len(required|covered)>capacity:
+        tasks.append(f'Add bullets up to {T.MAX_BULLETS} per role to fit the feasible required coverage.')
+    ctx['log'](f'repairing required JD coverage before summary/review: {missing}')
+    _,out=_run_agent({**ctx,'_require_coverage':True},'experience',f,tasks,'')
+    if out is None:raise RuntimeError(f'Required JD coverage repair failed for {missing}; no packet published')
+    updated=_merge(ctx,f,{'experience':out})
+    if remaining:=T.fill_checks(template,jd,updated,slots)[0]:
+        raise RuntimeError(f'Required JD coverage repair left {remaining}; no packet published')
+    return updated
+
+
 # --- nodes -------------------------------------------------------------------------------------------------------
 
 def write_initial(state: State) -> dict:
@@ -549,6 +590,7 @@ def write_initial(state: State) -> dict:
     f = T.Filled(summary=T.summary_text(r.summary), roles=roles,
                  skills=[T.SkillLine(category=c, terms=[T.to_plain(v)]) for c, v in r.skills][:8] or
                  [T.SkillLine(category="Skills", terms=["Python"])] * 3, notes=exp.notes)
+    f=ensure_incremental_coverage(ctx,f)
     _, sk = _run_agent(ctx, "skills", f, [], "")
     if sk is not None:
         f.skills = sk.skills
@@ -887,6 +929,7 @@ def edit_sections(state: State) -> dict:
         with ThreadPoolExecutor(len(other) or 1) as ex:
             outs = dict(ex.map(with_context(lambda a: _run_agent(ctx, a, f, other[a], state.get('last', ''))), other))
         updated = _merge(ctx, f, outs)
+        updated = ensure_incremental_coverage(ctx,updated)
         summary_tasks = list(tasks.get('summary', []))
         if before!=_content_hash(ctx,updated):
             summary_tasks.append('Reconcile the summary with the final changed experience, projects and skills; preserve accurate text.')

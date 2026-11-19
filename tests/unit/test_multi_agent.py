@@ -64,6 +64,52 @@ def test_small_coverage_gaps_use_the_incremental_patch_not_a_full_section_draft(
     assert 'current_coverage' in seen[0][1][-1].content and seen[0][2]['first']=='json_mode'
 
 
+def test_coverage_barrier_calls_only_the_coverage_repair_and_skips_complete_or_default(monkeypatch):
+    jd,f=_coverage_repair_fixture();calls=[]
+    ctx={'incremental':True,'r':_coverage_template(),'jd':jd,'log':lambda _:None}
+    def run(context,agent,current,tasks,last):
+        assert context['_require_coverage'] is True
+        calls.append((agent,tasks))
+        return agent,M.IncrementalRepair(fixes=[M.IncrementalBulletFix(
+            role=0,bullet=1,text=f.roles[0].bullets[0].text,duties=[0,2])])
+    monkeypatch.setattr(M,'_run_agent',run)
+    updated=M.ensure_incremental_coverage(ctx,f)
+    assert len(calls)==1 and calls[0][0]=='experience' and len(calls[0][1])==1
+    assert M.T.fill_checks(ctx['r'],jd,updated)[0]==[]
+    assert M.ensure_incremental_coverage(ctx,updated) is updated
+    assert M.ensure_incremental_coverage({**ctx,'incremental':False},f) is f
+    assert len(calls)==1 and f.roles[0].bullets[0].duties==[0]
+
+
+def test_coverage_barrier_rejects_cosmetic_progress_and_failed_requests(monkeypatch):
+    import pytest
+    jd,f=_coverage_repair_fixture();ctx={'incremental':True,'r':_coverage_template(),'jd':jd,'log':lambda _:None}
+    cosmetic=M.IncrementalRepair(fixes=[M.IncrementalBulletFix(role=0,bullet=1,
+        text='Built Python APIs using object-oriented patterns, cutting latency by 20%.',duties=[0])])
+    with pytest.raises(ValueError,match='Coverage-only repair must clear'):
+        M.validate_incremental_repair(f,jd,cosmetic,template=ctx['r'],require_coverage=True)
+    monkeypatch.setattr(M,'_run_agent',lambda *a:('experience',cosmetic))
+    with pytest.raises(RuntimeError,match='repair left'):M.ensure_incremental_coverage(ctx,f)
+    monkeypatch.setattr(M,'_run_agent',lambda *a:('experience',None))
+    with pytest.raises(RuntimeError,match='repair failed'):M.ensure_incremental_coverage(ctx,f)
+
+
+def test_coverage_growth_uses_a_full_request_when_existing_bullets_cannot_hold_targets(monkeypatch):
+    from types import SimpleNamespace
+    jd,f=_coverage_repair_fixture()
+    jd.responsibilities=[f'Build Python service {i}.' for i in range(7)]
+    calls=[]
+    def run(ctx,agent,current,tasks,last):
+        calls.append(tasks)
+        assert any(M.FULL_REWRITE.search(t) for t in tasks[1:])
+        bullets=[M.T.FillBullet(text=f'Built Python system {i}, reducing latency by 20%.',duties=ids)
+                 for i,ids in enumerate(([0,1,2],[3,4,5],[6]))]
+        return agent,SimpleNamespace(role_0=bullets)
+    monkeypatch.setattr(M,'_run_agent',run)
+    updated=M.ensure_incremental_coverage({'incremental':True,'r':_coverage_template(),'jd':jd,'log':lambda _:None},f)
+    assert len(calls)==1 and M.T.fill_checks(_coverage_template(),jd,updated)[0]==[]
+
+
 def test_full_incremental_experience_validates_duty_references_before_caching(tmp_path,monkeypatch):
     import pytest
     from types import SimpleNamespace
