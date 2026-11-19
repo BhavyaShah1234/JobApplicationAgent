@@ -235,7 +235,7 @@ def test_long_reasoner_reviews_dispatch_serially_while_other_reviews_remain_inde
     ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
          'models':{'router':'cheap-reviewer'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None}
     review(ctx,M.T.Filled.model_construct(summary='Engineer.',roles=[],skills=[]))
-    assert peak==1 and len(calls)==2
+    assert peak==1 and len(calls)==3  # projects, summary and skills share the bounded reasoner
 
 
 def test_failed_review_cancels_queued_reasoner_calls_and_reports_the_actual_failed_section(tmp_path,monkeypatch):
@@ -380,8 +380,8 @@ def test_summary_review_receives_current_date_and_target_company_context(tmp_pat
     assert json.loads(seen[1].content)['company_context']=='Beta builds robots.'
     assert json.loads(seen[1].content)['target_job_identity']=={'title':'Engineer','company':'Beta'}
     assert 'resume headline' in seen[0].content and 'not employment history' in seen[0].content
-    assert models['review:summary']==models['review:projects']==I.get_settings().model_planner
-    assert models['review:skills']==models['review:experience']=='m'
+    assert models['review:summary']==models['review:projects']==models['review:skills']==I.get_settings().model_planner
+    assert models['review:experience']=='m'
 
 
 @pytest.mark.parametrize('category,term',[
@@ -451,14 +451,16 @@ def test_scoped_skills_review_receives_acronym_context_without_extra_review_call
         payload=json.loads(messages[1].content)
         if stage=='review:skills':
             assert payload['posting_skill_context']==['Experience with AI open standards such as MCP and A2A.']
+            assert payload['category_components']=={'Networking & Protocols':['Networking','Protocols']}
             assert 'Do not invent an unrelated expansion' in messages[0].content
+            assert 'not simultaneous requirements' in messages[0].content
         else:assert 'posting_skill_context' not in payload
         return M.Review(findings=[])
     monkeypatch.setattr(I,'invoke',inspect)
     ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
          'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None,
          'jd_text':'Experience with AI open standards such as MCP and A2A.'}
-    filled=M.T.Filled.model_construct(summary='Engineer.',roles=[],skills=[M.T.SkillLine(category='Protocols',terms=['MCP','A2A'])])
+    filled=M.T.Filled.model_construct(summary='Engineer.',roles=[],skills=[M.T.SkillLine(category='Networking & Protocols',terms=['MCP','A2A'])])
     assert review(ctx,filled)==[]
     assert sorted(calls)==['review:experience','review:projects','review:skills','review:summary']
 

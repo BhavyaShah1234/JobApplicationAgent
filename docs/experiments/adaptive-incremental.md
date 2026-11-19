@@ -95,11 +95,13 @@ ignored. Potential schema fields remain potential until their applicability is
 established; this does not promise discovery of unseen server-side questions.
 
 The incremental document strategy reuses the existing parallel section writers,
-and its skills critic receives bounded verbatim posting excerpts for displayed
+measured layout fitting and bounded targeted repairs. Its skills critic uses the
+configured planner, receives explicit alternatives for combined category headings
+and bounded verbatim posting excerpts for displayed
 technical terms. Those excerpts disambiguate acronyms; they do not establish
 candidate ownership. Ambiguous terminology yields a suggestion, while concrete
 category/type errors remain actionable. This adds no separate model call.
-measured layout fitting and bounded targeted repairs. Successful model outputs
+Successful model outputs
 and reviews are cached in `.incremental/v1/`, keyed by exact prompt, schema,
 model and generation/validation code version. Project cards are refreshed before
 selection-cache lookup. Document prompts use the current local date rather than
