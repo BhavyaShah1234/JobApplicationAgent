@@ -60,7 +60,17 @@ FULL_REWRITE = __import__("re").compile(r"(?i)not covered|pages?; it must be one
 
 # --- section outputs ----------------------------------------------------------------------------------------
 
-def experience_schema(r: T.Resume) -> type[BaseModel]:
+class CompactFillBullet(T.FillBullet):
+    """Expose the actual new-bullet budget to the opt-in writer's JSON schema.
+
+    Longer original bullets remain available to the existing source backfill;
+    generated drafts do not advertise the more permissive verbatim-only limit.
+    """
+    text: str = Field(max_length=T.BULLET_MAX,
+                      description=f'Plain text, past tense; aim for {T.BULLET_TARGET} characters including spaces, never over {T.BULLET_MAX}')
+
+
+def experience_schema(r: T.Resume, *, compact: bool = False) -> type[BaseModel]:
     """Build the structured-output schema for the experience agent: one bullet list per role of this template plus a note.
 
     Args:
@@ -69,7 +79,8 @@ def experience_schema(r: T.Resume) -> type[BaseModel]:
     Returns:
         A pydantic model class with `role_0 ... role_N` and `notes`.
     """
-    fields = {f"role_{i}": (list[T.FillBullet], Field(min_length=T.MIN_BULLETS, max_length=T.MAX_BULLETS,
+    bullet_type = CompactFillBullet if compact else T.FillBullet
+    fields = {f"role_{i}": (list[bullet_type], Field(min_length=T.MIN_BULLETS, max_length=T.MAX_BULLETS,
                                                       description=f"Use {T.MIN_BULLETS}-{T.MAX_BULLETS} bullets for {role.title} at {role.company}; do not omit this role"))
               for i, role in enumerate(r.roles)}
     fields["notes"] = (str, Field(max_length=600, description="How duties were distributed across roles"))
@@ -273,7 +284,7 @@ def _invoke(ctx, stage, model, schema, messages, **kwargs):
 def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last: str) -> tuple[str, object]:
     """One section agent's call; returns (agent, output) or (agent, None) on failure."""
     targeted = agent=='experience' and f is not None and not any(FULL_REWRITE.search(t) for t in tasks)
-    model = llm.writer(3000 if targeted else 16000 if agent == "experience" else 4000 if agent == "projects" else 8000,
+    model = llm.writer(3000 if targeted else (8000 if ctx.get('incremental') else 16000) if agent == "experience" else 4000 if agent == "projects" else 8000,
                        timeout=120 if targeted or agent == "projects" else 600, model=ctx["models"][agent])
     log, t0 = ctx["log"], time.monotonic()
     try:
@@ -291,7 +302,7 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
             msgs = T.build_repair_prompt(ctx["r"], ctx["jd"], f, tasks + ([f"LAST ROUND: {last}"] if last else []))
             out = _invoke(ctx, agent, model, T.Repair, msgs, log=log)
         else:
-            schema = {"experience": experience_schema(ctx["r"]), "skills": SkillsOut, "summary": SummaryOut}[agent]
+            schema = {"experience": experience_schema(ctx["r"],compact=bool(ctx.get('incremental'))), "skills": SkillsOut, "summary": SummaryOut}[agent]
             out = _invoke(ctx, agent, model, schema, _section_messages(ctx, agent, f, tasks, last), log=log)
         log(f"  {agent} agent ({ctx['models'][agent]}): {time.monotonic() - t0:.0f}s")
         return agent, out

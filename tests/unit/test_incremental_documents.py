@@ -72,7 +72,7 @@ def test_initial_experience_prompt_is_independent_of_project_thread_timing(tmp_p
     assert [m.content for m in before]==[m.content for m in after]
 
 
-def test_project_reviewer_never_receives_search_vectors_or_readme_bodies(tmp_path,monkeypatch):
+def test_project_reviewer_never_receives_search_vectors_or_unbounded_readme_bodies(tmp_path,monkeypatch):
     from jobagent.steps import multi_agent as M
     from jobagent.tools import incremental_documents as I
     monkeypatch.setattr(M.T,'facts_block',lambda:'owner claims')
@@ -89,7 +89,7 @@ def test_project_reviewer_never_receives_search_vectors_or_readme_bodies(tmp_pat
          'cards':{'owner/project':{'summary':'Built a robot.','embedding':[.1]*4096,'readme':'junk'*100000}}}
     f=M.T.Filled.model_construct(summary='A summary.',roles=[],skills=[])
     review(ctx,f)
-    assert seen[0]['own_repo_sources']=={'owner/project':{'summary':'Built a robot.'}}
+    assert seen[0]['own_repo_sources']=={'owner/project':{'summary':'Built a robot.','readme_excerpt':('junk'*100000)[:2500]}}
     assert len(json.dumps(seen[0]))<10000
 
 
@@ -144,6 +144,15 @@ def test_title_prefix_is_deterministic_and_nonfatal_policy_remains_unchanged(tmp
     reviewed=M._reviewed_content({'job_dir':tmp_path,'incremental':True},f,{})
     assert reviewed['semantic_hard']==[]
     assert reviewed['content_findings']==findings
+
+
+def test_incremental_draft_schema_matches_the_actual_new_bullet_limit():
+    from jobagent.steps import multi_agent as M
+    r=SimpleNamespace(roles=[SimpleNamespace(title='Engineer',company='Fixture')])
+    compact=M.experience_schema(r,compact=True).model_json_schema()
+    ordinary=M.experience_schema(r).model_json_schema()
+    assert compact['$defs']['CompactFillBullet']['properties']['text']['maxLength']==M.T.BULLET_MAX
+    assert ordinary['$defs']['FillBullet']['properties']['text']['maxLength']==M.T.BULLET_VERBATIM_MAX
 
 
 def panel_world(tmp_path,monkeypatch,scores):
