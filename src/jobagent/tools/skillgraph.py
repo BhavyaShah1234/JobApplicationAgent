@@ -63,14 +63,51 @@ def norm(term: str) -> str:
     return BUILTIN_ALIASES.get(t, t)
 
 
-def clean_skills(terms: list[str]) -> list[str]:
-    """A posting's technical_skills as individual skills: comma/slash lists split, junk and long phrases dropped, duplicates by `norm` removed."""
+US_STATES = {"alabama": "al", "alaska": "ak", "arizona": "az", "arkansas": "ar", "california": "ca", "colorado": "co", "connecticut": "ct", "delaware": "de",
+             "florida": "fl", "georgia": "ga", "hawaii": "hi", "idaho": "id", "illinois": "il", "indiana": "in", "iowa": "ia", "kansas": "ks", "kentucky": "ky",
+             "louisiana": "la", "maine": "me", "maryland": "md", "massachusetts": "ma", "michigan": "mi", "minnesota": "mn", "mississippi": "ms", "missouri": "mo",
+             "montana": "mt", "nebraska": "ne", "nevada": "nv", "new hampshire": "nh", "new jersey": "nj", "new mexico": "nm", "new york": "ny", "north carolina": "nc",
+             "north dakota": "nd", "ohio": "oh", "oklahoma": "ok", "oregon": "or", "pennsylvania": "pa", "rhode island": "ri", "south carolina": "sc",
+             "south dakota": "sd", "tennessee": "tn", "texas": "tx", "utah": "ut", "vermont": "vt", "virginia": "va", "washington": "wa", "west virginia": "wv",
+             "wisconsin": "wi", "wyoming": "wy", "district of columbia": "dc"}
+# Place names that postings list beside their technologies (pay-transparency sections: "NY, WA, CA"); they are not skills. Two-letter codes that are
+# also real technologies ("go" is not one of them, "r" and "c" are not state codes) are only dropped when written in capitals.
+PLACE_WORDS = set(US_STATES) | {c.upper() for c in US_STATES.values()} | {"remote", "hybrid", "onsite", "on-site", "usa", "us", "united states", "emea", "apac", "latam"}
+
+
+def is_place(term: str, places: set[str] = frozenset()) -> bool:
+    """True when `term` is a US state (name or capitalised code), a work-mode word, or a place named in the posting's own locations."""
+    t = str(term).strip()
+    return t in PLACE_WORDS or t.lower() in {k for k in PLACE_WORDS if len(k) > 2} or t.lower() in places
+
+
+def posting_places(jd: dict) -> set[str]:
+    """The place words of a posting's own location fields (cities, states), lower case, for `is_place`."""
+    out: set[str] = set()
+    for loc in [*(jd.get("locations") or []), *(jd.get("locations_resolved") or [])]:
+        for part in re.split(r"[,;/|]| - ", str(loc if not isinstance(loc, dict) else " ".join(map(str, loc.values())))):
+            part = part.strip().lower()
+            if 2 < len(part) < 40:
+                out.add(part)
+    return out
+
+
+def clean_skills(terms: list[str], places: set[str] = frozenset()) -> list[str]:
+    """A posting's technical_skills as individual skills: comma/slash lists split, junk, long phrases and place names dropped, duplicates by `norm` removed.
+
+    Args:
+        terms: The posting's `technical_skills`.
+        places: Extra place words to drop (the posting's own locations, see `posting_places`).
+
+    Returns:
+        The individual skills, in order.
+    """
     out, seen = [], set()
     for raw in terms or []:
         for part in re.split(r",|;|\band\b(?= [A-Z])|\|", str(raw)):
             part = part.strip(" .-•")
             key = norm(part)
-            if not key or len(key) > 40 or len(key.split()) > 4 or key in seen or (len(key.split()) > 1 and GENERIC_SKILL.search(key)):
+            if not key or len(key) > 40 or len(key.split()) > 4 or key in seen or (len(key.split()) > 1 and GENERIC_SKILL.search(key)) or is_place(part, places):
                 continue
             seen.add(key)
             out.append(part)
@@ -241,6 +278,23 @@ class Graph:
         linked = {e["src"] for e in self.edges.values()} | {e["dst"] for e in self.edges.values()}
         for nid in [n for n, v in self.nodes.items() if v["kind"] != "role" and n not in linked]:
             del self.nodes[nid]
+
+    def prune_noise(self) -> list[str]:
+        """Remove skill nodes that are really place names (US states and codes, remote/hybrid) left by older builds, with the edges only they supported.
+
+        Returns:
+            The names removed.
+        """
+        gone = [n["name"] for n in self.of_kind("skill") if is_place(n["name"])]
+        for name in gone:
+            nid = self.find("skill", name)
+            for key in [k for k, e in self.edges.items() if nid in (e["src"], e["dst"])]:
+                del self.edges[key]
+            self.nodes.pop(nid, None)
+        linked = {e["src"] for e in self.edges.values()} | {e["dst"] for e in self.edges.values()}
+        for nid in [n for n, v in self.nodes.items() if v["kind"] == "duty" and n not in linked]:
+            del self.nodes[nid]
+        return gone
 
     def merge(self, keep: str, drop: str) -> None:
         """Fold node `drop` into `keep`: its edges, aliases and sources move over; edge weights add up by posting."""
@@ -542,7 +596,7 @@ def ingest(g: Graph, jd: dict, role_id: str, *, ask=default_ask, embed=None, dut
     cur = g.postings.get(key)
     if cur and (cur.get("fp") is None or cur["fp"] == fp):
         return {"added_skills": [], "added_duties": [], "skipped": True}
-    skills = clean_skills(jd.get("technical_skills") or [])
+    skills = clean_skills(jd.get("technical_skills") or [], posting_places(jd))
     duties = ask(jd, list(dict.fromkeys([*DEFAULT_DUTIES, *(n["name"] for n in g.of_kind("duty"))])), skills) if skills else []
     if cur:
         g.retract(key)
@@ -595,7 +649,7 @@ def add_posting(jd: dict, role_id: str, settings=None, *, ask=default_ask, embed
     cur = snap.postings.get(jd_key(jd))
     if cur and (cur.get("fp") is None or cur["fp"] == jd_fp(jd, role_id)):
         return None
-    skills = clean_skills(jd.get("technical_skills") or [])
+    skills = clean_skills(jd.get("technical_skills") or [], posting_places(jd))
     duties = ask(jd, list(dict.fromkeys([*DEFAULT_DUTIES, *(n["name"] for n in snap.of_kind("duty"))])), skills) if skills else []
     with locked(s, timeout):
         g = load(s)
@@ -839,7 +893,7 @@ def job_suggestions(job_dir: Path | None, jd: dict, role_id: str, resume_terms: 
             return {}
         g = load(s)
         owned = owned_with_evidence(g, resume_terms, s)
-        res = suggest(g, clean_skills(jd.get("technical_skills") or []), role_id, owned, {norm(t) for t in resume_terms}, s.skills_max_neighbours)
+        res = suggest(g, clean_skills(jd.get("technical_skills") or [], posting_places(jd)), role_id, owned, {norm(t) for t in resume_terms}, s.skills_max_neighbours)
         text = _posting_text(jd, job_dir)
         for k in ("owned", "review"):                                   # skills the posting itself names are its own, not suggestions
             res[k] = [x for x in res[k] if not named_in(text, x)]

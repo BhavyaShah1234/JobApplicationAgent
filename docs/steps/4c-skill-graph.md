@@ -47,3 +47,8 @@ run. The tests keep the graph off (`SKILLS_USE_GRAPH=false` in `tests/conftest.p
 - **The resume stage's cache inputs** include the graph's effect (`jobagent tailor` rebuilds after you approve a skill, the graph grows or
   you switch it off) without `--force`.
 - `jobagent skills sync` exits non-zero when any scrape failed and says which roles found nothing.
+
+## Place names are not skills (2026-11-19)
+Postings often list places beside their technologies (pay-transparency sections: "NY, WA, CA"), and the first live runs showed "NY", "WA" and "Seattle" among the
+review suggestions. They never reached a resume (only owned skills can), but they were noise. Now US states (names and capitalised codes), work-mode words
+(remote, hybrid) and the posting's own locations are dropped when a posting is read, and `jobagent skills prune` removes the ones older builds stored.

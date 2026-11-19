@@ -115,6 +115,23 @@ def register(app: typer.Typer, console) -> None:
         if failed:
             raise typer.Exit(1)
 
+    @skills_app.command("prune")
+    def prune() -> None:
+        """Remove place names ("NY", "WA", "Seattle"...) that older builds took for skills."""
+        from jobagent.config import get_settings
+        from jobagent.tools import skillgraph as SG
+        s = get_settings()
+        try:
+            with SG.locked(s, 30):
+                g = SG.load(s)
+                before = g.content_hash()
+                gone = g.prune_noise()
+                SG.save(g, f"prune: {len(gone)} place name(s)", before, s)
+        except TimeoutError as exc:
+            console.print(f"skills: {exc}; try again in a moment")
+            raise typer.Exit(1) from exc
+        console.print(f"skills: removed {len(gone)} place name(s): {', '.join(gone[:12]) or 'none'}")
+
     @skills_app.command("show")
     def show(role: str = typer.Option(None, help="Only this role id.")) -> None:
         """Roles, their duties and the skills under each duty."""

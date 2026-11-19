@@ -259,3 +259,26 @@ def test_languages_do_not_steer_the_neighbours():
     g.nodes[g.find("skill", "Python")]["category"] = "language"
     res = SG.suggest(g, ["Python", "PyTorch"], "ml", owned=set(), on_resume=set())
     assert [x["skill"] for x in res["review"]] == ["JAX"]                       # React sits under a duty only Python (a language) points at
+
+
+def test_place_names_are_not_skills():
+    got = SG.clean_skills(["Python", "NY", "WA", "Washington", "Remote", "Seattle", "Go", "R", "C", "TypeScript"], {"seattle"})
+    assert got == ["Python", "Go", "R", "C", "TypeScript"]                                       # "Go", "R", "C" are technologies; state codes are not
+    assert SG.is_place("CA") and not SG.is_place("ca-style") and SG.is_place("New York")
+    assert {"seattle", "foster city"} <= SG.posting_places({"locations": ["Seattle, WA; Foster City, CA"], "locations_resolved": []})
+
+
+def test_a_posting_s_own_locations_are_dropped_from_its_skills():
+    g = SG.Graph()
+    jd_ = {"title": "x", "source_url": "https://x.test/1", "technical_skills": ["Go", "Kubernetes", "Foster City"], "locations": ["Foster City, CA"],
+           "responsibilities": ["r"], "preferred_qualifications": []}
+    SG.ingest(g, jd_, "swe", ask=lambda *a: [duty("cloud infrastructure", "Go", "Kubernetes")])
+    assert {n["name"] for n in g.of_kind("skill")} == {"Go", "Kubernetes"}
+
+
+def test_prune_removes_place_names_older_builds_stored():
+    g = SG.Graph()
+    SG.ingest(g, jd("p", ["Kubernetes"]), "swe", ask=lambda *a: [duty("cloud infrastructure", "Kubernetes")])
+    nid = g.add("skill", "WA", "tool", "old")
+    g.link(g.find("duty", "cloud infrastructure"), nid, "old")
+    assert g.prune_noise() == ["WA"] and g.find("skill", "WA") is None and g.find("skill", "Kubernetes")
