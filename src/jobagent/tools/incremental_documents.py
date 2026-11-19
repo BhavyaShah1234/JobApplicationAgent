@@ -140,8 +140,25 @@ class SkillFinding(BaseModel):
     category: str
     term: str = Field(description='Exact displayed term, including its parenthesized tools if any')
     kind: Literal['incorrect_category','soft_skill']
+    category_scope: Literal['intrinsic_type','application_domain','mixed'] = Field(description=
+        'Interpret the CURRENT heading: intrinsic_type asserts what a term IS (e.g. Programming Languages); '
+        'application_domain includes skills USED IN that area (e.g. Web Development or Distributed Systems); '
+        'mixed headings accept either named component. Do not silently narrow a domain into a product type.')
+    membership: Literal['intrinsic_member','used_in_domain','unrelated','nontechnical','uncertain'] = Field(description=
+        'Evaluate the strongest reasonable interpretation of the current heading. intrinsic_member: term is '
+        'of a named type; used_in_domain: technology/concept is used in a named application domain; '
+        'unrelated: no reasonable membership in ANY named component; nontechnical: soft skill; '
+        'uncertain: technical meaning or membership cannot be established. Only unrelated/nontechnical '
+        'can justify an error. A more specific preferred heading is not unrelated.')
     issue: str = Field(max_length=400)
     severity: Literal['error','suggestion']
+
+    @model_validator(mode='after')
+    def consistent_membership(self):
+        """Prevent domain usage from overriding a heading that asserts only a type."""
+        if self.category_scope=='intrinsic_type' and self.membership=='used_in_domain':
+            raise ValueError('A purely intrinsic type heading requires type membership, not domain usage')
+        return self
 
 
 class SkillReview(BaseModel):
@@ -652,7 +669,16 @@ def review(ctx, filled):
             'Do not request padding or finer categories. '
             'The owned template is a reference, not a required inventory: omitted template skills are NOT errors. '
             'If moving a term, recommend a heading that actually includes its type; never call a runtime a '
-            'programming language or a concept a library merely to fit an existing heading.',
+            'programming language or a concept a library merely to fit an existing heading. '
+            'First classify category_scope and membership using the schema. Application-domain headings '
+            'are not intrinsic-type assertions: Web Development includes frameworks used for web apps; '
+            'Mobile Development includes mobile platforms; Distributed Systems includes security and '
+            'identity capabilities used across distributed services. The availability of a narrower heading '
+            'does not make the current one wrong. A technical concept under its relevant domain is valid. '
+            'By contrast Programming Languages requires an actual language, not merely a runtime used by '
+            'languages; a database-only heading does not include an unrelated ML framework. '
+            'Only membership=unrelated or nontechnical can be severity=error. If the strongest reasonable '
+            'interpretation fits, return no finding; unresolved ambiguity can only be a suggestion.',
         'summary':'Check unsupported skills, credentials or employer/project achievements against the CURRENT '
             'sections and education, subject to the owner policy. Opening title, character length and the '
             'declared experience ceiling are checked in code: do not review them. '
@@ -709,7 +735,8 @@ def review(ctx, filled):
             if agent=='projects':
                 return adjudicate_projects({**ctx,'reasoner_lock':reasoner_lock,'review_abort':review_abort},payloads[agent],out.findings)
             if agent=='skills':
-                return [M.Finding(agent='skills',severity=f.severity,
+                return [M.Finding(agent='skills',severity=(f.severity if f.membership in
+                                 ('unrelated','nontechnical') else 'suggestion'),
                                  issue=f'{f.category}: {f.term}: {f.issue}'[:400]) for f in out.findings]
             if agent=='summary':return adjudicate_summary({**ctx,'review_abort':review_abort},payloads[agent],out.findings)
             return out.findings

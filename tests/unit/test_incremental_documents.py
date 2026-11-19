@@ -392,6 +392,7 @@ def test_summary_review_receives_current_date_and_target_company_context(tmp_pat
 def test_skill_critic_cannot_request_missing_skills_or_move_its_target(category,term):
     from jobagent.tools.incremental_documents import SkillReview,bind_skill_findings
     result=SkillReview(findings=[{'category':category,'term':term,'kind':'incorrect_category',
+                                 'category_scope':'intrinsic_type','membership':'unrelated',
                                  'issue':'Move this term.','severity':'error'}])
     with pytest.raises(ValueError,match='displayed term/category pair'):
         bind_skill_findings(result,[('Languages',['Java','C++']),('Runtime',['JVM'])])
@@ -401,8 +402,10 @@ def test_skill_critic_binds_actual_category_errors_and_parenthesized_tools():
     from jobagent.tools.incremental_documents import SkillReview,bind_skill_findings
     skills=[('Languages',['Java','JVM']),('ML',['NLP (spaCy, NLTK)'])]
     result=SkillReview(findings=[{'category':'languages','term':'JVM','kind':'incorrect_category',
+                                 'category_scope':'intrinsic_type','membership':'unrelated',
                                  'issue':'JVM is a runtime.','severity':'error'},
                                 {'category':'ML','term':'NLP (spaCy, NLTK)','kind':'incorrect_category',
+                                 'category_scope':'application_domain','membership':'used_in_domain',
                                  'issue':'An example advisory finding.','severity':'suggestion'}])
     bind_skill_findings(result,skills)
 
@@ -417,6 +420,7 @@ def test_bound_skill_review_keeps_current_scope_and_returns_shared_findings(tmp_
         assert schema is I.SkillReview
         assert 'omitted template skills are NOT errors' in messages[0].content
         result=schema(findings=[{'category':'Languages','term':'JVM','kind':'incorrect_category',
+                                 'category_scope':'intrinsic_type','membership':'unrelated',
                                  'issue':'Use a runtime heading.','severity':'error'}])
         kwargs['validator'](result)
         return result
@@ -427,6 +431,40 @@ def test_bound_skill_review_keeps_current_scope_and_returns_shared_findings(tmp_
     findings=review(ctx,filled)
     assert len(findings)==1 and isinstance(findings[0],M.Finding)
     assert findings[0].agent=='skills' and 'Languages: JVM:' in findings[0].issue
+
+
+@pytest.mark.parametrize('category,term,scope,membership',[
+    ('Web Development','.NET','application_domain','used_in_domain'),
+    ('Mobile Development','Android','application_domain','used_in_domain'),
+    ('Distributed Systems','Enterprise Authentication','application_domain','used_in_domain'),
+    ('Distributed Systems','Multi-tenant Security','application_domain','used_in_domain'),
+    ('AI & Development Tools','Python','mixed','intrinsic_member'),
+    ('Protocols','Ambiguous acronym','application_domain','uncertain'),
+])
+def test_valid_or_ambiguous_skill_membership_cannot_force_repair(tmp_path,monkeypatch,category,term,scope,membership):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(M.T,'facts_block',lambda:'Owner policy')
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
+        if stage!='review:skills':return M.Review(findings=[])
+        result=schema(findings=[{'category':category,'term':term,'kind':'incorrect_category',
+            'category_scope':scope,'membership':membership,'issue':'Prefer a narrower category.','severity':'error'}])
+        kwargs['validator'](result)
+        return result
+    monkeypatch.setattr(I,'invoke',inspect)
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
+         'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None}
+    filled=M.T.Filled.model_construct(summary='Engineer.',roles=[],skills=[M.T.SkillLine(category=category,terms=[term])])
+    findings=review(ctx,filled)
+    assert len(findings)==1 and findings[0].severity=='suggestion'
+
+
+def test_intrinsic_language_heading_cannot_be_satisfied_by_runtime_usage():
+    from jobagent.tools.incremental_documents import SkillFinding
+    with pytest.raises(ValueError,match='requires type membership'):
+        SkillFinding(category='Programming Languages',term='JVM',kind='incorrect_category',
+                     category_scope='intrinsic_type',membership='used_in_domain',issue='Runtime.',severity='error')
 
 
 def test_skills_context_keeps_only_verbatim_relevant_bounded_posting_excerpts():
