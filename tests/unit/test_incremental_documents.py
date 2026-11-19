@@ -15,6 +15,87 @@ class Output(BaseModel):
     text: str
 
 
+@pytest.mark.parametrize('tasks,changed',[
+    (['Remove the unsupported medical-device domain claim.'],False),
+    (['Remove the unsupported medical-device domain claim.'],True),
+    (None,False),
+])
+def test_explicit_summary_repair_cannot_cache_unchanged_text_but_reconciliation_can(tmp_path,monkeypatch,tasks,changed):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    from langchain_core.messages import SystemMessage
+    before='Software engineer with experience developing Windows and web applications for medical devices and cloud platforms.'
+    after='Software engineer with experience developing Windows and web applications, backend services and cloud platforms.'
+    f=M.T.Filled.model_construct(summary=before,roles=[],skills=[])
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':None,'company':'Company',
+         'models':{'summary':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None,'incremental':True}
+    monkeypatch.setattr(M.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    monkeypatch.setattr(M.T,'build_fill_prompt',lambda *a,**kw:[SystemMessage('Write from the sources.'),HumanMessage('JD')])
+    monkeypatch.setattr(M,'_context',lambda *a,**kw:'Current summary: '+before)
+    monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:M.SummaryOut(summary=after if changed else before))
+    _,out=M._run_agent(ctx,'summary',f,tasks or [M.SUMMARY_RECONCILE],'')
+    entries=list((tmp_path/'cache').glob('*.json'))
+    if tasks and not changed:
+        assert out is None and not entries
+    else:
+        assert out.summary==(after if changed else before) and len(entries)==1
+
+
+def test_incremental_summary_schema_rejects_outputs_that_merge_would_discard():
+    from pydantic import ValidationError
+    from jobagent.steps import multi_agent as M
+    with pytest.raises(ValidationError):M.IncrementalSummaryOut(summary='Engineer.')
+    assert M.SummaryOut(summary='Engineer.').summary=='Engineer.'
+
+
+@pytest.mark.parametrize('preposition',['at','for','with'])
+def test_aspirational_company_destination_stays_reviewable_as_company_business(preposition):
+    from jobagent.tools.incremental_documents import summary_review_parts
+    candidate='Engineer with Windows and web application experience.'
+    mission=f'Committed to advancing science through medical technology {preposition} Fixture Corp.'
+    assert summary_review_parts(candidate+' '+mission,'Fixture Corp')==(
+        candidate,['advancing science through medical technology'])
+    # An unsupported business proposition is still present for factual checking.
+    assert summary_review_parts('Committed to supporting retail banking at Fixture Corp.','Fixture Corp')==(
+        '',['supporting retail banking'])
+    assert summary_review_parts("Aligned with Fixture Corp's mission to deliver software as a service.",'Fixture Corp')==(
+        '',['deliver software as a service'])
+
+
+@pytest.mark.parametrize('text',[
+    'Currently employed at Fixture Corp, advancing medical technology.',
+    'Committed to advancing technology at Fixture Corp since 2020.',
+    'Committed to advancing technology after I led a clinical team at Fixture Corp.',
+    'Committed to advancing technology as CTO at Fixture Corp.',
+    'Committed to advancing technology having built a clinical team at Fixture Corp.',
+    'Committed to advancing technology for 3 years at Fixture Corp.',
+    'Committed to advancing technology at Another Corp.',
+])
+def test_company_interest_projection_never_hides_history_or_another_company(text):
+    from jobagent.tools.incremental_documents import summary_review_parts
+    assert summary_review_parts(text,'Fixture Corp')==(text,[])
+
+
+def test_company_business_criticism_cannot_be_reclassified_as_candidate_work(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(M.T,'facts_block',lambda:'Owner policy')
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
+        """Misclassify a real projected company phrase to exercise source type binding."""
+        if stage=='review:summary':
+            out=I.SummaryReview(findings=[I.SummaryFinding(kind='work',claim_quote='advancing medical technology',
+                issue='Candidate lacks employment at the target company.',severity='error')])
+            kwargs['validator'](out)
+        return M.Review(findings=[])
+    monkeypatch.setattr(I,'invoke',inspect)
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[],tex=''),
+         'jd':SimpleNamespace(model_dump=lambda **kw:{'company':'Fixture Corp'}),
+         'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None}
+    f=M.T.Filled.model_construct(summary='Committed to advancing medical technology at Fixture Corp.',roles=[],skills=[])
+    with pytest.raises(I.ReviewUnavailable):review(ctx,f)
+
+
 def test_success_survives_restart_but_prompt_schema_model_and_code_are_dependencies(tmp_path,monkeypatch):
     from jobagent.tools import incremental_documents as I
     calls=[]

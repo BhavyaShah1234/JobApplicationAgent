@@ -37,6 +37,12 @@ the classifier, exact offered choices and completeness markers, source validatio
 batched missing-answer questions, entity binding, closed-root reader, upload
 proofs, navigation rules, desktop fallback and approval/submission guards.
 
+An empty startup page with a confirmed HTTP 429 stops as resumable `rate_limit`,
+preserving the checkpoint and any server `Retry-After` hint. Desktop startup can
+read the actual navigation timing status without another HTTP request. Blankness
+alone does not imply rate limiting or a CAPTCHA; visible verification controls
+retain the existing human flow. A rate-limit stop does not request desktop fallback.
+
 Literal owner declarations can retain confirmation provenance and no-invention
 cautions without becoming unresolved conditional rules. Only the closed note
 format is eligible; output directives, conditions and unknown instructions still
@@ -121,6 +127,13 @@ when an owner-declared limit exists; the original summary is preserved, and its
 ceiling is enforced separately, including fractional amounts and an explicit
 zero-year limit. Substantive skill/credential text remains visible to review. Employer-specific
 and protected education, credential or legal history keep their numerical context.
+Explicit summary repairs must change the rejected paragraph before entering the
+cache; dependency-only reconciliation can preserve an accurate summary. The
+incremental schema also rejects paragraphs shorter than the merge accepts.
+A plain "Committed to advancing ... at [target company]" sentence is reviewed as
+a company-business proposition rather than current employment. Its factual content
+remains reviewable against company sources; candidate history, role qualifiers,
+numbers and other-company clauses remain in candidate prose.
 Unresolved incremental correctness findings remain blockers after the repair
 budget; reaching that budget cannot certify an invalid packet. The current
 document strategy keeps its previous acceptance policy.

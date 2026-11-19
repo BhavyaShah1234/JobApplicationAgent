@@ -435,11 +435,15 @@ def summary_review_parts(summary, company):
     if not company:return summary,[]
     pattern=re.compile(r'^(?:Committed to\s+(?:(?:advancing|supporting|furthering)\s+)?|Aligned with\s+)'+
         re.escape(company)+r"(?:['’]s)?\s+mission\s+(?:of|to)\s+(.+?)[.!]?$",re.I)
+    destination=re.compile(r'^Committed to\s+((?:advancing|supporting|furthering)\s+.+?)\s+'
+        r'(?:at|for|with)\s+'+re.escape(company)+r'[.!]?$',re.I)
     history=re.compile(r'\b(?:I|my|me|we|our|worked|employed|led|built|developed|since|years?)\b|\d',re.I)
     kept=[];missions=[]
     for sentence in re.split(r'(?<=[.!?])\s+',summary.strip()):
-        match=pattern.fullmatch(sentence)
-        if match and not history.search(match[1]):missions.append(match[1])
+        explicit=pattern.fullmatch(sentence)
+        match=explicit or destination.fullmatch(sentence)
+        if match and not history.search(match[1]) and (explicit or not re.search(r'\bas\b|\bhaving\b',match[1],re.I)):
+            missions.append(match[1])
         else:kept.append(sentence)
     return ' '.join(kept),missions
 
@@ -551,6 +555,10 @@ def review(ctx, filled):
             if agent=='summary' and any(not _words(f.claim_quote) or not any(
                     _words(f.claim_quote) in _words(s) for s in summary_claims(payloads[agent])) for f in result.findings):
                 raise ValueError('Summary findings must quote the current candidate prose or mission proposition')
+            if agent=='summary' and any(any(_words(f.claim_quote) in _words(p) for p in mission_propositions)
+                                         and _words(f.claim_quote) not in _words(summary_for_review)
+                                         and f.kind!='company' for f in result.findings):
+                raise ValueError('Target mission/business propositions need company evidence, not candidate work history')
             if agent=='summary' and any(re.search(r"\b(?:ph\.?d|doctorate|bachelor|master(?:['’]s|\s+of)|gpa)\b",f.claim_quote,re.I)
                                          and f.kind!='credential' for f in result.findings):
                 raise ValueError('Degree and GPA claims require credential evidence, not work or company sources')

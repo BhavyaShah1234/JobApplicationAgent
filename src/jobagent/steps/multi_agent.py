@@ -53,6 +53,7 @@ DEFAULT_MODELS = {"experience": "devstral2-123b", "projects": "gpt-oss-120b", "s
 SITES = ats_sites.DEFAULT_SITES
 # 3 validator fix passes and 3 ATS rounds after the first score (5 and 5 until 2026-11-08: the user asked for 3)
 LAYOUT_PASSES, ATS_ROUNDS, TARGET = 3, 3, 90.0
+SUMMARY_RECONCILE = 'Reconcile the summary with the final changed experience, projects and skills; preserve accurate text.'
 BLANK_HARD_PT = 24  # more free height than this (about 2 lines) at the bottom disqualifies a version
 # Tasks that need the whole Experience section rewritten (coverage, length); anything else is a targeted bullet edit
 FULL_REWRITE = __import__("re").compile(r"(?i)not covered|pages?; it must be one|overflows|failed to compile|"
@@ -122,6 +123,12 @@ class SkillsOut(BaseModel):
 class SummaryOut(BaseModel):
     """The summary agent's answer: the Summary as plain text, within the length limits."""
     summary: str = Field(max_length=T.SUMMARY_MAX, description=f"Plain text, 2-3 complete sentences, at most {T.SUMMARY_TARGET} characters")
+
+
+class IncrementalSummaryOut(SummaryOut):
+    """Only cache a summary the merge can actually accept."""
+    summary: str = Field(min_length=80,max_length=T.SUMMARY_MAX,
+                        description=f'Plain text,2-3 complete sentences,aim for {T.SUMMARY_TARGET} characters')
 
 
 class IncrementalBulletFix(T.BulletFix):
@@ -455,7 +462,7 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
         else:
             schema = (experience_schema(ctx['r'],compact=bool(ctx.get('incremental')),
                                         **({'jd':ctx['jd']} if ctx.get('incremental') else {}))
-                      if agent=='experience' else {'skills':SkillsOut,'summary':SummaryOut}[agent])
+                      if agent=='experience' else {'skills':SkillsOut,'summary':IncrementalSummaryOut if ctx.get('incremental') else SummaryOut}[agent])
             # Live compact drafts repeatedly exhausted tool/schema retries,
             # then succeeded in JSON mode. Prefer that transport for the full
             # opt-in experience draft; retain the shared bounded fallbacks.
@@ -474,6 +481,15 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
                         missing=T.fill_checks(ctx['r'],ctx['jd'],proposed,len(ctx['r'].roles)*T.MAX_BULLETS)[0]
                         if missing:raise ValueError(f'Coverage rewrite must cover required JD indices {missing}')
                 guards['validator']=valid_references
+            elif ctx.get('incremental') and agent=='summary' and f is not None and any(
+                    task!=SUMMARY_RECONCILE for task in tasks):
+                def changed_summary(draft):
+                    """Do not cache an unchanged answer to an explicit summary repair."""
+                    if ' '.join(draft.summary.split())==' '.join(f.summary.split()):
+                        raise ValueError('Summary repair returned the unchanged paragraph. Address the supplied '
+                                         'findings with an actual correction; preserve supported facts and remove '
+                                         'unsupported claims rather than repeating them.')
+                guards['validator']=changed_summary
             out = _invoke(ctx, agent, model, schema, _section_messages(ctx, agent, f, tasks, last), log=log,**guards,
                           **({'first':'json_mode'} if ctx.get('incremental') and agent in ('experience','summary') else {}))
         log(f"  {agent} agent ({ctx['models'][agent]}): {time.monotonic() - t0:.0f}s")
@@ -934,7 +950,7 @@ def edit_sections(state: State) -> dict:
         updated = ensure_incremental_coverage(ctx,updated)
         summary_tasks = list(tasks.get('summary', []))
         if before!=_content_hash(ctx,updated):
-            summary_tasks.append('Reconcile the summary with the final changed experience, projects and skills; preserve accurate text.')
+            summary_tasks.append(SUMMARY_RECONCILE)
         if summary_tasks:
             _, summary = _run_agent(ctx, 'summary', updated, summary_tasks, state.get('last', ''))
             updated = _merge(ctx, updated, {'summary': summary})
