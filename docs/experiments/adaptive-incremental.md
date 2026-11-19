@@ -50,6 +50,12 @@ current date facts along with the other watched inputs.
 An external source change after earlier wizard pages were filled stops the run
 for reconciliation, rather than certifying answers on pages no longer visible.
 Readback acceptance uses a bounded state poll rather than three fixed delays.
+An unopened partial menu retains its last observed vocabulary for decision scope;
+only a newly observed vocabulary changes that scope. Evicting a menu cache after
+a failed lookup cannot reset its retry count. A source literal that was tried and
+rejected by a menu becomes one question with the actual offered choices, rather
+than repeated model guesses (for example, Asian versus specific Asian subgroups).
+Skipping that question stops unresolved filling without a retry-only loop.
 The existing two-attempt outer control-repair limit remains in force; exhausted
 repairs produce a private screenshot for diagnosis and a blocker.
 
@@ -94,6 +100,16 @@ whitespace normalization as rendering. Deterministic identity/number checks prec
 cached semantic attribution review. This prevents treating a matching number under
 another employer as evidence. It does not ask the owner to reconfirm generated
 duties/metrics: the standing declaration and existing claims policy remain in force.
+Incremental letter drafting prefers JSON mode after live tool-output retries.
+Source coverage is validated inside the bounded correction loop before caching.
+Typed, claim-bound supported/unsupported/uncertain review verdicts prevent positive
+observations from being recorded as errors; malformed or unbound verdicts fail
+validation. Semantic review receives each source once rather than repeated full
+quotes per sentence. A letter may omit a source metric but cannot change or add
+one. Its valediction is constrained; the template supplies the candidate name.
+Incremental duplicate checks require substantive shared phrases rather than tool
+connectors such as using C++ and ROS2; actual copied duties and word overlap remain
+checked. The current document strategy retains its previous duplicate policy.
 Degrees, employer identities, dates, personal histories and consents keep their
 existing boundaries.
 Project and summary factual reviews, the independent project adjudicator and the

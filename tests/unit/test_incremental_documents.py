@@ -544,7 +544,7 @@ def test_incremental_letter_attaches_source_and_claim_in_code_without_duplicate_
     assert letter.paragraphs[0].bindings[0].claim==letter.paragraphs[0].text
     assert letter.paragraphs[0].bindings[0].quote==bank['a']['text']
     monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
-    monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(issues=[]))
+    monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(findings=[]))
     assert L.check(letter,bank,None,'m',lambda _:None)==[]
     data['paragraphs'][0]['sentences'][0]['source_id']='invented'
     with pytest.raises(ValidationError):schema.model_validate(data)
@@ -553,16 +553,54 @@ def test_incremental_letter_attaches_source_and_claim_in_code_without_duplicate_
 def test_attribution_uses_the_same_dash_normalization_as_letter_rendering(monkeypatch):
     from jobagent.tools import incremental_documents as I
     monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
-    monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(issues=[]))
+    monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(findings=[]))
     paragraph=Paragraph(text='I built tooling, improving speed by 30%.',evidence=[],bindings=[
         L.Binding(claim='I built tooling — improving speed by 30%.',source_id='a',quote='Improved speed by 30%.')])
     assert L.check(Letter.model_construct(paragraphs=[paragraph]),
                    {'a':{'entity':'Alpha','text':'Improved speed by 30%.'}},None,'m',lambda _:None)==[]
 
 
-def test_final_project_evidence_survives_rendered_punctuation_but_excludes_an_unused_variant(tmp_path):
+@pytest.mark.parametrize('status',['supported','unsupported','uncertain'])
+def test_attribution_verdicts_distinguish_positive_observations_from_errors(monkeypatch,status):
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(findings=[L.AttributionFinding(
+        paragraph=1,claim='Built pipelines.',status=status,reason='The source agrees.' if status=='supported' else 'Mismatch or uncertainty.')]))
+    paragraph=Paragraph(text='Built pipelines.',evidence=[],bindings=[L.Binding(
+        claim='Built pipelines.',source_id='a',quote='Built pipelines, increasing test coverage by 40%.')])
+    bank={'a':{'entity':'Alpha','text':'Built pipelines, increasing test coverage by 40%.','kind':'employment'}}
+    # A letter may omit a source metric; it cannot add or change one.
+    issues=L.check(Letter.model_construct(paragraphs=[paragraph]),bank,None,'m',lambda _:None)
+    assert bool(issues)==(status!='supported')
+
+
+def test_attribution_rejects_an_unbound_reviewer_claim_and_legacy_observation_payload(monkeypatch):
+    from pydantic import ValidationError
+    from jobagent.tools import incremental_documents as I
+    with pytest.raises(ValidationError):L.AttributionReview.model_validate({'issues':['All claims are supported.']})
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(findings=[L.AttributionFinding(
+        paragraph=1,claim='Invented unseen claim.',status='unsupported',reason='Not actually in this letter.')]))
+    paragraph=Paragraph(text='Thank you for considering my application.',evidence=[],bindings=[])
+    with pytest.raises(ValueError,match='exact quote'):
+        L.check(Letter.model_construct(paragraphs=[paragraph]),{},None,'m',lambda _:None)
+
+
+def test_incremental_letter_closing_cannot_supply_a_name_or_placeholder():
+    from pydantic import ValidationError
+    from jobagent.tools.cover_letter import sourced_letter_schema
+    schema=sourced_letter_schema({})
+    packet={'salutation':'Dear Hiring Team,','closing':'Sincerely','paragraphs':[
+        {'sentences':[{'text':'Thank you.','source_id':''}]} for _ in range(4)]}
+    assert schema.model_validate(packet).closing=='Sincerely'
+    packet['closing']='Sincerely, [Your Name]'
+    with pytest.raises(ValidationError):schema.model_validate(packet)
+
+
+@pytest.mark.parametrize('raw',['Built routing—reduced latency by 20%.',
+    'Built pipelines, cutting failed runs 20%.','Connected storage -> realtime exports.'])
+def test_final_project_evidence_survives_rendered_punctuation_but_excludes_an_unused_variant(tmp_path,raw):
     from jobagent.tools import tailor as T
-    raw='Built routing—reduced latency by 20%.'
     (tmp_path/'projects.json').write_text(json.dumps({'kept':2,'ranked':[
         {'title':'Router','paragraph':raw},
         {'title':'Absent','paragraph':'Built a completely different system.'}]}))
@@ -578,7 +616,7 @@ def test_final_project_evidence_survives_rendered_punctuation_but_excludes_an_un
 def test_target_company_and_posting_title_are_not_confused_with_candidate_employer_attribution(monkeypatch):
     from jobagent.tools import incremental_documents as I
     monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
-    monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(issues=[]))
+    monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(findings=[]))
     text='I am interested in the Engineer position at Beta.'
     paragraph=Paragraph(text=text,evidence=[],bindings=[
         L.Binding(claim=text,source_id='posting',quote='Engineer at Beta')])
@@ -608,7 +646,7 @@ def test_jd_metric_cannot_supply_a_candidate_achievement():
 def test_company_number_can_be_quoted_without_becoming_candidate_work(tmp_path,monkeypatch):
     from jobagent.tools import incremental_documents as I
     monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
-    monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:L.AttributionReview(issues=[]))
+    monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:L.AttributionReview(findings=[]))
     paragraph=Paragraph(text='Beta launched its platform in 2025.',evidence=[],bindings=[
         L.Binding(claim='Beta launched its platform in 2025.',source_id='company',quote='Beta launched its platform in 2025.')])
     bank={'company':{'entity':'Beta','text':'Beta launched its platform in 2025.','kind':'company'}}

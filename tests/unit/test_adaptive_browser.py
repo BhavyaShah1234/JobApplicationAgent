@@ -7,6 +7,35 @@ from jobagent.filling.facts import Fact
 from jobagent.tools import forms
 from jobagent.steps import apply as A
 from test_filling_strategy import world, SourceModel, CONTACT
+import pytest
+
+
+@pytest.mark.parametrize('reply',[None,'Asian: South Asian'])
+def test_unavailable_broad_race_asks_for_an_offered_choice_once_instead_of_repair_loop(world,tmp_path,reply):
+    world.setup('''<label for=e>Email</label><input id=e required>
+      <label for=r>Race</label><input id=r role=combobox required
+       onclick="document.getElementById('menu').hidden=false">
+      <div id=menu role=listbox hidden>
+       <div role=option onmousedown="event.preventDefault()"
+        onclick="document.getElementById('r').value=this.textContent;this.parentElement.hidden=true">Asian: East Asian</div>
+       <div role=option onmousedown="event.preventDefault()"
+        onclick="document.getElementById('r').value=this.textContent;this.parentElement.hidden=true">Asian: South Asian</div>
+      </div>''')
+    world.page.goto('https://fixture.test/apply');questions=[]
+    def ask(items):
+        questions.append(items)
+        return {str(f['id']):reply for f in items}
+    filler=AdaptiveFiller([Fact('email',['Email'],'one@example.test','owner'),
+                           Fact('race',['Race'],'Asian','owner')],ask,checkpoint_path=tmp_path/'saved.json')
+    result=filler.fill(world.page,advance_pages=False,max_rounds=8)
+    assert len(questions)==1 and len(questions[0])==1
+    assert questions[0][0]['options']==['Asian: East Asian','Asian: South Asian']
+    assert result['state']==('page_complete' if reply else 'blocked'),result['blockers']
+    assert not any('round budget' in reason for reason in result['blockers'])
+    if reply:assert world.page.locator('#r').input_value()==reply
+    else:assert not any(r.get('label')=='Race' and r.get('outcome')=='verified' for r in result['records'])
+    assert world.page.locator('#e').input_value()=='one@example.test'
+    assert len([r for r in result['records'] if r.get('outcome')=='failed'])<=2
 
 
 def test_adaptive_uses_existing_workflow_without_any_submission(world):
@@ -16,6 +45,26 @@ def test_adaptive_uses_existing_workflow_without_any_submission(world):
     assert result['verified']==3 and result['filling_strategy']=='adaptive'
     assert not world.page.evaluate('!!window.sent')
     assert (world.job/'application/adaptive-v1.json').exists()
+
+
+def test_a_refused_stale_dispatch_replans_even_without_another_successful_field(world):
+    world.setup('<label for=x>Favourite colour</label><select id=x required><option value="">Choose</option><option>Red</option></select>')
+    world.page.goto('https://fixture.test/apply');questions=[]
+    class MutatesBeforeDispatch(AdaptiveFiller):
+        def plan(self,*args,**kwargs):
+            result=super().plan(*args,**kwargs)
+            if not getattr(self,'mutated',False):
+                self.mutated=True
+                world.page.evaluate("document.getElementById('x').options[1].textContent='Blue'")
+            return result
+    def ask(items):
+        questions.append(items)
+        return {str(f['id']):'Blue' for f in items}
+    filler=MutatesBeforeDispatch([Fact('colour',['Favourite colour'],'Red','owner')],ask)
+    result=filler.fill(world.page,advance_pages=False,max_rounds=5)
+    assert result['state']=='page_complete',result['blockers']
+    assert len(questions)==1 and world.page.locator('#x').input_value()=='Blue'
+    assert not any(r.get('answer')=='Red' and r.get('outcome')=='verified' for r in result['records'])
 
 
 def test_native_options_and_help_mutations_invalidate_live_inventory(world):

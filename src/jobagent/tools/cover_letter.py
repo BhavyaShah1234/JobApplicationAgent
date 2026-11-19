@@ -82,7 +82,8 @@ def sourced_letter_schema(bank):
     return create_model('SourcedLetter',
         salutation=(str, Field(max_length=80)),
         paragraphs=(list[paragraph], Field(min_length=3, max_length=4)),
-        closing=(str, Field(max_length=30)))
+        closing=(Literal['Sincerely','Best regards','Kind regards','Respectfully'], Field(
+            description='Valediction only; the template supplies the candidate name')))
 
 
 def attach_sources(draft, bank):
@@ -237,11 +238,20 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
                     'Company facts may cite company_context; '
                     'the position title may cite posting_context. Neither context establishes candidate achievements. '
                     'Do not borrow a number or technology from another employer.\nENTITY SOURCES:\n' + json.dumps(bank)))
+                messages.append(HumanMessage('Return exactly four paragraphs: introduction, two evidence paragraphs, '
+                    'and a short close. A closing sentence that claims skills, experience or credentials still '
+                    'needs its skills/summary/employment source_id; only pure courtesy or interest uses an empty ID. '
+                    'Use a valediction only in closing, without a name or placeholder.'))
                 # The template is part of the cache input even though only its
                 # locked layout/header is rendered after generation.
                 messages.append(HumanMessage('LETTER TEMPLATE VERSION: ' + hashlib.sha256(template.encode()).hexdigest()))
+                def validate_draft(value):
+                    """Correct missing claim bindings before caching or rendering a draft."""
+                    candidate=attach_sources(value,bank)
+                    if problems:=attribution.binding_issues(candidate,bank):
+                        raise ValueError('; '.join(problems))
                 draft = invoke(cache, 'letter', get_settings().model_writer, model, source_schema, messages,
-                               log=log, validator=lambda value: attach_sources(value, bank))
+                               log=log, validator=validate_draft,first='json_mode',deadline_s=180)
                 letter = attach_sources(draft, bank)
             else:
                 letter = llm.structured_invoke(model, Letter, messages, log=log)

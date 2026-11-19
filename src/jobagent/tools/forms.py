@@ -1212,6 +1212,10 @@ class FillError(RuntimeError):
     pass
 
 
+class UnavailableOption(FillError):
+    """A strict picker exhausted its offered choices without an exact match."""
+
+
 def _choose(question: str, answer: str, options: list[str], tie_break) -> str:
     if is_identity(question):
         # a fact about WHO: the named institution or nothing; the "Other" choice (whose name the form then asks for) when the list
@@ -1454,7 +1458,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
     if f.kind == "select":
         opt = (literal_identity_option(answer,f.options,person=bool(PERSON_Q.search(f.label))) if is_identity(f.label) else strict_option(answer,f.options)) if strict else close_option(answer, f.options) if close and not is_identity(f.label) else _choose(f.label, answer, f.options, tie_break)
         if opt is None:
-            raise FillError(f"{answer!r} isn't offered as such")
+            raise UnavailableOption(f"{answer!r} isn't offered as such")
         values=[v for label,v in zip(f.options,f.option_values) if label==opt]
         if values and len(set(values))!=1:raise FillError('The offered label identifies several distinct options')
         loc.select_option(**({'value':values[0]} if values else {'label':opt}),timeout=8000)
@@ -1483,7 +1487,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
     if f.kind == "buttons":  # press the button that is the answer (Ashby Yes / No)
         opt = close_option(answer, f.options) if close else _choose(f.label, answer, f.options, tie_break)
         if opt is None:
-            raise FillError(f"{answer!r} isn't offered as such")
+            raise UnavailableOption(f"{answer!r} isn't offered as such")
         k = f.options.index(opt)
         field_element(frame, f'[data-jf="{f.id}"][data-jf-opt="{k}"]').click(timeout=8000)
         page.wait_for_timeout(50)
@@ -1492,7 +1496,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         wanted = [a.strip() for a in (answer.split(";") if f.kind == "checkboxes" else [answer]) if a.strip()]
         chosen = [close_option(a, f.options) if close else _choose(f.label, a, f.options, tie_break) for a in wanted]
         if None in chosen:
-            raise FillError(f"{answer!r} isn't offered as such")
+            raise UnavailableOption(f"{answer!r} isn't offered as such")
         for k, o in enumerate(f.options):
             box = field_element(frame, f'[data-jf="{f.id}"][data-jf-opt="{k}"]')
             on = o in chosen
@@ -1582,7 +1586,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 return fill_field(page,view,f,fallback,files,strict=True)
         if opt is None and (strict or close):
             page.keyboard.press("Escape")
-            raise FillError(f"{answer!r} isn't offered as such")
+            raise UnavailableOption(f"{answer!r} isn't offered as such")
         if opt is None:
             try:
                 opt = _choose(f.label, answer, opts, tie_break)

@@ -75,6 +75,17 @@ def test_duplicates_across_bullets():
     f = _filled("Developed Python/PySpark and SQL/T-SQL transformations for robot data, cutting prep 20%.",
                 "Developed Python/PySpark and SQL/T-SQL transformations for clinical imaging, cutting cost 10%.")
     assert T.duplicates(T.parse(TEX), f)
+    assert T.duplicates(T.parse(TEX), f,substantive=True)
+
+
+def test_incremental_duplicate_check_requires_more_than_a_shared_technology_phrase():
+    f=_filled('Developed core runtime and middleware services for autonomous systems using C++ and ROS2.',
+              'Built messaging infrastructure for embedded devices using C++ and ROS2.')
+    assert T.duplicates(T.parse(TEX),f)  # Preserve the original policy for rollback/comparison.
+    assert T.duplicates(T.parse(TEX),f,substantive=True)==[]
+    copied=_filled('Implemented scalable REST APIs for clinical imaging and reduced errors by 20%.',
+                   'Implemented scalable REST APIs for robot control and reduced errors by 25%.')
+    assert T.duplicates(T.parse(TEX),copied,substantive=True)
 
 
 def test_quality_flags_academic_wording_and_missing_tech():

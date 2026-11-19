@@ -513,7 +513,7 @@ def check_layout(state: State) -> dict:
         tasks["experience"].append(f"The resume is {pages} pages; it must be one: shorten every bullet to one line "
                                    f"(about {T.BULLET_TARGET} characters, at most {T.BULLET_MAX}) and drop the least relevant bullet of the longest role.")
         tasks["skills"].append("The resume overflows one page: at most 2 tools per term, merge near-duplicates.")
-    tasks["experience"] += T.duplicates(r, f) + T.quality(r, jd, f)
+    tasks["experience"] += T.duplicates(r, f, **({'substantive':True} if ctx.get('incremental') else {})) + T.quality(r, jd, f)
     slots = len(r.roles) * T.MAX_BULLETS          # the most bullets the page layout allows (F18)
     uncovered = T.fill_checks(r, jd, f, slots)[0]
     if uncovered:

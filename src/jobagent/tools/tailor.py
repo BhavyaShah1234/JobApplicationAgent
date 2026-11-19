@@ -727,10 +727,13 @@ def _words(t: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", t.lower())
 
 
-def duplicates(r: Resume, f: Filled) -> list[str]:
+def duplicates(r: Resume, f: Filled, *, substantive: bool = False) -> list[str]:
     """Pairs of bullets (anywhere in Experience) that repeat each other: a shared 4-word phrase (ignoring very
-    common joiners) or > 50% word overlap. Returned as human-readable lines for the model and the report."""
+    common joiners) or > 50% word overlap. With substantive=True, a shared phrase
+    needs three substantial words, so a repeated tool list alone does not demand
+    rewriting distinct duties. Returned as lines for the model and report."""
     stop = {"and", "the", "to", "for", "of", "a", "an", "in", "on", "with", "by", "into", "from"}
+    if substantive:stop |= {'using','via'}
     items = [(e.role, k, b.text) for e in f.roles for k, b in enumerate(e.bullets)]
     out = []
     for x in range(len(items)):
@@ -739,6 +742,8 @@ def duplicates(r: Resume, f: Filled) -> list[str]:
             wa, wb = _words(ta), _words(tb)
             grams = lambda w: {tuple(w[i:i + 4]) for i in range(len(w) - 3) if not set(w[i:i + 4]) <= stop}
             shared = grams(wa) & grams(wb)
+            if substantive:
+                shared={gram for gram in shared if len({w for w in gram if w not in stop and len(w)>=3})>=3}
             sa, sb = set(wa) - stop, set(wb) - stop
             overlap = len(sa & sb) / max(1, min(len(sa), len(sb)))
             if shared or overlap > 0.5:

@@ -77,6 +77,33 @@ def test_invalid_control_does_not_reset_two_attempt_repair_budget(tmp_path):
     assert filler.failures[key(f)] == 2 and key(f) not in filler.cache
 
 
+def test_unopened_partial_menu_preserves_repair_scope_but_new_choices_reset_it(tmp_path):
+    field=Field(1,'combobox','Race',options=['Asian: East Asian','Asian: South Asian'],
+                options_state='partial',identity='race',frame_identity='epoch1')
+    filler,view=world(tmp_path,[field])
+    filler.observe_view(view)
+    filler.bindings[key(field)]={'schema':filler.signature(field),'evidence':filler.evidence(Decision('Asian'))}
+    filler.failures[key(field)]=2
+    spec=filler.signature(field)
+    view.fields=[replace(field,options=[])]
+    filler.observe_view(view)
+    assert filler.signature(view.fields[0])==spec and filler.failures[key(field)]==2
+    view.fields=[replace(field,options=['Asian'])]
+    filler.observe_view(view)
+    assert filler.signature(view.fields[0])!=spec and key(field) not in filler.failures
+
+
+def test_a_transient_readback_error_is_not_an_unavailable_search_choice(tmp_path):
+    from jobagent.tools import forms
+    field=Field(1,'combobox','School',options=['Initial search suggestion'],options_state='partial')
+    filler,_=world(tmp_path,[field]);decision=Decision('The actual school','owner','school')
+    filler.control_failed(field,decision,ValueError('control not accepted or exact readback unavailable'))
+    filler.control_failed(field,decision,forms.FillError('temporary widget failure'))
+    assert filler.unavailable_choices=={}
+    filler.control_failed(field,decision,forms.UnavailableOption('no exact offered match'))
+    assert key(field) in filler.unavailable_choices
+
+
 def test_corrupt_checkpoint_is_a_miss(tmp_path):
     (tmp_path/'decisions.json').write_text('{broken')
     filler, view = world(tmp_path)

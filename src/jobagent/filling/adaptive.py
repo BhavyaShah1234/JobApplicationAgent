@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from jobagent.tools.artifact_cache import digest, write_private
+from jobagent.tools import forms
 from .facts import Decision, key, norm, entity_scope
 from .planned import PlannedFiller
 from .adaptive_view import AdaptiveView
@@ -42,6 +43,8 @@ class AdaptiveFiller(PlannedFiller):
         self.restored = 0
         self.resumed_keys = set()
         self.human_scopes = {}
+        self.option_inventory = {}
+        self.unavailable_choices = {}
         self._live = None
         package = Path(__file__).parent
         self.implementation = digest({'code':{name:(package/name).read_text() for name in
@@ -58,7 +61,31 @@ class AdaptiveFiller(PlannedFiller):
 
     def signature(self, field):
         """Fingerprint all decision-relevant visible field properties."""
-        return digest(schema(field))
+        return digest(self.decision_schema(field))
+
+    def decision_schema(self, field):
+        """An unopened partial menu does not assert that previously read options vanished."""
+        spec=schema(field)
+        previous=self.option_inventory.get(key(field))
+        if field.kind=='combobox' and not field.options and field.options_state!='complete' and previous:
+            spec.update(options=list(previous[0]),options_state=previous[1])
+        return spec
+
+    def control_failed(self, field, decision, error):
+        """Remember an unavailable literal without inferring a more specific identity."""
+        if (isinstance(error,forms.UnavailableOption) and field.kind=='combobox' and field.options and
+                forms.strict_option(decision.value,field.options) is None):
+            self.unavailable_choices[key(field)]=(self.signature(field),decision.value)
+
+    def reconcile_choices(self, fields, answers, missing):
+        """Ask once when a tried source literal cannot identify an offered choice."""
+        for field in fields:
+            failed=self.unavailable_choices.get(key(field))
+            decision=answers[field.id]
+            if (failed and failed==(self.signature(field),decision.value) and field.options and
+                    forms.strict_option(decision.value,field.options) is None):
+                answers[field.id]=Decision(None,reason='saved answer does not identify an offered choice')
+                if field not in missing:missing.append(field)
 
     def applicable_inventory(self, inventory):
         """Exclude only schema branches the delivered schema explicitly disables."""
@@ -75,7 +102,7 @@ class AdaptiveFiller(PlannedFiller):
                           norm(' '.join((field.label,field.help,field.section))))): return None
         frame = self._live.view.frames.get(field.frame) if self._live and self._live.view else None
         frame_url = getattr(frame, 'url', '')
-        return digest({'step': self.step, 'frame_url': frame_url, 'schema': schema(field)})
+        return digest({'step': self.step, 'frame_url': frame_url, 'schema': self.decision_schema(field)})
 
     def evidence(self, decision):
         """Fingerprint bound facts, or conservatively the broader narrative/policy."""
@@ -93,13 +120,16 @@ class AdaptiveFiller(PlannedFiller):
 
     def observe_view(self, view):
         """Invalidate dependent decisions and restore only unique source-valid proposals."""
+        for field in view.fields:
+            if field.kind=='combobox' and (field.options or field.options_state=='complete'):
+                self.option_inventory[key(field)]=(list(field.options),field.options_state)
         semantic = [self.semantic_id(f) for f in view.fields]
         counts = Counter(semantic)
         current = {}
         for field, ident in zip(view.fields, semantic):
             field_key = key(field)
             spec = self.signature(field)
-            current[digest(field_key)] = {'schema': schema(field), 'semantic_id': ident,
+            current[digest(field_key)] = {'schema': self.decision_schema(field), 'semantic_id': ident,
                                           'invalid': bool(field.invalid)}
             previous = self.bindings.get(field_key)
             decision = self.cache.get(field_key)
@@ -155,7 +185,7 @@ class AdaptiveFiller(PlannedFiller):
             # The shared planner's global question alias can collapse two
             # same-labelled human replies. Give each literal its own live field
             # and semantic scope before another round can resolve from it.
-            ident = 'human:'+digest({'step':self.step,'field':key(field),'schema':schema(field)})[:24]
+            ident = 'human:'+digest({'step':self.step,'field':key(field),'schema':self.decision_schema(field)})[:24]
             self.session_facts[ident] = replace(fact,id=ident,value=decision.value,variants=[],target_key=key(field))
             self.session_fact_steps[ident] = self.step
             replaced.add(fact.id)

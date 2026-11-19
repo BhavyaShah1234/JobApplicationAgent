@@ -131,6 +131,14 @@ class PlannedFiller:
         except Exception:
             pass
 
+    def reconcile_choices(self, fields, answers, missing):
+        """Strategy hook for a known answer rejected by the portal's vocabulary."""
+        pass
+
+    def control_failed(self, field, decision, error):
+        """Strategy hook for retaining bounded repair evidence across rereads."""
+        pass
+
     def invoke(self,schema,messages,**kwargs):
         started=time.monotonic()
         try:return llm.structured_invoke(self.model,schema,messages,log=getattr(self,'log',None),**kwargs)
@@ -212,11 +220,13 @@ class PlannedFiller:
         for f in missing:
             if answers[f.id].reason in ('missing sponsorship timeframe evidence','explicit owner evidence missing','explicit residency evidence missing',
                                        'waiting for selected education record','explicit education evidence missing'):source_updates[f.id]=answers[f.id]
+        self.reconcile_choices(fields,answers,missing)
         # A known fact can still require rendering into the portal's vocabulary.
         render=[f for f in fields if f.kind=='combobox' and f.options and answers[f.id].value is not None
                 and forms.strict_option(answers[f.id].value,f.options) is None and not forms.is_identity(f.label)]
         model_missing=[f for f in [*missing,*render] if (answers[f.id].value is None or f in render)
-                       and f.id not in source_updates and answers[f.id].reason!='exact day missing from source'
+                       and f.id not in source_updates and answers[f.id].reason not in
+                           ('exact day missing from source','saved answer does not identify an offered choice')
                        and (self.step,key(f)) not in self.declined]
         if model_missing and self.model:
             routes={f.id:route(f,self.facts) for f in fields}
@@ -335,6 +345,7 @@ class PlannedFiller:
                             provenance.append('document:'+m.source+' quote:'+m.quote)
                         answers[f.id]=Decision(d.value,'; '.join(provenance),
                                                ','.join(x.id for x in bound), 'independently source checked')
+        self.reconcile_choices(fields,answers,missing)
         unresolved=[f for f in missing if answers[f.id].value is None and
                     answers[f.id].reason!='waiting for selected education record' and
                     (self.step,key(f)) not in self.declined and key(f) not in self.technical_failures]
@@ -484,18 +495,21 @@ class PlannedFiller:
                     # Parent controls first; always refresh the inventory after each mutation.
                     conditionals={f.id for f in todo if unlisted_school(f,view,self.facts) is not None}
                     order=sorted(todo,key=lambda f:(2 if f.id in conditionals else 0 if norm(f.label) in ('country','how did you hear about this position') else 1,f.id))
-                    changed=False
+                    changed=False;attempted=set()
                     for old in order:
                         fresh=live.current()
                         f=next((f for f in fresh.fields if key(f)==key(old)),None)
                         if f is None:continue
                         d=unlisted_school(f,fresh,self.facts) or decisions[old.id]
-                        if not self.can_execute(old,f,d):continue
+                        if not self.can_execute(old,f,d):
+                            changed=True  # The newly observed question needs a fresh plan.
+                            continue
                         if d.value is None:
                             if not f.required and (self.step,key(f)) in self.declined:
                                 self.cache[key(f)]=d
                             continue
                         try:
+                            attempted.add(key(f))
                             value=d.value
                             held_sha=None
                             proof=None
@@ -542,6 +556,7 @@ class PlannedFiller:
                         except Exception as e:
                             from jobagent.tools.challenge import Blocked
                             if isinstance(e,Blocked):raise
+                            self.control_failed(f,d,e)
                             row={'step':self.step,'field_key':key(f),'identity':f.identity,'label':f.label,'section':f.section,'frame':f.frame,'kind':f.kind,'slot':f.slot,
                                  'required':f.required,'outcome':'failed','error':str(e)[:200]}
                             records.append(row);self.record_state[(self.step,key(f))]=row
@@ -549,7 +564,7 @@ class PlannedFiller:
                             if f.kind=='combobox':live.catalogues.pop(f.locator_ref,None)
                     post=live.current()
                     if changed or {key(f) for f in post.fields}!={key(f) for f in view.fields} or any(
-                            0<self.failures.get(key(f),0)<2 for f in post.fields):continue
+                            key(f) in attempted and 0<self.failures.get(key(f),0)<2 for f in post.fields):continue
                     remaining=[f.label for f in post.fields if f.required and
                                (key(f) not in self.cache or self.cache[key(f)].value is None)]
                     if remaining:return self.result('blocked',records,started,remaining)
