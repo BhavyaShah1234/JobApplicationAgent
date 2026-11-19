@@ -314,7 +314,17 @@ def resolve(f, facts):
     if len(human)==1:matches=human
     if len(matches)>1:
         profile=[x for x in matches if x.source.startswith('applicant/')]
-        if profile:matches=profile
+        if profile:
+            # An explicitly saved self-identification choice can refine a broad
+            # profile category absent from this menu. Never derive the subgroup
+            # from nationality, and never replace a contradictory declaration.
+            refinement=[]
+            if re.search(r'\brace\b|\bethnicity\b',norm(f.label)) and f.options and all(
+                    not x.instructions and forms.strict_option(x.value,f.options) is None for x in profile):
+                refinement=[x for x in matches if x.source.startswith('learned:') and not x.instructions and
+                    forms.strict_option(x.value,f.options) is not None and all(
+                        norm(x.value).startswith(norm(p.value)+' ') and norm(p.value) for p in profile)]
+            matches=refinement or profile
         if len({(x.value,x.instructions,x.section) for x in matches})==1:matches=matches[:1]
     if len(matches) != 1:
         return Decision(None, reason='no unique source-backed mapping')

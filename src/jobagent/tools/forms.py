@@ -1997,7 +1997,11 @@ SENDS_FORM_JS = """e => {
   const fillable = form ? [...form.elements].filter(c => /^(INPUT|SELECT|TEXTAREA)$/.test(c.tagName)
       && !['hidden', 'submit', 'button', 'image', 'reset'].includes(c.type) && shown(c)).length : 0;
   let href = '';
-  if (e.tagName === 'A' && e.getAttribute('href')) {
+  // Some careers sites publish the application URL on a menu button. Read its
+  // address without executing the dropdown's scripts or submitting any form.
+  const address = e.tagName === 'A' || (e.tagName === 'BUTTON' && !form &&
+      ['true', 'menu'].includes(e.getAttribute('aria-haspopup')));
+  if (address && e.getAttribute('href')) {
     try {
       const to = new URL(e.getAttribute('href'), location.href), here = new URL(location.href);
       if (/^https?:$/.test(to.protocol) && to.origin + to.pathname + to.search !== here.origin + here.pathname + here.search)
@@ -2059,14 +2063,19 @@ def _workday_listing_entry(view: PageView, button) -> bool:
     }"""))
 
 
-def click_open_application(page: Page, view: PageView, pattern: re.Pattern, *, expected_url: str | None = None) -> str | None:
+def click_open_application(page: Page, view: PageView, pattern: re.Pattern, *, expected_url: str | None = None,
+                           navigation_only: bool = False) -> str | None:
     """Startup: open the application (Apply, Apply Manually, Continue application). Navigation only, and only what can be
     established as navigation:
     - a control that belongs to a form with fields to fill is that form's own control: never acted on here;
     - a real link to another page is followed by loading its address (no click handler runs), except the recognised
       fieldless Workday listing component that opens the client-side application chooser;
     - any other control is clicked only while the page has no application fields at all (nothing for it to send);
-      with fields on the page it is left to the planner, the filler and the reviewed submission path (step 13)."""
+      with fields on the page it is left to the planner, the filler and the reviewed submission path (step 13).
+
+    navigation_only follows published addresses without invoking any event handler.
+    It can leave a listing whose unrelated search filters remain collapsed.
+    """
     from jobagent.tools import challenge
     if challenge.guard(page):
         view = read_page(page)
@@ -2083,6 +2092,8 @@ def click_open_application(page: Page, view: PageView, pattern: re.Pattern, *, e
                 continue
             if info["href"]:
                 if _workday_listing_entry(view, btn):
+                    if navigation_only:
+                        continue
                     _press(page, btn)
                     return text
                 try:
@@ -2090,6 +2101,8 @@ def click_open_application(page: Page, view: PageView, pattern: re.Pattern, *, e
                 except Exception:
                     continue
                 return text
+            if navigation_only:
+                continue
             if fields_on_page and not _successfactors_listing_entry(page, view, btn, expected_url):
                 continue
             _press(page, btn)

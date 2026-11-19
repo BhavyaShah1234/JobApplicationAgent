@@ -195,6 +195,9 @@ class PlannedFiller:
             if d.source!='human' and f.id not in referral_policy and not (d.value is not None and d.fact_id.startswith('application.answer.')) and routed is not None:d=routed
             answers[f.id]=d
             if d.value is None:missing.append(f)
+        # A literal rejected by an opened picker is missing evidence too. Give
+        # saved owner clarifications a chance before asking the owner again.
+        self.reconcile_choices(fields,answers,missing)
         source_updates=dict(referral_policy)
         if self.source_resolver:
             eligible=[f for f in fields if (f in missing and f.id not in referral_policy or f.id in source_fallback)

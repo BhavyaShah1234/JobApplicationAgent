@@ -47,6 +47,30 @@ def test_adaptive_uses_existing_workflow_without_any_submission(world):
     assert (world.job/'application/adaptive-v1.json').exists()
 
 
+def test_rejected_broad_race_uses_saved_owner_subgroup_before_another_human_question(world,monkeypatch):
+    from jobagent.tools import learned
+    question='Race (Please select one option that best describes how you identify)'
+    world.data['EEO']=[{'question':'Race / ethnicity','seen':['Race',question],'answer':'Asian'}]
+    monkeypatch.setattr(learned,'load',lambda:[{
+        'question':question,'answer':'Asian: South Asian','company':'fixture',
+        'options':['Asian: East Asian','Asian: South Asian']}])
+    monkeypatch.setattr(learned,'_vectors',lambda _:pytest.fail('The exact saved answer needs no embeddings'))
+    world.setup(CONTACT+'''<label for=r>'''+question+'''</label><input id=r role=combobox required
+      onclick="document.getElementById('menu').hidden=false">
+      <div id=menu role=listbox hidden>
+       <div role=option onmousedown="event.preventDefault()"
+        onclick="document.getElementById('r').value=this.textContent;this.parentElement.hidden=true">Asian: East Asian</div>
+       <div role=option onmousedown="event.preventDefault()"
+        onclick="document.getElementById('r').value=this.textContent;this.parentElement.hidden=true">Asian: South Asian</div>
+      </div>''')
+    result=A.run(world.page,world.job,'fixture',model=SourceModel(),
+                 filling_strategy='adaptive',log=lambda _:None)
+    assert result['ready_to_submit'],result.get('reason')
+    assert result['experimental_questions']==0
+    assert world.page.locator('#r').input_value()=='Asian: South Asian'
+    assert not world.page.evaluate('!!window.sent')
+
+
 def test_a_refused_stale_dispatch_replans_even_without_another_successful_field(world):
     world.setup('<label for=x>Favourite colour</label><select id=x required><option value="">Choose</option><option>Red</option></select>')
     world.page.goto('https://fixture.test/apply');questions=[]

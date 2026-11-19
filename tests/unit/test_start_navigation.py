@@ -81,6 +81,41 @@ def test_collapsed_required_controls_do_not_make_final_apply_a_startup_action():
     assert not state['sent'] and 'remain collapsed' in view.error
 
 
+@pytest.mark.parametrize('entry', [
+    '<a href="https://jobs.example.test/application" onclick="window.sent=true">Apply now</a>',
+    '<button aria-haspopup="true" href="https://jobs.example.test/application" '
+    'onclick="window.sent=true">Apply now</button>',
+])
+def test_published_application_address_precedes_unrelated_collapsed_search_filters(entry):
+    html = '''<form role=search onsubmit="window.sent=true;return false">
+      <button aria-expanded=false aria-controls=filters>Show More Options</button>
+      <div id=filters hidden><label>Location<input name=location></label></div></form>
+      <label>Job alert frequency<input type=number value=7></label>''' + entry
+    state, view = start(html, routes={'https://jobs.example.test/application': FORM3})
+    assert state['url'] == 'https://jobs.example.test/application' and len(view.fields) == 3
+    assert not state['sent'] and view.coverage.complete
+
+
+def test_a_published_button_address_inside_candidate_form_cannot_bypass_submission_guard():
+    html = '''<form onsubmit="window.sent=true;return false"><label>Email<input type=email></label>
+      <button aria-expanded=false aria-controls=details>More information</button>
+      <div id=details hidden><label>Phone<input type=tel></label></div>
+      <button aria-haspopup=true href="https://jobs.example.test/send"
+      onclick="window.sent=true">Apply now</button></form>'''
+    state, view = start(html, allow_error=True)
+    assert 'remain collapsed' in view.error and not state['sent']
+    assert 'https://jobs.example.test/send' not in state['requests']
+
+
+@pytest.mark.parametrize('href', ['javascript:window.sent=true', '#apply'])
+def test_collapsed_controls_do_not_allow_script_or_fragment_menu_apply_handlers(href):
+    html = '''<form><button aria-expanded=false aria-controls=details>More information</button>
+      <div id=details hidden><label>Email<input type=email></label></div></form>'''
+    html += f'<button aria-haspopup=true href="{href}" onclick="window.sent=true">Apply now</button>'
+    state, view = start(html, allow_error=True)
+    assert 'remain collapsed' in view.error and not state['sent']
+
+
 def test_startup_opens_sections_through_expand_all_and_leaves_final_apply_alone():
     html='''<form onsubmit="window.sent=true;return false">
       <a role=button onclick="panel.hidden=false;heading.setAttribute('aria-expanded','true')">Expand all sections</a>

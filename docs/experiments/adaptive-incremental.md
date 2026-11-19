@@ -68,13 +68,21 @@ only a newly observed vocabulary changes that scope. Generic menu placeholders
 such as Select... are excluded from decision help, so selecting a value does not
 invalidate that accepted answer; substantive instructions remain part of scope. Evicting a menu cache after
 a failed lookup cannot reset its retry count. A source literal that was tried and
-rejected by a menu becomes one question with the actual offered choices, rather
+rejected by a menu first checks saved owner clarifications, then becomes one question with the actual offered choices, rather
 than repeated model guesses (for example, Asian versus specific Asian subgroups).
+An exact saved race self-identification may refine an unavailable broad profile
+category to an explicitly offered subgroup. Nationality never supplies that
+choice, and a contradictory category cannot override the profile this way.
 Skipping that question stops unresolved filling without a retry-only loop.
 A bare contact Location field uses the prepared city; explicit office guidance,
 country catalogues and employer/school/reference row scopes retain their own sources.
 The existing two-attempt outer control-repair limit remains in force; exhausted
 repairs produce a private screenshot for diagnosis and a blocker.
+
+Before expanding collapsed controls on a listing, startup can follow a published
+application address without executing its handler. This includes an outside-form
+menu button advertising a real HTTP(S) URL. Controls belonging to a form with
+visible fields remain excluded; fragment/script addresses cannot use this path.
 
 `application/adaptive-v1.json` stores serializable accepted decisions and field
 schemas. Restoration requires unique matching semantics and current evidence;

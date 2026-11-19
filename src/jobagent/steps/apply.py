@@ -1533,6 +1533,14 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
             response = page.goto(url, wait_until="domcontentloaded")  # back to the posting, signed in
             continue
         if getattr(getattr(view,'coverage',None),'collapsed',[]):
+            # A listing can contain collapsed search filters or other utility
+            # forms. A published application URL needs no disclosure clicks;
+            # load its address while keeping all scripts/submission guards off.
+            opened = next((label for pat in START if (label := forms.click_open_application(
+                page, view, pat, expected_url=url, navigation_only=True))), None)
+            if opened:
+                log(f"apply: opened application address from {opened!r}")
+                continue
             from jobagent.tools import disclosures
             if disclosures.expand(page,view,log):
                 continue

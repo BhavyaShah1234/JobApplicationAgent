@@ -79,3 +79,34 @@ def test_the_candidates_answer_sheet_still_answers_this_postings_qualification_q
     decision = resolve(field, facts)
     assert decision.value == 'Yes'
     assert decision.source == 'applicant/application/answers.md'
+
+
+@pytest.mark.parametrize('saved,expected', [
+    ('Asian: South Asian','Asian: South Asian'),
+    ('Asian: East Asian','Asian: East Asian'),
+    ('White',None),
+])
+def test_explicit_saved_race_choice_refines_an_unavailable_broad_category_only(saved,expected):
+    from jobagent.filling.facts import Fact,resolve
+    question='Race (Please select one option that best describes how you identify)'
+    field=forms.Field(id=0,kind='select',label=question,
+                      options=['Asian: South Asian','Asian: East Asian','White'])
+    facts=[Fact('profile',['Race',question],'Asian','applicant/EEO/Race'),
+           Fact('saved',[question],saved,'learned:fixture:'+question)]
+    assert resolve(field,facts).value==expected
+
+
+def test_a_saved_subgroup_does_not_replace_an_offered_broad_profile_category():
+    from jobagent.filling.facts import Fact,resolve
+    field=forms.Field(id=0,kind='select',label='Race',options=['Asian','Asian: South Asian'])
+    facts=[Fact('profile',['Race'],'Asian','applicant/EEO/Race'),
+           Fact('saved',['Race'],'Asian: South Asian','learned:fixture:Race')]
+    assert resolve(field,facts).value=='Asian'
+
+
+def test_nationality_is_not_a_source_for_a_race_subgroup():
+    from jobagent.filling.facts import Fact,resolve
+    field=forms.Field(id=0,kind='select',label='Race',options=['Asian: South Asian','White'])
+    facts=[Fact('profile',['Race'],'Asian','applicant/EEO/Race'),
+           Fact('nationality',['Citizenship'],'India','applicant/Citizenship')]
+    assert resolve(field,facts).value is None
