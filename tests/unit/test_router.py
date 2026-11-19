@@ -124,3 +124,18 @@ def test_route_node_reads_latest_human_message():
 
     out = route_node({"messages": [SystemMessage("bootstrap ok"), HumanMessage("Google, NVIDIA")]})
     assert [i["value"] for i in out["routed"]["items"]] == ["Google", "NVIDIA"]
+
+
+def test_a_link_that_already_has_a_scheme_is_never_rewritten():
+    """`https://job-boards.greenhouse.io/...` was turned into `https://job-https://boards.greenhouse.io/...` (the schemeless-link rule matched inside it)."""
+    for url in ("https://job-boards.greenhouse.io/doordashusa/jobs/8225722", "http://my-jobs.example.co.uk/a-b/1?x=y-z",
+                "https://boards.greenhouse.io/acme/jobs/123", "https://www.job-site.com/careers/42"):
+        r = route(url)
+        assert r.kind == "url" and [i.value for i in r.items] == [url], url
+
+
+def test_schemeless_links_still_get_https_including_hyphenated_hosts():
+    assert [i.value for i in route("boards.greenhouse.io/acme/jobs/123").items] == ["https://boards.greenhouse.io/acme/jobs/123"]
+    assert [i.value for i in route("job-boards.greenhouse.io/acme/jobs/9").items] == ["https://job-boards.greenhouse.io/acme/jobs/9"]
+    mixed = route("https://job-boards.greenhouse.io/a/jobs/1 and jobs.lever.co/b/2")
+    assert [i.value for i in mixed.items] == ["https://job-boards.greenhouse.io/a/jobs/1", "https://jobs.lever.co/b/2"]

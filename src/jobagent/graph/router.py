@@ -18,7 +18,9 @@ from urllib.parse import urlparse
 from jobagent.config import get_settings
 
 URL_RE = re.compile(r"https?://[^\s,;<>\"']+", re.I)
-BARE_LINK_RE = re.compile(r"(?<![\w/@.:])(?:www\.)?(?:[a-z0-9-]+\.)+[a-z]{2,}/[^\s,;<>\"']*", re.I)
+BARE_LINK_RE = re.compile(r"(?<![\w/@.:-])(?:www\.)?(?:[a-z0-9-]+\.)+[a-z]{2,}/[^\s,;<>\"']*", re.I)
+# A real URL is consumed first, so a schemeless-link rule can never match inside it ("https://job-boards.greenhouse.io/..." once became "job-https://boards...").
+WITH_OR_WITHOUT_SCHEME_RE = re.compile(r"(?P<url>https?://[^\s,;<>\"']+)|(?P<bare>" + BARE_LINK_RE.pattern + ")", re.I)
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
 TABLE_SUFFIXES = {".csv", ".xlsx", ".xlsm"}
 # Legal-form tokens that follow a comma inside one company name ("Acme, Inc.").
@@ -179,7 +181,7 @@ def route(trigger: str) -> Routed:
     if Path(text.strip("'\"")).suffix.lower() in TABLE_SUFFIXES and "\n" not in text:
         return Routed("file", warnings=[f"file not found: {text} (put it in data/ or give the full path)"])
     # Links pasted without a scheme ("boards.greenhouse.io/acme/jobs/123") count as URLs; bare domains don't.
-    text = BARE_LINK_RE.sub(lambda m: "https://" + m.group(0), text)
+    text = WITH_OR_WITHOUT_SCHEME_RE.sub(lambda m: m.group("url") or "https://" + m.group("bare"), text)
     urls = [u.rstrip(".)") for u in URL_RE.findall(text)]
     if urls:
         routed = Routed("url")
