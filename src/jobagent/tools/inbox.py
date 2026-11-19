@@ -60,6 +60,7 @@ class Cleanup:
 
 @dataclass
 class Mail:
+    """One email as the agent reads it: IMAP uid, Message-ID, sender, subject, date, body text (and recipients, thread id when known)."""
     uid: str
     message_id: str
     sender: str
@@ -77,6 +78,7 @@ class Mail:
 
 @dataclass
 class Verification:
+    """A verification the agent can act on: a one-time code or a link (or a password-reset link) and how sure the classifier is."""
     kind: str  # otp | link | password_reset
     code: str | None
     link: str | None
@@ -109,6 +111,17 @@ def _recipients(msg: Message) -> tuple:
 
 
 def parse(uid: str, raw: bytes, thread_id: str = "", headers_only: bool = False) -> Mail:
+    """Turn raw message bytes into a `Mail`.
+
+    Args:
+        uid: The IMAP uid.
+        raw: The RFC 822 message.
+        thread_id: Gmail's thread id, when known.
+        headers_only: Skip the body.
+
+    Returns:
+        The parsed `Mail`; an unparseable date is left as None, never guessed.
+    """
     msg = email.message_from_bytes(raw)
     subject = str(email.header.make_header(email.header.decode_header(msg.get("Subject", ""))))
     date, ok = None, bool(msg["Date"])
@@ -228,10 +241,12 @@ SELF_TEST_TAG = "jobagent-selftest-"
 
 
 def sender_domain(mail: Mail) -> str:
+    """The registrable domain of the sender (`mail.greenhouse.io` -> `greenhouse.io`), used to decide whether a message is from a site the agent signed up with."""
     return db.registrable_domain(email.utils.parseaddr(mail.sender)[1] or mail.sender)
 
 
 def is_protected(mail: Mail) -> bool:
+    """True when a message looks like outcome mail (interview, offer, rejection, assessment, next steps) that must never be deleted."""
     return bool(_PROTECTED_WORDS.search(f"{mail.subject}\n{mail.text}"))
 
 
@@ -268,6 +283,7 @@ def classify_verification(mail: Mail) -> Verification | None:
 
 
 class Inbox:
+    """The agent's mailbox over IMAP and SMTP (a Gmail app password): search, fetch, wait for a verification message from a site the agent used, trash only what it used, and send itself a test message."""
     def __init__(self, address: str, app_password: str, conn: sqlite3.Connection | None = None):
         self.address, self._password = address, app_password.replace(" ", "")
         self.conn = conn
@@ -276,12 +292,14 @@ class Inbox:
 
     # --- connection ---------------------------------------------------------------
     def imap(self) -> imaplib.IMAP4_SSL:
+        """The IMAP connection, logging in on first use."""
         if self._imap is None:
             self._imap = imaplib.IMAP4_SSL(IMAP_HOST, timeout=60)
             self._imap.login(self.address, self._password)
         return self._imap
 
     def close(self) -> None:
+        """Log out of IMAP; safe to call when not connected."""
         if self._imap is not None:
             try:
                 self._imap.logout()
@@ -338,6 +356,7 @@ class Inbox:
         return SELF_TEST_TAG in mail.subject or self._owned_by_action(mail)
 
     def trash_folder(self) -> str:
+        """The name of the mailbox's Trash folder (found once and remembered)."""
         if self._trash is None:
             _, rows = self.imap().list()
             for row in rows or []:
@@ -351,6 +370,15 @@ class Inbox:
 
     # --- reading ----------------------------------------------------------------
     def search(self, criteria: str = "ALL", folder: str = "INBOX") -> list[str]:
+        """Search a folder.
+
+        Args:
+            criteria: An IMAP SEARCH expression (default `ALL`).
+            folder: The folder to search (default `INBOX`).
+
+        Returns:
+            The matching uids, as strings.
+        """
         imap = self.imap()
         imap.select(folder)
         typ, data = imap.uid("SEARCH", None, criteria)
@@ -496,6 +524,16 @@ class Inbox:
 
     # --- sending ------------------------------------------------------------------
     def send(self, to: str, subject: str, body: str) -> str:
+        """Send a plain-text message from the agent's own address.
+
+        Args:
+            to: Recipient.
+            subject: Subject line.
+            body: Message text.
+
+        Returns:
+            The Message-ID of the sent message.
+        """
         msg = EmailMessage()
         msg["From"], msg["To"], msg["Subject"] = self.address, to, subject
         msg.set_content(body)
@@ -581,6 +619,14 @@ class Inbox:
 
 
 def open_inbox() -> Inbox:
+    """Open the inbox from the vault's `gmail` entry.
+
+    Returns:
+        A connected-on-demand `Inbox`.
+
+    Raises:
+        RuntimeError: When the vault has no email and app password for it (run `jobagent step gmail`).
+    """
     from jobagent.tools.vault import open_vault
 
     entry = open_vault().get("gmail") or {}

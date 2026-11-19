@@ -47,6 +47,7 @@
   "src/jobagent/tools/__init__.py": 1,
   "src/jobagent/tools/applicant.py": 6,
   "src/jobagent/tools/application_address.py": 4,
+  "src/jobagent/tools/application_verification.py": 4,
   "src/jobagent/tools/ats_accounts.py": 3,
   "src/jobagent/tools/ats_providers.py": 15,
   "src/jobagent/tools/ats_result.py": 1,
@@ -64,7 +65,7 @@
   "src/jobagent/tools/github.py": 2,
   "src/jobagent/tools/google_auth.py": 1,
   "src/jobagent/tools/hitl.py": 7,
-  "src/jobagent/tools/inbox.py": 16,
+  "src/jobagent/tools/inbox.py": 4,
   "src/jobagent/tools/jdtext.py": 8,
   "src/jobagent/tools/layout.py": 8,
   "src/jobagent/tools/learned.py": 2,
@@ -95,8 +96,8 @@
   "src/jobagent/tools/wizard.py": 3,
   "src/jobagent/tools/workflow.py": 8
  },
- "public_items": 1384,
- "without_docstring": 515,
- "covered_percent": 62.8,
+ "public_items": 1393,
+ "without_docstring": 507,
+ "covered_percent": 63.6,
  "long_functions_without_args_section": 309
 }
