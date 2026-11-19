@@ -7,7 +7,7 @@ from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model, model_validator
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from jobagent import llm
@@ -38,6 +38,28 @@ class ReviewUnavailable(RuntimeError):
     """A bounded technical review failure, labelled with its actual section/model."""
     def __init__(self, section, model, kind):
         super().__init__(f'{section} content review unavailable: {model} ({kind})')
+
+
+def review_model(model_name, max_tokens=4000, timeout=120):
+    """Use the verified Qwen 3.5 non-thinking profile for bounded factual review only."""
+    model=llm.writer(max_tokens,timeout=timeout,model=model_name)
+    if re.search(r'qwen(?:3\.5|35)(?:\b|[-_])',model_name,re.I):
+        model.temperature=.7
+        model.top_p=.8
+        model.presence_penalty=1.5
+        model.extra_body={'top_k':20,'chat_template_kwargs':{'enable_thinking':False}}
+    return model
+
+
+def _bound_schema(schema, validator):
+    """Feed exact-source validation failures into the shared bounded correction loop."""
+    if validator is None:return schema
+    @model_validator(mode='after')
+    def check_sources(result):
+        """Reject structurally valid output whose evidence is unbound."""
+        validator(result)
+        return result
+    return create_model(schema.__name__,__base__=schema,__validators__={'check_sources':check_sources})
 
 
 def _words(text):
@@ -80,16 +102,17 @@ def adjudicate_projects(ctx, payload, findings):
             if not 1<=verdict.project<=len(projects):raise ValueError('unknown project in adjudication')
             project=projects[verdict.project-1]
             source=data['owner_policy'] if verdict.evidence_source=='owner_policy' else _evidence_text(project['evidence'])
-            if (not _words(verdict.claim_quote) or _words(verdict.claim_quote) not in _words(project['text']) or
-                    not _words(verdict.source_quote) or _words(verdict.source_quote) not in _words(source)):
-                raise ValueError('project adjudication used an unbound claim or source quote')
+            if not _words(verdict.claim_quote) or _words(verdict.claim_quote) not in _words(project['text']):
+                raise ValueError('claim_quote must be an exact contiguous quote from the named project description')
+            if not _words(verdict.source_quote) or _words(verdict.source_quote) not in _words(source):
+                raise ValueError('unbound source_quote: use an exact contiguous quote from the named source, without added field labels or ellipses')
             if verdict.status=='uncertain':raise ValueError('project evidence needs review: '+verdict.reason)
             if verdict.status=='confirmed':
                 checked.append(M.Finding(agent='projects',severity='error',issue=(
                     f"Project {verdict.project} ({project['repo']}): {verdict.reason} "
                     f"Claim: {verdict.claim_quote!r}; own source: {verdict.source_quote!r}")[:400]))
         return checked
-    result=invoke(ctx['cache'],'adjudicate:projects',model_name,llm.writer(6000,model=model_name),
+    result=invoke(ctx['cache'],'adjudicate:projects',model_name,review_model(model_name,6000),
                   ProjectVerdicts,messages,log=ctx['log'],deadline_s=180,validator=bind,
                   request_lock=ctx.get('reasoner_lock'),request_abort=ctx.get('review_abort'))
     return bind(result)
@@ -121,6 +144,8 @@ def invoke(cache, stage, model_name, model, schema, messages, *, validator=None,
     preferred = kwargs.get('first') or settings.llm_structured_method
     inputs = {'version': job_context.model_version(stage), 'model': model_name,
               'provider':settings.openai_base_url,'preferred_method':preferred,
+              'model_parameters':{name:getattr(model,name,None) for name in
+                                  ('temperature','top_p','presence_penalty','extra_body','max_tokens')},
               'schema': schema.model_json_schema(),
               'messages': [{'type': m.type, 'content': m.content} for m in messages]}
     saved = cache.get(stage, inputs)
@@ -147,7 +172,9 @@ def invoke(cache, stage, model_name, model, schema, messages, *, validator=None,
                 raise RuntimeError('review cancelled after another section failed')
             try:
                 dispatched=True
-                result = schema.model_validate(llm.structured_invoke(model, schema, messages, **kwargs))
+                guarded=_bound_schema(schema,validator)
+                raw=llm.structured_invoke(model,guarded,messages,**kwargs)
+                result=schema.model_validate(raw.model_dump() if isinstance(raw,BaseModel) else raw)
                 if validator:validator(result)
             except BaseException as exc:
                 if request_abort is not None:
@@ -196,7 +223,8 @@ def review(ctx, filled):
         'experience': {'roles': roles},
         'projects': {'displayed': projects, 'own_repo_sources': sources},
         'skills': {'skills': skills, 'owned_template': ctx['r'].skills, 'graph': ctx.get('graph')},
-        'summary': {'summary': filled.summary, 'roles': roles, 'skills': skills,
+        'summary': {'summary': filled.summary,
+                    'roles':[{k:v for k,v in role.items() if k!='dates'} for role in roles], 'skills': skills,
                     'projects': projects, 'job_identity':{name:jd.get(name) for name in ('title','company')}},
     }
     education=re.search(r'\\section\{Education\}(.*?)(?=\\section\{|\\end\{document\})',
@@ -240,7 +268,7 @@ def review(ctx, filled):
         reasoner = agent in ('projects','summary')
         try:
             out = invoke(ctx['cache'], 'review:' + agent, model_name,
-                         llm.writer(6000 if reasoner else 4000, timeout=180 if reasoner else 120, model=model_name),
+                         review_model(model_name,6000 if reasoner else 4000,timeout=120),
                          M.Review, messages, log=ctx['log'], deadline_s=240 if reasoner else 180,validator=bound_agent,
                          request_lock=reasoner_lock if reasoner else None,request_abort=review_abort)
             bound_agent(out)

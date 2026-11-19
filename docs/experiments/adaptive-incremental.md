@@ -89,7 +89,8 @@ or generated title independently. Known template titles remain protected.
 Cover letters use the final resume. Each sentence selects an ID from the actual
 employer/project/company source inventory; the code assembles the prose and attaches
 the corresponding evidence. The model does not duplicate its prose or copy freehand
-evidence quotes. Deterministic identity/number checks precede a
+evidence quotes. Project evidence comparisons use the same punctuation and
+whitespace normalization as rendering. Deterministic identity/number checks precede a
 cached semantic attribution review. This prevents treating a matching number under
 another employer as evidence. It does not ask the owner to reconfirm generated
 duties/metrics: the standing declaration and existing claims policy remain in force.
@@ -98,7 +99,13 @@ existing boundaries.
 Project and summary factual reviews, the independent project adjudicator and the
 letter attribution reviewer use `MODEL_PLANNER`; drafting remains on `MODEL_WRITER`.
 Both validator model identities and provider/transport configuration participate
-in workflow invalidation. Full incremental experience drafts prefer JSON mode
+in workflow invalidation. Exact sampling parameters and token budgets also bind stage
+cache entries. Qwen 3.5 factual reviewers use its endpoint-verified non-thinking
+profile (temperature 0.7, top-p 0.8, presence penalty 1.5); drafting and other model
+families retain their existing settings. Unsupported provider parameters fail
+through the bounded error path rather than silently changing models or modes.
+Source-binding validation failures participate in the same bounded correction
+loop as malformed schema output; invalid evidence never enters the cache. Full incremental experience drafts prefer JSON mode
 after repeated live tool/schema retries; the shared bounded fallbacks remain in
 place. This preference does not change the current strategy.
 Long factual review requests share one provider dispatch slot after cache lookup;

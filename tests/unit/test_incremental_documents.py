@@ -77,6 +77,52 @@ def test_document_transport_preference_is_a_cache_dependency(tmp_path,monkeypatc
     assert calls==['function_calling','json_mode']
 
 
+def test_review_sampling_does_not_change_drafting_or_other_model_families(monkeypatch):
+    from jobagent.tools import incremental_documents as I
+    made=[]
+    def writer(*args,**kwargs):
+        model=SimpleNamespace(temperature=0,top_p=None,presence_penalty=None,extra_body=None)
+        made.append(model)
+        return model
+    monkeypatch.setattr(I.llm,'writer',writer)
+    qwen=I.review_model('qwen35-397b-a17b')
+    assert qwen.temperature==.7 and qwen.top_p==.8 and qwen.presence_penalty==1.5
+    assert qwen.extra_body=={'top_k':20,'chat_template_kwargs':{'enable_thinking':False}}
+    other=I.review_model('another-reviewer')
+    draft=I.llm.writer(model='qwen35-397b-a17b')
+    assert other.temperature==draft.temperature==0
+    assert other.extra_body is draft.extra_body is None
+
+
+def test_inference_parameters_invalidate_review_cache(tmp_path,monkeypatch):
+    from jobagent.tools import incremental_documents as I
+    calls=[]
+    monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:calls.append(1) or Output(text='done'))
+    for thinking in (False,False,True):
+        model=SimpleNamespace(temperature=.7,extra_body={'chat_template_kwargs':{'enable_thinking':thinking}})
+        invoke(ArtifactCache(tmp_path),'review','m',model,Output,[HumanMessage('q')])
+    assert len(calls)==2
+
+
+def test_unbound_review_output_is_corrected_inside_the_shared_bounded_loop(tmp_path):
+    from jobagent.tools import incremental_documents as I
+    class Model:
+        model_name='test-reviewer'
+        def __init__(self):self.seen=[]
+        def with_structured_output(self,schema,**kwargs):self.schema=schema;return self
+        def invoke(self,messages):
+            self.seen.append(messages)
+            return self.schema.model_validate({'text':'invented quote' if len(self.seen)==1 else 'exact source'})
+    def bind(result):
+        if result.text!='exact source':raise ValueError('quote must match the exact source')
+    model=Model();cache=ArtifactCache(tmp_path)
+    out=invoke(cache,'review','test-reviewer',model,Output,[HumanMessage('Review the source')],validator=bind)
+    assert out.text=='exact source' and len(model.seen)==2
+    assert 'quote must match the exact source' in model.seen[1][-1].content
+    assert invoke(cache,'review','test-reviewer',model,Output,[HumanMessage('Review the source')],validator=bind)==out
+    assert len(model.seen)==2
+
+
 def test_cache_hits_do_not_wait_for_a_reasoner_dispatch_slot(tmp_path,monkeypatch):
     from jobagent.tools import incremental_documents as I
     monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:Output(text='done'))
@@ -169,7 +215,7 @@ def test_changed_skills_rechecks_skills_and_summary_only(tmp_path,monkeypatch):
     def generate(model,schema,msgs,**kw):
         calls.append(msgs[0].content.split('Review ONLY ')[1].split('.')[0]);return M.Review(findings=[])
     monkeypatch.setattr(I.llm,'structured_invoke',generate)
-    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
     f=M.T.Filled.model_construct(summary='A summary.',roles=[],skills=[M.T.SkillLine(category='Languages',terms=['Python'])])
     ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
          'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda m:None}
@@ -196,7 +242,7 @@ def test_project_reviewer_never_receives_search_vectors_or_unbounded_readme_bodi
     from jobagent.steps import multi_agent as M
     from jobagent.tools import incremental_documents as I
     monkeypatch.setattr(M.T,'facts_block',lambda:'owner claims')
-    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
     seen=[]
     def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
         if stage=='review:projects':seen.append(json.loads(messages[1].content))
@@ -218,7 +264,7 @@ def test_every_scoped_reviewer_receives_the_existing_owner_claims_policy(tmp_pat
     from jobagent.tools import incremental_documents as I
     policy='Up to 5+ years overall or in any domain the posting asks for.'
     monkeypatch.setattr(M.T,'facts_block',lambda:policy)
-    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
     seen=[]
     def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
         seen.append(json.loads(messages[1].content)['owner_claims_policy']);return M.Review(findings=[])
@@ -234,7 +280,7 @@ def test_summary_review_receives_current_date_and_target_company_context(tmp_pat
     from jobagent.steps import multi_agent as M
     from jobagent.tools import incremental_documents as I
     monkeypatch.setattr(M.T,'facts_block',lambda:'Owner policy')
-    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
     seen=[];models={}
     def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
         if stage=='review:summary':seen.extend(messages)
@@ -347,7 +393,7 @@ def test_targeted_project_edit_changes_only_the_bound_visible_variant_and_title(
 def test_a_critic_cannot_block_a_supported_project_claim_without_a_bound_contradiction(tmp_path,monkeypatch):
     from jobagent.steps import multi_agent as M
     from jobagent.tools import incremental_documents as I
-    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
     monkeypatch.setattr(I,'invoke',lambda *a,**kw:I.ProjectVerdicts(verdicts=[I.ProjectVerdict(
         finding=0,project=1,status='rejected',claim_quote='Built quality inspection workflows.',
         source_quote='inventory/quality-inspection management system',reason='The own source explicitly supports the capability.')]))
@@ -361,7 +407,7 @@ def test_a_critic_cannot_block_a_supported_project_claim_without_a_bound_contrad
 def test_adjudication_cannot_borrow_another_projects_source(tmp_path,monkeypatch):
     from jobagent.steps import multi_agent as M
     from jobagent.tools import incremental_documents as I
-    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
     monkeypatch.setattr(I,'invoke',lambda *a,**kw:I.ProjectVerdicts(verdicts=[I.ProjectVerdict(
         finding=0,project=1,status='rejected',claim_quote='Built a camera driver.',source_quote='Supports cameras.',
         reason='Unbound quote from another repository')]))
@@ -497,7 +543,7 @@ def test_incremental_letter_attaches_source_and_claim_in_code_without_duplicate_
     letter=CL.attach_sources(schema.model_validate(data),bank)
     assert letter.paragraphs[0].bindings[0].claim==letter.paragraphs[0].text
     assert letter.paragraphs[0].bindings[0].quote==bank['a']['text']
-    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
     monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(issues=[]))
     assert L.check(letter,bank,None,'m',lambda _:None)==[]
     data['paragraphs'][0]['sentences'][0]['source_id']='invented'
@@ -506,7 +552,7 @@ def test_incremental_letter_attaches_source_and_claim_in_code_without_duplicate_
 
 def test_attribution_uses_the_same_dash_normalization_as_letter_rendering(monkeypatch):
     from jobagent.tools import incremental_documents as I
-    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
     monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(issues=[]))
     paragraph=Paragraph(text='I built tooling, improving speed by 30%.',evidence=[],bindings=[
         L.Binding(claim='I built tooling — improving speed by 30%.',source_id='a',quote='Improved speed by 30%.')])
@@ -514,9 +560,24 @@ def test_attribution_uses_the_same_dash_normalization_as_letter_rendering(monkey
                    {'a':{'entity':'Alpha','text':'Improved speed by 30%.'}},None,'m',lambda _:None)==[]
 
 
+def test_final_project_evidence_survives_rendered_punctuation_but_excludes_an_unused_variant(tmp_path):
+    from jobagent.tools import tailor as T
+    raw='Built routing—reduced latency by 20%.'
+    (tmp_path/'projects.json').write_text(json.dumps({'kept':2,'ranked':[
+        {'title':'Router','paragraph':raw},
+        {'title':'Absent','paragraph':'Built a completely different system.'}]}))
+    # Exercise real escaping and parsing with the current supported template.
+    from jobagent.config import get_settings
+    tex=(get_settings().data_dir/'templates/resume.tex').read_text()
+    tex=tex.replace('\\end{document}','\\section{Projects}\n'+T.to_latex(raw)+'\n\\end{document}')
+    bank=L.sources(tex,tmp_path)
+    assert bank['project:0']['text']==raw
+    assert 'project:1' not in bank
+
+
 def test_target_company_and_posting_title_are_not_confused_with_candidate_employer_attribution(monkeypatch):
     from jobagent.tools import incremental_documents as I
-    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
     monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(issues=[]))
     text='I am interested in the Engineer position at Beta.'
     paragraph=Paragraph(text=text,evidence=[],bindings=[
@@ -546,7 +607,7 @@ def test_jd_metric_cannot_supply_a_candidate_achievement():
 
 def test_company_number_can_be_quoted_without_becoming_candidate_work(tmp_path,monkeypatch):
     from jobagent.tools import incremental_documents as I
-    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
     monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:L.AttributionReview(issues=[]))
     paragraph=Paragraph(text='Beta launched its platform in 2025.',evidence=[],bindings=[
         L.Binding(claim='Beta launched its platform in 2025.',source_id='company',quote='Beta launched its platform in 2025.')])
