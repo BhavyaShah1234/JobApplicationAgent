@@ -72,6 +72,27 @@ def test_initial_experience_prompt_is_independent_of_project_thread_timing(tmp_p
     assert [m.content for m in before]==[m.content for m in after]
 
 
+def test_project_reviewer_never_receives_search_vectors_or_readme_bodies(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(M.T,'facts_block',lambda:'owner claims')
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    seen=[]
+    def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
+        if stage=='review:projects':seen.append(json.loads(messages[1].content))
+        return M.Review(findings=[])
+    monkeypatch.setattr(I,'invoke',inspect)
+    (tmp_path/'projects.json').write_text(json.dumps({'kept':1,'short':[],
+        'ranked':[{'repo':'owner/project','title':'Project','stack':['Python'],'paragraph':'Built a robot.'}]}))
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
+         'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None,
+         'cards':{'owner/project':{'summary':'Built a robot.','embedding':[.1]*4096,'readme':'junk'*100000}}}
+    f=M.T.Filled.model_construct(summary='A summary.',roles=[],skills=[])
+    review(ctx,f)
+    assert seen[0]['own_repo_sources']=={'owner/project':{'summary':'Built a robot.'}}
+    assert len(json.dumps(seen[0]))<10000
+
+
 def panel_world(tmp_path,monkeypatch,scores):
     from jobagent.steps import multi_agent as M
     (tmp_path/'resume.pdf').write_bytes(b'valid-pdf-fixture')

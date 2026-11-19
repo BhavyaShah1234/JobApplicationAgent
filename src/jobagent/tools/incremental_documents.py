@@ -55,7 +55,12 @@ def review(ctx, filled):
     skills = [(s.category, s.render()) for s in filled.skills]
     jd = ctx['jd'].model_dump(mode='json')
     cards = dict(ctx.get('cards') or {})
-    sources = {p['repo']: cards.get((p['repo'] or '').casefold(), {}) for p in projects}
+    # Cards also carry 4096-dimensional search vectors and potentially long
+    # README bodies. They are retrieval machinery, not reviewer evidence.
+    evidence_keys=('full_name','summary','tech_stack','fields','results','evidence_notes',
+                   'head_sha','archive_truncated','kind')
+    sources = {p['repo']: {name:value for name,value in cards.get((p['repo'] or '').casefold(), {}).items()
+                          if name in evidence_keys} for p in projects}
     payloads = {
         'experience': {'roles': roles, 'jd': jd, 'policy': M.T.facts_block()},
         'projects': {'displayed': projects, 'own_repo_sources': sources, 'policy': M.T.facts_block()},
