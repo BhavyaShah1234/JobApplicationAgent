@@ -70,6 +70,13 @@ def test_scientific_scripts_survive_rendering_and_source_roundtrip(plain, latex)
     assert T.to_plain(latex) == plain
 
 
+def test_comparison_qualifiers_and_microsecond_units_are_not_silently_changed():
+    raw='Latency ≤10µs; throughput ≥20; error ≈1%; A≠B.'
+    latex=T.to_latex(raw)
+    assert latex==r'Latency $\leq$10$\mu$s; throughput $\geq$20; error $\approx$1\%; A$\neq$B.'
+    assert T.to_plain(latex)==raw.replace('µ','μ')
+
+
 def test_soft_duties():
     assert T.is_soft("Partner with architects and stakeholders to translate ambiguous requirements.")
     assert not T.is_soft("Ensure machine safety compliance. Partner with EHS on guarding.")
@@ -197,6 +204,12 @@ def test_every_duty_and_preferred_qualification_becomes_bullet_material_but_not_
     assert [(k, n) for k, _, n in items] == [("duty", "REQUIRED"), ("duty", "REQUIRED"), ("basic", "REQUIRED"),
                                              ("preferred", "REQUIRED"), ("preferred", "REQUIRED")]
     assert items[2][1].startswith("Strong SQL") and "supply chain" in items[4][1]
+
+
+@pytest.mark.parametrize('prefix',['3 to 8','3-8','3–8','3.5+','at least 3'])
+def test_experience_range_keeps_the_technical_qualification_without_copying_tenure(prefix):
+    j=jd(responsibilities=[],basic_qualifications=[prefix+' years of experience writing production software.'])
+    assert T.jd_items(j)==[('basic','Experience writing production software.','REQUIRED')]
 
 
 def test_only_new_bullets_cover_jd_items():

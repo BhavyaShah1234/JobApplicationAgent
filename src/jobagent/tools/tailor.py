@@ -123,11 +123,15 @@ def parse(tex: str) -> Resume:
 _UNESC = [("\\%", "%"), ("\\&", "&"), ("\\$", "$"), ("\\#", "#"), ("\\_", "_"), ("--", "–")]
 _SUPER = str.maketrans('⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾', '0123456789+-=()')
 _SUB = str.maketrans('₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎', '0123456789+-=()')
+_MATH = {'×':r'$\times$', '±':r'$\pm$', '≤':r'$\leq$', '≥':r'$\geq$',
+         '≈':r'$\approx$', '≠':r'$\neq$', 'µ':r'$\mu$', 'μ':r'$\mu$'}
 
 
 def to_plain(latex: str) -> str:
     r"""Turn LaTeX-escaped text (`\%`, `\&`, ...) back into plain text."""
     out = latex
+    for command,symbol in {command:symbol for symbol,command in _MATH.items()}.items():
+        out=out.replace(command,symbol)
     for command, table in (('textsuperscript', _SUPER), ('textsubscript', _SUB)):
         reverse = {value: chr(key) for key, value in table.items()}
         out = re.sub(r'\\' + command + r'\{([0-9+\-=()]+)\}',
@@ -149,7 +153,7 @@ def summary_text(latex: str) -> str:
     return to_plain(text).strip()
 
 
-_KEEP = set("–’‘“”®™°±×→") | set(map(chr, _SUPER)) | set(map(chr, _SUB))
+_KEEP = set("–’‘“”®™°→") | set(_MATH) | set(map(chr, _SUPER)) | set(map(chr, _SUB))
 # Dashes used as punctuation (em dash, or a spaced en dash / double hyphen) read as AI-written text. Ranges like
 # "2025–2026" are not touched.
 DASH = re.compile(r"\s*—\s*|\s+(–|--)\s+")
@@ -182,8 +186,8 @@ def to_latex(plain: str) -> str:
     for ch in "%&$#_":
         out = out.replace(ch, "\\" + ch)
     # The template's default (OT1) font encoding prints a bare < > as ¡ ¿ and × as Ö; use commands that work in any
-    out = (out.replace("<", "\\textless{}").replace(">", "\\textgreater{}").replace("×", "$\\times$")
-           .replace("±", "$\\pm$"))
+    out = out.replace("<", "\\textless{}").replace(">", "\\textgreater{}")
+    for symbol,command in _MATH.items():out=out.replace(symbol,command)
     out = out.replace("~", "\\textasciitilde{}").replace("^", "\\textasciicircum{}").replace("–", "--")
     # OT1 cannot print these Unicode glyphs. Dropping them changes facts such as
     # R² into R, or CO₂ into CO. Insert only our own commands after escaping.
@@ -474,7 +478,7 @@ NOT_BULLET = re.compile(r"(?i)\b(degree|bachelor|master'?s|ph\.?d|b\.?s\.?|m\.?s
                         r"background in|foundations? in|"
                         r"salary|base pay|compensation|usd|annually|equal opportunity|discriminat\w*|accommodation)\b")
 # "3+ years of professional ... experience in X" -> "X": the skill stays, the years go
-_YEARS = re.compile(r"(?i)^\W*(at least\s+)?\d+\+?\s*(or more\s+)?years?\s+of\s+((non-internship|professional|"
+_YEARS = re.compile(r"(?i)^\W*(at least\s+)?\d+(?:\.\d+)?(?:\s*(?:to|[-–])\s*\d+(?:\.\d+)?)?\+?\s*(or more\s+)?years?\s+of\s+((non-internship|professional|"
                     r"relevant|industry|hands-on|full)\s+)*")
 TECH_WORDS = re.compile(r"(?i)\b(code|coding|software|systems?|backend|back-end|frontend|front-end|full.stack|"
                         r"infrastructure|database|architecture|algorithms?|distributed|programming|debug\w*|kernel|"
