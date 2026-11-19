@@ -524,6 +524,35 @@ def test_incremental_draft_schema_matches_the_actual_new_bullet_limit():
     assert ordinary['$defs']['FillBullet']['properties']['text']['maxLength']==M.T.BULLET_VERBATIM_MAX
 
 
+def test_posting_bounds_are_exposed_and_enforced_in_draft_and_patch_schemas():
+    from pydantic import ValidationError
+    from jobagent.state import JobDescription
+    from jobagent.steps import multi_agent as M
+    r=SimpleNamespace(roles=[SimpleNamespace(title='Engineer',company='Fixture')])
+    jd=JobDescription(company='Fixture',title='Engineer',responsibilities=['Build Python APIs.','Test Java services.'])
+    draft=M.experience_schema(r,compact=True,jd=jd)
+    patch=M.incremental_repair_schema(jd)
+    for schema,definition in ((draft,'PostingDraftBullet'),(patch,'PostingBulletFix')):
+        bounds=schema.model_json_schema()['$defs'][definition]['properties']['duties']['items']
+        assert bounds['minimum']==0 and bounds['exclusiveMaximum']==2
+    bullet={'text':'Built Python APIs, reducing latency by 20%.','duties':[1]}
+    draft.model_validate({'role_0':[bullet]*M.T.MIN_BULLETS,'notes':''})
+    assert isinstance(patch.model_validate({'fixes':[{'role':0,'bullet':1,**bullet}]}),M.IncrementalRepair)
+    for invalid in (-1,2,True,'1'):
+        wrong={**bullet,'duties':[invalid]}
+        with pytest.raises(ValidationError):draft.model_validate({'role_0':[wrong]+[bullet]*(M.T.MIN_BULLETS-1),'notes':''})
+        with pytest.raises(ValidationError):patch.model_validate({'fixes':[{'role':0,'bullet':1,**wrong}]})
+
+
+def test_empty_posting_is_rejected_before_requesting_impossible_coverage():
+    from jobagent.state import JobDescription
+    from jobagent.steps import multi_agent as M
+    jd=JobDescription(company='Fixture',title='Engineer')
+    r=SimpleNamespace(roles=[SimpleNamespace(title='Engineer',company='Fixture')])
+    with pytest.raises(ValueError,match='no experience coverage items'):M.experience_schema(r,compact=True,jd=jd)
+    with pytest.raises(ValueError,match='no experience coverage items'):M.incremental_repair_schema(jd)
+
+
 def test_targeted_project_edit_changes_only_the_bound_visible_variant_and_title(tmp_path,monkeypatch):
     from jobagent.steps import multi_agent as M
     from jobagent.steps import ats as A

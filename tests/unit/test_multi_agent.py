@@ -60,7 +60,7 @@ def test_small_coverage_gaps_use_the_incremental_patch_not_a_full_section_draft(
         seen.append((schema,messages,kw));kw['validator'](repair);return repair
     monkeypatch.setattr(M,'_invoke',invoke)
     agent,result=M._run_agent(ctx,'experience',f,['REQUIRED JD item indices not covered by any NEW bullet: [2].'],'')
-    assert agent=='experience' and result==repair and seen[0][0] is M.IncrementalRepair
+    assert agent=='experience' and result==repair and issubclass(seen[0][0],M.IncrementalRepair)
     assert 'current_coverage' in seen[0][1][-1].content and seen[0][2]['first']=='json_mode'
 
 
@@ -77,7 +77,7 @@ def test_full_incremental_experience_validates_duty_references_before_caching(tm
         out=SimpleNamespace(role_0=f.roles[0].bullets)
         kwargs['validator'](out);checked.append('valid')
         invalid=SimpleNamespace(role_0=[M.T.FillBullet(text='Built Python services.',duties=[99])])
-        with pytest.raises(ValueError,match='existing JD item'):kwargs['validator'](invalid)
+        with pytest.raises(ValueError,match='allowed JD item IDs are 0 through 2'):kwargs['validator'](invalid)
         return out
     monkeypatch.setattr(M,'_invoke',invoke)
     _,out=M._run_agent(ctx,'experience',None,[],'')

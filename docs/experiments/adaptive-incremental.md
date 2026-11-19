@@ -138,6 +138,9 @@ duties/metrics: the standing declaration and existing claims policy remain in fo
 Incremental experience and summary drafting, small experience repairs and
 letter drafting prefer JSON mode after live tool-output retries.
 Source coverage is validated inside the bounded correction loop before caching.
+Draft and patch schemas expose the posting's exact allowed JD-index range to the
+provider, retaining strict integer validation and final target/coverage checks.
+An empty coverage inventory stops before an impossible drafting request.
 Typed, claim-bound supported/unsupported/uncertain review verdicts prevent positive
 observations from being recorded as errors; malformed or unbound verdicts fail
 validation. Semantic review receives each source once rather than repeated full

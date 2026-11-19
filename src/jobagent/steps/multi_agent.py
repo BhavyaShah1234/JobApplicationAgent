@@ -72,16 +72,41 @@ class CompactFillBullet(T.FillBullet):
     duties: list[Annotated[int, Field(strict=True, ge=0)]] = Field(min_length=1,max_length=T.ITEMS_PER_BULLET)
 
 
-def experience_schema(r: T.Resume, *, compact: bool = False) -> type[BaseModel]:
+def _posting_bullet_schema(base, jd, name):
+    """Expose the posting's valid duty-index range before provider generation.
+
+    Args:
+        base: Draft or repair bullet model whose remaining constraints stay intact.
+        jd: Posting that supplies the numbered coverage items.
+        name: Distinct schema name for provider output.
+
+    Returns:
+        A subclass retaining strict integer references and the bullet budget.
+
+    Raises:
+        ValueError: The posting has no coverable experience items.
+    """
+    count=len(T.jd_items(jd))
+    if not count:raise ValueError('Posting has no experience coverage items; check the scraped JD before drafting')
+    index=Annotated[int,Field(strict=True,ge=0,lt=count)]
+    return create_model(name,__base__=base,duties=(list[index],Field(
+        min_length=1,max_length=T.ITEMS_PER_BULLET,
+        description=f'JD item IDs only: 0 through {count-1}; not role or original-bullet indices')))
+
+
+def experience_schema(r: T.Resume, *, compact: bool = False, jd=None) -> type[BaseModel]:
     """Build the structured-output schema for the experience agent: one bullet list per role of this template plus a note.
 
     Args:
         r: The parsed template (its roles decide the fields).
+        compact: Advertise the opt-in new-bullet budget instead of verbatim allowances.
+        jd: Optional posting for explicit valid coverage-index bounds in compact output.
 
     Returns:
         A pydantic model class with `role_0 ... role_N` and `notes`.
     """
     bullet_type = CompactFillBullet if compact else T.FillBullet
+    if compact and jd is not None:bullet_type=_posting_bullet_schema(bullet_type,jd,'PostingDraftBullet')
     fields = {f"role_{i}": (list[bullet_type], Field(min_length=T.MIN_BULLETS, max_length=T.MAX_BULLETS,
                                                       description=f"Use {T.MIN_BULLETS}-{T.MAX_BULLETS} bullets for {role.title} at {role.company}; do not omit this role"))
               for i, role in enumerate(r.roles)}
@@ -107,6 +132,13 @@ class IncrementalBulletFix(T.BulletFix):
 class IncrementalRepair(T.Repair):
     """Repair a few bullets or coverage annotations while preserving other work."""
     fixes: list[IncrementalBulletFix] = Field(min_length=1, max_length=8)
+
+
+def incremental_repair_schema(jd):
+    """Expose valid posting indices without relaxing patch targets or quality gates."""
+    bullet=_posting_bullet_schema(IncrementalBulletFix,jd,'PostingBulletFix')
+    return create_model('PostingIncrementalRepair',__base__=IncrementalRepair,
+                        fixes=(list[bullet],Field(min_length=1,max_length=8)))
 
 
 def apply_incremental_repair(f, repair):
@@ -411,12 +443,14 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
                         'covered indices across the section. For duplicate duties, change one to distinct relevant '
                         'work rather than repeating the same duty with synonyms. Leave unrelated bullets alone.')
                 })))
-                out=_invoke(ctx,agent,model,IncrementalRepair,msgs,log=log,first='json_mode',
+                out=_invoke(ctx,agent,model,incremental_repair_schema(ctx['jd']),msgs,log=log,first='json_mode',
                     validator=lambda repair:validate_incremental_repair(f,ctx['jd'],repair,template=ctx['r']))
             else:
                 out = _invoke(ctx, agent, model, T.Repair, msgs, log=log)
         else:
-            schema = {"experience": experience_schema(ctx["r"],compact=bool(ctx.get('incremental'))), "skills": SkillsOut, "summary": SummaryOut}[agent]
+            schema = (experience_schema(ctx['r'],compact=bool(ctx.get('incremental')),
+                                        **({'jd':ctx['jd']} if ctx.get('incremental') else {}))
+                      if agent=='experience' else {'skills':SkillsOut,'summary':SummaryOut}[agent])
             # Live compact drafts repeatedly exhausted tool/schema retries,
             # then succeeded in JSON mode. Prefer that transport for the full
             # opt-in experience draft; retain the shared bounded fallbacks.
@@ -425,9 +459,11 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
                 def valid_references(draft):
                     """Require every proposed coverage index to exist in this posting."""
                     n=len(T.jd_items(ctx['jd']))
-                    if any(not 0<=d<n for i in range(len(ctx['r'].roles))
-                           for b in getattr(draft,f'role_{i}') for d in b.duties):
-                        raise ValueError('Every duties index must name an existing JD item')
+                    invalid=sorted({d for i in range(len(ctx['r'].roles))
+                                    for b in getattr(draft,f'role_{i}') for d in b.duties if not 0<=d<n})
+                    if invalid:
+                        raise ValueError(f'Invalid duties IDs {invalid}; allowed JD item IDs are 0 through {n-1}, '
+                                         'not role or original-bullet indices')
                 guards['validator']=valid_references
             out = _invoke(ctx, agent, model, schema, _section_messages(ctx, agent, f, tasks, last), log=log,**guards,
                           **({'first':'json_mode'} if ctx.get('incremental') and agent in ('experience','summary') else {}))
