@@ -245,7 +245,13 @@ def _section_messages(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str
     base = T.build_fill_prompt(ctx["r"], ctx["jd"], ctx["company"], 16)
     system = SystemMessage(ROLE_PROMPTS[agent] + "\n\n" + base[0].content)
     proj = (ctx["job_dir"] / "projects.json")
-    extra = _context(ctx, f, proj.read_text() if proj.exists() else None)
+    if ctx.get('incremental') and agent=='experience' and f is None:
+        # Initial experience is independent of concurrently selected projects.
+        # Reading yesterday's projects.json here makes both the prompt and its
+        # cache key depend on thread timing or an interrupted previous build.
+        extra = _context({**ctx,'candidates':[],'cards':{}}, None, None)
+    else:
+        extra = _context(ctx, f, proj.read_text() if proj.exists() else None)
     if tasks:
         extra += "\n\nTASKS FOR YOU (from the validators):\n" + "\n".join(f"- {t}" for t in tasks)
     if last:

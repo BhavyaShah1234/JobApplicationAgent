@@ -59,6 +59,19 @@ def test_changed_skills_rechecks_skills_and_summary_only(tmp_path,monkeypatch):
     assert sorted(calls[4:])==['skills','summary']
 
 
+def test_initial_experience_prompt_is_independent_of_project_thread_timing(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M
+    from langchain_core.messages import SystemMessage
+    monkeypatch.setattr(M.T,'facts_block',lambda:'owner claims')
+    monkeypatch.setattr(M.T,'build_fill_prompt',lambda *a,**kw:[SystemMessage('base'),HumanMessage('JD')])
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(skills=[]),'jd':None,'company':'Company','incremental':True}
+    before=M._section_messages(ctx,'experience',None,[],'')
+    (tmp_path/'projects.json').write_text('This previous output must not be read')
+    ctx['candidates']=[(1,{'full_name':'another/project'})]
+    after=M._section_messages(ctx,'experience',None,[],'')
+    assert [m.content for m in before]==[m.content for m in after]
+
+
 def panel_world(tmp_path,monkeypatch,scores):
     from jobagent.steps import multi_agent as M
     (tmp_path/'resume.pdf').write_bytes(b'valid-pdf-fixture')
