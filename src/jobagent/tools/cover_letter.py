@@ -259,7 +259,7 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
         issues = consistency(letter, resume, jd, company_md)
         if incremental:
             try:
-                issues += attribution.check(letter, bank, cache, get_settings().model_writer, log)
+                issues += attribution.check(letter, bank, cache, get_settings().model_planner, log)
             except Exception as exc:
                 issues.append(f'achievement attribution review unavailable ({type(exc).__name__})')
         tex = render(template, letter, jd)

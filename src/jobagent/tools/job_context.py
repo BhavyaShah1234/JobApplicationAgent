@@ -1,9 +1,27 @@
 """A shared source snapshot: source text is evidence, never executable instructions."""
 from pathlib import Path
+import hashlib
 
 from .artifact_cache import digest, write_private
 
 VERSION = 1
+
+
+class SourceGuard:
+    """Detect edits across a document stage without overwriting the owner's sources."""
+    def __init__(self, paths):
+        self.paths = tuple(Path(path) for path in paths)
+        self.before = self.fingerprints()
+
+    def fingerprints(self):
+        """Hash actual source bytes; creation and removal are changes too."""
+        return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+                for path in self.paths}
+
+    def check(self):
+        """Stop publication if the snapshot used to generate a packet is no longer current."""
+        if self.before != self.fingerprints():
+            raise RuntimeError('Document source inputs changed during generation; rerun from the current sources')
 
 
 def snapshot(job_dir, *, company='', candidate=None, template='', claims=None):
@@ -32,7 +50,7 @@ def model_version(stage=None):
     root = Path(__file__).parents[1]
     names = ('steps/multi_agent.py', 'tools/tailor.py', 'tools/projects.py',
              'tools/cover_letter.py', 'tools/skillgraph.py', 'tools/incremental_documents.py',
-             'tools/letter_attribution.py')
+             'tools/letter_attribution.py', 'steps/tailor.py', 'tools/job_context.py')
     if stage in ('experience','projects','skills','summary'):
         names=('steps/multi_agent.py','tools/tailor.py','tools/projects.py','tools/skillgraph.py')
     elif stage=='project-selection':
@@ -41,4 +59,6 @@ def model_version(stage=None):
         names=('tools/cover_letter.py','tools/tailor.py')
     elif stage=='letter-attribution':
         names=('tools/letter_attribution.py','tools/cover_letter.py','tools/tailor.py')
+    elif stage and (stage.startswith('review:') or stage=='adjudicate:projects'):
+        names=('tools/incremental_documents.py','steps/multi_agent.py','tools/tailor.py')
     return digest({n: (root / n).read_text() for n in names if (root / n).exists()})

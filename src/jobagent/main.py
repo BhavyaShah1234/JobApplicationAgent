@@ -468,6 +468,21 @@ def tailor_cmd(
     from jobagent.tools import workflow as W
     from jobagent.tools.tailor import PDF_STARTUP_POLICY
     wf = W.Workflow(d)
+    source_guard = None
+    if strategy == 'incremental':
+        from jobagent.tools.job_context import SourceGuard
+        from jobagent.tools.cover_letter import template_path
+        source_guard = SourceGuard([d/name for name in ('jd.json','jd.txt')] +
+            [s.data_dir/'templates'/'resume.tex', template_path(), s.data_dir/'master_profile.yaml',
+             s.data_dir/'applicant.yaml', s.state_dir/'companies'/f'{company}.md'])
+    def check_sources():
+        """Invalidate the packet, retaining owner edits, if sources changed between stages."""
+        if source_guard:
+            try:
+                source_guard.check()
+            except RuntimeError:
+                documents.begin_rewrite(d)
+                raise
     jd_sha, txt_sha = W.sha_file(d / "jd.json"), W.sha_file(d / "jd.txt")
     template_sha = W.sha_file(s.data_dir / "templates" / "resume.tex")
     profile_sha = W.sha_file(s.state_dir / "companies" / f"{company}.md")
@@ -509,6 +524,7 @@ def tailor_cmd(
                                  "sites": list(sites), "document_strategy":strategy,"ats_refine":ats_refine,
                                  "ats_providers":{name:M.ats_sites.provider_version(name) for name in sites},
                                  "incremental_version":job_context.model_version() if strategy=='incremental' else None,
+                                 **({'incremental_validators':{'projects':s.model_planner,'letter':s.model_planner}} if strategy=='incremental' else {}),
                                  "claims_profile":W.sha_file(s.data_dir/'master_profile.yaml'),
                                  "skills": _skill_inputs(d, s), "document_provenance": 1,
                                  "project_content_validation": 1, "versioned_content_review": 3,
@@ -516,6 +532,7 @@ def tailor_cmd(
                          outputs=["resume.pdf", "resume.tex", "filled.json"], force=force, log=log,
                          check=lambda r: None if r.get("produced") else (r.get("failure") or "no valid resume was produced"))
         log(f"resume ({how}): average {rj['average']} {rj['scores']}, {rj['pages']} page(s), hard issues {rj['hard_issues']}")
+        check_sources()
         cl = None
         if (rj["produced"] and rj.get("template_sha256")
                 and rj["template_sha256"] == documents.template_fingerprint()):
@@ -526,12 +543,14 @@ def tailor_cmd(
                                      "jd":jd_sha,"letter_template":W.sha_file(letter_template_path()),
                                      "document_strategy":strategy,
                                      "incremental_version":job_context.model_version() if strategy=='incremental' else None,
+                                     **({'incremental_validator':s.model_planner} if strategy=='incremental' else {}),
                                      "candidate_credentials": 1, "pdf_startup_policy": PDF_STARTUP_POLICY},
                              outputs=["cover_letter.pdf", "cover_letter.tex"], force=force, log=log)
             log(f"cover letter ({how}): {cl['words']} words, {len(cl['issues'])} issue(s)")
         res = documents.assess(d, resume=rj, letter=cl, ats={"average": rj["average"], "complete": rj["average_complete"],
                                                              "missing": rj["average_missing"], "scored": bool(rj["average_sites"])},
                                policy=s.ats_shortfall, target=s.ats_target)
+    check_sources()
     documents.save(d, res)
     _print_documents(res)
     if code := documents.exit_code(res):

@@ -111,10 +111,22 @@ def cover_letter(job_dir: str | Path, company_slug: str, log=print, *, increment
 
     s = get_settings()
     job_dir = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
+    if incremental:
+        from jobagent.tools.job_context import SourceGuard
+        guard = SourceGuard([job_dir/name for name in ('resume.tex','resume.pdf','filled.json','projects.json','jd.json','jd.txt')] +
+            [s.state_dir/'companies'/f'{company_slug}.md', CL.template_path(),
+             s.data_dir/'templates'/'resume.tex', s.data_dir/'master_profile.yaml', s.data_dir/'applicant.yaml'])
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
     company = (s.state_dir / "companies" / f"{company_slug}.md").read_text()
     writer = llm.writer(8000)
     cl = CL.write(job_dir, jd, company, writer, log=log, **({'incremental':True} if incremental else {}))
+    if incremental:
+        try:
+            guard.check()
+        except RuntimeError:
+            from jobagent.tools import documents
+            documents.begin_rewrite(job_dir)
+            raise
     changes = job_dir / "changes.md"
     text = changes.read_text() if changes.exists() else ""
     text = text.split("\n## Cover letter\n", 1)[0].rstrip("\n") + "\n"  # replace an earlier letter's section

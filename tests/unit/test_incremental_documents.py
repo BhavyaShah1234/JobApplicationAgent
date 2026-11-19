@@ -147,6 +147,50 @@ def test_every_scoped_reviewer_receives_the_existing_owner_claims_policy(tmp_pat
     assert all('standing confirmation' in v for v in seen)
 
 
+def test_summary_review_receives_current_date_and_target_company_context(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(M.T,'facts_block',lambda:'Owner policy')
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    seen=[]
+    def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
+        if stage=='review:summary':seen.extend(messages)
+        return M.Review(findings=[])
+    monkeypatch.setattr(I,'invoke',inspect)
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
+         'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None,
+         'company':'Beta builds robots.'}
+    review(ctx,M.T.Filled.model_construct(summary='Engineer interested in Beta.',roles=[],skills=[]))
+    assert 'Today is ' in seen[0].content and 'not a claim of previous employment' in seen[0].content
+    assert json.loads(seen[1].content)['company_context']=='Beta builds robots.'
+
+
+@pytest.mark.parametrize('changed',['resume.tex','jd.json','company'])
+def test_cover_letter_refuses_changed_inputs_without_discarding_owner_edits(tmp_path,monkeypatch,changed):
+    from jobagent.steps import tailor as S
+    from jobagent.tools import cover_letter as CL,documents
+    from jobagent.state import JobDescription
+    data=tmp_path/'data';state=tmp_path/'state';job=tmp_path/'job'
+    (data/'templates').mkdir(parents=True);(state/'companies').mkdir(parents=True);job.mkdir()
+    company=state/'companies'/'fixture.md';company.write_text('Original company')
+    (job/'jd.json').write_text(JobDescription(company='Fixture',title='Engineer').model_dump_json())
+    (job/'resume.tex').write_text('Final resume')
+    template=data/'templates'/'cover_letter.tex';template.write_text('Template')
+    monkeypatch.setattr(S,'get_settings',lambda:SimpleNamespace(data_dir=data,state_dir=state))
+    monkeypatch.setattr(CL,'template_path',lambda:template)
+    monkeypatch.setattr(S.llm,'writer',lambda *a,**kw:object())
+    target=company if changed=='company' else job/changed
+    def generate(*a,**kw):
+        target.write_text('Owner edit during generation')
+        return {'valid':True}
+    monkeypatch.setattr(CL,'write',generate)
+    with pytest.raises(RuntimeError,match='source inputs changed'):
+        S.cover_letter(job,'fixture',incremental=True)
+    assert target.read_text()=='Owner edit during generation'
+    assert documents.load(job)['valid'] is False
+    assert not (job/'changes.md').exists()
+
+
 def test_review_only_code_changes_preserve_writer_cache_versions(tmp_path,monkeypatch):
     from jobagent.tools import job_context as J
     (tmp_path/'steps').mkdir();(tmp_path/'tools').mkdir()

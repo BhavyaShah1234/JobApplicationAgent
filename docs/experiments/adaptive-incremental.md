@@ -70,6 +70,10 @@ changed employer bullets recheck experience and summary. Failed calls are never
 cached. Completed section work survives interruption. Compilation and deterministic
 validity gates still run. `context-manifest.json` records source fingerprints using
 the same source-snapshot interface used by adaptive filling.
+Source guards span the complete tailoring command and the cover-letter stage;
+an intervening profile, JD, template or resume edit invalidates publication while
+retaining the owner's edits. Review prompts receive the local date and relevant
+company context, so a mission clause is not treated as a previous-employer claim.
 
 Proposed critical project contradictions receive an independent, source-bound
 adjudication. Both claim and evidence quotes must belong to that same project;
@@ -87,6 +91,9 @@ another employer as evidence. It does not ask the owner to reconfirm generated
 duties/metrics: the standing declaration and existing claims policy remain in force.
 Degrees, employer identities, dates, personal histories and consents keep their
 existing boundaries.
+The independent project adjudicator and letter attribution reviewer use
+`MODEL_PLANNER`; the document writer remains `MODEL_WRITER`. Both validator model
+identities participate in workflow invalidation.
 
 The external ATS panel runs after local resume validation, using the configured
 providers and their existing repeats, quotas and feedback-only distinctions.

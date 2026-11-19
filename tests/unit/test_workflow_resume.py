@@ -131,7 +131,7 @@ def tailor_world(monkeypatch, tmp_path):
     get_settings.cache_clear()
     calls = {"resume": 0, "cover": 0, "crash_cover": False}
 
-    def run_job(d, slug, models, sites, log=print):
+    def run_job(d, slug, models, sites, log=print, **kwargs):
         calls["resume"] += 1
         for n in ("resume.pdf", "resume.tex", "filled.json"):
             (d / n).write_text(f"{n} #{calls['resume']}")
@@ -139,7 +139,7 @@ def tailor_world(monkeypatch, tmp_path):
                 "average_missing": [], "average_sites": ["jobscan"], "claims_issues": [],
                 "template_sha256": D.template_fingerprint()}
 
-    def cover_letter(d, slug, log=print):
+    def cover_letter(d, slug, log=print, **kwargs):
         calls["cover"] += 1
         if calls["crash_cover"]:
             raise RuntimeError("model unavailable")
@@ -167,6 +167,40 @@ def test_tailor_reuses_finished_stages_and_force_rebuilds_them(tailor_world):
     assert r.exit_code == 0 and (calls["resume"], calls["cover"]) == (1, 1) and "reused" in r.output       # nothing was rebuilt
     r = runner.invoke(main.app, ["tailor", str(job), "acme", "--force"])
     assert (calls["resume"], calls["cover"]) == (2, 2)
+
+
+def test_incremental_validator_model_change_revalidates_both_document_stages(tailor_world,monkeypatch):
+    job,calls=tailor_world
+    command=['tailor',str(job),'acme','--document-strategy','incremental']
+    runner=CliRunner()
+    first=runner.invoke(main.app,command)
+    assert first.exit_code==0,first.exception
+    assert runner.invoke(main.app,command).exit_code==0
+    assert (calls['resume'],calls['cover'])==(1,1)
+    monkeypatch.setenv('MODEL_PLANNER','another-independent-reviewer');get_settings.cache_clear()
+    changed=runner.invoke(main.app,command)
+    assert changed.exit_code==0,changed.exception
+    assert (calls['resume'],calls['cover'])==(2,2)
+
+
+def test_incremental_tailor_cannot_publish_if_profile_changes_between_document_stages(tailor_world,monkeypatch):
+    from jobagent.steps import tailor as S
+    from jobagent.tools import documents as D
+    job,calls=tailor_world
+    source=get_settings().data_dir/'applicant.yaml';source.write_text('Original owner profile')
+    original=S.cover_letter
+    def edit(*a,**kw):
+        result=original(*a,**kw)
+        source.write_text('New owner profile')
+        return result
+    monkeypatch.setattr(S,'cover_letter',edit)
+    invalidated=[];published=[]
+    monkeypatch.setattr(D,'begin_rewrite',lambda path:invalidated.append(path))
+    monkeypatch.setattr(D,'save',lambda *a:published.append(a))
+    result=CliRunner().invoke(main.app,['tailor',str(job),'acme','--document-strategy','incremental'])
+    assert result.exit_code!=0 and 'source inputs changed' in str(result.exception)
+    assert invalidated==[job] and not published
+    assert source.read_text()=='New owner profile' and (job/'resume.tex').exists()
 
 
 def test_pipeline_resolves_locations_before_real_tailor_fingerprints_and_reuses_documents(tailor_world):
