@@ -17,6 +17,20 @@ def test_media_shadow_controls_are_excluded_without_hiding_an_applicant_slider(p
     assert fields[0].kind=='range'
 
 
+def test_custom_playback_interface_excludes_nested_controls_without_guessing_tag_names(page):
+    page.set_content('''<clip-viewer id=player></clip-viewer><application-panel id=app></application-panel>
+      <script>
+        player.play=()=>{};player.pause=()=>{};
+        player.attachShadow({mode:'open'}).innerHTML='<clip-toolbar id=toolbar></clip-toolbar>';
+        player.shadowRoot.getElementById('toolbar').attachShadow({mode:'open'}).innerHTML=
+          '<input type=range aria-label="Progress scrubber">';
+        app.attachShadow({mode:'open'}).innerHTML=
+          '<label for=travel>Willingness to travel<input id=travel type=range></label>';
+      </script>''')
+    fields=forms.read_page(page).fields
+    assert [(f.label,f.kind) for f in fields]==[('Willingness to travel','range')]
+
+
 def test_primary_heading_retains_grade_and_separates_a_nested_location_heading(page):
     page.set_content('''<h1><span>Software Engineer 3<span style="display:none">Old title</span><h3>New York City</h3></span></h1>
       <h1 style="display:none">Old Software Engineer 2</h1>

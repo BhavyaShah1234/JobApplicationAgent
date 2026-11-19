@@ -80,6 +80,9 @@ FIELDS_JS = r"""(start) => {
     // author shadow roots. An ordinary application slider is still a field.
     for(let a=e;a;a=a.parentElement || a.getRootNode()?.host){
       if(a.matches?.('video,audio,media-controller,media-time-range,media-volume-range,mux-player'))return true;
+      // Other custom players expose the same playback interface, even when
+      // their video lives in a nested or closed shadow root (e.g. Vouch).
+      if(a.localName?.includes('-') && typeof a.play==='function' && typeof a.pause==='function')return true;
     }
     return false;
   };
