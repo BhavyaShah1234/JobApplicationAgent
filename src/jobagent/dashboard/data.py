@@ -36,6 +36,14 @@ def _count(conn, sql: str) -> dict:
 
 
 def overview(settings) -> dict:
+    """The headline numbers for the Overview: queue, application and outcome counts, applications waiting for review (and how many are ready), questions, and runs and jobs working now.
+
+    Args:
+        settings: Settings locating the state and outputs folders.
+
+    Returns:
+        A JSON-ready dict; empty counts when there is no database yet.
+    """
     conn = ro_conn(settings)
     out = {"now": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), "jobs": {}, "applications": {}, "outcomes": {}, "waiting": 0, "ready": 0,
            "questions": len(hitl_pending(settings)), "runs_active": sum(1 for r in runs(settings, 40) if r["running"]),
@@ -56,6 +64,15 @@ def overview(settings) -> dict:
 
 
 def queue(settings, limit: int = 300) -> list[dict]:
+    """Discovered postings, newest update first.
+
+    Args:
+        settings: Settings locating the state folder.
+        limit: At most this many rows.
+
+    Returns:
+        One dict per posting with company, title, status, role, match score, note and address.
+    """
     conn = ro_conn(settings)
     if conn is None:
         return []
@@ -68,6 +85,15 @@ def queue(settings, limit: int = 300) -> list[dict]:
 
 
 def applications(settings, limit: int = 300) -> list[dict]:
+    """Applications, most recent first, each with the latest approved outcome stage.
+
+    Args:
+        settings: Settings locating the state folder.
+        limit: At most this many rows.
+
+    Returns:
+        One dict per application.
+    """
     conn = ro_conn(settings)
     if conn is None:
         return []
@@ -354,6 +380,15 @@ def run_log(settings, stem: str, tail: int = 300) -> list[dict] | None:
 
 
 def outcomes(settings, limit: int = 40) -> dict:
+    """Outcome counts by stage and the most recent outcome mails.
+
+    Args:
+        settings: Settings locating the state folder.
+        limit: How many recent outcomes to include.
+
+    Returns:
+        `{"counts": {stage: n}, "recent": [...]}`.
+    """
     conn = ro_conn(settings)
     if conn is None:
         return {"counts": {}, "recent": []}

@@ -235,3 +235,7 @@ dev/
 
 # Dashboard front end (React): dependencies are installed in a container, never committed; the build in src/jobagent/dashboard/static IS committed
 frontend/node_modules/
+
+# Archives made by scripts/agentctl backup (they hold your data and the encrypted vault)
+backups/
+*.before-restore-*/

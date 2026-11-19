@@ -140,10 +140,12 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
         log(f"queue: {row['company']} - {row['title']}")
 
         def fin(status: str, note: str = "") -> None:
+            """Record this job's outcome if this worker still holds its claim (a job taken over by another runner keeps its new owner's outcome)."""
             if not Q.finish(conn, url, worker, status, note):
                 log(f"[yellow]queue: {url} was taken over by another runner; this runner's outcome ({status}) was not recorded[/]")
 
         def release() -> None:                       # a step recorded its own final state: only drop the claim
+            """Drop this worker's claim without changing the status (the step already recorded its own final state)."""
             conn.execute("UPDATE jobs SET claimed_by = NULL, lease_until = NULL WHERE url = ? AND claimed_by = ?", (url, worker))
             conn.commit()
 

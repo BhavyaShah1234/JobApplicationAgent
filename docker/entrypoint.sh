@@ -52,6 +52,7 @@ fi
 if [ -n "${DASHBOARD_PORT:-}" ]; then
     dashboard_flags=()
     case "${DASHBOARD_READ_ONLY:-0}" in 1|true|yes) dashboard_flags+=(--read-only) ;; esac
+    for h in ${DASHBOARD_ALLOW_HOSTS//,/ }; do dashboard_flags+=(--allow-host "$h"); done     # e.g. a Tailscale name; empty = this machine only
     mkdir -p /app/state/dashboard
     jobagent dashboard --host 127.0.0.1 --port "$DASHBOARD_PORT" --novnc-url "http://localhost:${NOVNC_PORT}/vnc.html" "${dashboard_flags[@]}" >"$LOG_DIR/dashboard.log" 2>&1 &
     echo "$!" >/app/state/dashboard/server.pid

@@ -38,7 +38,7 @@ from jobagent.tools import ats_sites, bundle, github, layout
 from jobagent.tools import projects as P
 from jobagent.tools import skillgraph as SG
 from jobagent.tools import tailor as T
-from jobagent.tools.vault import open_vault
+from jobagent.tools.vault import optional_secret
 
 AGENTS = ("experience", "projects", "skills", "summary")
 # Each agent's model from the per-section report of the 3-posting model run (outputs/experiments/
@@ -61,6 +61,14 @@ FULL_REWRITE = __import__("re").compile(r"(?i)not covered|pages?; it must be one
 # --- section outputs ----------------------------------------------------------------------------------------
 
 def experience_schema(r: T.Resume) -> type[BaseModel]:
+    """Build the structured-output schema for the experience agent: one bullet list per role of this template plus a note.
+
+    Args:
+        r: The parsed template (its roles decide the fields).
+
+    Returns:
+        A pydantic model class with `role_0 ... role_N` and `notes`.
+    """
     fields = {f"role_{i}": (list[T.FillBullet], Field(min_length=T.MIN_BULLETS, max_length=T.MAX_BULLETS,
                                                       description=f"Bullets for: {role.title} at {role.company}"))
               for i, role in enumerate(r.roles)}
@@ -69,39 +77,47 @@ def experience_schema(r: T.Resume) -> type[BaseModel]:
 
 
 class SkillsOut(BaseModel):
+    """The skills agent's answer: three to eight Technical Skills lines."""
     skills: list[T.SkillLine] = Field(min_length=3, max_length=8)
 
 
 class SummaryOut(BaseModel):
+    """The summary agent's answer: the Summary as plain text, within the length limits."""
     summary: str = Field(max_length=T.SUMMARY_MAX, description=f"Plain text, 2-3 complete sentences, at most {T.SUMMARY_TARGET} characters")
 
 
 class ProjectSwap(BaseModel):
+    """Replace one Projects entry with a better candidate repository."""
     project: int = Field(description="1-based number under PROJECTS to replace")
     entry: P.ProjectEntry = Field(description="The better CANDIDATE repo, written like the others")
 
 
 class ProjectsOut(BaseModel):
+    """The projects agent's answer: rewritten descriptions and at most two swaps."""
     projects: list[T.ProjectFix] = Field(default_factory=list, max_length=4)
     swaps: list[ProjectSwap] = Field(default_factory=list, max_length=2)
 
 
 class Finding(BaseModel):
+    """One problem the reviewer found: which agent should fix it, what is wrong, and whether it is a real error or only a suggestion."""
     agent: Literal["experience", "projects", "skills", "summary"]
     issue: str = Field(max_length=400, description="What is wrong and what to do, citing the text")
     severity: Literal["error", "suggestion"] = Field(description="Error only for an actual correctness problem; a preference for a narrower category is a suggestion")
 
 
 class Review(BaseModel):
+    """The reviewer's list of findings (at most eight)."""
     findings: list[Finding] = Field(default_factory=list, max_length=8)
 
 
 class Task(BaseModel):
+    """An instruction for one agent about what to change."""
     agent: Literal["experience", "projects", "skills", "summary"]
     instruction: str = Field(max_length=500, description="What that agent must change, citing the items")
 
 
 class RoutePlan(BaseModel):
+    """The router's plan: which agent gets which instruction before the next edit."""
     tasks: list[Task] = Field(default_factory=list, max_length=12)
 
 
@@ -163,6 +179,7 @@ location, degrees, certifications, clearances, citizenship or work authorization
 # --- graph state -----------------------------------------------------------------------------------------------
 
 class State(TypedDict, total=False):
+    """The state of the writing graph: the job context, the current resume content, the tasks for the next edit, what happened last, the scores and the best checked version so far."""
     ctx: dict                       # job_dir, jd, company, r, jd_text, models, log
     f: T.Filled                     # summary + roles + skills
     tasks: dict                     # agent -> list of instructions for the next edit
@@ -317,7 +334,7 @@ def write_initial(state: State) -> dict:
     progress(log, "documents", "running", "First draft: experience, projects, skills, summary")
 
     def projects():
-        token = (open_vault().get("github") or {}).get("token")
+        token = optional_secret("github", "token")
         chosen = P.choose(r, jd, llm.writer(8000, timeout=300, model=ctx["models"]["projects"]),
                           github.profile_user(r.tex), token, rediscover=False, log=log)
         P.save_state(ctx["job_dir"], list(chosen.entries), chosen)
@@ -400,6 +417,14 @@ def plan_space(ctx: dict, f: T.Filled) -> tuple[T.Filled, str, list[str], int, s
 
 
 def render(state: State) -> tuple[T.Filled, str, list[str], int, str]:
+    """Render the current resume content to a PDF and check the page.
+
+    Args:
+        state: The graph state.
+
+    Returns:
+        The content, its LaTeX, the problems found, the page count and the compile error (if any).
+    """
     return plan_space(state["ctx"], state["f"])
 
 
@@ -742,6 +767,14 @@ def _rollback(state: State, why: str, ev: dict | None = None) -> dict:
 
 
 def after_score(state: State) -> str:
+    """Decide where the graph goes after scoring.
+
+    Args:
+        state: The graph state.
+
+    Returns:
+        `done` when the result is final (a content error, a dry run with no ATS sites, the target reached, or the rounds used up); otherwise the name of the next node.
+    """
     best = state.get("best")
     if state.get("content_error") or (not state["ctx"]["sites"] and state.get("hard") and not best):
         return "done"
@@ -796,6 +829,11 @@ def route(state: State) -> dict:
 
 
 def build_graph():
+    """Build the LangGraph that writes, lays out, edits and scores a resume: write, check layout, fix, score, route, and the loops between them.
+
+    Returns:
+        The compiled graph.
+    """
     g = StateGraph(State)
     g.add_node("write", write_initial)
     g.add_node("check_layout", check_layout)

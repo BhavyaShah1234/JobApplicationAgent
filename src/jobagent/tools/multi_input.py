@@ -19,6 +19,7 @@ URL_ONLY = ("ignore_eligibility", "allow_desktop_submit")
 
 @dataclass
 class Row:
+    """What happened to one input (a URL, a company, a file) or one worked job: its kind, final state, a note and the exit code."""
     input: str
     kind: str
     state: str
@@ -27,6 +28,7 @@ class Row:
 
     @property
     def stopped(self) -> bool:
+        """True when this row did not reach what was asked: a non-zero exit code or a state in `STOPPED`."""
         return self.code != 0 or self.state in STOPPED
 
 
@@ -38,6 +40,7 @@ def exit_code(rows: list["Row"]) -> int:
 
 @dataclass
 class Plan:
+    """The inputs of one `jobagent run`, routed: job URLs, company names, warnings, inputs that could not be read, and the metadata (source row, referral) of file rows."""
     urls: list[str] = field(default_factory=list)
     companies: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -161,6 +164,18 @@ def run_inputs(inputs: list[str], *, through: str = "apply", limit: int = 5, log
                 from jobagent.tools.scrape import _slug
 
                 def work_queue(t, n, *, companies, options, results):          # noqa: E731
+                    """Work the queue for the requested companies only (the default `work_queue` of `run_inputs`).
+
+                    Args:
+                        t: How far to take each job (`scrape`, `tailor` or `apply`).
+                        n: At most this many jobs.
+                        companies: Slugs of the companies named in the run; no other company's jobs are claimed.
+                        options: Pipeline options that apply to queued jobs (force, no_ats, filling_strategy, browser_mode).
+                        results: A list that receives one dict per worked job.
+
+                    Returns:
+                        How many jobs reached the requested stage without failing.
+                    """
                     return run_queue(db.connect(), through=t, limit=n, company=None, companies=companies, pipeline_options=options,
                                      results=results, outputs_dir=get_settings().outputs_dir, slug_of=_slug, log=log,
                                      browser_mode=options.get("browser_mode", "docker"))

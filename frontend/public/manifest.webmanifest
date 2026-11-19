@@ -1,0 +1,11 @@
+{
+  "name": "Job agent",
+  "short_name": "Job agent",
+  "description": "Watch the job agent, answer its questions and see how the applications are going.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f6f3",
+  "theme_color": "#2158c4",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

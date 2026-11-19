@@ -290,8 +290,8 @@ def rank(cards: list[dict], job_text: str, k: int = 8, min_substance: int = 2) -
 if __name__ == "__main__":
     import sys
 
-    from jobagent.tools.vault import open_vault
+    from jobagent.tools.vault import optional_secret
 
     tex = (get_settings().data_dir / "templates" / "resume.tex").read_text()
-    refresh(github.profile_user(tex), (open_vault().get("github") or {}).get("token"),
+    refresh(github.profile_user(tex), optional_secret("github", "token"),
             workers=int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 6, force="--force" in sys.argv)

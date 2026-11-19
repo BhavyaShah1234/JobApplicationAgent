@@ -28,6 +28,7 @@ from jobagent.state import JobDescription
 
 @dataclass
 class Role:
+    """One job in the resume template: its locked heading, title, company, dates, and the LaTeX of each bullet, with where the bullet list sits in the file and which bullets the template marks `% backfill` (reusable to top up the section)."""
     header: str                  # the \resumeSubheading block (locked)
     title: str
     company: str
@@ -44,6 +45,7 @@ def eligible(role: "Role", j: int, marked: bool) -> bool:
 
 @dataclass
 class Resume:
+    """The parsed resume template: its source, the Summary, the roles, the Technical Skills lines (category, items), and the spans the tailor may rewrite. `forbidden` holds related skills this job's candidate does not have; they are never rendered."""
     tex: str
     summary_span: tuple[int, int]
     summary: str
@@ -73,6 +75,17 @@ def _braced(tex: str, start: int) -> tuple[str, int]:
 
 
 def parse(tex: str) -> Resume:
+    """Parse the resume template into a `Resume`.
+
+    Args:
+        tex: The template's LaTeX source (needs the Summary, Experience, Education and Technical Skills sections).
+
+    Returns:
+        The `Resume` with its roles, skills lines and editable spans.
+
+    Raises:
+        ValueError: When a required section is missing.
+    """
     s_sum = tex.index("\\section{Summary}") + len("\\section{Summary}")
     e_sum = tex.index("\\section{Experience}")
     summary = tex[s_sum:e_sum].strip()
@@ -111,6 +124,7 @@ _UNESC = [("\\%", "%"), ("\\&", "&"), ("\\$", "$"), ("\\#", "#"), ("\\_", "_"), 
 
 
 def to_plain(latex: str) -> str:
+    r"""Turn LaTeX-escaped text (`\%`, `\&`, ...) back into plain text."""
     out = latex
     for a, b in _UNESC:
         out = out.replace(a, b)
@@ -155,6 +169,7 @@ def no_dashes(text: str) -> str:
 
 
 def to_latex(plain: str) -> str:
+    """Make plain text safe for the resume's LaTeX: escape special characters, replace arrows and non-ASCII punctuation, and use commands that print correctly in the template's font encoding."""
     plain = by_percent(no_dashes(plain))
     plain = "".join(c for c in re.sub(r"~\s*(?=\d)", "about ", re.sub(r"\s*(→|->)\s*", " to ", plain)).replace("‑", "-") if ord(c) < 128 or c in _KEEP)
     out = plain.replace("\\", "\\textbackslash{}")
@@ -167,6 +182,7 @@ def to_latex(plain: str) -> str:
 
 
 def has_command(latex: str) -> bool:
+    r"""True when a LaTeX string contains a link or formatting command (`\href`, `\url`, `\textbf`, `\textit`, `\underline`) that must be kept."""
     return bool(re.search(r"\\(href|url|textbf|textit|underline)\b", latex))
 
 
@@ -237,6 +253,7 @@ def budget_text() -> str:
 
 
 class FillBullet(BaseModel):
+    """One bullet the model writes: its text (plain, past tense, length-bounded), which job-description items it covers, the template bullet it reuses (if any), and any numbers it estimated and the candidate must confirm."""
     text: str = Field(max_length=BULLET_VERBATIM_MAX, description=f"Plain text, no LaTeX, past tense, about {BULLET_TARGET} "
                       f"characters, at most {BULLET_MAX} unless copied verbatim from an original bullet")
     duties: list[int] = Field(min_length=1, max_length=3, description="Indices of the JD ITEMS this bullet covers")
@@ -254,16 +271,19 @@ class FillBullet(BaseModel):
 
 
 class FillRole(BaseModel):
+    """The bullets chosen for one role of the template (2 to 4)."""
     role: int = Field(description="Role index as given")
     bullets: list[FillBullet] = Field(min_length=2, max_length=4)
 
 
 class ToolsFor(BaseModel):
+    """Concrete tools for one abstract skill term, e.g. 'Machine Vision' implemented by OpenCV and YOLOv8."""
     term: str = Field(max_length=40, description="One abstract term from `terms`, exactly as written there")
     tools: list[str] = Field(min_length=1, max_length=4, description="Concrete current tools implementing it")
 
 
 class SkillLine(BaseModel):
+    """One Technical Skills line: a category, its terms, and concrete tools for abstract terms."""
     category: str = Field(max_length=32, description="Short category name, no parentheses or colons")
     terms: list[str] = Field(min_length=1, max_length=16,
                              description="One skill per array element (never a comma list in one element)")
@@ -271,6 +291,11 @@ class SkillLine(BaseModel):
                                       description="Concrete tools for the abstract terms of this line")
 
     def render(self) -> list[str]:
+        """The terms of the line as they print: `Term (tool, tool)` where tools are known, with duplicates and tools already shown in parentheses removed.
+
+        Returns:
+            The rendered terms, in order.
+        """
         tools = {t.term.strip().lower(): t.tools for t in self.tools_for}
         terms = []
         for raw in self.terms:  # top-level commas only; "Term (a, b)" written inside a term is read as tools_for
@@ -297,6 +322,7 @@ class SkillLine(BaseModel):
 
 
 class Filled(BaseModel):
+    """What the model returns for a whole resume: the Summary, the bullets of every role, the skills lines and a note on how duties were spread."""
     summary: str = Field(max_length=SUMMARY_MAX, description=f"Plain text, 2-3 complete sentences, at most {SUMMARY_TARGET} characters")
     roles: list[FillRole] = Field(min_length=1, max_length=6)
     skills: list[SkillLine] = Field(min_length=3, max_length=8)
@@ -334,6 +360,15 @@ def normalize_originals(r: "Resume", f: "Filled") -> "Filled":
 
 
 def to_filled(r: "Resume", out: BaseModel) -> Filled:
+    """Assemble the model's per-role answer into a `Filled` and mark bullets that claim to be an original but are not.
+
+    Args:
+        r: The parsed template.
+        out: The model's structured answer (`summary`, `role_N` lists, `skills`, `notes`).
+
+    Returns:
+        The `Filled` resume content.
+    """
     roles = [FillRole(role=i, bullets=getattr(out, f"role_{i}")) for i in range(len(r.roles))]
     return normalize_originals(r, Filled(summary=out.summary, roles=roles, skills=out.skills, notes=out.notes))
 
@@ -437,6 +472,7 @@ TECH_WORDS = re.compile(r"(?i)\b(code|coding|software|systems?|backend|back-end|
 
 
 def is_technical(text: str, jd: JobDescription) -> bool:
+    """True when a sentence names tools, technologies or technical work, or one of the posting's technical skills (so it can be a duty to cover)."""
     low = text.lower()
     return bool(TOOLISH.search(text) or TECHLESS.search(text) or TECH_WORDS.search(text) or
                 any(len(k) > 2 and k.lower() in low for k in jd.technical_skills))
@@ -465,6 +501,19 @@ def _graph_text(graph) -> str:
 
 
 def build_fill_prompt(r: Resume, jd: JobDescription, company_md: str, max_bullets: int, feedback: str = "", graph: dict | None = None) -> list:
+    """Build the messages that ask the model to write the whole resume.
+
+    Args:
+        r: The parsed template (roles, original bullets, current skills).
+        jd: The job posting.
+        company_md: The researched company profile text.
+        max_bullets: How many bullets the page can hold.
+        feedback: Notes from the previous round to fix.
+        graph: Related-skill suggestions from the skill graph (owned ones may fill space; the others are forbidden).
+
+    Returns:
+        The system and human messages.
+    """
     duties = "\n".join(f"  [{i}] {need} {kind}: {text}" for i, (kind, text, need) in enumerate(jd_items(jd)))
     marked = any(any(x.pool) for x in r.roles)
     roles = []
@@ -529,6 +578,7 @@ def facts_block() -> str:
 
 
 def fill_locked_parts(r: Resume) -> list[str]:
+    """The parts of the template the tailor must never change (header, Education, Projects or Publications, section headings, role headings), for the byte-for-byte check."""
     tex = r.tex
     pub = next((i for i in (tex.find("\\section{Projects}"), tex.find("\\section{Publications}")) if i != -1), -1)
     start = pub if pub != -1 else tex.index("\\section{Education}")
@@ -537,6 +587,17 @@ def fill_locked_parts(r: Resume) -> list[str]:
 
 
 def apply_fill(r: Resume, f: Filled) -> tuple[str, list[str]]:
+    """Write a `Filled` resume into the template.
+
+    Every writer and every refresh renders through here, so related skills this candidate does not have (`r.forbidden`) are removed from the skills lines first.
+
+    Args:
+        r: The parsed template.
+        f: The resume content; its skills are replaced by the cleaned ones.
+
+    Returns:
+        The new LaTeX source and a list of problems found while placing the content.
+    """
     problems = []
     if r.forbidden:                       # every render of every writer and refresh passes here: a skill the candidate's files do not show is removed
         from jobagent.tools import skillgraph
@@ -773,6 +834,7 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
 # --- repair: rewrite only the flagged bullets -------------------------------------------------------------------
 
 class BulletFix(BaseModel):
+    """A rewrite of one bullet: which role and position, the new text, and any estimated numbers."""
     role: int = Field(description="role_N index of the bullet")
     bullet: int = Field(description="1-based position of the bullet in that role")
     text: str = Field(max_length=BULLET_MAX, description=f"The rewritten bullet, plain text, about {BULLET_TARGET} characters, "
@@ -781,6 +843,7 @@ class BulletFix(BaseModel):
 
 
 class Repair(BaseModel):
+    """A set of up to eight bullet rewrites that fix the flagged problems."""
     fixes: list[BulletFix] = Field(min_length=1, max_length=8)
 
 
@@ -793,6 +856,17 @@ a percentage takes "by"."""
 
 
 def build_repair_prompt(r: Resume, jd: JobDescription, f: Filled, issues: list[str]) -> list:
+    """Build the messages that ask the model to fix specific bullet problems.
+
+    Args:
+        r: The parsed template.
+        jd: The job posting.
+        f: The current resume content.
+        issues: The problems to fix.
+
+    Returns:
+        The system and human messages.
+    """
     items = jd_items(jd)
     lines = []
     for e in f.roles:
@@ -822,16 +896,19 @@ def apply_repair(f: Filled, repair: Repair) -> int:
 # --- ATS keyword pass (step 10): add missing keywords without breaking the page or the rules --------------------
 
 class SkillAdd(BaseModel):
+    """Keywords to add to one skills category (existing or new)."""
     category: str = Field(max_length=40, description="An existing category name exactly, or a new short one")
     terms: list[str] = Field(min_length=1, max_length=6, description="ONLY the new keywords to add to this category")
 
 
 class ProjectFix(BaseModel):
+    """A rewritten description for one of the Projects entries."""
     project: int = Field(description="1-based number of the project under PROJECTS")
     paragraph: str = Field(max_length=PARAGRAPH_MAX, description=f"The rewritten description: 3 sentences, {PARAGRAPH_MIN}-{PARAGRAPH_MAX} characters")
 
 
 class KeywordPass(BaseModel):
+    """The model's answer to a missing-keywords round: skills to add, bullets and project descriptions to rewrite, and optionally a new Summary."""
     skills: list[SkillAdd] = Field(default_factory=list, max_length=4)
     bullets: list[BulletFix] = Field(default_factory=list, max_length=6)
     projects: list[ProjectFix] = Field(default_factory=list, max_length=4)
@@ -875,6 +952,21 @@ EVERY piece of advice, within the CANDIDATE FACTS:
 def build_keyword_prompt(r: Resume, jd: JobDescription, f: Filled, missing: list[str],
                          advice: list[str] = (), keep: list[str] = (), last: str = "",
                          projects: list[str] = ()) -> list:
+    """Build the messages that ask the model to work missing ATS keywords into the resume truthfully.
+
+    Args:
+        r: The parsed template.
+        jd: The job posting.
+        f: The current resume content.
+        missing: Keywords the checker sites say are missing.
+        advice: Written advice from the sites.
+        keep: Terms that must stay.
+        last: What happened in the previous round.
+        projects: The current Projects descriptions.
+
+    Returns:
+        The system and human messages.
+    """
     lines = []
     for e in f.roles:
         role = r.roles[e.role]
@@ -901,6 +993,7 @@ develop development developer engineer engineering software project projects tim
 
 
 def is_generic(term: str) -> bool:
+    """True when every word of a term is a generic word ('experience', 'strong', ...), so it is not worth adding as a skill."""
     return all(w in GENERIC_WORDS for w in re.findall(r"[a-z]+", term.lower())) if term.strip() else True
 
 

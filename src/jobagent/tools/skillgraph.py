@@ -141,9 +141,11 @@ class Graph:
         self.postings: dict = {k: (v if isinstance(v, dict) else {"role": v, "fp": None}) for k, v in (data.get("postings") or {}).items()}
 
     def to_dict(self) -> dict:
+        """The graph as plain data (version, nodes, edges, postings) ready for JSON."""
         return {"version": self.version, "nodes": self.nodes, "edges": self.edges, "postings": self.postings}
 
     def content_hash(self) -> str:
+        """A hash of everything except the version, so a save can tell whether anything changed."""
         d = self.to_dict()
         d.pop("version")
         return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()
@@ -151,9 +153,19 @@ class Graph:
     # lookup
     @staticmethod
     def node_id(kind: str, name: str) -> str:
+        """The id a node of this kind and name gets: `<kind>:<normalised name>`."""
         return f"{kind}:{norm(name)}"
 
     def find(self, kind: str, name: str) -> str | None:
+        """Look a node up by name or by a recorded alias.
+
+        Args:
+            kind: `role`, `duty` or `skill`.
+            name: The name or an alias, in any spelling `norm` unifies.
+
+        Returns:
+            The node id, or None when the graph does not know it.
+        """
         nid = self.node_id(kind, name)
         if nid in self.nodes:
             return nid
@@ -164,10 +176,22 @@ class Graph:
         return None
 
     def of_kind(self, kind: str) -> list[dict]:
+        """All nodes of one kind (`role`, `duty` or `skill`)."""
         return [n for n in self.nodes.values() if n["kind"] == kind]
 
     # change
     def add(self, kind: str, name: str, category: str = "", source: str = "") -> str:
+        """Add a node, or update it when it exists.
+
+        Args:
+            kind: `role`, `duty` or `skill`.
+            name: Display name.
+            category: For a skill, one of `CATEGORIES`; kept only if the node has none yet.
+            source: Key of the posting that mentioned it, recorded as provenance.
+
+        Returns:
+            The node id.
+        """
         nid = self.node_id(kind, name)
         n = self.nodes.setdefault(nid, {"id": nid, "kind": kind, "name": name.strip(), "aliases": [], "category": "", "sources": []})
         if category in CATEGORIES and (not n["category"] or n.get('category_defaulted')):
@@ -178,20 +202,30 @@ class Graph:
         return nid
 
     def alias(self, nid: str, name: str) -> None:
+        """Record another spelling of a node's name (ignored when it is the same name after normalisation)."""
         n = self.nodes[nid]
         if name.strip() and norm(name) != norm(n["name"]) and name.strip() not in n["aliases"]:
             n["aliases"].append(name.strip())
 
     def link(self, src: str, dst: str, posting: str) -> None:
+        """Support an edge with one posting.
+
+        Args:
+            src: Source node id (a role or a duty).
+            dst: Target node id (a duty or a skill).
+            posting: The posting's key; an edge's weight is the number of distinct postings supporting it.
+        """
         e = self.edges.setdefault(f"{src}>{dst}", {"src": src, "dst": dst, "weight": 0, "postings": []})
         if posting not in e["postings"]:
             e["postings"].append(posting)
             e["weight"] = len(e["postings"])
 
     def children(self, nid: str) -> list[tuple[str, int]]:
+        """The nodes an edge leads to from `nid`, as (id, weight) pairs."""
         return [(e["dst"], e["weight"]) for e in self.edges.values() if e["src"] == nid]
 
     def parents(self, nid: str) -> list[tuple[str, int]]:
+        """The nodes with an edge into `nid`, as (id, weight) pairs."""
         return [(e["src"], e["weight"]) for e in self.edges.values() if e["dst"] == nid]
 
     def retract(self, posting: str) -> None:
@@ -228,11 +262,27 @@ class Graph:
 # --- persistence -------------------------------------------------------------------------------------------------------------------
 
 def skills_dir(settings=None) -> Path:
+    """The folder holding the skill graph's files (`graph.json`, `history.jsonl`, `vectors.json`, `approved.json`).
+
+    Args:
+        settings: Settings to read `state_dir` from; the current settings when omitted.
+
+    Returns:
+        `<state_dir>/skills`.
+    """
     from jobagent.config import get_settings
     return (settings or get_settings()).state_dir / "skills"
 
 
 def load(settings=None) -> Graph:
+    """Read the saved graph.
+
+    Args:
+        settings: Settings to locate the state folder; the current settings when omitted.
+
+    Returns:
+        The saved `Graph`, or an empty one when there is no file or it cannot be read.
+    """
     p = skills_dir(settings) / "graph.json"
     try:
         return Graph(json.loads(p.read_text())) if p.exists() else Graph()
@@ -299,6 +349,15 @@ def save(g: Graph, why: str, before: str | None = None, settings=None) -> bool:
 # --- similarity --------------------------------------------------------------------------------------------------------------------
 
 def cosine(a: list[float], b: list[float]) -> float:
+    """Cosine similarity of two embedding vectors.
+
+    Args:
+        a: First vector.
+        b: Second vector.
+
+    Returns:
+        A value in [-1, 1]; 0.0 when the vectors differ in length (they came from different models and are not comparable) or either is all zeros.
+    """
     if len(a) != len(b):                                  # vectors of two models are not comparable
         return 0.0
     na, nb = math.sqrt(sum(x * x for x in a)), math.sqrt(sum(x * x for x in b))
@@ -316,6 +375,14 @@ def default_embed(settings=None) -> Callable[[list[str]], list[list[float]] | No
     mem: dict = {}                                       # loaded once: the file holds 4096-number vectors and grows to megabytes
 
     def embed(texts: list[str]):
+        """Embed texts, using the on-disk cache for known ones.
+
+        Args:
+            texts: The strings to embed.
+
+        Returns:
+            One vector per text, all from the same model; None when the model cannot be reached (callers then match by name only).
+        """
         if not mem:
             try:
                 mem.update(json.loads(path.read_text()) if path.exists() else {})
@@ -373,27 +440,32 @@ def resolve(g: Graph, kind: str, name: str, embed, threshold: float) -> str | No
 # --- ingesting postings ------------------------------------------------------------------------------------------------------------
 
 class SkillOut(BaseModel):
+    """One technology a posting names, as returned by the model: its name as the posting spells it and a category."""
     name: str = Field(max_length=60, description="Exactly one of the posting's technologies, spelled as the posting spells it")
     category: Literal['language','framework','database','cloud','tool','method'] = Field(
         default="tool", description="language, framework, database, cloud, tool or method")
 
 
 class DutyOut(BaseModel):
+    """One duty (a short kind of work, e.g. 'model training') with the posting's technologies that serve it."""
     duty: str = Field(max_length=200, description="A kind of work in at most 4 words, lower case, e.g. 'model training', 'model deployment "
                                                   "and hosting', 'databases', 'data pipelines', 'frontend development'")
     skills: list[SkillOut] = Field(max_length=25)
 
 
 class IngestOut(BaseModel):
+    """The model's answer for one posting: at most eight duties, each with its technologies."""
     duties: list[DutyOut] = Field(max_length=8)
 
 
 class MergeGroup(BaseModel):
+    """Duties that mean the same work: `keep` is the name to keep, `merge` the names to fold into it."""
     keep: str
     merge: list[str]
 
 
 class MergeOut(BaseModel):
+    """The model's answer when asked which duties are duplicates."""
     groups: list[MergeGroup] = Field(max_length=30)
 
 
@@ -427,6 +499,14 @@ def default_ask(jd: dict, known_duties: list[str], skills: list[str]) -> list[Du
 
 
 def default_merge(duties: list[str]) -> list[MergeGroup]:
+    """Ask the model which duty names mean the same work.
+
+    Args:
+        duties: Every duty name in the graph.
+
+    Returns:
+        The groups to merge; names the model invents are ignored later by `consolidate`.
+    """
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from jobagent import llm
@@ -437,6 +517,16 @@ def default_merge(duties: list[str]) -> list[MergeGroup]:
 
 
 def ensure_role(g: Graph, role_id: str, title: str = "") -> str:
+    """Make sure a role node exists, and refresh its display name.
+
+    Args:
+        g: The graph.
+        role_id: The role's id from `data/target_roles.yaml`.
+        title: The role's title, when known.
+
+    Returns:
+        The node id (`role:<role_id>`).
+    """
     nid = f"role:{role_id}"
     n = g.nodes.setdefault(nid, {"id": nid, "kind": "role", "name": title or role_id, "aliases": [], "category": "", "sources": []})
     if title:
@@ -687,6 +777,7 @@ def mermaid(g: Graph, role: str | None = None) -> str:
     ids = {}
 
     def ident(nid: str) -> str:
+        """A short, stable id for a node inside one diagram."""
         return ids.setdefault(nid, f"n{len(ids)}")
 
     lines = ["graph LR"]

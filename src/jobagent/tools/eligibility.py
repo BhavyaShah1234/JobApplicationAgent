@@ -62,10 +62,12 @@ def clearance_level(text: str) -> int | None:
 
 @dataclass
 class Verdict:
+    """The result of screening a posting: `level` is ok, review or blocked, and `reasons` lists each requirement with the sentence it came from."""
     level: str = "ok"                                     # ok | review | blocked
     reasons: list = field(default_factory=list)           # [{"requirement", "quote", "why"}]
 
     def text(self) -> str:
+        """The reasons as one line each, with the quoted sentence, for logs and notes."""
         return "; ".join(f"{r['requirement']}: {r['why']} (\"{r['quote'][:140]}\")" for r in self.reasons)
 
 
@@ -129,6 +131,7 @@ def screen(text: str, facts: dict) -> Verdict:
     permanent = bool(facts.get("permanent_resident"))
 
     def add(level: str, requirement: str, quote: str, why: str) -> None:
+        """Record one finding and raise the verdict's level (blocked beats review beats ok)."""
         v.reasons.append({"requirement": requirement, "quote": quote, "why": why})
         if level == "blocked" or v.level == "ok":
             v.level = level

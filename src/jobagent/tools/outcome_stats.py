@@ -49,6 +49,7 @@ class AppEvents:
 
 @dataclass
 class Status:
+    """One application's label as of a date: pending, positive, negative, ghosted or withdrawn, with days to the first real reply, its age, the furthest stage reached and its weight as evidence."""
     label: str                      # pending | positive | negative | ghosted | withdrawn
     first_response_days: float | None
     age_days: float                 # since submission, as of
@@ -70,6 +71,16 @@ def first_response(app: AppEvents) -> tuple[float, str] | None:
 
 
 def status_of(app: AppEvents, as_of: datetime, cutoff_days: float = DEFAULT_CUTOFF_DAYS) -> Status:
+    """Label one application as of a date.
+
+    Args:
+        app: The application with its approved events.
+        as_of: The date to judge at.
+        cutoff_days: After this many silent days an unanswered application counts as ghosted.
+
+    Returns:
+        Its `Status`.
+    """
     stages = [s for s, t in app.events if t <= as_of]          # events after `as_of` don't exist yet (replays)
     visible = AppEvents(app.id, app.submitted_at, [(s, t) for s, t in app.events if t <= as_of])
     fr = first_response(visible)
@@ -87,6 +98,7 @@ def status_of(app: AppEvents, as_of: datetime, cutoff_days: float = DEFAULT_CUTO
 
 
 def percentile(values: list[float], q: float) -> float:
+    """The q-th percentile of `values` (q in 0..1), by linear interpolation; 0.0 for an empty list."""
     xs = sorted(values)
     if not xs:
         raise ValueError("no values")
@@ -135,6 +147,16 @@ def ghost_cutoff_info(apps: list[AppEvents], as_of: datetime, portal: str | None
 
 
 def ghost_cutoff(apps: list[AppEvents], as_of: datetime, portal: str | None = None) -> float:
+    """The number of silent days after which an application counts as ghosted.
+
+    Args:
+        apps: All applications.
+        as_of: The date to judge at.
+        portal: Estimate for this portal only, when enough replies exist.
+
+    Returns:
+        The estimated or default cutoff in days (see `ghost_cutoff_info` for the basis).
+    """
     return ghost_cutoff_info(apps, as_of, portal)[0]
 
 
@@ -169,6 +191,7 @@ def km_curve(obs: list[tuple[float, bool]]) -> list[tuple[float, float]]:
 
 
 def survival_at(curve: list[tuple[float, float]], t: float) -> float:
+    """The Kaplan-Meier survival probability (still no reply) at day `t` of a curve."""
     s = 1.0
     for ti, si in curve:
         if ti > t:
@@ -188,6 +211,7 @@ def at_risk_at(obs: list[tuple[float, bool]], t: float) -> int:
 
 
 def observations(apps: list[AppEvents], sts: dict[int, Status]) -> list[tuple[float, bool]]:
+    """The (days, replied) observations for the applications in `sts`, with the still-waiting ones censored at their age."""
     out = []
     for a in apps:
         st = sts.get(a.id)
@@ -212,6 +236,7 @@ def wilson(k: float, n: float, z: float = 1.96) -> tuple[float, float]:
 
 @dataclass
 class Group:
+    """Outcome counts and rates for one group of applications (a portal, a role, a score band), with Wilson intervals and a `too_few` flag when the group is too small to trust."""
     key: str
     n: int                  # applications (withdrawn left out)
     resolved: int           # positive + negative + ghosted
@@ -233,12 +258,23 @@ class Group:
 
 
 def band(score: float | None) -> str:
+    """The resume-score band an average falls in: `under 70`, `70 to 79`, `80 and over`, or `no score`."""
     if score is None:
         return "no score"
     return "under 70" if score < 70 else "70 to 79" if score < 80 else "80 and over"
 
 
 def group_by(apps: list[AppEvents], sts: dict[int, Status], key) -> list[Group]:
+    """Summarise applications by a key.
+
+    Args:
+        apps: The applications.
+        sts: Each application's `Status`.
+        key: A function from an application to its group name.
+
+    Returns:
+        One `Group` per name, withdrawn applications left out.
+    """
     groups: dict[str, list[AppEvents]] = {}
     for a in apps:
         if a.id in sts and sts[a.id].label != "withdrawn":        # an application submitted after the evaluation date is absent

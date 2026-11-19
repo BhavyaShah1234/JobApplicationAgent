@@ -46,6 +46,7 @@ MAX_LINES = 6          # a message longer than this is a dump: shown as its firs
 
 
 def in_container() -> bool:
+    """True when running inside a Docker container (so commands are shown in their `docker exec` form)."""
     return Path("/.dockerenv").exists() or os.environ.get("container") is not None
 
 
@@ -92,6 +93,10 @@ ICON = {"error": "✗", "warn": "!", "ok": "✓", "cmd": "$", "dim": " ", "info"
 
 
 class RunLog:
+    """The `log` callable of one command run: prints coloured, tagged lines and writes a plain `.log` and a structured `.jsonl` file under `state/logs`.
+
+    Call it with a message like any print function; `progress()` writes structured progress records for the dashboard, `close()` writes the closing record.
+    """
     def __init__(self, step: str, job: str = "", console: Console | None = None, directory: Path | None = None, quiet: bool | None = None):
         if quiet is None:                                  # the effective setting: env, .env or config/logging.yaml
             try:
@@ -171,6 +176,14 @@ class RunLog:
             self._repeats = 0
 
     def emit(self, level: str, step: str, text: str, full: str | None = None) -> None:
+        """Show one line (collapsing repeats) and record it in the files.
+
+        Args:
+            level: error, warn, ok, cmd, dim, info or hitl.
+            step: The step tag shown in brackets; the command's own name when empty.
+            text: The text to show.
+            full: The complete text for the files when `text` is shortened on screen.
+        """
         step = step or self.step
         self._record(level, step, full if full is not None else text)
         if level == "dim" and self.quiet:
@@ -222,11 +235,21 @@ class RunLog:
             + (f" ({detail})" if detail else "")
         self._record("progress", self.step, text, {"stage": stage, "status": status, "label": label, "i": i, "n": n, "detail": detail[:200], **extra})
 
-    def info(self, text): self.emit("info", "", text)
-    def ok(self, text): self.emit("ok", "", text)
-    def warn(self, text): self.emit("warn", "", text)
-    def error(self, text): self.emit("error", "", text)
-    def cmd(self, text): self.emit("cmd", "", text)
+    def info(self, text):
+        """Log an informational line."""
+        self.emit("info", "", text)
+    def ok(self, text):
+        """Log a success line (green)."""
+        self.emit("ok", "", text)
+    def warn(self, text):
+        """Log a warning line (yellow)."""
+        self.emit("warn", "", text)
+    def error(self, text):
+        """Log an error line (red)."""
+        self.emit("error", "", text)
+    def cmd(self, text):
+        """Log a command the candidate can paste (cyan)."""
+        self.emit("cmd", "", text)
 
     def crash(self, exc: BaseException) -> None:
         """A failed command: one red line (what failed, what to do) and the path of the full trace; never a traceback on screen."""
@@ -237,6 +260,7 @@ class RunLog:
         self.console.print(f"✗ [bold]\\[{self.step}][/] [bold red]{_esc(type(exc).__name__)}: {_esc(condense(str(exc), 160))}[/]{where}")
 
     def close(self) -> None:
+        """Write the closing record (so the dashboard can tell a finished run from a killed one) and close the files. Safe to call twice."""
         self._flush_repeats()
         if self._file is not None:
             self._record("end", self.step, "finished")          # lets the dashboard tell a finished run from one that is still going
@@ -296,6 +320,7 @@ def with_context(fn):
     parent = contextvars.copy_context()
 
     def run(*args, **kwargs):
+        """Call the wrapped function in a copy of the context taken when `with_context` was called."""
         return parent.copy().run(fn, *args, **kwargs)
     return run
 

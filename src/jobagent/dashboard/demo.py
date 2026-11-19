@@ -118,8 +118,15 @@ def _progress_logs(state: Path) -> None:
         return {"ago": ago, "level": "progress", "step": stage, "msg": f"{stage} {status}", "stage": stage, "status": status, "label": label,
                 "i": i, "n": n, "detail": detail, **kw}
 
+    def px101(*a, **k):                                   # the tailor run of job 101 is part of the same execution as its `run`
+        return prog(*a, execution_id="x-101", **k)
+
+    def px102(*a, **k):
+        return prog(*a, execution_id="x-102", **k)
+
     def meta(job, title, company, url):
-        return {"plan": plan, "url": url, "title": title, "company": company, "job": job}
+        # every command of one execution shares its id (jobagent.progress), which is how the dashboard puts them on one card
+        return {"plan": plan, "url": url, "title": title, "company": company, "job": job, "execution_id": f"x-{job}"}
     a, b, c, d, e = (meta("101", "Robotics Engineer", "Example Robotics", "https://jobs.example.test/1"),
                      meta("102", "Backend Engineer", "Sample Cloud Co", "https://jobs.example.test/2"),
                      meta("103", "ML Engineer", "Demo Labs", "https://jobs.example.test/3"),
@@ -127,17 +134,17 @@ def _progress_logs(state: Path) -> None:
                      meta("105", "Platform Engineer", "Cleared Works", "https://jobs.example.test/5"))
     write("2026-11-17T080000-run-aaaa0101", "run", "", [prog(14, "scrape", "running", **a), prog(13.5, "scrape", "done", **a), prog(13, "research", "running", "Company research", **a),
                                                        prog(11, "research", "done", **a), prog(10.5, "documents", "running", "Resume and cover letter", **a)], 0.5, False)
-    write("2026-11-17T080600-tailor-101-aaaa0102", "tailor", "101", [prog(10, "documents", "running", "Resume"), prog(9.5, "documents", "running", "First draft: experience, projects, skills, summary"),
-                                                                    prog(6, "documents", "running", "Layout and quality check", 1, 4, "1 page(s), 3 finding(s)"),
-                                                                    prog(5, "documents", "running", "Fixing findings", detail="experience (2), skills (1)"),
-                                                                    prog(3.5, "documents", "running", "Layout and quality check", 2, 4, "1 page(s), 0 finding(s)"),
-                                                                    prog(3, "documents", "running", "ATS baseline", 0, 3, "average 79.4 (target 90)"),
-                                                                    prog(0.4, "documents", "running", "ATS round", 2, 3, "scoring on the checker sites")], 0.4, False)
+    write("2026-11-17T080600-tailor-101-aaaa0102", "tailor", "101", [px101(10, "documents", "running", "Resume"), px101(9.5, "documents", "running", "First draft: experience, projects, skills, summary"),
+                                                                    px101(6, "documents", "running", "Layout and quality check", 1, 4, "1 page(s), 3 finding(s)"),
+                                                                    px101(5, "documents", "running", "Fixing findings", detail="experience (2), skills (1)"),
+                                                                    px101(3.5, "documents", "running", "Layout and quality check", 2, 4, "1 page(s), 0 finding(s)"),
+                                                                    px101(3, "documents", "running", "ATS baseline", 0, 3, "average 79.4 (target 90)"),
+                                                                    px101(0.4, "documents", "running", "ATS round", 2, 3, "scoring on the checker sites")], 0.4, False)
     write("2026-11-17T081000-run-bbbb0201", "run", "", [prog(40, "scrape", "done", **b), prog(38, "research", "done", **b), prog(30, "documents", "done", **b),
                                                        prog(2, "apply", "running", "Filling the form", **b)], 0.6, False)
-    write("2026-11-17T081500-apply-102-bbbb0202", "apply", "102", [prog(1.5, "apply", "running", "Form page", 1, 15, "Contact information"),
-                                                                  prog(1.0, "apply", "running", "Form page", 2, 15, "Work history"),
-                                                                  prog(0.3, "apply", "running", "Form page", 3, 15, "Questions")], 0.3, False)
+    write("2026-11-17T081500-apply-102-bbbb0202", "apply", "102", [px102(1.5, "apply", "running", "Form page", 1, 15, "Contact information"),
+                                                                  px102(1.0, "apply", "running", "Form page", 2, 15, "Work history"),
+                                                                  px102(0.3, "apply", "running", "Form page", 3, 15, "Questions")], 0.3, False)
     write("2026-11-17T070000-run-cccc0301", "run", "", [prog(120, "scrape", "done", **c), prog(118, "research", "done", **c), prog(100, "documents", "done", **c),
                                                        prog(90, "apply", "done", detail="filled", **c)], 90, True)
     write("2026-11-17T071000-run-dddd0401", "run", "", [prog(200, "scrape", "done", **d), prog(199, "research", "failed", detail="research failed", **d)], 199, True)

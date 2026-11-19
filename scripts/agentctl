@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+# agentctl: install, run, update, back up and check the job agent on this machine. Everything it changes it says first; nothing here submits an application.
+#
+#   scripts/agentctl setup           create .env (with a new VAULT_KEY) and the data/ state/ outputs/ folders
+#   scripts/agentctl build           build the image from this checkout (tagged with the commit and as :latest)
+#   scripts/agentctl up | down       start / stop the container (compose)
+#   scripts/agentctl status          what is running: image, commit it was built from, mounts, ports, dashboard address
+#   scripts/agentctl doctor          check the install: docker, keys, folders, ports, image vs checkout; exit 1 on a failure
+#   scripts/agentctl backup [--with-outputs]   one archive of data/ and state/ (never .env, never the browser profile); the vault key is NOT inside it
+#   scripts/agentctl restore FILE --yes        put an archive back (the folders it replaces are moved aside, not deleted)
+#   scripts/agentctl update [--force]          back up, build, recreate the container, smoke-test, and go back to the old image if the test fails
+#   scripts/agentctl rollback                  recreate the container from the image that ran before the last update
+#   scripts/agentctl url | logs | shell        dashboard address, container log, a shell inside
+#
+# Settings (environment): AGENT_CONTAINER (jobagent), AGENT_IMAGE (jobagent-harness), DOCKER (docker), AGENTCTL_WAIT (seconds to wait for startup, 90).
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+CONTAINER="${AGENT_CONTAINER:-jobagent}"
+IMAGE="${AGENT_IMAGE:-jobagent-harness}"
+DOCKER="${DOCKER:-docker}"
+WAIT="${AGENTCTL_WAIT:-90}"
+FAILS=0
+ok()   { printf '  ok    %s\n' "$*"; }
+warn() { printf '  WARN  %s\n' "$*"; }
+bad()  { printf '  FAIL  %s\n' "$*"; FAILS=$((FAILS + 1)); }
+die()  { printf 'agentctl: %s\n' "$*" >&2; exit 1; }
+head_rev()   { git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown; }
+head_full()  { git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown; }
+running()    { [ "$($DOCKER inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ]; }
+image_rev()  { $DOCKER inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${1:-$CONTAINER}" 2>/dev/null; }
+compose()    { $DOCKER compose "$@"; }
+env_value()  { [ -f .env ] && sed -n "s/^$1=//p" .env | tail -1; }
+
+busy() {   # a run in progress would be cut off by recreating the container
+  running && $DOCKER exec "$CONTAINER" sh -c 'ps -eo args | grep -E "jobagent (run|apply|tailor|submit|scrape|queue)" | grep -v grep' >/dev/null 2>&1
+}
+
+cmd_setup() {
+  [ -x scripts/setup_env.sh ] || die "scripts/setup_env.sh is missing"
+  scripts/setup_env.sh
+  for f in data/applicant.yaml data/master_profile.yaml; do
+    [ -f "$f" ] || warn "$f is missing: copy ${f%.yaml}.example.yaml and fill it in (see README)"
+  done
+  echo "next: scripts/agentctl build && scripts/agentctl up && scripts/agentctl doctor"
+}
+
+cmd_build() {
+  local tag dirty=""
+  tag="$(head_rev)"
+  git -C "$ROOT" diff --quiet HEAD -- 2>/dev/null || dirty="-dirty"
+  echo "building $IMAGE:$tag$dirty from $(head_full)"
+  $DOCKER build --network host --build-arg UID="$(id -u)" --build-arg GID="$(id -g)" \
+    --label "org.opencontainers.image.revision=$(head_full)" -t "$IMAGE:$tag$dirty" -t "$IMAGE:latest" . || die "build failed"
+}
+
+cmd_up()   { compose up -d && wait_ready && cmd_url || die "the container did not become ready; see: scripts/agentctl logs"; }
+cmd_down() { compose down; }
+cmd_logs() { $DOCKER logs -f --tail 100 "$CONTAINER"; }
+cmd_shell(){ $DOCKER exec -it "$CONTAINER" bash; }
+
+wait_ready() {
+  local i=0
+  while [ "$i" -lt "$WAIT" ]; do
+    if running && $DOCKER exec "$CONTAINER" jobagent --help >/dev/null 2>&1; then return 0; fi
+    sleep 1; i=$((i + 1))
+  done
+  return 1
+}
+
+cmd_url() {
+  if running; then
+    $DOCKER exec "$CONTAINER" jobagent dashboard --print-url --port "${DASHBOARD_PORT:-$(env_value DASHBOARD_PORT)}" 2>/dev/null \
+      || echo "dashboard is not configured: set DASHBOARD_PORT=8765 in .env and run: scripts/agentctl up"
+  else
+    echo "the container is not running"
+  fi
+}
+
+cmd_status() {
+  if ! running; then echo "$CONTAINER: not running"; $DOCKER images "$IMAGE" --format '  image {{.Tag}}  {{.ID}}  {{.CreatedSince}}' 2>/dev/null | head -5; return 0; fi
+  local built head
+  built="$(image_rev)"; head="$(head_full)"
+  echo "$CONTAINER: running since $($DOCKER inspect --format '{{.State.StartedAt}}' "$CONTAINER")"
+  echo "  image   $($DOCKER inspect --format '{{.Config.Image}}' "$CONTAINER")"
+  echo "  built from  ${built:-unknown}"
+  if [ -n "$built" ] && [ "$built" = "$head" ]; then echo "  checkout    the same commit"; else echo "  checkout    $head (the image is NOT built from this commit: scripts/agentctl update)"; fi
+  echo "  mounts"; $DOCKER inspect --format '{{range .Mounts}}    {{.Source}} -> {{.Destination}} ({{.Mode}}){{"\n"}}{{end}}' "$CONTAINER"
+  echo "  dashboard   $(cmd_url)"
+}
+
+cmd_doctor() {
+  echo "checking the install in $ROOT"
+  if $DOCKER version --format '{{.Server.Version}}' >/dev/null 2>&1; then ok "docker daemon reachable"; else bad "docker is not reachable (is the daemon running, are you in the docker group?)"; fi
+  if $DOCKER compose version >/dev/null 2>&1; then ok "docker compose available"; else bad "docker compose is missing"; fi
+  if [ -f .env ]; then
+    [ -n "$(env_value VAULT_KEY)" ] && ok ".env has a VAULT_KEY" || bad ".env has no VAULT_KEY (run scripts/agentctl setup; an existing vault.enc needs its ORIGINAL key)"
+    [ "$(stat -c %a .env 2>/dev/null)" = "600" ] && ok ".env is private (600)" || warn ".env is readable by others: chmod 600 .env"
+  else bad ".env is missing (run scripts/agentctl setup)"; fi
+  [ -n "${OPENAI_API_KEY:-}" ] && ok "OPENAI_API_KEY is set in this shell (compose passes it to the container)" || warn "OPENAI_API_KEY is not set in this shell; compose will refuse to start"
+  for d in data state outputs; do
+    if [ -d "$d" ] && [ -w "$d" ]; then ok "$d/ exists and is writable"; else bad "$d/ is missing or not writable"; fi
+  done
+  [ -f data/applicant.yaml ] && ok "data/applicant.yaml present" || warn "data/applicant.yaml missing: the form filler has no answers to give"
+  [ -f data/templates/resume.tex ] && ok "data/templates/resume.tex present" || warn "data/templates/resume.tex missing"
+  if running; then
+    ok "container $CONTAINER is running"
+    local built head; built="$(image_rev)"; head="$(head_full)"
+    if [ -z "$built" ]; then warn "the image has no revision label (built before agentctl): rebuild with scripts/agentctl build"
+    elif [ "$built" = "$head" ]; then ok "the image is built from this checkout ($(head_rev))"
+    else warn "the image is built from ${built:0:7}, this checkout is $(head_rev): scripts/agentctl update"; fi
+    $DOCKER exec "$CONTAINER" jobagent config show >/dev/null 2>&1 && ok "jobagent config show works inside the container" || bad "jobagent does not start inside the container"
+    if command -v ss >/dev/null 2>&1; then
+      ss -ltn 2>/dev/null | grep -q ':6080 ' && ok "noVNC is listening on 6080" || warn "nothing listens on 6080 (the browser view)"
+    fi
+  else warn "container $CONTAINER is not running (scripts/agentctl up)"; fi
+  [ "$FAILS" -eq 0 ] && echo "all required checks passed" || echo "$FAILS check(s) failed"
+  [ "$FAILS" -eq 0 ]
+}
+
+cmd_backup() {
+  local with_out=0 ts out
+  [ "${1:-}" = "--with-outputs" ] && with_out=1
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p backups; out="backups/agent-$ts.tar.gz"
+  local items=(data state); [ "$with_out" -eq 1 ] && items+=(outputs)
+  tar -czf "$out" --exclude='state/chrome-profile' --exclude='state/desktop-browser' --exclude='state/carvana-desktop' --exclude='state/logs' \
+      --exclude='state/browser.lock' --exclude='state/*.lock' --exclude='state/hitl' "${items[@]}" || die "backup failed"
+  chmod 600 "$out"; sha256sum "$out" > "$out.sha256"
+  echo "wrote $out ($(du -h "$out" | cut -f1)); contains: ${items[*]}"
+  echo "NOT inside: .env (so the vault key is not stored next to the vault), the browser profile, logs. Keep the VAULT_KEY somewhere safe: without it vault.enc is unreadable."
+}
+
+cmd_restore() {
+  local file="${1:-}" yes="${2:-}" ts
+  [ -f "$file" ] || die "usage: agentctl restore FILE --yes"
+  [ "$yes" = "--yes" ] || die "restore replaces data/ and state/ (the old ones are moved aside); repeat with --yes to go ahead"
+  running && die "stop the container first: scripts/agentctl down"
+  [ -f "$file.sha256" ] && { sha256sum -c "$file.sha256" >/dev/null 2>&1 || die "the archive does not match its checksum"; }
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  for d in data state; do [ -e "$d" ] && mv "$d" "$d.before-restore-$ts"; done
+  tar -xzf "$file" || die "extraction failed (your folders are in *.before-restore-$ts)"
+  echo "restored from $file; the previous folders are *.before-restore-$ts (delete them yourself when you are sure)"
+}
+
+cmd_rollback() {
+  $DOCKER image inspect "$IMAGE:previous" >/dev/null 2>&1 || die "there is no $IMAGE:previous image (no update has been made from here)"
+  busy && [ "${1:-}" != "--force" ] && die "a run is in progress; wait for it or use --force"
+  $DOCKER tag "$IMAGE:previous" "$IMAGE:latest" && compose up -d --force-recreate && wait_ready && echo "rolled back to $IMAGE:previous" || die "rollback did not come up"
+}
+
+cmd_update() {
+  local force="${1:-}"
+  if busy && [ "$force" != "--force" ]; then die "a run is in progress inside $CONTAINER; recreating it would cut it off. Wait for it, or use --force."; fi
+  echo "1/5 checks"; FAILS=0; cmd_doctor >/dev/null && ok "install looks sound" || warn "doctor reported problems (continuing; see: scripts/agentctl doctor)"
+  echo "2/5 backup"; cmd_backup
+  if running; then $DOCKER tag "$($DOCKER inspect --format '{{.Image}}' "$CONTAINER")" "$IMAGE:previous" && ok "kept the running image as $IMAGE:previous"; fi
+  echo "3/5 build"; cmd_build
+  echo "4/5 recreate"; compose up -d --force-recreate || die "compose failed (the old image is $IMAGE:previous)"
+  echo "5/5 smoke test"
+  if wait_ready && $DOCKER exec "$CONTAINER" jobagent config show >/dev/null 2>&1 && $DOCKER exec "$CONTAINER" python -c 'import jobagent.dashboard.server, jobagent.tools.skillgraph' >/dev/null 2>&1; then
+    ok "the new container answers: update complete ($(image_rev | cut -c1-7))"
+  else
+    bad "the new container failed its smoke test; going back to $IMAGE:previous"
+    cmd_rollback --force
+    exit 1
+  fi
+}
+
+case "${1:-help}" in
+  setup) cmd_setup ;;
+  build) cmd_build ;;
+  up) cmd_up ;;
+  down) cmd_down ;;
+  status) cmd_status ;;
+  doctor) cmd_doctor ;;
+  backup) shift; cmd_backup "$@" ;;
+  restore) shift; cmd_restore "$@" ;;
+  update) shift; cmd_update "$@" ;;
+  rollback) shift; cmd_rollback "$@" ;;
+  url) cmd_url ;;
+  logs) cmd_logs ;;
+  shell) cmd_shell ;;
+  *) sed -n 2,16p "$0"; [ "${1:-help}" = "help" ] || exit 2 ;;
+esac

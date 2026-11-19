@@ -13,3 +13,4 @@ CODE_REVIEW_FINDINGS.md
 *.sqlite
 dev/
 frontend/
+backups

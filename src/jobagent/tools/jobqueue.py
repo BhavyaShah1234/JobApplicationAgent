@@ -40,6 +40,7 @@ LEASE_S = _lease_default()                     # a claim lasts this long unless 
 
 @dataclass
 class Listing:
+    """One posting seen on a careers site: what discovery records before deciding whether to queue it."""
     company: str
     title: str
     url: str
@@ -60,6 +61,7 @@ def canonical_url(url: str) -> str:
 
 
 def slug(company: str) -> str:
+    """A lower-case, hyphenated key for a company name (`Acme Corp` -> `acme-corp`); `unknown` for an empty one."""
     return re.sub(r"[^a-z0-9]+", "-", company.lower()).strip("-") or "unknown"
 
 
@@ -121,6 +123,17 @@ def enqueue(conn: sqlite3.Connection, item: Listing, match: Match, location: Dec
 
 def pending(conn: sqlite3.Connection, status: str = "queued", company: str | None = None,
             limit: int | None = None) -> list[sqlite3.Row]:
+    """Queued jobs, best match first.
+
+    Args:
+        conn: Open job database.
+        status: Which status to list (default `queued`).
+        company: Only this company, when given.
+        limit: At most this many rows.
+
+    Returns:
+        Matching `jobs` rows ordered by match score, then id.
+    """
     sql, args = "SELECT * FROM jobs WHERE status = ?", [status]
     if company:
         sql += " AND company_slug = ?"
@@ -253,6 +266,15 @@ def requeue_stale(conn: sqlite3.Connection, now: datetime | None = None, lease_s
 
 
 def summary(conn: sqlite3.Connection, company: str | None = None) -> dict[str, int]:
+    """How many discovered jobs there are in each status.
+
+    Args:
+        conn: Open job database.
+        company: Only this company, when given.
+
+    Returns:
+        `{status: count}`.
+    """
     sql, args = "SELECT status, COUNT(*) AS n FROM jobs WHERE source IS NOT NULL", []
     if company:
         sql += " AND company_slug = ?"

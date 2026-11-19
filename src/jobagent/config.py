@@ -30,6 +30,7 @@ class _ConcernYaml(PydanticBaseSettingsSource):
     belong to another file are not read from YAML at all (`describe` reports them as rejected)."""
 
     def get_field_value(self, field, field_name):                  # required by the base class; __call__ does the work
+        """Required by the settings-source interface; the values come from `__call__`."""
         return None, field_name, False
 
     def __call__(self) -> dict:
@@ -53,10 +54,12 @@ def config_dir() -> Path:
 
 
 class Settings(BaseSettings):
+    """Every setting of the agent. Precedence, highest first: environment variable, `.env`, `config/<concern>.yaml` (only the keys listed for that concern), then the default here. Paths, secrets and the display are environment-only."""
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @classmethod
     def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
+        """Set the order in which settings are read: init, environment, `.env`, the concern YAML files, then secrets files."""
         return (init_settings, env_settings, dotenv_settings, _ConcernYaml(settings_cls), file_secret_settings)
 
     # The user's local time: "today", "present" and "latest" are judged in this zone (America/Phoenix = MST, no DST)
@@ -131,19 +134,23 @@ class Settings(BaseSettings):
 
     @property
     def vault_path(self) -> Path:
+        """Where the encrypted vault lives (`state_dir/vault.enc`)."""
         return self.state_dir / "vault.enc"
 
     @property
     def chrome_profile_dir(self) -> Path:
+        """The persistent Chrome profile folder (`state_dir/chrome-profile`)."""
         return self.state_dir / "chrome-profile"
 
     @property
     def missing_capabilities_path(self) -> Path:
+        """Where the agent records tools it needed but the image lacks (`state_dir/missing-agent-capabilities.txt`)."""
         return self.state_dir / "missing-agent-capabilities.txt"
 
 
 @lru_cache
 def get_settings() -> Settings:
+    """The process-wide `Settings` (cached; call `get_settings.cache_clear()` after changing the environment)."""
     return Settings()
 
 

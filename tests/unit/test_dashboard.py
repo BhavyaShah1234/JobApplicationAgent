@@ -507,3 +507,15 @@ def test_failed_rebuild_cannot_make_an_older_review_ready_again(env, monkeypatch
     monkeypatch.setattr(data, 'pipeline', lambda _: [{'active': False, 'job_dir': saved['job_dir'], 'started': datetime.now(UTC).isoformat()}])
     current = next(r for r in data.review(s) if r['id'] == saved['id'])
     assert not current['ready'] and any('predates' in b for b in current['blockers'])
+
+
+def test_the_dashboard_can_be_installed_on_a_phone(env):
+    """A web app manifest and icon, served behind the same token as everything else (the link asks the browser to send the cookie)."""
+    _, srv, _ = env
+    code, man = call(srv, "GET", "/manifest.webmanifest")
+    assert code == 200 and man["display"] == "standalone" and man["start_url"] == "/" and man["icons"][0]["src"] == "/icon.svg"
+    assert call(srv, "GET", "/icon.svg")[0] == 200
+    assert call(srv, "GET", "/manifest.webmanifest", cookie=False)[0] == 401
+    assert call(srv, "GET", "/server.py")[0] == 404 and call(srv, "GET", "/..%2fserver.py")[0] == 404
+    code, html = call(srv, "GET", "/")
+    assert 'rel="manifest"' in html and 'crossorigin="use-credentials"' in html and 'name="theme-color"' in html

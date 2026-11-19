@@ -26,7 +26,8 @@ from jobagent.dashboard import data
 
 STATIC = Path(__file__).parent / "static"                    # the built React app (frontend/, built by scripts/build_dashboard.sh)
 CONTENT_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".html": "text/html; charset=utf-8", ".svg": "image/svg+xml",
-                 ".png": "image/png", ".ico": "image/x-icon", ".json": "application/json", ".map": "application/json", ".woff2": "font/woff2"}
+                 ".png": "image/png", ".ico": "image/x-icon", ".json": "application/json", ".map": "application/json", ".woff2": "font/woff2", ".webmanifest": "application/manifest+json"}
+ROOT_FILES = {"manifest.webmanifest", "icon.svg"}                 # the only files served from the top of the build (installable on a phone)
 ASSET = re.compile(r"^[A-Za-z0-9._-]{1,120}$")
 CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
@@ -157,6 +158,7 @@ def start_run(settings, inputs, through: str, limit: int, popen=subprocess.Popen
 
 
 class Server(ThreadingHTTPServer):
+    """The dashboard's HTTP server: the settings, the access token, the Host names it answers to, the noVNC address and whether it is read-only."""
     daemon_threads = True
 
     def __init__(self, addr, settings, token: str, allowed_hosts: set[str], popen=subprocess.Popen, novnc_url: str = "", read_only: bool = False):
@@ -167,9 +169,11 @@ class Server(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
+    """Handles one request: checks the Host header and the token, serves the React build and the JSON routes, and (unless read-only) the two actions, answering a question and starting a run."""
     server_version = "jobagent-dashboard"
 
     def log_message(self, *_):                       # no access log on the terminal
+        """Silence the default access log (the terminal stays readable)."""
         pass
 
     # --- guards ----------------------------------------------------------------------------------------------------------------
@@ -204,6 +208,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- GET -------------------------------------------------------------------------------------------------------------------
     def do_GET(self) -> None:
+        """Serve the page, its assets, the manifest and icon, and the read-only JSON routes (all behind the token)."""
         if not self._host_ok():
             return self._send(403, b"forbidden host", "text/plain")
         url = urlparse(self.path)
@@ -218,6 +223,9 @@ class Handler(BaseHTTPRequestHandler):
         if url.path in UI_PATHS:
             index = STATIC / "index.html"
             return self._send(200, index.read_bytes(), CONTENT_TYPES[".html"]) if index.is_file() else self._send(503, NOT_BUILT.encode(), CONTENT_TYPES[".html"])
+        if url.path.lstrip("/") in ROOT_FILES and (STATIC / url.path.lstrip("/")).is_file():
+            f = STATIC / url.path.lstrip("/")
+            return self._send(200, f.read_bytes(), CONTENT_TYPES.get(f.suffix, "application/octet-stream"), {"Cache-Control": "private, max-age=3600"})
         if url.path.startswith("/assets/"):
             name = url.path[len("/assets/"):]
             f = STATIC / "assets" / name
@@ -240,6 +248,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- POST ------------------------------------------------------------------------------------------------------------------
     def do_POST(self) -> None:
+        """Answer a question (`/api/hitl/answer`, never a secret) or start a run (`/api/run`, never past the review screen); refused when read-only or when the request is not same-site JSON with the guard header."""
         if not self._host_ok():
             return self._send(403, b"forbidden host", "text/plain")
         if not self._cookie_ok():
@@ -291,17 +300,47 @@ class Handler(BaseHTTPRequestHandler):
 
 def make_server(settings, host: str = "127.0.0.1", port: int = 8765, token: str | None = None, popen=subprocess.Popen,
                 extra_hosts: tuple[str, ...] = (), novnc_url: str = "", read_only: bool = False) -> Server:
+    """Build the server without starting it.
+
+    Args:
+        settings: The agent's settings.
+        host: Address to listen on (keep it local).
+        port: Port; 0 picks a free one.
+        token: Access token; the saved one when omitted.
+        popen: How a run is started (replaceable in tests).
+        extra_hosts: Extra Host names to accept, e.g. a tailnet name.
+        novnc_url: Address of the agent's browser view; empty for none.
+        read_only: Refuse every action.
+
+    Returns:
+        The `Server`.
+    """
     allowed = {"127.0.0.1", "localhost", "::1", host.lower(), *(h.lower() for h in extra_hosts)}
     return Server((host, port), settings, token or load_token(settings), allowed, popen, novnc_url, read_only)
 
 
 def access_url(srv: Server) -> str:
+    """The address to open, with the access token: `http://127.0.0.1:<port>/?t=<token>`."""
     host = srv.server_address[0]
     return f"http://{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{srv.server_address[1]}/?t={srv.token}"
 
 
 def serve(settings, host: str = "127.0.0.1", port: int = 8765, extra_hosts: tuple[str, ...] = (), novnc_url: str = "", echo=print,
           read_only: bool = False) -> None:
+    """Run the dashboard until interrupted, printing its address.
+
+    Args:
+        settings: The agent's settings.
+        host: Address to listen on.
+        port: Port to listen on.
+        extra_hosts: Extra Host names to accept.
+        novnc_url: Address of the agent's browser view.
+        echo: Where the address is printed.
+        read_only: Show everything, change nothing.
+
+    Raises:
+        SystemExit: When the port cannot be bound (another dashboard is probably running).
+    """
     try:
         srv = make_server(settings, host, port, extra_hosts=extra_hosts, novnc_url=novnc_url, read_only=read_only)
     except OSError as exc:

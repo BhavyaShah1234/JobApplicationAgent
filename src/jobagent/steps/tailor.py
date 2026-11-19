@@ -22,7 +22,7 @@ from jobagent.tools import github
 from jobagent.tools import layout
 from jobagent.tools import projects as P
 from jobagent.tools import tailor as T
-from jobagent.tools.vault import open_vault
+from jobagent.tools.vault import optional_secret
 
 
 # Visual-review findings the code checks can't see; the others (blank space, short lines) the code measures itself
@@ -143,7 +143,7 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
     if P.projects_span(r.tex):
         t0 = time.monotonic()
         writer = llm.writer(8000, timeout=300)
-        token = (open_vault().get("github") or {}).get("token")
+        token = optional_secret("github", "token")
         proj = P.choose(r, jd, writer, github.profile_user(r.tex), token, rediscover=rediscover, log=log)
         log(f"projects: {time.monotonic() - t0:.0f}s chose " + ", ".join(e.repo for e in proj.entries))
         all_projects = list(proj.entries)
@@ -342,7 +342,7 @@ def check(urls: list[str], workers: int = 3, log=print) -> list[tuple[str, bool,
             results.append((name, False, f"research failed: {err}"))
     template = (s.data_dir / "templates" / "resume.tex").read_text()
     if P.projects_span(template):  # once, before the parallel runs (one repo listing for all of them)
-        repo_cards.refresh(github.profile_user(template), (open_vault().get("github") or {}).get("token"), log=log)
+        repo_cards.refresh(github.profile_user(template), optional_secret("github", "token"), log=log)
 
     def one(job):
         jd, out_dir = job

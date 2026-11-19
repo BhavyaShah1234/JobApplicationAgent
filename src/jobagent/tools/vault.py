@@ -120,6 +120,23 @@ class Vault:
         return sorted(self._load())
 
 
+def optional_secret(name: str, field: str) -> str | None:
+    """One stored secret (`vault[name][field]`) or None when there is none to give: no vault key configured, no vault file, a vault that cannot be
+    read, or no such entry. For secrets that only make a step better (a GitHub token raises the API rate limit) and must never stop it.
+
+    Args:
+        name: The vault entry, e.g. "github".
+        field: The field inside it, e.g. "token".
+
+    Returns:
+        The secret, or None. A wrong key or a corrupt vault is also None here; `jobagent vault show` is where those are reported.
+    """
+    try:
+        return ((open_vault().get(name) or {}).get(field)) or None
+    except (VaultError, OSError, ValueError):
+        return None
+
+
 def open_vault() -> Vault:
     from jobagent.config import get_settings
 
