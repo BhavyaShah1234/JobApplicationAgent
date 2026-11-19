@@ -225,7 +225,16 @@ def invoke(cache, stage, model_name, model, schema, messages, *, validator=None,
 
 
 def summary_review_text(summary, declared_years, employers=()):
-    """Separate policy-authorized tenure from skills, keeping protected history visible."""
+    """Separate policy-authorized tenure from skills, keeping protected history visible.
+
+    Args:
+        summary: Original prose, which this function never modifies in the published resume.
+        declared_years: Owner's experience ceiling, or None without that authorization.
+        employers: Source employers whose specific history still requires its dates.
+
+    Returns:
+        Review-only prose with authorized tenure amounts replaced by policy markers.
+    """
     if declared_years is None:return summary
     protected=re.compile(r'\b(?:post[- ]?(?:baccalaureate|doctoral|graduate)|bachelor\w*|master\w*|'
                          r'degree|graduat\w*|ph\.?d|certif\w*|clearance|citizen\w*|residen\w*|visa)\b',re.I)

@@ -110,7 +110,12 @@ class IncrementalRepair(T.Repair):
 
 
 def apply_incremental_repair(f, repair):
-    """Use the same validated patch in pre-cache checks and the final merge."""
+    """Apply a validated patch in pre-cache checks or the final merge.
+
+    Args:
+        f: Resume content to update in place.
+        repair: Patch whose targets and coverage references were validated.
+    """
     T.apply_repair(f, repair)
     by_role={e.role:e for e in f.roles}
     for fx in repair.fixes:
@@ -118,7 +123,16 @@ def apply_incremental_repair(f, repair):
 
 
 def validate_incremental_repair(f, jd, repair):
-    """Reject invalid targets, lost coverage and no-progress output before caching."""
+    """Reject invalid targets, lost coverage and no-progress output before caching.
+
+    Args:
+        f: Current resume content, retained unchanged by this check.
+        jd: Posting that defines the available duty indices.
+        repair: Proposed in-place text and coverage edits.
+
+    Raises:
+        ValueError: Targets or references are invalid, coverage is lost, or no edit changes anything.
+    """
     targets=set();by_role={e.role:e for e in f.roles};n=len(T.jd_items(jd))
     for fx in repair.fixes:
         target=(fx.role,fx.bullet)
@@ -401,6 +415,7 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
             guards={}
             if ctx.get('incremental') and agent=='experience':
                 def valid_references(draft):
+                    """Require every proposed coverage index to exist in this posting."""
                     n=len(T.jd_items(ctx['jd']))
                     if any(not 0<=d<n for i in range(len(ctx['r'].roles))
                            for b in getattr(draft,f'role_{i}') for d in b.duties):

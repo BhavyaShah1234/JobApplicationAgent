@@ -5,7 +5,7 @@ and, when it takes parameters, returns something non-obvious or raises on purpos
 (comments and docstrings) were kept.
 
 **How it is measured:** `python scripts/docstring_audit.py` (summary and the worst files), `--list FILE` (every undocumented public name in a file),
-`--check` (the ratchet), `--write-baseline`. "Public" means no leading underscore; nested helper functions are not counted. The ratchet is a test
+`--check` (the ratchet), `--write-baseline`. "Public" means no leading underscore, including nested helpers with public names. The ratchet is a test
 (`tests/unit/test_docstring_audit.py`): no file may have more undocumented public names than `docs/docstring_baseline.json` records, so coverage can only go up;
 after documenting a file, run `--write-baseline` and commit it.
 
