@@ -485,6 +485,13 @@ TECH_WORDS = re.compile(r"(?i)\b(code|coding|software|systems?|backend|back-end|
                         r"firmware|embedded|hardware|cloud|machine learning|deep learning|ml|ai|test\w*|deploy\w*|"
                         r"production|scal\w+|performance|security|devops|automation|object.oriented|design patterns|"
                         r"data|api|apis|sdk|compiler|network\w*|linux|processor|gpu|cpu)\b")
+# These clauses can be misclassified as responsibilities by extraction. Match
+# administrative wording, not a bare word such as salary inside a real duty.
+ADMIN_DUTY = re.compile(r"(?i)^\W*(?:eoe\b|equal opportunity\b|"
+    r"(?:we are|is) an? equal opportunity\b|(?:the\s+)?base pay\b|"
+    r"(?:primary location\s*\||additional compensation for this role\b)|"
+    r"[^.;\n]{1,90}\|\s*(?:salary|pay range)\s*:|"
+    r"(?:must be|candidates? must be|applicants? must be)\s+legally authori[sz]ed to work\b)")
 
 
 def is_technical(text: str, jd: JobDescription) -> bool:
@@ -500,7 +507,8 @@ def jd_items(jd: JobDescription) -> list[tuple[str, str, str]]:
     generic duties ("Adapt quickly") may be folded in or skipped; education, authorisation, pay and physical
     requirements are left out, and "N+ years of" is stripped so the skill behind it stays."""
     # every responsibility, soft-sounding ones included, becomes Experience bullets (written as technical work)
-    items = [("duty", d, "REQUIRED") for d in jd.responsibilities if not NON_SKILL.search(d)]
+    items = [("duty", d, "REQUIRED") for d in jd.responsibilities
+             if not NON_SKILL.search(d) and not ADMIN_DUTY.search(d)]
     for kind, quals in (("basic", jd.basic_qualifications), ("preferred", jd.preferred_qualifications)):
         for q in quals:
             q = _YEARS.sub("", q.lstrip("-• ").strip())
@@ -871,15 +879,14 @@ class Repair(BaseModel):
     fixes: list[BulletFix] = Field(min_length=1, max_length=8)
 
 
-REPAIR_PROMPT = f"""You fix specific bullets of a tailored resume. Rewrite ONLY the bullets listed under PROBLEMS, each
-in place, so that every problem is solved; leave all other bullets alone. Each rewritten bullet must keep covering
-the JD items it covered (shown), name concrete technologies, state a result (a believable estimated metric is fine;
+REPAIR_PROMPT = f"""You fix specific bullets of a tailored resume. {{coverage_rule}} Each rewritten bullet must
+name concrete technologies, state a result (a believable estimated metric is fine;
 list it in `estimated`), stay within the length budget (about {BULLET_TARGET} characters, at most {BULLET_MAX}), not repeat any other bullet, use no academic wording and no
 dashes as punctuation, and describe work done at THAT role's employer (never another employer's work). A change by
 a percentage takes "by"."""
 
 
-def build_repair_prompt(r: Resume, jd: JobDescription, f: Filled, issues: list[str]) -> list:
+def build_repair_prompt(r: Resume, jd: JobDescription, f: Filled, issues: list[str], *, section_coverage: bool = False) -> list:
     """Build the messages that ask the model to fix specific bullet problems.
 
     Args:
@@ -887,6 +894,7 @@ def build_repair_prompt(r: Resume, jd: JobDescription, f: Filled, issues: list[s
         jd: The job posting.
         f: The current resume content.
         issues: The problems to fix.
+        section_coverage: Allow existing bullets to exchange duties while preserving section coverage.
 
     Returns:
         The system and human messages.
@@ -899,7 +907,15 @@ def build_repair_prompt(r: Resume, jd: JobDescription, f: Filled, issues: list[s
         for k, b in enumerate(e.bullets, 1):
             covers = "; ".join(items[d][1][:80] for d in b.duties if 0 <= d < len(items))
             lines.append(f"  {k}. {b.text}" + (f"   [covers: {covers}]" if covers and b.original is None else ""))
-    return [SystemMessage(with_today(REPAIR_PROMPT)),
+    coverage_rule=(
+        'Repair the named problems in place. For missing coverage, you may also edit suitable existing bullets. '
+        'Preserve previously covered JD indices ACROSS THE WHOLE EXPERIENCE SECTION, not separately in each '
+        'bullet. To resolve a repeated duty, keep one occurrence and replace the other with distinct relevant '
+        'work, preferably an uncovered JD item. Do not just substitute synonyms. Do not add or remove bullets. '
+        'Leave unrelated bullets unchanged.' if section_coverage else
+        'Rewrite ONLY the bullets listed under PROBLEMS, each in place, so that every problem is solved; '
+        'leave all other bullets alone. Each rewritten bullet must keep covering the JD items it covered (shown).')
+    return [SystemMessage(with_today(REPAIR_PROMPT.format(coverage_rule=coverage_rule))),
             HumanMessage("RESUME BULLETS:\n" + "\n".join(lines) + "\n\nPROBLEMS:\n" + "\n".join(issues))]
 
 

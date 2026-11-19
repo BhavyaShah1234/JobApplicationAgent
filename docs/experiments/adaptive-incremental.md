@@ -82,6 +82,11 @@ Source text and its dates are not rewritten. Small coverage gaps repair existing
 valid targets, retained prior coverage and a progress check before caching.
 Each proposed patch also passes the final bullet-quality checks before caching;
 it cannot introduce a new defect or leave an edited duty duplicated.
+Incremental repair instructions preserve coverage across the section, allowing a
+duplicate occurrence to become different relevant work. They do not require
+each individual bullet to retain its former duties. Shared coverage normalization
+excludes administrative salary, EEO and authorization clauses misclassified as
+responsibilities; those facts remain in the original posting and eligibility sources.
 Coverage-only metadata edits do not trigger a summary rewrite. The summary runs after visible changes to sections. Semantic review
 is scoped to section dependencies: changed skills recheck skills and summary;
 changed employer bullets recheck experience and summary. Failed calls are never
@@ -102,6 +107,9 @@ and protected education, credential or legal history keep their numerical contex
 Unresolved incremental correctness findings remain blockers after the repair
 budget; reaching that budget cannot certify an invalid packet. The current
 document strategy keeps its previous acceptance policy.
+Skills findings use a typed category-error/soft-skill schema and must identify an
+actual displayed term/category pair. Omitted template terms cannot be submitted as
+missing-skill findings, and broad accurate categories remain valid.
 
 Proposed critical project contradictions receive an independent, source-bound
 adjudication. Both claim and evidence quotes must belong to that same project;

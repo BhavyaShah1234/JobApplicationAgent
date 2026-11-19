@@ -397,7 +397,8 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
             out = _invoke(ctx, agent, model, schema, msgs, log=log, deadline_s=180)
         elif targeted:
             # targeted edit: only the bullets the validators named (a full rewrite moves every orphan word)
-            msgs = T.build_repair_prompt(ctx["r"], ctx["jd"], f, tasks + ([f"LAST ROUND: {last}"] if last else []))
+            msgs = T.build_repair_prompt(ctx["r"], ctx["jd"], f, tasks + ([f"LAST ROUND: {last}"] if last else []),
+                                        **({'section_coverage':True} if ctx.get('incremental') else {}))
             if ctx.get('incremental'):
                 msgs.append(HumanMessage(json.dumps({
                     'jd_items':[{'index':i,'text':text,'coverage_target':need}

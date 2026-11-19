@@ -47,6 +47,39 @@ class ProjectReview(BaseModel):
     findings: list[ProjectFinding] = Field(default_factory=list,max_length=8)
 
 
+class SkillFinding(BaseModel):
+    """A skills check must identify a term in an actual displayed category."""
+    agent: Literal['skills'] = 'skills'
+    category: str
+    term: str = Field(description='Exact displayed term, including its parenthesized tools if any')
+    kind: Literal['incorrect_category','soft_skill']
+    issue: str = Field(max_length=400)
+    severity: Literal['error','suggestion']
+
+
+class SkillReview(BaseModel):
+    """Only present skill/category pairs can create actionable findings."""
+    findings: list[SkillFinding] = Field(default_factory=list,max_length=8)
+
+
+def bind_skill_findings(result, skills):
+    """Reject missing-term padding requests and findings bound to another category.
+
+    Args:
+        result: Typed review of the currently displayed skill lines.
+        skills: Pairs of category and rendered terms supplied to the critic.
+
+    Raises:
+        ValueError: A finding names a term/category pair absent from the draft.
+    """
+    normalize=lambda value:' '.join(str(value).split()).casefold()
+    shown={(normalize(category),normalize(term)) for category,terms in skills for term in terms}
+    for finding in result.findings:
+        if (normalize(finding.category),normalize(finding.term)) not in shown:
+            raise ValueError('Skills findings must name an exact displayed term/category pair. '
+                             'Missing template skills are not errors; return no finding for them.')
+
+
 class ReviewUnavailable(RuntimeError):
     """A bounded technical review failure, labelled with its actual section/model."""
     def __init__(self, section, model, kind):
@@ -312,8 +345,12 @@ def review(ctx, filled):
             'estimates are allowed. owner_template_titles are explicit owner evidence for the same repository\'s '
             'title and awards; missing README mentions do not contradict them. They do not establish '
             'implementation features. Do not recommend alternate projects or report formatting preferences.',
-        'skills':'Check only incorrect technical categories and soft skills. A term need fit just ONE component '
-            'of a combined heading. Broad accurate headings are valid. Do not request padding or finer categories.',
+        'skills':'Check only incorrect technical categories and soft skills. Identify the exact displayed '
+            'term and its CURRENT category for each finding. A term need fit just ONE component '
+            'of a combined heading. Broad accurate headings are valid. Do not request padding or finer categories. '
+            'The owned template is a reference, not a required inventory: omitted template skills are NOT errors. '
+            'If moving a term, recommend a heading that actually includes its type; never call a runtime a '
+            'programming language or a concept a library merely to fit an existing heading.',
         'summary':'Check unsupported skills, credentials or employer/project achievements against the CURRENT '
             'sections and education, subject to the owner policy. Opening title, character length and the '
             'declared experience ceiling are checked in code: do not review them. '
@@ -336,6 +373,7 @@ def review(ctx, filled):
                 raise ValueError('semantic reviewer returned a finding for another section')
             if agent=='projects' and any(not 1<=f.project<=len(projects) for f in result.findings):
                 raise ValueError('Project findings must name an actual displayed project ID')
+            if agent=='skills':bind_skill_findings(result,skills)
         messages = [SystemMessage(with_today('Review ONLY ' + agent + '. '+instructions[agent] +
             ' Return actionable correctness findings for that agent only, or an empty list when sound. '
             'Do not give positive observations or stylistic preferences. Apply the supplied owner claims policy. '
@@ -348,10 +386,16 @@ def review(ctx, filled):
         try:
             out = invoke(ctx['cache'], 'review:' + agent, model_name,
                          review_model(model_name,6000 if reasoner else 4000,timeout=120),
-                         ProjectReview if agent=='projects' else M.Review, messages, log=ctx['log'], deadline_s=240 if reasoner else 180,validator=bound_agent,
+                         ProjectReview if agent=='projects' else SkillReview if agent=='skills' else M.Review,
+                         messages, log=ctx['log'], deadline_s=240 if reasoner else 180,validator=bound_agent,
                          request_lock=reasoner_lock if reasoner else None,request_abort=review_abort)
             bound_agent(out)
-            return adjudicate_projects({**ctx,'reasoner_lock':reasoner_lock,'review_abort':review_abort},payloads[agent],out.findings) if agent=='projects' else out.findings
+            if agent=='projects':
+                return adjudicate_projects({**ctx,'reasoner_lock':reasoner_lock,'review_abort':review_abort},payloads[agent],out.findings)
+            if agent=='skills':
+                return [M.Finding(agent='skills',severity=f.severity,
+                                 issue=f'{f.category}: {f.term}: {f.issue}'[:400]) for f in out.findings]
+            return out.findings
         except Exception as exc:
             review_abort.set()
             raise ReviewUnavailable(agent,model_name,getattr(exc,'kind',type(exc).__name__)) from exc

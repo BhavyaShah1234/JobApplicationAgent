@@ -299,6 +299,51 @@ def test_summary_review_receives_current_date_and_target_company_context(tmp_pat
     assert models['review:skills']==models['review:experience']=='m'
 
 
+@pytest.mark.parametrize('category,term',[
+    ('Languages','SQL'),  # Present in the template is not present in this draft.
+    ('Runtime','Java'),  # A term cannot migrate between displayed categories.
+    ('Languages','C'),  # Punctuation distinguishes C from C++.
+])
+def test_skill_critic_cannot_request_missing_skills_or_move_its_target(category,term):
+    from jobagent.tools.incremental_documents import SkillReview,bind_skill_findings
+    result=SkillReview(findings=[{'category':category,'term':term,'kind':'incorrect_category',
+                                 'issue':'Move this term.','severity':'error'}])
+    with pytest.raises(ValueError,match='displayed term/category pair'):
+        bind_skill_findings(result,[('Languages',['Java','C++']),('Runtime',['JVM'])])
+
+
+def test_skill_critic_binds_actual_category_errors_and_parenthesized_tools():
+    from jobagent.tools.incremental_documents import SkillReview,bind_skill_findings
+    skills=[('Languages',['Java','JVM']),('ML',['NLP (spaCy, NLTK)'])]
+    result=SkillReview(findings=[{'category':'languages','term':'JVM','kind':'incorrect_category',
+                                 'issue':'JVM is a runtime.','severity':'error'},
+                                {'category':'ML','term':'NLP (spaCy, NLTK)','kind':'incorrect_category',
+                                 'issue':'An example advisory finding.','severity':'suggestion'}])
+    bind_skill_findings(result,skills)
+
+
+def test_bound_skill_review_keeps_current_scope_and_returns_shared_findings(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(M.T,'facts_block',lambda:'Owner policy')
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
+        if stage!='review:skills':return M.Review(findings=[])
+        assert schema is I.SkillReview
+        assert 'omitted template skills are NOT errors' in messages[0].content
+        result=schema(findings=[{'category':'Languages','term':'JVM','kind':'incorrect_category',
+                                 'issue':'Use a runtime heading.','severity':'error'}])
+        kwargs['validator'](result)
+        return result
+    monkeypatch.setattr(I,'invoke',inspect)
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
+         'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None}
+    filled=M.T.Filled.model_construct(summary='Engineer.',roles=[],skills=[M.T.SkillLine(category='Languages',terms=['JVM'])])
+    findings=review(ctx,filled)
+    assert len(findings)==1 and isinstance(findings[0],M.Finding)
+    assert findings[0].agent=='skills' and 'Languages: JVM:' in findings[0].issue
+
+
 @pytest.mark.parametrize('summary,masked',[
     ('Engineer with 3+ years of professional experience in Python.',True),
     ('Engineer with 3 years of Python experience.',True),

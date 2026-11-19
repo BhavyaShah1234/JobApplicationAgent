@@ -219,6 +219,31 @@ def test_experience_range_keeps_the_technical_qualification_without_copying_tenu
     assert T.jd_items(j)==[('basic','Experience writing production software.','REQUIRED')]
 
 
+def test_misclassified_pay_eeo_and_authorization_clauses_are_not_experience_targets():
+    duties=['Build Java microservices.', 'EOE, including disability/vets.',
+            'The base pay for this role will depend on where you work.',
+            'Primary Location | Pay Range:',
+            'Scottsdale, AZ | Salary: $135,304.00-171,500.00 per annum. 40 hours per week;',
+            'Additional compensation for this role may include an annual performance bonus.',
+            'Must be legally authorized to work in the U.S. without sponsorship.',
+            'Build salary prediction software using Python.',
+            'Design equal opportunity reporting APIs using Java.']
+    items=T.jd_items(jd(responsibilities=duties))
+    assert [text for _,text,_ in items]==[duties[0],duties[-2],duties[-1]]
+
+
+def test_incremental_repair_can_exchange_duplicate_duties_without_losing_section_coverage():
+    f=_filled('Built Java microservices, reducing latency by 20%.',
+              'Built Python checks, reducing release errors by 10%.')
+    current=T.build_repair_prompt(T.parse(TEX),jd(),f,['Fix the duplicate duty.'])[0].content
+    incremental=T.build_repair_prompt(T.parse(TEX),jd(),f,['Fix the duplicate duty.'],section_coverage=True)[0].content
+    assert 'Each rewritten bullet must keep covering the JD items it covered' in current
+    assert 'ACROSS THE WHOLE EXPERIENCE SECTION' in incremental
+    assert 'For missing coverage, you may also edit suitable existing bullets' in incremental
+    assert 'Each rewritten bullet must keep covering the JD items it covered' not in incremental
+    assert '{coverage_rule}' not in current+incremental
+
+
 def test_only_new_bullets_cover_jd_items():
     j = jd(responsibilities=["Build pipelines in Azure Data Factory."])
     original = T.Filled(summary="s", roles=[T.FillRole(role=0, bullets=[
