@@ -185,6 +185,11 @@ class AdaptiveFiller(PlannedFiller):
     def result(self, *args):
         """Add invalidation metrics and private diagnostics when repairs are exhausted."""
         result = super().result(*args)
+        live=getattr(self,'_live',None)
+        if live and live.view:
+            exhausted={f.label for f in live.view.fields if self.failures.get(key(f),0)>=2}
+            result['blockers']=['control repair budget exhausted: '+b if b in exhausted else b
+                                for b in result['blockers']]
         result['adaptive'] = {'version': self.VERSION, 'invalidations': self.invalidations,
                               'restored_decisions': self.restored}
         if self.checkpoint_path and any('repair budget exhausted' in b for b in result['blockers']):

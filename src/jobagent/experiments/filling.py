@@ -97,7 +97,7 @@ def run(args):
                 from jobagent.filling.adaptive import AdaptiveFiller
                 filler=AdaptiveFiller(facts,batch_ask,model,{'resume':resume,'jd':raw},
                     {'company':contents.get('company',''),'contact':ctx_data.get('REFERRAL',{})},
-                    checkpoint_path=root/'adaptive-v1.json',source_version=__import__('hashlib').sha256(
+                    checkpoint_path=root/'adaptive-v1.json',source_version=hashlib.sha256(
                         json.dumps(manifest['inputs'],sort_keys=True).encode()).hexdigest())
             else:
                 filler=Candidate(facts,batch_ask,model,{'resume':resume,'jd':raw},

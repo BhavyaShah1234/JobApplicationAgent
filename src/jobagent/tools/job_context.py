@@ -1,6 +1,5 @@
 """A shared source snapshot: source text is evidence, never executable instructions."""
 from pathlib import Path
-import json
 
 from .artifact_cache import digest, write_private
 

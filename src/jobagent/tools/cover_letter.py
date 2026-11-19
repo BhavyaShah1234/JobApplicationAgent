@@ -9,6 +9,7 @@ the JD or the company profile, and every tool/technology it names must appear in
 
 import re
 import time
+import hashlib
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -203,7 +204,7 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
                     'Do not borrow a number or technology from another employer.\nENTITY SOURCES:\n' + json.dumps(bank)))
                 # The template is part of the cache input even though only its
                 # locked layout/header is rendered after generation.
-                messages.append(HumanMessage('LETTER TEMPLATE VERSION: ' + __import__('hashlib').sha256(template.encode()).hexdigest()))
+                messages.append(HumanMessage('LETTER TEMPLATE VERSION: ' + hashlib.sha256(template.encode()).hexdigest()))
                 letter = invoke(cache, 'letter', get_settings().model_writer, model, AttributedLetter, messages, log=log)
             else:
                 letter = llm.structured_invoke(model, Letter, messages, log=log)

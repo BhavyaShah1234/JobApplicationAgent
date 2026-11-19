@@ -495,6 +495,7 @@ def tailor_cmd(
     else:
         from jobagent.steps import multi_agent as M
         from jobagent.tools import job_context
+        from jobagent.tools.cover_letter import template_path as letter_template_path
 
         model = s.model_writer  # the same model for every agent (chosen 2026-11-02)
         sites = () if no_ats else M.SITES
@@ -506,6 +507,7 @@ def tailor_cmd(
                          **({"document_strategy":strategy,"ats_refine":ats_refine} if strategy=="incremental" else {})),
                          inputs={"jd": jd_sha, "jd_text": txt_sha, "template": template_sha, "profile": profile_sha, "model": model,
                                  "sites": list(sites), "document_strategy":strategy,"ats_refine":ats_refine,
+                                 "ats_providers":{name:M.ats_sites.provider_version(name) for name in sites},
                                  "incremental_version":job_context.model_version() if strategy=='incremental' else None,
                                  "claims_profile":W.sha_file(s.data_dir/'master_profile.yaml'),
                                  "skills": _skill_inputs(d, s), "document_provenance": 1,
@@ -521,7 +523,7 @@ def tailor_cmd(
             progress(log, "documents", "running", "Cover letter", detail=f"resume done: average {rj['average']}")
             cl, how = wf.run("cover_letter", lambda: cover_letter(d, company, log=log, **({"incremental":True} if strategy=="incremental" else {})),
                              inputs={"resume_tex": W.sha_file(d / "resume.tex"), "profile": profile_sha, "model": model,
-                                     "jd":jd_sha,"letter_template":W.sha_file(__import__("jobagent.tools.cover_letter",fromlist=["template_path"]).template_path()),
+                                     "jd":jd_sha,"letter_template":W.sha_file(letter_template_path()),
                                      "document_strategy":strategy,
                                      "incremental_version":job_context.model_version() if strategy=='incremental' else None,
                                      "candidate_credentials": 1, "pdf_startup_policy": PDF_STARTUP_POLICY},

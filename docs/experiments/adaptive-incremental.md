@@ -43,6 +43,8 @@ Narrative-backed answers also depend on their documents. Source-file changes
 reload context once per change; a change of posting identity stops filling.
 Independent accepted answers survive a changed neighbouring field. Before each
 dispatch the planner checks that the live field still matches its decision.
+An external source change after earlier wizard pages were filled stops the run
+for reconciliation, rather than certifying answers on pages no longer visible.
 Readback acceptance uses a bounded state poll rather than three fixed delays.
 The existing two-attempt outer control-repair limit remains in force; exhausted
 repairs produce a private screenshot for diagnosis and a blocker.
@@ -80,7 +82,8 @@ providers and their existing repeats, quotas and feedback-only distinctions.
 SkillsFirst remains feedback-only. There is no baseline/intermediate external
 panel unless `--ats-refine` is explicitly requested. A missing required provider
 leaves the five-provider average incomplete. PDF/posting identities are checked
-around scoring. Rejected refinements restore the complete prior document bundle
+around scoring; uploads use a private immutable PDF snapshot and rows keep that
+snapshot's PDF/JD identity even if the working files change. Rejected refinements restore the complete prior document bundle
 and its own score identity. ATS scores remain a proxy, not factual validation or
 a hiring-outcome measure.
 
