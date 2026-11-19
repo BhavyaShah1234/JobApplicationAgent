@@ -117,3 +117,10 @@ def test_codes_and_upload_proofs_are_never_checkpointed_as_answers(tmp_path):
     assert filler.semantic_id(Field(1,'text','Email verification code')) is None
     assert filler.semantic_id(Field(1,'password','Password')) is None
     assert filler.semantic_id(Field(1,'file','Resume')) is None
+    for field in (Field(1,'text','Code'),Field(1,'text','PIN'),Field(1,'text','OTP'),
+                  Field(1,'text','Enter value',help='Security token from email')):
+        assert filler.semantic_id(field) is None
+    code=Field(1,'text','Code')
+    filler,view=world(tmp_path,[code])
+    accept(filler,view,code,Decision('123456','human'))
+    assert '123456' not in (tmp_path/'decisions.json').read_text()

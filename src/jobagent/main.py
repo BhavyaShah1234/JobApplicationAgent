@@ -524,7 +524,8 @@ def tailor_cmd(
                                  "sites": list(sites), "document_strategy":strategy,"ats_refine":ats_refine,
                                  "ats_providers":{name:M.ats_sites.provider_version(name) for name in sites},
                                  "incremental_version":job_context.model_version() if strategy=='incremental' else None,
-                                 **({'incremental_validators':{'projects':s.model_planner,'letter':s.model_planner}} if strategy=='incremental' else {}),
+                                 **({'incremental_validators':{'projects':s.model_planner,'summary':s.model_planner,'letter':s.model_planner},
+                                     'incremental_provider':{'base_url':s.openai_base_url,'method':s.llm_structured_method}} if strategy=='incremental' else {}),
                                  "claims_profile":W.sha_file(s.data_dir/'master_profile.yaml'),
                                  "skills": _skill_inputs(d, s), "document_provenance": 1,
                                  "project_content_validation": 1, "versioned_content_review": 3,
@@ -544,6 +545,7 @@ def tailor_cmd(
                                      "document_strategy":strategy,
                                      "incremental_version":job_context.model_version() if strategy=='incremental' else None,
                                      **({'incremental_validator':s.model_planner} if strategy=='incremental' else {}),
+                                     **({'incremental_provider':{'base_url':s.openai_base_url,'method':s.llm_structured_method}} if strategy=='incremental' else {}),
                                      "candidate_credentials": 1, "pdf_startup_policy": PDF_STARTUP_POLICY},
                              outputs=["cover_letter.pdf", "cover_letter.tex"], force=force, log=log)
             log(f"cover letter ({how}): {cl['words']} words, {len(cl['issues'])} issue(s)")

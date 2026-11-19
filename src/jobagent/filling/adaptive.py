@@ -70,8 +70,8 @@ class AdaptiveFiller(PlannedFiller):
         # Entity row numbers alone are not sufficient to restore a different
         # person's/reordered employer's answers after a browser restart.
         if (entity_scope(field.section) or field.kind in ('file','password') or
-                re.search(r'\b(?:verification|security|one time|authentication|captcha)\b.{0,30}\b(?:code|token)\b',
-                          norm(field.label))): return None
+                re.search(r'\b(?:code|pin|passcode|token|otp|password|captcha)\b',
+                          norm(' '.join((field.label,field.help,field.section))))): return None
         frame = self._live.view.frames.get(field.frame) if self._live and self._live.view else None
         frame_url = getattr(frame, 'url', '')
         return digest({'step': self.step, 'frame_url': frame_url, 'schema': schema(field)})

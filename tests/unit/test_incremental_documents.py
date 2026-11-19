@@ -68,6 +68,15 @@ def test_failure_and_corruption_never_become_cache_hits(tmp_path,monkeypatch):
     assert cache.get('x',{}) is None
 
 
+def test_document_transport_preference_is_a_cache_dependency(tmp_path,monkeypatch):
+    from jobagent.tools import incremental_documents as I
+    calls=[]
+    monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:calls.append(kw['first']) or Output(text='done'))
+    for preference in ('function_calling','function_calling','json_mode'):
+        invoke(ArtifactCache(tmp_path),'experience','m',object(),Output,[HumanMessage('q')],first=preference)
+    assert calls==['function_calling','json_mode']
+
+
 def test_semantically_unbound_outputs_do_not_enter_the_cache(tmp_path,monkeypatch):
     from jobagent.tools import incremental_documents as I
     monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:Output(text='unbound'))
@@ -152,9 +161,10 @@ def test_summary_review_receives_current_date_and_target_company_context(tmp_pat
     from jobagent.tools import incremental_documents as I
     monkeypatch.setattr(M.T,'facts_block',lambda:'Owner policy')
     monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
-    seen=[]
+    seen=[];models={}
     def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
         if stage=='review:summary':seen.extend(messages)
+        models[stage]=model_name
         return M.Review(findings=[])
     monkeypatch.setattr(I,'invoke',inspect)
     ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
@@ -163,6 +173,8 @@ def test_summary_review_receives_current_date_and_target_company_context(tmp_pat
     review(ctx,M.T.Filled.model_construct(summary='Engineer interested in Beta.',roles=[],skills=[]))
     assert 'Today is ' in seen[0].content and 'not a claim of previous employment' in seen[0].content
     assert json.loads(seen[1].content)['company_context']=='Beta builds robots.'
+    assert models['review:summary']==models['review:projects']==I.get_settings().model_planner
+    assert models['review:skills']==models['review:experience']=='m'
 
 
 @pytest.mark.parametrize('changed',['resume.tex','jd.json','company'])

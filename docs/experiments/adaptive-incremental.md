@@ -91,9 +91,12 @@ another employer as evidence. It does not ask the owner to reconfirm generated
 duties/metrics: the standing declaration and existing claims policy remain in force.
 Degrees, employer identities, dates, personal histories and consents keep their
 existing boundaries.
-The independent project adjudicator and letter attribution reviewer use
-`MODEL_PLANNER`; the document writer remains `MODEL_WRITER`. Both validator model
-identities participate in workflow invalidation.
+Project and summary factual reviews, the independent project adjudicator and the
+letter attribution reviewer use `MODEL_PLANNER`; drafting remains on `MODEL_WRITER`.
+Both validator model identities and provider/transport configuration participate
+in workflow invalidation. Full incremental experience drafts prefer JSON mode
+after repeated live tool/schema retries; the shared bounded fallbacks remain in
+place. This preference does not change the current strategy.
 
 The external ATS panel runs after local resume validation, using the configured
 providers and their existing repeats, quotas and feedback-only distinctions.

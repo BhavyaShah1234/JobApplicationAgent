@@ -322,7 +322,11 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
             out = _invoke(ctx, agent, model, T.Repair, msgs, log=log)
         else:
             schema = {"experience": experience_schema(ctx["r"],compact=bool(ctx.get('incremental'))), "skills": SkillsOut, "summary": SummaryOut}[agent]
-            out = _invoke(ctx, agent, model, schema, _section_messages(ctx, agent, f, tasks, last), log=log)
+            # Live compact drafts repeatedly exhausted tool/schema retries,
+            # then succeeded in JSON mode. Prefer that transport for the full
+            # opt-in experience draft; retain the shared bounded fallbacks.
+            out = _invoke(ctx, agent, model, schema, _section_messages(ctx, agent, f, tasks, last), log=log,
+                          **({'first':'json_mode'} if ctx.get('incremental') and agent=='experience' else {}))
         log(f"  {agent} agent ({ctx['models'][agent]}): {time.monotonic() - t0:.0f}s")
         return agent, out
     except Exception as e:
