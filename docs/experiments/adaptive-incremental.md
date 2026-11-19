@@ -58,6 +58,8 @@ a failed lookup cannot reset its retry count. A source literal that was tried an
 rejected by a menu becomes one question with the actual offered choices, rather
 than repeated model guesses (for example, Asian versus specific Asian subgroups).
 Skipping that question stops unresolved filling without a retry-only loop.
+A bare contact Location field uses the prepared city; explicit office guidance,
+country catalogues and employer/school/reference row scopes retain their own sources.
 The existing two-attempt outer control-repair limit remains in force; exhausted
 repairs produce a private screenshot for diagnosis and a blocker.
 
@@ -76,7 +78,9 @@ and reviews are cached in `.incremental/v1/`, keyed by exact prompt, schema,
 model and generation/validation code version. Project cards are refreshed before
 selection-cache lookup. Document prompts use the current local date rather than
 the current minute, and the exact normalized prompt is both sent and hashed.
-Source text and its dates are not rewritten. The summary runs after changed sections. Semantic review
+Source text and its dates are not rewritten. Small coverage gaps repair existing bullets or their JD-index annotations, with
+valid targets, retained prior coverage and a progress check before caching.
+Coverage-only metadata edits do not trigger a summary rewrite. The summary runs after visible changes to sections. Semantic review
 is scoped to section dependencies: changed skills recheck skills and summary;
 changed employer bullets recheck experience and summary. Failed calls are never
 cached. Completed section work survives interruption. Compilation and deterministic
@@ -86,14 +90,21 @@ Source guards span the complete tailoring command and the cover-letter stage;
 an intervening profile, JD, template or resume edit invalidates publication while
 retaining the owner's edits. Review prompts receive the local date and relevant
 company context, so a mission clause is not treated as a previous-employer claim.
-Generic numerical experience tenure is omitted only from semantic-review input
+Policy-authorized overall and domain tenure is omitted only from semantic-review input
 when an owner-declared limit exists; the original summary is preserved, and its
 ceiling is enforced separately, including fractional amounts and an explicit
-zero-year limit. Substantive skill/credential text remains visible to review.
+zero-year limit. Substantive skill/credential text remains visible to review. Employer-specific
+and protected education, credential or legal history keep their numerical context.
+Unresolved incremental correctness findings remain blockers after the repair
+budget; reaching that budget cannot certify an invalid packet. The current
+document strategy keeps its previous acceptance policy.
 
 Proposed critical project contradictions receive an independent, source-bound
 adjudication. Both claim and evidence quotes must belong to that same project;
-uncertain or unbound results block publication and are not cached. Supported
+uncertain or unbound results block publication and are not cached. Claims may
+bind to the displayed title, stack or selected description. Original template
+titles supply owner evidence for the same repository and its awards; they
+cannot establish implementation features or another repository's claims. Supported
 subsets, design intentions and the existing owner claims policy remain valid.
 Targeted project repairs can change the full description, displayed short form
 or generated title independently. Known template titles remain protected.
@@ -106,7 +117,8 @@ whitespace normalization as rendering. Deterministic identity/number checks prec
 cached semantic attribution review. This prevents treating a matching number under
 another employer as evidence. It does not ask the owner to reconfirm generated
 duties/metrics: the standing declaration and existing claims policy remain in force.
-Incremental letter drafting prefers JSON mode after live tool-output retries.
+Incremental experience and summary drafting, small experience repairs and
+letter drafting prefer JSON mode after live tool-output retries.
 Source coverage is validated inside the bounded correction loop before caching.
 Typed, claim-bound supported/unsupported/uncertain review verdicts prevent positive
 observations from being recorded as errors; malformed or unbound verdicts fail
@@ -117,7 +129,9 @@ Incremental duplicate checks require substantive shared phrases rather than tool
 connectors such as using C++ and ROS2; actual copied duties and word overlap remain
 checked. The current document strategy retains its previous duplicate policy.
 Degrees, employer identities, dates, personal histories and consents keep their
-existing boundaries.
+existing boundaries. Scientific superscripts/subscripts, comparison qualifiers
+and microsecond units survive LaTeX conversion and PDF compilation; they are
+not silently dropped from the generated text.
 Project and summary factual reviews, the independent project adjudicator and the
 letter attribution reviewer use `MODEL_PLANNER`; drafting remains on `MODEL_WRITER`.
 Both validator model identities and provider/transport configuration participate

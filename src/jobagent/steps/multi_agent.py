@@ -69,6 +69,7 @@ class CompactFillBullet(T.FillBullet):
     """
     text: str = Field(max_length=T.BULLET_MAX,
                       description=f'Plain text, past tense; aim for {T.BULLET_TARGET} characters including spaces, never over {T.BULLET_MAX}')
+    duties: list[Annotated[int, Field(strict=True, ge=0)]] = Field(min_length=1,max_length=T.ITEMS_PER_BULLET)
 
 
 def experience_schema(r: T.Resume, *, compact: bool = False) -> type[BaseModel]:
@@ -96,6 +97,45 @@ class SkillsOut(BaseModel):
 class SummaryOut(BaseModel):
     """The summary agent's answer: the Summary as plain text, within the length limits."""
     summary: str = Field(max_length=T.SUMMARY_MAX, description=f"Plain text, 2-3 complete sentences, at most {T.SUMMARY_TARGET} characters")
+
+
+class IncrementalBulletFix(T.BulletFix):
+    """An in-place repair carries the actual JD indices its resulting text covers."""
+    duties: list[Annotated[int, Field(strict=True, ge=0)]] = Field(min_length=1, max_length=T.ITEMS_PER_BULLET)
+
+
+class IncrementalRepair(T.Repair):
+    """Repair a few bullets or coverage annotations while preserving other work."""
+    fixes: list[IncrementalBulletFix] = Field(min_length=1, max_length=8)
+
+
+def apply_incremental_repair(f, repair):
+    """Use the same validated patch in pre-cache checks and the final merge."""
+    T.apply_repair(f, repair)
+    by_role={e.role:e for e in f.roles}
+    for fx in repair.fixes:
+        by_role[fx.role].bullets[fx.bullet-1].duties=list(fx.duties)
+
+
+def validate_incremental_repair(f, jd, repair):
+    """Reject invalid targets, lost coverage and no-progress output before caching."""
+    targets=set();by_role={e.role:e for e in f.roles};n=len(T.jd_items(jd))
+    for fx in repair.fixes:
+        target=(fx.role,fx.bullet)
+        if target in targets or fx.role not in by_role or not 1<=fx.bullet<=len(by_role[fx.role].bullets):
+            raise ValueError('Each repair must name a distinct existing role and 1-based bullet')
+        targets.add(target)
+        if len(set(fx.duties))!=len(fx.duties) or any(d>=n for d in fx.duties):
+            raise ValueError('duties must be distinct existing JD item indices')
+    proposed=f.model_copy(deep=True)
+    apply_incremental_repair(proposed,repair)
+    covered=lambda v:{d for e in v.roles for b in e.bullets if b.original is None for d in b.duties if 0<=d<n}
+    if lost:=covered(f)-covered(proposed):
+        raise ValueError(f'Repair removed previously covered JD indices: {sorted(lost)}')
+    if all(by_role[fx.role].bullets[fx.bullet-1].text==fx.text and
+           by_role[fx.role].bullets[fx.bullet-1].duties==fx.duties and
+           by_role[fx.role].bullets[fx.bullet-1].original is None for fx in repair.fixes):
+        raise ValueError('Repair made no text or coverage change; address the supplied findings')
 
 
 class ProjectSwap(BaseModel):
@@ -307,7 +347,9 @@ def _invoke(ctx, stage, model, schema, messages, **kwargs):
 
 def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last: str) -> tuple[str, object]:
     """One section agent's call; returns (agent, output) or (agent, None) on failure."""
-    targeted = agent=='experience' and f is not None and not any(FULL_REWRITE.search(t) for t in tasks)
+    full_tasks=[t for t in tasks if not (ctx.get('incremental') and
+                t.startswith('REQUIRED JD item indices not covered by any NEW bullet:'))]
+    targeted = agent=='experience' and f is not None and not any(FULL_REWRITE.search(t) for t in full_tasks)
     model = llm.writer(3000 if targeted else (8000 if ctx.get('incremental') else 16000) if agent == "experience" else 4000 if agent == "projects" else 8000,
                        timeout=120 if targeted or agent == "projects" else 600, model=ctx["models"][agent])
     log, t0 = ctx["log"], time.monotonic()
@@ -335,14 +377,37 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
         elif targeted:
             # targeted edit: only the bullets the validators named (a full rewrite moves every orphan word)
             msgs = T.build_repair_prompt(ctx["r"], ctx["jd"], f, tasks + ([f"LAST ROUND: {last}"] if last else []))
-            out = _invoke(ctx, agent, model, T.Repair, msgs, log=log)
+            if ctx.get('incremental'):
+                msgs.append(HumanMessage(json.dumps({
+                    'jd_items':[{'index':i,'text':text,'coverage_target':need}
+                                for i,(_,text,need) in enumerate(T.jd_items(ctx['jd']))],
+                    'current_coverage':[{'role':e.role,'bullet':i,'duties':b.duties}
+                                        for e in f.roles for i,b in enumerate(e.bullets,1)],
+                    'repair_rules':('Repair coverage gaps in suitable existing bullets, returning their resulting '
+                        'duties indices. An annotation-only change is allowed when the existing text already '
+                        'supports that JD item. Otherwise rewrite the text to support it. Preserve all previously '
+                        'covered indices across the section. For duplicate duties, change one to distinct relevant '
+                        'work rather than repeating the same duty with synonyms. Leave unrelated bullets alone.')
+                })))
+                out=_invoke(ctx,agent,model,IncrementalRepair,msgs,log=log,first='json_mode',
+                    validator=lambda repair:validate_incremental_repair(f,ctx['jd'],repair))
+            else:
+                out = _invoke(ctx, agent, model, T.Repair, msgs, log=log)
         else:
             schema = {"experience": experience_schema(ctx["r"],compact=bool(ctx.get('incremental'))), "skills": SkillsOut, "summary": SummaryOut}[agent]
             # Live compact drafts repeatedly exhausted tool/schema retries,
             # then succeeded in JSON mode. Prefer that transport for the full
             # opt-in experience draft; retain the shared bounded fallbacks.
-            out = _invoke(ctx, agent, model, schema, _section_messages(ctx, agent, f, tasks, last), log=log,
-                          **({'first':'json_mode'} if ctx.get('incremental') and agent=='experience' else {}))
+            guards={}
+            if ctx.get('incremental') and agent=='experience':
+                def valid_references(draft):
+                    n=len(T.jd_items(ctx['jd']))
+                    if any(not 0<=d<n for i in range(len(ctx['r'].roles))
+                           for b in getattr(draft,f'role_{i}') for d in b.duties):
+                        raise ValueError('Every duties index must name an existing JD item')
+                guards['validator']=valid_references
+            out = _invoke(ctx, agent, model, schema, _section_messages(ctx, agent, f, tasks, last), log=log,**guards,
+                          **({'first':'json_mode'} if ctx.get('incremental') and agent in ('experience','summary') else {}))
         log(f"  {agent} agent ({ctx['models'][agent]}): {time.monotonic() - t0:.0f}s")
         return agent, out
     except Exception as e:
@@ -354,7 +419,10 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
     """The current resume with each agent's new section (an agent that failed keeps its old section)."""
     g = f.model_copy(deep=True)
     r = ctx["r"]
-    if isinstance(outs.get("experience"), T.Repair):
+    if isinstance(outs.get('experience'),IncrementalRepair):
+        validate_incremental_repair(g,ctx['jd'],outs['experience'])
+        apply_incremental_repair(g,outs['experience'])
+    elif isinstance(outs.get("experience"), T.Repair):
         T.apply_repair(g, outs["experience"])
     elif outs.get("experience") is not None:
         g.roles = [T.FillRole(role=i, bullets=getattr(outs["experience"], f"role_{i}")) for i in range(len(r.roles))]
@@ -661,6 +729,15 @@ def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
     if lay.pages == 1 and lay.free_pt is not None and lay.free_pt > BLANK_HARD_PT:
         out.append(f"{round(lay.free_pt / 11)} blank lines at the bottom")
     out += [f"empty skills line {sl.category}" for sl in f.skills if not sl.render()]
+    if ctx.get('incremental'):
+        # Reaching a repair budget must not turn outstanding correctness
+        # findings into an accepted, apparently valid final packet.
+        out += T.duplicates(ctx['r'],f,substantive=True) + T.quality(ctx['r'],ctx['jd'],f)
+        out += summary_issues(f.summary,False)
+        if not _title_prefix(f.summary,ctx['jd'].title):
+            out.append(f'Open the summary with the exact posting title: {ctx["jd"].title}')
+        uncovered=T.fill_checks(ctx['r'],ctx['jd'],f,len(ctx['r'].roles)*T.MAX_BULLETS)[0]
+        if uncovered:out.append(f'Required resume coverage targets remain unresolved: {uncovered}')
     return out
 
 
@@ -714,7 +791,8 @@ def _reviewed_content(ctx: dict, f: T.Filled, state: dict) -> dict:
             error = str(exc) if ctx.get('incremental') and isinstance(exc,ReviewUnavailable) else \
                     f"{'document' if ctx.get('incremental') else 'skills'} content review unavailable ({type(exc).__name__})"
             findings = []
-    hard = [f"{fd.agent}: {fd.issue}" for fd in findings if fd.agent in {"skills", "projects"} and fd.severity == "error"]
+    hard = [f"{fd.agent}: {fd.issue}" for fd in findings
+            if (ctx.get('incremental') or fd.agent in {"skills", "projects"}) and fd.severity == "error"]
     if error:
         hard.append(error)
     return {"content_hash": fingerprint, "content_findings": findings, "content_error": error, "semantic_hard": hard}
@@ -745,12 +823,13 @@ def edit_sections(state: State) -> dict:
     ctx["log"]("editing: " + ", ".join(f"{a} ({len(t)})" for a, t in tasks.items()))
     progress(ctx["log"], "documents", "running", "Fixing findings", detail=", ".join(f"{a} ({len(t)})" for a, t in tasks.items()))
     if ctx.get('incremental'):
+        before=_content_hash(ctx,f)
         other = {a: t for a, t in tasks.items() if a != 'summary'}
         with ThreadPoolExecutor(len(other) or 1) as ex:
             outs = dict(ex.map(with_context(lambda a: _run_agent(ctx, a, f, other[a], state.get('last', ''))), other))
         updated = _merge(ctx, f, outs)
         summary_tasks = list(tasks.get('summary', []))
-        if any(value is not None for value in outs.values()):
+        if before!=_content_hash(ctx,updated):
             summary_tasks.append('Reconcile the summary with the final changed experience, projects and skills; preserve accurate text.')
         if summary_tasks:
             _, summary = _run_agent(ctx, 'summary', updated, summary_tasks, state.get('last', ''))
@@ -776,6 +855,7 @@ def score(state: State) -> dict:
         return _rollback(state, "UNDONE: the edit broke the one-page layout; keep lines short") if best else \
             {"ats_round": rnd + 1, "last": "the page overflowed: shorten bullets"}
     hard = list(dict.fromkeys(hard_issues(ctx, f) + state.get("semantic_hard", [])))
+    if ctx.get('incremental'):hard=list(dict.fromkeys(hard+problems))
     if state.get("content_hash") and _content_hash(ctx, f) != state["content_hash"]:
         hard.append("skills content changed after its semantic review")
     if hard:

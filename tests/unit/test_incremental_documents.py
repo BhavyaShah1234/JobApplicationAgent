@@ -299,8 +299,11 @@ def test_summary_review_receives_current_date_and_target_company_context(tmp_pat
 
 @pytest.mark.parametrize('summary,masked',[
     ('Engineer with 3+ years of professional experience in Python.',True),
-    ('Engineer with 3 years of Python experience.',False)])
-def test_semantic_review_separates_code_checked_generic_tenure_from_substantive_claims(tmp_path,monkeypatch,summary,masked):
+    ('Engineer with 3 years of Python experience.',True),
+    ('Engineer with 3+ years building real-time video streaming pipelines.',True),
+    ('Engineer with 3 years after the bachelor degree.',False),
+    ('Engineer with 3 years of clearance experience.',False)])
+def test_semantic_review_separates_policy_authorized_tenure_from_protected_history(tmp_path,monkeypatch,summary,masked):
     from jobagent.steps import multi_agent as M
     from jobagent.tools import incremental_documents as I
     monkeypatch.setattr(M.T,'facts_block',lambda:'Owner policy')
@@ -311,13 +314,23 @@ def test_semantic_review_separates_code_checked_generic_tenure_from_substantive_
         if stage=='review:summary':seen.append(json.loads(messages[1].content))
         return M.Review(findings=[])
     monkeypatch.setattr(I,'invoke',inspect)
-    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[SimpleNamespace(company='Acme',title='Engineer',dates='2020–2026')],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
          'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None}
-    filled=M.T.Filled.model_construct(summary=summary,roles=[],skills=[])
+    filled=M.T.Filled.model_construct(summary=summary,roles=[M.T.FillRole.model_construct(role=0,bullets=[])],skills=[])
     review(ctx,filled)
-    assert ('owner-declared experience' in seen[0]['summary'])==masked
-    assert 'Python' in seen[0]['summary'] and filled.summary==summary
+    assert ('owner-declared' in seen[0]['summary'])==masked
+    assert filled.summary==summary
+    assert ('dates' in seen[0]['roles'][0]) is not masked
+    if 'Python' in summary:assert 'Python' in seen[0]['summary']
     assert M.summary_issues('Engineer with 6.2 years of experience.',False)
+
+
+def test_tenure_review_keeps_employer_history_and_requires_an_owner_policy():
+    from jobagent.tools.incremental_documents import summary_review_text
+    text='Engineer with 3 years at Acme. Built Python services for 2 years.'
+    reviewed=summary_review_text(text,5,['Acme'])
+    assert '3 years at Acme' in reviewed and '2 years' not in reviewed and 'Python' in reviewed
+    assert summary_review_text(text,None,['Acme'])==text
 
 
 @pytest.mark.parametrize('changed',['resume.tex','jd.json','company'])
@@ -371,7 +384,7 @@ def test_targeted_bullet_repair_uses_a_repair_budget_not_a_full_draft_budget(mon
     assert seen==[3000]
 
 
-def test_title_prefix_is_deterministic_and_nonfatal_policy_remains_unchanged(tmp_path,monkeypatch):
+def test_title_prefix_is_deterministic_and_incremental_review_errors_remain_blocking(tmp_path,monkeypatch):
     from jobagent.steps import multi_agent as M
     assert M._title_prefix('Autonomy Platform Engineer with 1+ years of experience.','Autonomy Platform Engineer')
     assert not M._title_prefix('Platform Engineer with experience.','Autonomy Platform Engineer')
@@ -379,7 +392,8 @@ def test_title_prefix_is_deterministic_and_nonfatal_policy_remains_unchanged(tmp
     monkeypatch.setattr(M,'content_review',lambda *a:findings)
     f=M.T.Filled.model_construct(summary='Autonomy Platform Engineer with 1+ years.',roles=[],skills=[])
     reviewed=M._reviewed_content({'job_dir':tmp_path,'incremental':True},f,{})
-    assert reviewed['semantic_hard']==[]
+    assert reviewed['semantic_hard']==['summary: '+findings[0].issue]
+    assert M._reviewed_content({'job_dir':tmp_path},f,{})['semantic_hard']==[]
     assert reviewed['content_findings']==findings
 
 
@@ -423,7 +437,7 @@ def test_a_critic_cannot_block_a_supported_project_claim_without_a_bound_contrad
     payload={'displayed':[{'repo':'owner/project','text':'Built quality inspection workflows.'}],
              'own_repo_sources':{'owner/project':{'summary':'An inventory/quality-inspection management system.'}},
              'owner_claims_policy':'Work impact metrics are allowed.'}
-    error=M.Finding(agent='projects',severity='error',issue='Quality inspection is not in the source')
+    error=I.ProjectFinding(project=1,severity='error',issue='Quality inspection is not in the source')
     assert I.adjudicate_projects({'adjudicator_model':'judge','cache':ArtifactCache(tmp_path),'log':lambda _:None},payload,[error])==[]
 
 
@@ -439,7 +453,40 @@ def test_adjudication_cannot_borrow_another_projects_source(tmp_path,monkeypatch
              'owner_claims_policy':'Owner policy'}
     with pytest.raises(ValueError,match='unbound'):
         I.adjudicate_projects({'adjudicator_model':'judge','cache':ArtifactCache(tmp_path),'log':lambda _:None},payload,
-            [M.Finding(agent='projects',severity='error',issue='Unsupported camera claim')])
+            [I.ProjectFinding(project=1,severity='error',issue='Unsupported camera claim')])
+
+
+def test_template_award_is_evidence_for_its_own_title_not_another_projects_features(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    verdict=I.ProjectVerdict(finding=0,project=1,status='rejected',claim_quote='Hackathon Winner',
+        source_quote='Hackathon Winner',evidence_source='owner_template',reason='The owner template explicitly supplies the award.')
+    monkeypatch.setattr(I,'invoke',lambda *a,**kw:I.ProjectVerdicts(verdicts=[verdict]))
+    payload={'displayed':[{'repo':'a','title':'Hackathon Winner','text':'Built a camera driver.','stack':['Python']}],
+             'own_repo_sources':{'a':{'summary':'Supports cameras.'}},
+             'owner_template_titles':{'a':'Hackathon Winner'},'owner_claims_policy':'Keep the owner titles.'}
+    ctx={'adjudicator_model':'judge','cache':ArtifactCache(tmp_path),'log':lambda _:None}
+    errors=[I.ProjectFinding(project=1,severity='error',issue='README does not establish Winner status')]
+    assert I.adjudicate_projects(ctx,payload,errors)==[]
+    verdict.claim_quote='Built a camera driver.'
+    with pytest.raises(ValueError,match='implementation features'):I.adjudicate_projects(ctx,payload,errors)
+    verdict.claim_quote='Hackathon Winner';payload['owner_template_titles']={'b':'Hackathon Winner'}
+    with pytest.raises(ValueError,match='unbound source_quote'):I.adjudicate_projects(ctx,payload,errors)
+
+
+def test_adjudication_cannot_move_a_finding_even_when_both_quotes_match_the_other_project(tmp_path,monkeypatch):
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    monkeypatch.setattr(I,'invoke',lambda *a,**kw:I.ProjectVerdicts(verdicts=[I.ProjectVerdict(
+        finding=0,project=2,status='rejected',claim_quote='Built a robot.',source_quote='Supports robots.',
+        reason='Both quotes are real, but belong to the other project.')]))
+    payload={'displayed':[{'repo':'a','text':'Built a camera driver.'},{'repo':'b','text':'Built a robot.'}],
+             'own_repo_sources':{'a':{'summary':'Path planning only.'},'b':{'summary':'Supports robots.'}},
+             'owner_claims_policy':'Owner policy'}
+    with pytest.raises(ValueError,match='cannot change'):
+        I.adjudicate_projects({'adjudicator_model':'judge','cache':ArtifactCache(tmp_path),'log':lambda _:None},payload,
+            [I.ProjectFinding(project=1,severity='error',issue='Camera claim unsupported in project a')])
 
 
 def panel_world(tmp_path,monkeypatch,scores):

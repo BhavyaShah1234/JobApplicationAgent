@@ -1,6 +1,117 @@
 """Multi-agent validator: the Summary's own checks."""
 
 from jobagent.steps import multi_agent as M
+
+
+def _coverage_repair_fixture():
+    from jobagent.state import JobDescription
+    jd=JobDescription(title='Engineer',company='Acme',responsibilities=[
+        'Build Python APIs.','Deploy Docker containers.','Use object-oriented design in production software.'])
+    f=M.T.Filled(summary='Engineer with Python experience.',notes='',skills=[
+        M.T.SkillLine(category=c,terms=[t]) for c,t in [('Languages','Python'),('Containers','Docker'),('Tools','Git')]
+    ],roles=[M.T.FillRole(role=0,bullets=[
+        M.T.FillBullet(text='Built Python APIs using object-oriented design, reducing latency by 20%.',duties=[0]),
+        M.T.FillBullet(text='Deployed Docker containers, reducing failures by 25%.',duties=[1]),
+    ])])
+    return jd,f
+
+
+def test_incremental_coverage_patch_changes_only_the_selected_annotation():
+    from types import SimpleNamespace
+    jd,f=_coverage_repair_fixture()
+    repair=M.IncrementalRepair(fixes=[M.IncrementalBulletFix(role=0,bullet=1,text=f.roles[0].bullets[0].text,duties=[0,2])])
+    M.validate_incremental_repair(f,jd,repair)
+    original=f.model_copy(deep=True)
+    M.apply_incremental_repair(f,repair)
+    assert f.roles[0].bullets[0].text==original.roles[0].bullets[0].text
+    assert f.roles[0].bullets[0].duties==[0,2]
+    assert f.roles[0].bullets[1]==original.roles[0].bullets[1]
+    assert M.T.fill_checks(SimpleNamespace(tex=''),jd,f)[0]==[]
+
+
+def test_incremental_coverage_patch_rejects_lost_coverage_bad_targets_and_no_progress():
+    import pytest
+    jd,f=_coverage_repair_fixture()
+    for role,bullet,duties,message in [(0,1,[2],'removed previously covered'),
+            (1,1,[0,2],'existing role'),(0,4,[0,2],'existing role'),(0,1,[0,8],'existing JD'),
+            (0,1,[0,0],'distinct'),(0,1,[0],'no text or coverage change')]:
+        repair=M.IncrementalRepair(fixes=[M.IncrementalBulletFix(role=role,bullet=bullet,
+            text=f.roles[0].bullets[0].text,duties=duties)])
+        with pytest.raises(ValueError,match=message):M.validate_incremental_repair(f,jd,repair)
+    fix=M.IncrementalBulletFix(role=0,bullet=1,text=f.roles[0].bullets[0].text,duties=[0,2])
+    with pytest.raises(ValueError,match='distinct existing'):
+        M.validate_incremental_repair(f,jd,M.IncrementalRepair(fixes=[fix,fix]))
+
+
+def test_small_coverage_gaps_use_the_incremental_patch_not_a_full_section_draft(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    jd,f=_coverage_repair_fixture();seen=[]
+    ctx={'incremental':True,'r':SimpleNamespace(roles=[SimpleNamespace(title='Engineer',company='Acme',dates='2020')]),
+         'jd':jd,'job_dir':tmp_path,'models':{'experience':'writer'},'log':lambda _:None}
+    monkeypatch.setattr(M.llm,'writer',lambda *a,**kw:object())
+    repair=M.IncrementalRepair(fixes=[M.IncrementalBulletFix(role=0,bullet=1,text=f.roles[0].bullets[0].text,duties=[0,2])])
+    def invoke(ctx,agent,model,schema,messages,**kw):
+        seen.append((schema,messages,kw));kw['validator'](repair);return repair
+    monkeypatch.setattr(M,'_invoke',invoke)
+    agent,result=M._run_agent(ctx,'experience',f,['REQUIRED JD item indices not covered by any NEW bullet: [2].'],'')
+    assert agent=='experience' and result==repair and seen[0][0] is M.IncrementalRepair
+    assert 'current_coverage' in seen[0][1][-1].content and seen[0][2]['first']=='json_mode'
+
+
+def test_full_incremental_experience_validates_duty_references_before_caching(tmp_path,monkeypatch):
+    import pytest
+    from types import SimpleNamespace
+    jd,f=_coverage_repair_fixture();checked=[]
+    ctx={'incremental':True,'r':SimpleNamespace(roles=[None]),'jd':jd,'job_dir':tmp_path,
+         'models':{'experience':'writer'},'log':lambda _:None}
+    monkeypatch.setattr(M.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(M,'experience_schema',lambda *a,**kw:object)
+    monkeypatch.setattr(M,'_section_messages',lambda *a:[])
+    def invoke(ctx,agent,model,schema,messages,**kwargs):
+        out=SimpleNamespace(role_0=f.roles[0].bullets)
+        kwargs['validator'](out);checked.append('valid')
+        invalid=SimpleNamespace(role_0=[M.T.FillBullet(text='Built Python services.',duties=[99])])
+        with pytest.raises(ValueError,match='existing JD item'):kwargs['validator'](invalid)
+        return out
+    monkeypatch.setattr(M,'_invoke',invoke)
+    _,out=M._run_agent(ctx,'experience',None,[],'')
+    assert out is not None and checked==['valid']
+
+
+def test_incremental_final_gate_keeps_unresolved_required_coverage_and_review_errors(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    jd,f=_coverage_repair_fixture()
+    ctx={'incremental':True,'r':SimpleNamespace(roles=[None],tex=''),'jd':jd,'job_dir':tmp_path}
+    monkeypatch.setattr(M.layout,'check',lambda _:SimpleNamespace(issues=[],pages=1,free_pt=0))
+    monkeypatch.setattr(M.T,'duplicates',lambda *a,**kw:[])
+    monkeypatch.setattr(M.T,'quality',lambda *a,**kw:[])
+    assert any('coverage targets' in issue for issue in M.hard_issues(ctx,f))
+    monkeypatch.setattr(M,'content_review',lambda *a:[M.Finding(
+        agent='experience',severity='error',issue='A duty belongs to a different employer')])
+    assert M._reviewed_content(ctx,f,{})['semantic_hard']==['experience: A duty belongs to a different employer']
+    ctx.update(sites=('hireflow',),log=lambda _:None,jd_text='JD')
+    monkeypatch.setattr(M,'render',lambda state:(f,'tex',[],1,''))
+    monkeypatch.setattr(M.A,'evaluate',lambda *a,**kw:__import__('pytest').fail('Unresolved coverage must not spend an ATS scan'))
+    result=M.score({'ctx':ctx,'f':f,'layout_pass':M.LAYOUT_PASSES+1})
+    assert any('coverage targets' in issue for issue in result['hard'])
+
+
+def test_coverage_metadata_repair_does_not_dispatch_an_unnecessary_summary_rewrite(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    jd,f=_coverage_repair_fixture();calls=[]
+    ctx={'incremental':True,'r':SimpleNamespace(roles=[None]),'jd':jd,'job_dir':tmp_path,'log':lambda _:None}
+    fix=M.IncrementalBulletFix(role=0,bullet=1,text=f.roles[0].bullets[0].text,duties=[0,2])
+    def run(ctx,agent,current,tasks,last):
+        calls.append((agent,current.roles[0].bullets[0].text))
+        return agent,M.IncrementalRepair(fixes=[fix]) if agent=='experience' else M.SummaryOut(summary='Engineer.')
+    monkeypatch.setattr(M,'_run_agent',run)
+    state={'ctx':ctx,'f':f,'tasks':{'experience':['REQUIRED JD item indices not covered by any NEW bullet: [2].']}}
+    result=M.edit_sections(state)
+    assert [a for a,_ in calls]==['experience'] and result['f'].roles[0].bullets[0].duties==[0,2]
+    calls.clear();fix.text='Designed Python APIs with object-oriented patterns, cutting latency by 20%.'
+    M.edit_sections(state)
+    assert [a for a,_ in calls]==['experience','summary']
+    assert calls[1][1]==fix.text
 import pytest
 
 
