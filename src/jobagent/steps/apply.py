@@ -228,6 +228,7 @@ def jd_passages(text: str, fields: list[forms.Field], limit: int = 6000) -> str:
 
 def context(job_dir: Path, company: str) -> dict:
     """The candidate's files, as the planner sees them."""
+    from jobagent.config import get_settings
     resume = ""
     if (job_dir / "resume.pdf").exists():
         resume = subprocess.run(["pdftotext", "-layout", str(job_dir / "resume.pdf"), "-"], capture_output=True,
@@ -240,7 +241,7 @@ def context(job_dir: Path, company: str) -> dict:
             jd = json.loads((job_dir / "jd.json").read_text())
         except Exception:
             pass
-    comp = Path(f"/app/state/companies/{company}.md")
+    comp = get_settings().state_dir / 'companies' / f'{company}.md'
     tex = (job_dir / "resume.tex").read_text() if (job_dir / "resume.tex").exists() else ""
     data = applicant.with_resume(applicant.load(), applicant.resume_experience(tex))
     forms.set_approved_aliases(applicant.identity_aliases(data))        # the only forms of a school / employer treated as the same one (F29)
@@ -1565,7 +1566,7 @@ def _guarded_run(page: Page, job_dir: str | Path, company: str, *args, **kwargs)
         try:
             from jobagent.filling import select_strategy
             from jobagent.filling.discovery import Discovery
-            discovery=Discovery(page) if select_strategy(kwargs.get('filling_strategy'),resume_job=job_dir)=='experimental' else None
+            discovery=Discovery(page) if select_strategy(kwargs.get('filling_strategy'),resume_job=job_dir) in ('experimental','adaptive') else None
             if discovery:page._jobagent_discovery=discovery
             try:
                 return _run(page, job_dir, company, *args, **kwargs)
@@ -1692,6 +1693,7 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
     result['planner'] = {'provider': 'Voyager', 'model': getattr(model, 'model_name', model_name or 'configured writer')}
     result['browser_mode'] = 'desktop' if already_open else 'docker'
     result['filling_strategy']=strategy
+    ctx['_filling_strategy']=strategy
     result["address_lookup"] = None  # prepared before planning if an address field is actually encountered
     def checkpoint(current=None):
         result['address_lookup'] = ctx.get('_application_address')
@@ -1728,7 +1730,7 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         log(f"apply: page {page_no}{' (again: ' + '; '.join(errors)[:120] + ')' if known else ''}: {heads[:100]} "
             f"({len(view.fields)} fields)")
         try:
-            if strategy=='experimental':
+            if strategy in ('experimental','adaptive'):
                 from jobagent.filling.adapter import fill_page as planned_page
                 view,done=planned_page(page,ctx,files,model,log,record,page_no,env,known,errors)
                 if env.get('_experimental_blockers'):
@@ -1788,7 +1790,7 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
     result["fields"] = record
     if _filling_metrics is not None:
         _filling_metrics.finish();result['filling_metrics']=_filling_metrics.snapshot()
-    if strategy=='experimental':
+    if strategy in ('experimental','adaptive'):
         result['experimental_pages']=ctx.get('_experimental_pages',[])
         filler=ctx.get('_experimental_filler')
         result['experimental_questions']=filler.questions if filler else 0

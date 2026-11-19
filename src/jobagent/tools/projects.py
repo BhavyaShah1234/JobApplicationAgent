@@ -215,7 +215,7 @@ def from_card(c: dict) -> ProjectEntry:
 
 
 def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = None, rediscover: bool = True,
-           log=print) -> Chosen:
+           log=print, *, cache=None, model_name="") -> Chosen:
     """Refresh the repo cards (new/changed repos only), rank them for this job, pick and write 2-4 projects."""
     cards = repo_cards.refresh(user, token, rediscover=rediscover, log=log)
     job_text = " ".join([jd.title or ""] + jd.responsibilities + jd.basic_qualifications +
@@ -233,7 +233,11 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
     out, chosen = None, []
     for _ in range(3):
         try:
-            out = llm.structured_invoke(model, Projects, messages, log=log)
+            if cache is not None:
+                from .incremental_documents import invoke
+                out = invoke(cache,'project-selection',model_name,model,Projects,messages,log=log)
+            else:
+                out = llm.structured_invoke(model, Projects, messages, log=log)
         except Exception as e:  # timeout / token limit: one more try
             log(f"projects: model error {type(e).__name__}; retrying")
             continue

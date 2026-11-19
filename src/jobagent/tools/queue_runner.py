@@ -151,7 +151,7 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
 
         with Heartbeat(url, worker, lease_s, max(lease_s / 3, 1), connect):
             if pipeline is not None:
-                opts = {k: v for k, v in (pipeline_options or {}).items() if k in ("force", "no_ats", "filling_strategy")}
+                opts = {k: v for k, v in (pipeline_options or {}).items() if k in ("force", "no_ats", "filling_strategy", "document_strategy", "ats_refine")}
                 try:
                     result = pipeline.run(url, through=through, browser_mode=browser_mode, **opts)
                 except Exception as exc:

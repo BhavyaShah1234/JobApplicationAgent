@@ -77,6 +77,28 @@ class Supported(BaseModel):
 class PlannedFiller:
     engine_name = 'experimental'
     ROW_ADD_TIMEOUT_S = 8.0
+    live_view_class = LiveView
+
+    def observe_view(self, view):
+        """Strategy hook for source/schema invalidation; legacy execution is unchanged."""
+
+    def can_execute(self, planned, current, decision):
+        """Whether a planned decision remains bound to the current control."""
+        return True
+
+    def can_reuse(self, field):
+        """Whether an in-memory accepted decision already has live verification."""
+        return True
+
+    def accepted(self, view, field, decision, row):
+        """Strategy hook after exact readback (or verified document dispatch)."""
+
+    def settle(self, page, live, field, chosen, actual):
+        """Wait for the control's readback and validation, preserving legacy timing."""
+        for pause in (100,200,400):
+            if actual is None or (not actual.invalid and forms.same_value(chosen,actual.value,field.kind,field.label,field.multiple)):break
+            page.wait_for_timeout(pause);actual=live.refresh(field)
+        return actual
 
     def __init__(self, facts, ask, model=None, narrative_sources=None, referral_context=None, source_resolver=None, prepare_sources=None):
         self.source_resolver=source_resolver
@@ -354,7 +376,7 @@ class PlannedFiller:
         for f in read_view(page).fields:
             if any(norm(f.label) and norm(f.label) in norm(e) for e in errors):
                 self.cache.pop(key(f),None);self.rendered.pop(key(f),None)
-        live=LiveView(page,read_view);self._live=live
+        live=self.live_view_class(page,read_view);self._live=live
         try:
             for round_no in range(max_rounds):
                 view=live.capture()
@@ -362,6 +384,7 @@ class PlannedFiller:
                 if disclosures.expand(page,view,getattr(self,'log',lambda _:None)):
                     continue  # opening a section changes neither facts nor answers
                 if self.prepare_sources:self.facts=self.prepare_sources(view.fields)
+                self.observe_view(view)
                 # Add missing source-backed entity rows using the existing discovered controls.
                 added=False
                 for button in view.adds:
@@ -417,6 +440,7 @@ class PlannedFiller:
                     future.identity='schema:'+item.get('schema_id','')+repr(qkey)
                     potential.append(future);self.potential_seen.add(qkey)
                 def unchanged(f):
+                    if not self.can_reuse(f):return False
                     decision=self.cache.get(key(f))
                     if decision is None:return False
                     if f.invalid:return False
@@ -436,6 +460,7 @@ class PlannedFiller:
                 if todo or potential:
                     forms.discover_options(page,view,fields=todo)
                     live.remember_options(todo)
+                    self.observe_view(view)
                     nonfiles=[f for f in todo if f.kind!='file']
                     decisions=self.plan([*nonfiles,*potential])
                     for future in potential:
@@ -461,6 +486,7 @@ class PlannedFiller:
                         f=next((f for f in fresh.fields if key(f)==key(old)),None)
                         if f is None:continue
                         d=unlisted_school(f,fresh,self.facts) or decisions[old.id]
+                        if not self.can_execute(old,f,d):continue
                         if d.value is None:
                             if not f.required and (self.step,key(f)) in self.declined:
                                 self.cache[key(f)]=d
@@ -491,9 +517,7 @@ class PlannedFiller:
                                 actual=live.refresh(f);after=live.view
                             if actual is None and f.kind!='file':
                                 after=live.capture();actual=next((x for x in after.fields if key(x)==key(f)),None)
-                            for pause in (100,200,400):
-                                if actual is None or (not actual.invalid and forms.same_value(chosen,actual.value,f.kind,f.label,f.multiple)):break
-                                page.wait_for_timeout(pause);actual=live.refresh(f)
+                            actual=self.settle(page,live,f,chosen,actual)
                             valid=actual is not None and forms.same_value(chosen,actual.value,f.kind,f.label,f.multiple)
                             if actual:valid=valid and not actual.invalid
                             if f.kind=='file':
@@ -509,6 +533,7 @@ class PlannedFiller:
                                             'upload_verification':proof.method if proof else None,
                                             'replaced_attachment_count':proof.replaced_count if proof else 0}
                             records.append(row);self.record_state[(self.step,key(f))]=row
+                            self.accepted(after,f,d,row)
                             self._report_progress(after)
                         except Exception as e:
                             from jobagent.tools.challenge import Blocked

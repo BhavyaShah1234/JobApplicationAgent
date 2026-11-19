@@ -10,12 +10,13 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 # Behaviour you may want to change without touching code lives in config/<concern>.yaml (step 21); precedence, highest first:
 # environment variable > .env > config/*.yaml > the default in this class. Paths, secrets and the display are environment-only.
-CONFIG_FILES = ("models", "forms", "ats", "browser", "queue", "learning", "logging", "skills")
+CONFIG_FILES = ("models", "forms", "ats", "browser", "queue", "learning", "logging", "skills", "documents")
 CONCERN = {                      # which file each setting belongs to
     "models": ["openai_base_url", "ollama_base_url", "model_planner", "model_vision", "model_fast", "model_embed", "model_writer",
                "fallback_planner", "fallback_vision", "fallback_fast", "fallback_embed", "llm_max_retries", "llm_timeout_s",
                "llm_call_deadline_s", "llm_max_calls", "llm_rate_retries", "llm_structured_method"],
     "forms": ["filling_strategy", "apply_max_pages"],
+    "documents": ["document_strategy"],
     "ats": ["ats_shortfall", "ats_target"],
     "browser": ["chrome_channel", "headless"],
     "queue": ["pacing_max_per_company", "pacing_window_days", "queue_lease_seconds"],
@@ -86,7 +87,8 @@ class Settings(BaseSettings):
     # devstral2-123b (the user's "fast model for now", 2026-11-08): glm-5-3 was tried that day as a larger model and
     # wrote more specific bullets, but scored 73.3 vs 76.7 on General Mills and took ~140 min vs 44.
     model_writer: str = "devstral2-123b"
-    filling_strategy: Literal['original','experimental'] = 'experimental'
+    document_strategy: Literal['current', 'incremental'] = 'current'
+    filling_strategy: Literal['original','experimental','adaptive'] = 'experimental'
     # F05: what an ATS shortfall does to a valid resume. "warn" (default): the application may proceed, the review packet says the
     # average is below the target (or unscored); "block": no application is filled until the target is met. Invalid documents
     # (missing, not compiled, not one page, unresolved hard findings) always block, whatever this says.

@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-STRATEGIES = ("original", "experimental")
+STRATEGIES = ("original", "experimental", "adaptive")
 
 
 def select_strategy(value=None, *, resume_job=None):
@@ -14,5 +14,5 @@ def select_strategy(value=None, *, resume_job=None):
         from jobagent.config import get_settings
         value=get_settings().filling_strategy
     if value not in STRATEGIES:
-        raise ValueError('filling-strategy must be original or experimental')
+        raise ValueError('filling-strategy must be original, experimental or adaptive')
     return value

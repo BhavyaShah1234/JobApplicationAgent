@@ -1,0 +1,4 @@
+# Document generation strategy. Keep current as the production default until the
+# held-out live comparison passes; incremental caches successful section work
+# and runs the configured external ATS panel only on the final valid resume.
+# document_strategy: current

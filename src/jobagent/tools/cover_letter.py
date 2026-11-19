@@ -8,6 +8,7 @@ the JD or the company profile, and every tool/technology it names must appear in
 """
 
 import re
+import time
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -18,6 +19,7 @@ from jobagent.clock import with_today
 from jobagent.config import get_settings
 from jobagent.state import JobDescription
 from jobagent.tools.tailor import DASH, TOOLISH, compile_pdf, proper_nouns, to_latex, to_plain
+from jobagent.tools.letter_attribution import Binding
 
 SLOTS = ("<<RECIPIENT>>", "<<SUBJECT>>", "<<SALUTATION>>", "<<BODY>>", "<<CLOSING>>")
 # Words TOOLISH matches that aren't technologies (letter boilerplate, degrees, places).
@@ -55,6 +57,16 @@ class Letter(BaseModel):
     salutation: str = Field(max_length=80, description="e.g. 'Dear Plante Moran Hiring Team,'")
     paragraphs: list[Paragraph] = Field(min_length=3, max_length=4)
     closing: str = Field(max_length=30, description="e.g. 'Sincerely' (no comma)")
+
+
+class AttributedParagraph(Paragraph):
+    """Opt-in paragraph schema with employer/project-specific achievement evidence."""
+    bindings: list[Binding] = Field(default_factory=list)
+
+
+class AttributedLetter(Letter):
+    """Keep the production letter schema unchanged outside the incremental strategy."""
+    paragraphs: list[AttributedParagraph] = Field(min_length=3,max_length=4)
 
 
 PROMPT = """You write a one-page cover letter for the candidate whose tailored RESUME is given, for the given job.
@@ -162,17 +174,35 @@ def header_matches(letter_template: str, resume_tex: str) -> bool:
     return norm(grab(letter_template)) == norm(grab(resume_tex))
 
 
-def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int = 3, log=print) -> dict:
+def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int = 3, log=print, *, incremental=False) -> dict:
     """cover_letter.tex/.pdf in job_dir from its resume.tex; returns a small report for changes.md."""
+    started=time.monotonic()
     for stale in ("cover_letter.pdf", "cover_letter.tex"):     # an earlier letter must not pass as this one
         (job_dir / stale).unlink(missing_ok=True)
     resume_tex = (job_dir / "resume.tex").read_text()
     resume = resume_text(resume_tex)
     template = template_path().read_text()
+    if incremental:
+        from . import letter_attribution as attribution
+        from .incremental_documents import cache_for, invoke
+        cache = cache_for(job_dir)
+        bank = attribution.sources(resume_tex, job_dir)
     feedback, best = "", None
     for attempt in range(1, rounds + 1):
         try:
-            letter = llm.structured_invoke(model, Letter, build_prompt(resume, jd, company_md, feedback), log=log)
+            messages = build_prompt(resume, jd, company_md, feedback)
+            if incremental:
+                import json
+                messages.append(HumanMessage('For every sentence about a candidate achievement, supply a bindings '
+                    'entry: claim = the exact complete sentence in the paragraph, source_id = its owning source ID, '
+                    'quote = exact supporting text from that source. Keep each achievement sentence about one source. '
+                    'Do not borrow a number or technology from another employer.\nENTITY SOURCES:\n' + json.dumps(bank)))
+                # The template is part of the cache input even though only its
+                # locked layout/header is rendered after generation.
+                messages.append(HumanMessage('LETTER TEMPLATE VERSION: ' + __import__('hashlib').sha256(template.encode()).hexdigest()))
+                letter = invoke(cache, 'letter', get_settings().model_writer, model, AttributedLetter, messages, log=log)
+            else:
+                letter = llm.structured_invoke(model, Letter, messages, log=log)
         except Exception as e:  # timeout / token limit: next round
             log(f"cover letter round {attempt}: model error {type(e).__name__}")
             continue
@@ -185,6 +215,11 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
             "paragraphs": [p.model_copy(update={"text": DASH.sub(", ", p.text)}) for p in letter.paragraphs],
         })
         issues = consistency(letter, resume, jd, company_md)
+        if incremental:
+            try:
+                issues += attribution.check(letter, bank, cache, get_settings().model_writer, log)
+            except Exception as exc:
+                issues.append(f'achievement attribution review unavailable ({type(exc).__name__})')
         tex = render(template, letter, jd)
         pages, err = compile_pdf(tex, job_dir, name="cover_letter")
         log(f"cover letter round {attempt}: {pages or 'compile error'} page(s), {len(issues)} consistency issue(s)")
@@ -206,5 +241,9 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
         (job_dir / "cover_letter.pdf").unlink(missing_ok=True)
     elif pages and pages > 1 and not any("pages; it must be one" in i for i in issues):
         issues = issues + [f"{pages} pages; it must be one"]
+    if incremental:
+        from .artifact_cache import write_private
+        write_private(job_dir/'incremental-letter-metrics-v1.json', {'version':1,'elapsed_s':time.monotonic()-started,
+                                                                    'rounds':attempt,'stages':cache.events})
     return {"valid": not issues and pages == 1, "pages": pages, "letter": letter, "issues": issues, "words": sum(len(p.text.split()) for p in letter.paragraphs),
             "header_matches_resume": header_matches(template, resume_tex), "template": template_path().name}

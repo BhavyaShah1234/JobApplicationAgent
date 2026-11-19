@@ -92,8 +92,18 @@ def run(args):
         if any(f.kind=='password' for f in forms.read_page(page).fields):raise ValueError('Sign in before starting filling; authentication is measured separately')
         files={role:str((job/(role+'.pdf')).resolve()) for role in ('resume','cover_letter') if (job/(role+'.pdf')).exists()}
         resume=subprocess.run(['pdftotext',str(job/'resume.pdf'),'-'],capture_output=True,text=True).stdout
-        if args.engine=='candidate':result=Candidate(facts,batch_ask,model,{'resume':resume,'jd':raw},
-            {'company':contents.get('company',''),'contact':ctx_data.get('REFERRAL',{})}).fill(page,files)
+        if args.engine in ('candidate','experimental','adaptive'):
+            if args.engine=='adaptive':
+                from jobagent.filling.adaptive import AdaptiveFiller
+                filler=AdaptiveFiller(facts,batch_ask,model,{'resume':resume,'jd':raw},
+                    {'company':contents.get('company',''),'contact':ctx_data.get('REFERRAL',{})},
+                    checkpoint_path=root/'adaptive-v1.json',source_version=__import__('hashlib').sha256(
+                        json.dumps(manifest['inputs'],sort_keys=True).encode()).hexdigest())
+            else:
+                filler=Candidate(facts,batch_ask,model,{'resume':resume,'jd':raw},
+                    {'company':contents.get('company',''),'contact':ctx_data.get('REFERRAL',{})})
+                if args.engine=='experimental':filler.engine_name='experimental'
+            result=filler.fill(page,files)
         else:
             if model is None:raise ValueError('current engine requires --model')
             class Hitl:
@@ -130,7 +140,7 @@ def run(args):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--engine',choices=['current','candidate'],required=True)
+    p.add_argument('--engine',choices=['current','candidate','experimental','adaptive'],required=True)
     p.add_argument('--run-dir',type=Path,required=True);p.add_argument('--job-dir',type=Path,required=True)
     p.add_argument('--applicant',type=Path,required=True);p.add_argument('--facts',type=Path);p.add_argument('--contacts',type=Path)
     target=p.add_mutually_exclusive_group(required=True);target.add_argument('--url');target.add_argument('--html',type=Path)

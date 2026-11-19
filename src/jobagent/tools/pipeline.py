@@ -95,7 +95,7 @@ class Pipeline:
             self.log(f"skills: graph not updated ({type(exc).__name__}: {str(exc)[:100]})")
 
     def run(self, url, *, through="apply", browser_mode="docker", allow_desktop_submit=False, force=False, no_ats=False,
-            filling_strategy=None, ignore_eligibility=False):
+            filling_strategy=None, ignore_eligibility=False, document_strategy=None, ats_refine=False):
         from jobagent.tools import bundle
         if through not in {"scrape", "tailor", "apply", "submit"}:
             raise ValueError("through must be scrape, tailor, apply or submit")
@@ -104,18 +104,23 @@ class Pipeline:
         if filling_strategy is not None:
             from jobagent.filling import select_strategy
             filling_strategy=select_strategy(filling_strategy)
+        strategy = document_strategy or getattr(self.settings, 'document_strategy', 'current')
+        if strategy not in ('current','incremental'):
+            raise ValueError('document-strategy must be current or incremental')
+        if ats_refine and (strategy != 'incremental' or no_ats):
+            raise ValueError('--ats-refine requires incremental documents with ATS enabled')
         root = (self.settings.state_dir / "workflows" / hashlib.sha256(url.encode()).hexdigest()[:24]).resolve()
         from jobagent.progress import execution
         with bundle.job_lock(root, "pipeline"), execution(new=True, url=url):
             try:
-                return self._run(url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy, ignore_eligibility)
+                return self._run(url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy, ignore_eligibility, document_strategy, ats_refine)
             except BaseException as exc:
                 from jobagent.progress import metadata
                 from jobagent.log import progress
                 progress(self.log, metadata().get('stage', 'scrape'), 'failed', detail=type(exc).__name__)
                 raise
 
-    def _run(self, url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy=None, ignore_eligibility=False):
+    def _run(self, url, through, browser_mode, allow_desktop_submit, force, root, no_ats, filling_strategy=None, ignore_eligibility=False, document_strategy=None, ats_refine=False):
         from jobagent.tools import research, places
         from jobagent.tools.queue_runner import outcome_of_apply, fresh_result
         from jobagent.log import progress
@@ -195,7 +200,10 @@ class Pipeline:
         current.save()
         P("research", "done")
         P("documents", "running", label="Resume and cover letter")
-        code = self.invoke("tailor", job_dir=str(d), company=slug, force=force, no_ats=no_ats)
+        document_options = {}
+        if document_strategy is not None: document_options['document_strategy'] = document_strategy
+        if ats_refine: document_options['ats_refine'] = True
+        code = self.invoke("tailor", job_dir=str(d), company=slug, force=force, no_ats=no_ats, **document_options)
         if code:
             P("documents", "failed", detail="document generation or document gate failed")
             return PipelineResult("failed", str(d), code, "document generation or document gate failed")

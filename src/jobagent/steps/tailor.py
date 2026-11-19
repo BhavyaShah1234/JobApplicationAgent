@@ -105,7 +105,7 @@ def letter_report(cl: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def cover_letter(job_dir: str | Path, company_slug: str, log=print) -> dict:
+def cover_letter(job_dir: str | Path, company_slug: str, log=print, *, incremental=False) -> dict:
     """Write cover_letter.tex/.pdf from the job's (final) resume.tex; also usable after editing the resume."""
     from jobagent.tools import cover_letter as CL
 
@@ -114,7 +114,7 @@ def cover_letter(job_dir: str | Path, company_slug: str, log=print) -> dict:
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
     company = (s.state_dir / "companies" / f"{company_slug}.md").read_text()
     writer = llm.writer(8000)
-    cl = CL.write(job_dir, jd, company, writer, log=log)
+    cl = CL.write(job_dir, jd, company, writer, log=log, **({'incremental':True} if incremental else {}))
     changes = job_dir / "changes.md"
     text = changes.read_text() if changes.exists() else ""
     text = text.split("\n## Cover letter\n", 1)[0].rstrip("\n") + "\n"  # replace an earlier letter's section

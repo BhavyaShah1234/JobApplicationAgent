@@ -78,6 +78,37 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
     from jobagent.tools import forms,application_address,learned
     documents=ctx.setdefault('_experimental_uploads',{}).setdefault(page_no,{})
 
+    def refresh_adaptive_sources():
+        """Reload changed source files once per change, never silently switch jobs."""
+        if ctx.get('_filling_strategy')!='adaptive':return
+        from jobagent.config import get_settings
+        from jobagent.clock import now
+        from jobagent.tools.artifact_cache import digest
+        settings=get_settings();job=Path(env['out_dir']).parent
+        paths=[settings.data_dir/'applicant.yaml',settings.data_dir/'learned.yaml',
+               settings.data_dir/'master_profile.yaml',job/'jd.json',job/'jd.txt',job/'resume.tex',
+               job/'resume.pdf',job/'cover_letter.pdf',job/'application'/'answers.md',
+               settings.state_dir/'companies'/f"{env.get('company','')}.md"]
+        stamp=digest({'date':now().date().isoformat(),'files':{
+            str(p):hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None for p in paths}})
+        previous=ctx.get('_adaptive_source_stamp')
+        if previous and stamp!=previous:
+            fresh=A.context(job,env.get('company',''))
+            original=ctx.get('_jd',{})
+            if any(fresh.get('_jd',{}).get(k)!=original.get(k) for k in ('company','source_url','apply_url')):
+                raise ValueError('Job identity changed during filling; restart this application')
+            ctx.update(fresh)
+            for name in ('_experimental_compiled_facts','_experimental_learned_entries',
+                         '_experimental_learned_retrieval','_experimental_learned_facts'):
+                ctx.pop(name,None)
+            current=ctx.get('_experimental_filler')
+            if current:
+                current.narrative_sources.update({name:ctx.get(key,'') for name,key in
+                    [('resume','RESUME'),('jd','_jd_text'),('company','COMPANY'),('cover_letter','COVER_LETTER')]})
+        ctx['_adaptive_source_stamp']=stamp
+        current=ctx.get('_experimental_filler')
+        if current:current.source_version=stamp
+
     def upload_identity(view,field):
         node=forms.locate(view,field).evaluate('''e=>{
             const w=e.ownerDocument.defaultView;
@@ -99,6 +130,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                           previous.get('role',role)!=role}
 
     def prepare(fields):
+        refresh_adaptive_sources()
         matches=A.match_entries(fields,ctx.get('_jd',{}).get('company',''),ctx.get('_applicant') or {})
         from .routing import family
         address_needed=any(e.get('question') in {'Current address','Current location (city)'} for _,e in matches.values()) or any(
@@ -187,11 +219,21 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
 
     filler=ctx.get('_experimental_filler')
     if filler is None:
-        filler=PlannedFiller([],ask,model,
+        filler_class=PlannedFiller
+        strategy_options={}
+        if ctx.get('_filling_strategy')=='adaptive':
+            from .adaptive import AdaptiveFiller
+            from jobagent.tools import job_context
+            filler_class=AdaptiveFiller
+            shared=job_context.snapshot(env['out_dir'].parent, company=ctx.get('COMPANY',''),
+                candidate=ctx.get('_applicant',{}))
+            strategy_options={'checkpoint_path':Path(env['out_dir'])/'adaptive-v1.json',
+                              'source_version':shared['fingerprint']}
+        filler=filler_class([],ask,model,
             {k:v for k,v in [('resume',ctx.get('RESUME','')),('jd',ctx.get('_jd_text','')),
                             ('company',ctx.get('COMPANY','')),('cover_letter',ctx.get('COVER_LETTER','')),
                             ('today',ctx.get('TODAY','')),('date_facts',ctx.get('DATE_FACTS',''))] if v},
-            {'company':ctx.get('_jd',{}).get('company',''),'contact':ctx.get('REFERRAL',{})},sources,prepare)
+            {'company':ctx.get('_jd',{}).get('company',''),'contact':ctx.get('REFERRAL',{})},sources,prepare,**strategy_options)
         ctx['_experimental_filler']=filler
     if filler.step!=page_no:
         filler.cache={};filler.step=page_no;filler.failures={}

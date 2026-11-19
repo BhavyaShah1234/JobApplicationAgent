@@ -255,6 +255,15 @@ def _section_messages(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str
     return [system, HumanMessage(base[1].content + "\n\n" + extra)]
 
 
+def _invoke(ctx, stage, model, schema, messages, **kwargs):
+    """Use private, source-bound artifacts only in the opt-in document strategy."""
+    if ctx.get('incremental'):
+        from jobagent.tools.incremental_documents import invoke
+        role = stage if stage in ctx['models'] else 'router'
+        return invoke(ctx['cache'], stage, ctx['models'][role], model, schema, messages, **kwargs)
+    return llm.structured_invoke(model, schema, messages, **kwargs)
+
+
 def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last: str) -> tuple[str, object]:
     """One section agent's call; returns (agent, output) or (agent, None) on failure."""
     model = llm.writer(16000 if agent == "experience" else 4000 if agent == "projects" else 8000,
@@ -269,14 +278,14 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
             # A short paragraph repair must not spend ten minutes in a fallback
             # mode after length validation fails. Preserve the previous version
             # on failure; its hard findings still prevent publication.
-            out = llm.structured_invoke(model, ProjectsOut, msgs, log=log, deadline_s=180)
+            out = _invoke(ctx, agent, model, ProjectsOut, msgs, log=log, deadline_s=180)
         elif agent == "experience" and f is not None and not any(FULL_REWRITE.search(t) for t in tasks):
             # targeted edit: only the bullets the validators named (a full rewrite moves every orphan word)
             msgs = T.build_repair_prompt(ctx["r"], ctx["jd"], f, tasks + ([f"LAST ROUND: {last}"] if last else []))
-            out = llm.structured_invoke(model, T.Repair, msgs, log=log)
+            out = _invoke(ctx, agent, model, T.Repair, msgs, log=log)
         else:
             schema = {"experience": experience_schema(ctx["r"]), "skills": SkillsOut, "summary": SummaryOut}[agent]
-            out = llm.structured_invoke(model, schema, _section_messages(ctx, agent, f, tasks, last), log=log)
+            out = _invoke(ctx, agent, model, schema, _section_messages(ctx, agent, f, tasks, last), log=log)
         log(f"  {agent} agent ({ctx['models'][agent]}): {time.monotonic() - t0:.0f}s")
         return agent, out
     except Exception as e:
@@ -336,7 +345,8 @@ def write_initial(state: State) -> dict:
     def projects():
         token = optional_secret("github", "token")
         chosen = P.choose(r, jd, llm.writer(8000, timeout=300, model=ctx["models"]["projects"]),
-                          github.profile_user(r.tex), token, rediscover=False, log=log)
+                          github.profile_user(r.tex), token, rediscover=False, log=log,
+                          **({'cache':ctx['cache'],'model_name':ctx['models']['projects']} if ctx.get('incremental') else {}))
         P.save_state(ctx["job_dir"], list(chosen.entries), chosen)
         ctx["candidates"] = chosen.candidates
         ctx["cards"] = {c["full_name"].lower(): c for _, c in chosen.candidates}
@@ -585,6 +595,9 @@ def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
 
 def content_review(ctx: dict, f: T.Filled) -> list:
     """The validator agent's read of the whole resume against the posting (judgement code can't make)."""
+    if ctx.get('incremental'):
+        from jobagent.tools.incremental_documents import review
+        return review(ctx, f)
     proj = ctx["job_dir"] / "projects.json"
     job = {"title": ctx["jd"].title, "responsibilities": ctx["jd"].responsibilities,
            "basic": ctx["jd"].basic_qualifications, "preferred": ctx["jd"].preferred_qualifications,
@@ -627,7 +640,7 @@ def _reviewed_content(ctx: dict, f: T.Filled, state: dict) -> dict:
             findings, error = content_review(ctx, f), ""
         except Exception as exc:
             findings, error = [], f"skills content review unavailable ({type(exc).__name__})"
-    hard = [f"{fd.agent}: {fd.issue}" for fd in findings if fd.agent in {"skills", "projects"} and fd.severity == "error"]
+    hard = [f"{fd.agent}: {fd.issue}" for fd in findings if (ctx.get("incremental") or fd.agent in {"skills", "projects"}) and fd.severity == "error"]
     if error:
         hard.append(error)
     return {"content_hash": fingerprint, "content_findings": findings, "content_error": error, "semantic_hard": hard}
@@ -657,6 +670,18 @@ def edit_sections(state: State) -> dict:
     ctx, f, tasks = state["ctx"], state["f"], state["tasks"]
     ctx["log"]("editing: " + ", ".join(f"{a} ({len(t)})" for a, t in tasks.items()))
     progress(ctx["log"], "documents", "running", "Fixing findings", detail=", ".join(f"{a} ({len(t)})" for a, t in tasks.items()))
+    if ctx.get('incremental'):
+        other = {a: t for a, t in tasks.items() if a != 'summary'}
+        with ThreadPoolExecutor(len(other) or 1) as ex:
+            outs = dict(ex.map(with_context(lambda a: _run_agent(ctx, a, f, other[a], state.get('last', ''))), other))
+        updated = _merge(ctx, f, outs)
+        summary_tasks = list(tasks.get('summary', []))
+        if any(value is not None for value in outs.values()):
+            summary_tasks.append('Reconcile the summary with the final changed experience, projects and skills; preserve accurate text.')
+        if summary_tasks:
+            _, summary = _run_agent(ctx, 'summary', updated, summary_tasks, state.get('last', ''))
+            updated = _merge(ctx, updated, {'summary': summary})
+        return {'f': updated, 'tasks': {}}
     with ThreadPoolExecutor(len(tasks) or 1) as ex:
         outs = dict(ex.map(with_context(lambda a: _run_agent(ctx, a, f, tasks[a], state.get("last", ""))), list(tasks)))
     return {"f": _merge(ctx, f, outs), "tasks": {}}
@@ -728,7 +753,7 @@ def score(state: State) -> dict:
     if best:
         better = (len(hard) < len(best["hard"]) or
                   (len(hard) == len(best["hard"]) and
-                   (avg > best["avg"] or (avg >= best["avg"] - A.NOISE and n_layout < best["layout"]))))
+                   (avg > best["avg"] or (avg >= best["avg"] - A.NOISE and (n_layout < best["layout"] or ctx.get("incremental") and n_layout == best["layout"])))))
         if not better:
             return _rollback(state, f"UNDONE: the last edits moved the scores to {ev['scores']} (average {avg}, best "
                                     f"{best['avg']}) with page problems {hard}; try different wording or other items",
@@ -828,7 +853,7 @@ def route(state: State) -> dict:
     return {"tasks": tasks, "layout_pass": 0, "reviewed": False, "skills_padding_attempted": False}
 
 
-def build_graph():
+def build_graph(start="write"):
     """Build the LangGraph that writes, lays out, edits and scores a resume: write, check layout, fix, score, route, and the loops between them.
 
     Returns:
@@ -841,7 +866,7 @@ def build_graph():
     g.add_node("score", score)
     g.add_node("route", route)
     g.add_node("edit", edit_sections)
-    g.add_edge(START, "write")
+    g.add_edge(START, start)
     g.add_edge("write", "check_layout")
     g.add_conditional_edges("check_layout", after_layout, {"fix": "fix", "score": "score"})
     g.add_edge("fix", "check_layout")
@@ -851,14 +876,19 @@ def build_graph():
     return g.compile()
 
 
-def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> dict:  # noqa: C901
+def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, document_strategy=None, ats_refine=False) -> dict:  # noqa: C901
     """One job through the agent graph; leaves the best one-page version in job_dir."""
+    started = time.monotonic()
+    panel_history = []
     if sites and all(name in ats_sites.FEEDBACK_ONLY_SITES for name in sites):
         raise ValueError("The ATS improvement loop requires at least one numeric checker alongside SkillsFirst's written feedback.")
-    if sites and not any(name not in ats_sites.BUDGET_SITES and name not in ats_sites.FEEDBACK_ONLY_SITES
-                         for name in sites):
-        raise ValueError("The multi-agent loop needs an unlimited numeric checker alongside limited-credit sites.")
     s = get_settings()
+    strategy = document_strategy or getattr(s, 'document_strategy', 'current')
+    if strategy not in ('current','incremental'): raise ValueError('document strategy must be current or incremental')
+    if ats_refine and strategy != 'incremental': raise ValueError('--ats-refine requires incremental documents')
+    if strategy == 'current' and sites and not any(name not in ats_sites.BUDGET_SITES and name not in ats_sites.FEEDBACK_ONLY_SITES
+                                                 for name in sites):
+        raise ValueError("The multi-agent loop needs an unlimited numeric checker alongside limited-credit sites.")
     from jobagent.tools import documents
     documents.begin(job_dir)       # fail closed: an in-progress record replaces the manifest before anything is generated
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
@@ -867,14 +897,24 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> d
     ctx = {"job_dir": job_dir, "jd": jd, "company": (s.state_dir / "companies" / f"{slug}.md").read_text(),
            "r": T.parse(template_text),
            "jd_text": (job_dir / "jd.txt").read_text() if (job_dir / "jd.txt").exists() else "",
-           "models": models, "log": log, "sites": sites}
+           "models": models, "log": log, "sites": () if strategy == "incremental" else sites}
     ctx["graph"] = SG.for_tailor(job_dir, jd, ctx["r"])               # related skills (step 4c); {} when off or empty
     SG.guard_resume(ctx["r"], job_dir)                                # every render of this resume drops skills that are not the candidate's
+    if strategy == 'incremental':
+        from jobagent.tools.incremental_documents import cache_for
+        from jobagent.tools import job_context, applicant
+        ctx.update(incremental=True, cache=cache_for(job_dir))
+        ctx['source_snapshot'] = job_context.snapshot(job_dir,company=ctx['company'],
+            candidate=applicant.load(),template=template_text,claims=T.declared_claims())
     final = build_graph().invoke({"ctx": ctx, "history": []}, {"recursion_limit": 200})
     best = final.get("best")
     if best:
         bundle.publish(job_dir, _version_files(best))      # source, PDF, projects layout and structure: one version (F25)
-        budget = tuple(name for name in sites if name in ats_sites.BUDGET_SITES)
+        if strategy == 'incremental' and sites:
+            from jobagent.tools.incremental_documents import final_panel
+            best, panel_history = final_panel(ctx, final, sites, ats_refine)
+            bundle.publish(job_dir, _version_files(best))
+        budget = tuple(name for name in sites if name in ats_sites.BUDGET_SITES) if strategy == 'current' else ()
         if budget:
             final_ev = A.evaluate(job_dir, jd, ctx["jd_text"], final.get("ats_round", 0) + 1, budget, log)
             best["scores"] = {**{name: value for name, value in best["scores"].items() if name not in budget},
@@ -887,11 +927,19 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print) -> d
     hist = [h for h in final.get("history", []) if h.startswith("ats ")]
     summary = ats_sites.write_summary(job_dir, best["scores"] if best else {}, sites)
     avg = summary["average"]
-    return {"average": avg, "scores": summary["scores"],
+    if strategy == 'incremental':
+        from jobagent.tools.artifact_cache import write_private
+        elapsed = time.monotonic()-started
+        ats_wait = sum(r['seconds'] for r in panel_history)
+        write_private(job_dir/'incremental-metrics-v1.json', {'version':1,'stages':ctx['cache'].events,
+            'elapsed_s':elapsed,'external_ats_s':ats_wait,'generation_s':max(0,elapsed-ats_wait),
+            'ats_rounds':len(panel_history)})
+    return {"document_strategy": strategy, "average": avg, "scores": summary["scores"],
             "template_sha256": documents.template_fingerprint(template_text),
             "average_sites": summary["sites"], "average_missing": summary["missing"],
             "average_complete": summary["complete"],
-            "history": [float(h.split()[1]) for h in hist], "history_metric": "unlimited-site comparison",
+            "history": [p['panel']['average'] for p in panel_history] if strategy=='incremental' else [float(h.split()[1]) for h in hist],
+            "history_metric": "configured final-panel averages" if strategy=='incremental' else "unlimited-site comparison",
             "reached": bool(best and avg is not None and avg >= TARGET),
             "pages": layout.page_count(job_dir / "resume.pdf") if best else None, "layout_issues": lay,
             "hard_issues": hard, "claims_issues": claims,

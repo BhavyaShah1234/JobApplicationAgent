@@ -430,6 +430,8 @@ def tailor_cmd(
     company: str = typer.Argument(..., help="Company slug of the research profile (state/companies/<slug>.md)."),
     no_ats: bool = typer.Option(False, "--no-ats", help="Skip the step 10 ATS loop."),
     single: bool = typer.Option(False, "--single", help="The older one-model writer instead of the agent team."),
+    document_strategy: str = typer.Option(None, help="current or incremental; defaults to DOCUMENT_STRATEGY/current."),
+    ats_refine: bool = typer.Option(False, "--ats-refine", help="With incremental documents, allow at most two targeted ATS revision rounds."),
     force: bool = typer.Option(False, "--force", help="Rebuild every stage; without it a finished resume or cover letter whose "
                                                       "inputs and files are unchanged is reused (see `jobagent workflow`)."),
 ) -> None:
@@ -445,6 +447,13 @@ def tailor_cmd(
     from jobagent.tools import documents
 
     s = get_settings()
+    strategy = document_strategy or s.document_strategy
+    if strategy not in ('current','incremental'):
+        raise typer.BadParameter('document-strategy must be current or incremental')
+    if strategy == 'incremental' and single:
+        raise typer.BadParameter('incremental documents use the section writer; remove --single')
+    if ats_refine and (strategy != 'incremental' or no_ats):
+        raise typer.BadParameter('--ats-refine requires incremental documents with ATS enabled')
     d = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
     from jobagent.tools import bundle
     lock = contextlib.ExitStack()
@@ -465,6 +474,9 @@ def tailor_cmd(
     order = ["resume", "cover_letter"]
     if force:
         wf.forget_from("resume", order)
+        if strategy == 'incremental':
+            import shutil
+            shutil.rmtree(d / '.incremental', ignore_errors=True)
     if single:
         documents.begin(d)
         out = main(job_dir, company, ats=not no_ats)
@@ -482,6 +494,7 @@ def tailor_cmd(
                                     "missing": [], "scored": bool(ats)}, policy=s.ats_shortfall, target=s.ats_target)
     else:
         from jobagent.steps import multi_agent as M
+        from jobagent.tools import job_context
 
         model = s.model_writer  # the same model for every agent (chosen 2026-11-02)
         sites = () if no_ats else M.SITES
@@ -489,9 +502,13 @@ def tailor_cmd(
         # are unchanged, and redoes only the cover letter; `--force` rebuilds everything.
         from jobagent.log import progress
         progress(log, "documents", "running", "Resume")
-        rj, how = wf.run("resume", lambda: M.run_job(d, company, {k: model for k in M.DEFAULT_MODELS}, sites, log=log),
+        rj, how = wf.run("resume", lambda: M.run_job(d, company, {k: model for k in M.DEFAULT_MODELS}, sites, log=log,
+                         **({"document_strategy":strategy,"ats_refine":ats_refine} if strategy=="incremental" else {})),
                          inputs={"jd": jd_sha, "jd_text": txt_sha, "template": template_sha, "profile": profile_sha, "model": model,
-                                 "sites": list(sites), "skills": _skill_inputs(d, s), "document_provenance": 1,
+                                 "sites": list(sites), "document_strategy":strategy,"ats_refine":ats_refine,
+                                 "incremental_version":job_context.model_version() if strategy=='incremental' else None,
+                                 "claims_profile":W.sha_file(s.data_dir/'master_profile.yaml'),
+                                 "skills": _skill_inputs(d, s), "document_provenance": 1,
                                  "project_content_validation": 1, "versioned_content_review": 3,
                                  "pdf_startup_policy": PDF_STARTUP_POLICY},
                          outputs=["resume.pdf", "resume.tex", "filled.json"], force=force, log=log,
@@ -502,8 +519,11 @@ def tailor_cmd(
                 and rj["template_sha256"] == documents.template_fingerprint()):
             # Do not spend another model call when the source changed during generation.
             progress(log, "documents", "running", "Cover letter", detail=f"resume done: average {rj['average']}")
-            cl, how = wf.run("cover_letter", lambda: cover_letter(d, company, log=log),
+            cl, how = wf.run("cover_letter", lambda: cover_letter(d, company, log=log, **({"incremental":True} if strategy=="incremental" else {})),
                              inputs={"resume_tex": W.sha_file(d / "resume.tex"), "profile": profile_sha, "model": model,
+                                     "jd":jd_sha,"letter_template":W.sha_file(__import__("jobagent.tools.cover_letter",fromlist=["template_path"]).template_path()),
+                                     "document_strategy":strategy,
+                                     "incremental_version":job_context.model_version() if strategy=='incremental' else None,
                                      "candidate_credentials": 1, "pdf_startup_policy": PDF_STARTUP_POLICY},
                              outputs=["cover_letter.pdf", "cover_letter.tex"], force=force, log=log)
             log(f"cover letter ({how}): {cl['words']} words, {len(cl['issues'])} issue(s)")
@@ -525,7 +545,9 @@ def run_pipeline_cmd(
     allow_desktop_submit: bool = typer.Option(False, "--allow-desktop-submit"),
     force: bool = typer.Option(False, help="Refresh input stages and regenerate documents."),
     no_ats: bool = typer.Option(False, "--no-ats", help="Skip ATS scans while generating documents; document validity still gates submission."),
-    filling_strategy: str = typer.Option(None, help="original or experimental; default FILLING_STRATEGY/experimental."),
+    filling_strategy: str = typer.Option(None, help="original, experimental or adaptive; default FILLING_STRATEGY/experimental."),
+    document_strategy: str = typer.Option(None, help="current or incremental; defaults to DOCUMENT_STRATEGY/current."),
+    ats_refine: bool = typer.Option(False, "--ats-refine", help="Allow at most two targeted incremental ATS revisions."),
     ignore_eligibility: bool = typer.Option(False, "--ignore-eligibility", help="Go on although the posting's hard requirements "
         "(U.S. citizenship, a clearance, no sponsorship) conflict with your file. The queue never does this."),
 ) -> None:
@@ -538,7 +560,9 @@ def run_pipeline_cmd(
     try:
         rows = multi_input.run_inputs(inputs, through=through, limit=limit, log=log, browser_mode=browser_mode,
                                       allow_desktop_submit=allow_desktop_submit, force=force, no_ats=no_ats,
-                                      filling_strategy=filling_strategy, ignore_eligibility=ignore_eligibility)
+                                      filling_strategy=filling_strategy, ignore_eligibility=ignore_eligibility,
+                                      **({"document_strategy":document_strategy} if document_strategy else {}),
+                                      **({"ats_refine":True} if ats_refine else {}))
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     table = Table(title="run: what happened to each input")
@@ -821,7 +845,7 @@ def apply_cmd(
     ask_minutes: float = typer.Option(30, help="How long to wait for your answer to a question (then it's left for review)."),
     model: str = typer.Option(None, help="Voyager model that plans the answers (default: the writer model)."),
     browser_mode: str = typer.Option('docker', help="docker, desktop, or auto (Docker then desktop on a challenge block)."),
-    filling_strategy: str = typer.Option(None, help="original or experimental; default FILLING_STRATEGY/experimental."),
+    filling_strategy: str = typer.Option(None, help="original, experimental or adaptive; default FILLING_STRATEGY/experimental."),
     desktop_allow_origin: list[str] = typer.Option(None, "--desktop-allow-origin",
         help="Additional trusted application/login HTTPS origin; repeat for extra origins."),
 ) -> None:
@@ -914,7 +938,7 @@ def submit_cmd(
     ask_minutes: float = typer.Option(30, help="How long a question while filling waits for your answer."),
     review_minutes: float = typer.Option(60, help="How long the filled form waits for your approve / skip."),
     mail_minutes: float = typer.Option(15, help="How long to watch the inbox for the confirmation mail."),
-    filling_strategy: str = typer.Option(None, help="original or experimental; resumes the application's recorded strategy by default."),
+    filling_strategy: str = typer.Option(None, help="original, experimental or adaptive; resumes the application's recorded strategy by default."),
     browser_mode: str = typer.Option('docker', help="docker (default) or desktop: the browser that holds the application "
                                      "(`apply --browser-mode auto` is for filling only)."),
     allow_desktop_submit: bool = typer.Option(False, "--allow-desktop-submit",

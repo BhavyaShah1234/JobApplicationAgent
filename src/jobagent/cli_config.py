@@ -8,7 +8,7 @@ def register(app: typer.Typer, console) -> None:
     app.add_typer(config_app, name="config")
 
     @config_app.command("show")
-    def show(concern: str = typer.Argument(None, help="Only this file's settings (models, forms, ats, browser, queue, learning, logging).")) -> None:
+    def show(concern: str = typer.Argument(None, help="Only this file's settings (models, forms, documents, ats, browser, queue, learning, logging, skills).")) -> None:
         """List each setting with its effective value and its source (env, .env, yaml file or default)."""
         from rich.table import Table
         from jobagent.config import describe
