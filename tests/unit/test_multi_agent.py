@@ -94,6 +94,18 @@ def test_coverage_barrier_rejects_cosmetic_progress_and_failed_requests(monkeypa
     with pytest.raises(RuntimeError,match='repair failed'):M.ensure_incremental_coverage(ctx,f)
 
 
+def test_false_original_markers_are_normalized_before_requesting_coverage(monkeypatch):
+    jd,f=_coverage_repair_fixture()
+    f.roles[0].bullets[0].duties=[0,2]
+    f.roles[0].bullets[0].original=999
+    monkeypatch.setattr(M,'_run_agent',lambda *a:__import__('pytest').fail('Only source metadata needed correction'))
+    updated=M.ensure_incremental_coverage({'incremental':True,'r':_coverage_template(),
+                                          'jd':jd,'log':lambda _:None},f)
+    assert updated.roles[0].bullets[0].original is None
+    assert f.roles[0].bullets[0].original==999
+    assert M.T.fill_checks(_coverage_template(),jd,updated)[0]==[]
+
+
 def test_coverage_growth_uses_a_full_request_when_existing_bullets_cannot_hold_targets(monkeypatch):
     from types import SimpleNamespace
     jd,f=_coverage_repair_fixture()

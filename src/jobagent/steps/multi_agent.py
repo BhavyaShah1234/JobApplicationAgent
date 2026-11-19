@@ -544,6 +544,8 @@ def ensure_incremental_coverage(ctx, f):
     """
     if not ctx.get('incremental'):return f
     template,jd=ctx['r'],ctx['jd'];slots=len(template.roles)*T.MAX_BULLETS
+    normalized=T.normalize_originals(template,f.model_copy(deep=True))
+    if normalized!=f:f=normalized
     missing=T.fill_checks(template,jd,f,slots)[0]
     if not missing:return f
     required=set(T.coverage_target(jd,slots)[0])
