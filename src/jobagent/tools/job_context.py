@@ -59,6 +59,6 @@ def model_version(stage=None):
         names=('tools/cover_letter.py','tools/tailor.py')
     elif stage=='letter-attribution':
         names=('tools/letter_attribution.py','tools/cover_letter.py','tools/tailor.py')
-    elif stage and (stage.startswith('review:') or stage=='adjudicate:projects'):
+    elif stage and (stage.startswith('review:') or stage.startswith('adjudicate:')):
         names=('tools/incremental_documents.py','steps/multi_agent.py','tools/tailor.py')
     return digest({n: (root / n).read_text() for n in names if (root / n).exists()})

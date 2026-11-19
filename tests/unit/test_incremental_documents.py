@@ -353,6 +353,7 @@ def test_bound_skill_review_keeps_current_scope_and_returns_shared_findings(tmp_
     ('Engineer with 3 years of Python experience.',True),
     ('Engineer with 3+ years building real-time video streaming pipelines.',True),
     ('Engineer with 3 years after the bachelor degree.',False),
+    ('Engineer at Acme since 2018.',False),
     ('Engineer with 3 years of clearance experience.',False)])
 def test_semantic_review_separates_policy_authorized_tenure_from_protected_history(tmp_path,monkeypatch,summary,masked):
     from jobagent.steps import multi_agent as M
@@ -586,6 +587,84 @@ def test_a_critic_cannot_block_a_supported_project_claim_without_a_bound_contrad
              'owner_claims_policy':'Work impact metrics are allowed.'}
     error=I.ProjectFinding(project=1,severity='error',issue='Quality inspection is not in the source')
     assert I.adjudicate_projects({'adjudicator_model':'judge','cache':ArtifactCache(tmp_path),'log':lambda _:None},payload,[error])==[]
+
+
+def _summary_judgment_fixture(tmp_path,monkeypatch,*,kind='work',claim='autonomous vehicles',status='rejected',source_id='role:0',source_quote='autonomous boats'):
+    from jobagent.tools import incremental_documents as I
+    payload={'summary':f'Candidate with experience in {claim}.','roles':[{'employer':'Acme','bullets':['Built C++ data systems for autonomous boats.']}],
+             'projects':[],'skills':[('Languages',['C++'])],'education':'Master of Science from Arizona State University.',
+             'company_context':'Zoox builds autonomous vehicles.','owner_claims_policy':'Generated duties and domain tenure are authorized.'}
+    finding=I.SummaryFinding(kind=kind,claim_quote=claim,issue='A proposed unsupported claim.',severity='error')
+    verdict=I.SummaryVerdict(finding=0,status=status,claim_quote=claim,source_id=source_id,source_quote=source_quote,
+                            reason='Checked against the exact source and owner policy.')
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    monkeypatch.setattr(I,'invoke',lambda *a,**kw:I.SummaryVerdicts(verdicts=[verdict]))
+    ctx={'models':{'router':'independent-judge'},'cache':ArtifactCache(tmp_path),'log':lambda _:None}
+    return I,ctx,payload,finding,verdict
+
+
+def test_summary_judge_can_reject_incorrect_domain_criticism_using_its_actual_role(tmp_path,monkeypatch):
+    I,ctx,payload,finding,_=_summary_judgment_fixture(tmp_path,monkeypatch)
+    assert I.adjudicate_summary(ctx,payload,[finding])==[]
+
+
+@pytest.mark.parametrize('kind,claim,source_id,source_quote,message',[
+    ('work','autonomous vehicles','company','autonomous vehicles','source type'),
+    ('work','autonomous vehicles','role:0','autonomous cars','unbound'),
+    ('credential','PhD from Stanford University','education','Master of Science','different degree'),
+    ('credential','Master from Stanford University','education','Master of Science','another institution'),
+    ('employment','worked at Google','role:0','autonomous boats','another employer')])
+def test_summary_judge_cannot_borrow_incompatible_or_unbound_evidence(tmp_path,monkeypatch,kind,claim,source_id,source_quote,message):
+    I,ctx,payload,finding,_=_summary_judgment_fixture(tmp_path,monkeypatch,
+        kind=kind,claim=claim,source_id=source_id,source_quote=source_quote)
+    with pytest.raises(ValueError,match=message):I.adjudicate_summary(ctx,payload,[finding])
+
+
+def test_summary_judge_cannot_move_its_finding_to_another_real_claim(tmp_path,monkeypatch):
+    I,ctx,payload,finding,verdict=_summary_judgment_fixture(tmp_path,monkeypatch)
+    payload['summary']+=' Experience with C++.';verdict.claim_quote='C++'
+    with pytest.raises(ValueError,match='cannot change'):I.adjudicate_summary(ctx,payload,[finding])
+
+
+def test_summary_judge_preserves_genuine_credential_errors_and_honest_uncertainty(tmp_path,monkeypatch):
+    I,ctx,payload,finding,verdict=_summary_judgment_fixture(tmp_path,monkeypatch,
+        kind='credential',claim='PhD from Stanford University',status='confirmed',
+        source_id='education',source_quote='Master of Science')
+    assert I.adjudicate_summary(ctx,payload,[finding])[0].severity=='error'
+    verdict.status='uncertain';verdict.source_quote=''
+    def invoke(*args,**kwargs):
+        result=I.SummaryVerdicts(verdicts=[verdict])
+        assert not kwargs['cache_when'](result)
+        return result
+    monkeypatch.setattr(I,'invoke',invoke)
+    assert I.adjudicate_summary(ctx,payload,[finding])[0].issue.startswith('uncertain claim')
+
+
+@pytest.mark.parametrize('kind,quote',[('work','PhD'),('work','claim absent from the summary')])
+def test_summary_critic_must_bind_its_actual_claim_and_credential_type(tmp_path,monkeypatch,kind,quote):
+    from jobagent.tools import incremental_documents as I
+    from jobagent.steps import multi_agent as M
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    def invoke(cache,stage,model_name,model,schema,messages,**kwargs):
+        if stage=='review:summary':return I.SummaryReview(findings=[I.SummaryFinding(
+            kind=kind,claim_quote=quote,issue='Unsupported claim.',severity='error')])
+        return schema(findings=[])
+    monkeypatch.setattr(I,'invoke',invoke)
+    monkeypatch.setattr(I,'adjudicate_summary',lambda *a:pytest.fail('Unbound or misclassified claim reached the judge'))
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),
+         'jd':SimpleNamespace(model_dump=lambda **kw:{}),'models':{'router':'m'},
+         'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None}
+    with pytest.raises(I.ReviewUnavailable,match='summary content review unavailable'):
+        I.review(ctx,M.T.Filled.model_construct(summary='Engineer with a PhD.',roles=[],skills=[]))
+
+
+def test_noncacheable_uncertainty_returns_once_without_sampling_for_confidence(tmp_path,monkeypatch):
+    from jobagent.tools import incremental_documents as I
+    calls=[]
+    monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:calls.append(1) or Output(text='uncertain'))
+    result=I.invoke(ArtifactCache(tmp_path),'adjudicate:summary','m',object(),Output,[HumanMessage('Evidence')],
+                    cache_when=lambda out:out.text!='uncertain')
+    assert result.text=='uncertain' and calls==[1] and not list(tmp_path.glob('*.json'))
 
 
 def test_adjudication_cannot_borrow_another_projects_source(tmp_path,monkeypatch):

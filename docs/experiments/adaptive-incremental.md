@@ -132,6 +132,15 @@ subsets, design intentions and the existing owner claims policy remain valid.
 Targeted project repairs can change the full description, displayed short form
 or generated title independently. Known template titles remain protected.
 
+Critical summary findings also receive independent adjudication on the configured
+router model. The critic must quote actual candidate prose or a mission proposition;
+the adjudicator retains that claim and selects a typed source from the current
+roles, projects, skills, education or company context. Company facts cannot establish
+candidate employment, and skill lists cannot establish employer achievements.
+Degree, institution and employer identities receive additional binding checks.
+Uncertain decisions remain blocking and are not cached or retried as format errors.
+No adjudicator call is made when the summary critic reports no critical findings.
+
 Cover letters use the final resume. Each sentence selects an ID from the actual
 employer/project/company source inventory; the code assembles the prose and attaches
 the corresponding evidence. The model does not duplicate its prose or copy freehand
@@ -159,7 +168,8 @@ existing boundaries. Scientific superscripts/subscripts, comparison qualifiers
 and microsecond units survive LaTeX conversion and PDF compilation; they are
 not silently dropped from the generated text.
 Project and summary factual reviews, the independent project adjudicator and the
-letter attribution reviewer use `MODEL_PLANNER`; drafting remains on `MODEL_WRITER`.
+letter attribution reviewer use `MODEL_PLANNER`; the summary adjudicator uses the
+configured router model, and drafting remains on `MODEL_WRITER`.
 Both validator model identities and provider/transport configuration participate
 in workflow invalidation. Exact sampling parameters and token budgets also bind stage
 cache entries. Qwen 3.5 factual reviewers use its endpoint-verified non-thinking
