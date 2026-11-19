@@ -41,6 +41,16 @@ def test_failure_and_corruption_never_become_cache_hits(tmp_path,monkeypatch):
     assert cache.get('x',{}) is None
 
 
+def test_semantically_unbound_outputs_do_not_enter_the_cache(tmp_path,monkeypatch):
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:Output(text='unbound'))
+    def validate(value):
+        if value.text=='unbound':raise ValueError('source quote does not belong to this field')
+    with pytest.raises(ValueError,match='source quote'):
+        invoke(ArtifactCache(tmp_path),'review','m',object(),Output,[HumanMessage('q')],validator=validate)
+    assert not list(tmp_path.glob('*.json'))
+
+
 def test_changed_skills_rechecks_skills_and_summary_only(tmp_path,monkeypatch):
     from jobagent.steps import multi_agent as M
     from jobagent.tools import incremental_documents as I
@@ -106,7 +116,8 @@ def test_every_scoped_reviewer_receives_the_existing_owner_claims_policy(tmp_pat
     ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
          'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None}
     review(ctx,M.T.Filled.model_construct(summary='A summary.',roles=[],skills=[]))
-    assert seen==[policy]*4
+    assert len(seen)==4 and all(v.startswith(policy) for v in seen)
+    assert all('standing confirmation' in v for v in seen)
 
 
 def test_review_only_code_changes_preserve_writer_cache_versions(tmp_path,monkeypatch):
@@ -153,6 +164,35 @@ def test_incremental_draft_schema_matches_the_actual_new_bullet_limit():
     ordinary=M.experience_schema(r).model_json_schema()
     assert compact['$defs']['CompactFillBullet']['properties']['text']['maxLength']==M.T.BULLET_MAX
     assert ordinary['$defs']['FillBullet']['properties']['text']['maxLength']==M.T.BULLET_VERBATIM_MAX
+
+
+def test_a_critic_cannot_block_a_supported_project_claim_without_a_bound_contradiction(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I,'invoke',lambda *a,**kw:I.ProjectVerdicts(verdicts=[I.ProjectVerdict(
+        finding=0,project=1,status='rejected',claim_quote='Built quality inspection workflows.',
+        source_quote='inventory/quality-inspection management system',reason='The own source explicitly supports the capability.')]))
+    payload={'displayed':[{'repo':'owner/project','text':'Built quality inspection workflows.'}],
+             'own_repo_sources':{'owner/project':{'summary':'An inventory/quality-inspection management system.'}},
+             'owner_claims_policy':'Work impact metrics are allowed.'}
+    error=M.Finding(agent='projects',severity='error',issue='Quality inspection is not in the source')
+    assert I.adjudicate_projects({'adjudicator_model':'judge','cache':ArtifactCache(tmp_path),'log':lambda _:None},payload,[error])==[]
+
+
+def test_adjudication_cannot_borrow_another_projects_source(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I,'invoke',lambda *a,**kw:I.ProjectVerdicts(verdicts=[I.ProjectVerdict(
+        finding=0,project=1,status='rejected',claim_quote='Built a camera driver.',source_quote='Supports cameras.',
+        reason='Unbound quote from another repository')]))
+    payload={'displayed':[{'repo':'a','text':'Built a camera driver.'},{'repo':'b','text':'Built a robot.'}],
+             'own_repo_sources':{'a':{'summary':'Path planning only.'},'b':{'summary':'Supports cameras.'}},
+             'owner_claims_policy':'Owner policy'}
+    with pytest.raises(ValueError,match='unbound'):
+        I.adjudicate_projects({'adjudicator_model':'judge','cache':ArtifactCache(tmp_path),'log':lambda _:None},payload,
+            [M.Finding(agent='projects',severity='error',issue='Unsupported camera claim')])
 
 
 def panel_world(tmp_path,monkeypatch,scores):
