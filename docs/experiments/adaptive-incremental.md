@@ -124,7 +124,9 @@ hardware; they do not require a literal type relationship to the heading's noun.
 
 Proposed critical project contradictions receive an independent, source-bound
 adjudication. Both claim and evidence quotes must belong to that same project;
-uncertain or unbound results block publication and are not cached. Claims may
+uncertain or unbound results block publication and are not cached. Honest project
+uncertainty returns a blocking finding once rather than a format retry for a more
+confident answer. Claims may
 bind to the displayed title, stack or selected description. Original template
 titles supply owner evidence for the same repository and its awards; they
 cannot establish implementation features or another repository's claims. Supported

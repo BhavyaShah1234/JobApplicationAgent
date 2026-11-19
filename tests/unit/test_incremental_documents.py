@@ -682,6 +682,29 @@ def test_adjudication_cannot_borrow_another_projects_source(tmp_path,monkeypatch
             [I.ProjectFinding(project=1,severity='error',issue='Unsupported camera claim')])
 
 
+@pytest.mark.parametrize('quote',['','Path planning only.'])
+def test_uncertain_project_verdict_blocks_without_retrying_for_confidence_or_caching(tmp_path,monkeypatch,quote):
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    calls=[]
+    def decide(*args,**kwargs):
+        """Return honest uncertainty once, after exercising binding and cache policy."""
+        result=I.ProjectVerdicts(verdicts=[I.ProjectVerdict(
+            finding=0,project=1,status='uncertain',claim_quote='Built a camera driver.',
+            source_quote=quote,reason='The available repository evidence is insufficient.')])
+        kwargs['validator'](result)
+        assert not kwargs['cache_when'](result)
+        calls.append(1)
+        return result
+    monkeypatch.setattr(I,'invoke',decide)
+    payload={'displayed':[{'repo':'a','text':'Built a camera driver.'}],
+             'own_repo_sources':{'a':{'summary':'Path planning only.'}},'owner_claims_policy':'Owner policy'}
+    out=I.adjudicate_projects({'adjudicator_model':'judge','cache':ArtifactCache(tmp_path),'log':lambda _:None},payload,
+        [I.ProjectFinding(project=1,severity='error',issue='Camera claim unsupported')])
+    assert len(out)==1 and out[0].severity=='error' and 'uncertain' in out[0].issue
+    assert calls==[1]
+
+
 def test_template_award_is_evidence_for_its_own_title_not_another_projects_features(tmp_path,monkeypatch):
     from jobagent.steps import multi_agent as M
     from jobagent.tools import incremental_documents as I

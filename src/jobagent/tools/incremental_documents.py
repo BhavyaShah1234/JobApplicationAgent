@@ -292,17 +292,18 @@ def adjudicate_projects(ctx, payload, findings):
             if verdict.evidence_source=='owner_template' and (
                     _words(verdict.claim_quote) not in _words(project.get('title',''))):
                 raise ValueError('An owner template title cannot establish project implementation features')
-            if not _words(verdict.source_quote) or _words(verdict.source_quote) not in _words(source):
+            if (verdict.status!='uncertain' or verdict.source_quote) and (
+                    not _words(verdict.source_quote) or _words(verdict.source_quote) not in _words(source)):
                 raise ValueError('unbound source_quote: use an exact contiguous quote from the named source, without added field labels or ellipses')
-            if verdict.status=='uncertain':raise ValueError('project evidence needs review: '+verdict.reason)
-            if verdict.status=='confirmed':
+            if verdict.status!='rejected':
                 checked.append(M.Finding(agent='projects',severity='error',issue=(
-                    f"Project {verdict.project} ({project['repo']}): {verdict.reason} "
+                    f"Project {verdict.project} ({project['repo']}) {verdict.status}: {verdict.reason} "
                     f"Claim: {verdict.claim_quote!r}; own source: {verdict.source_quote!r}")[:400]))
         return checked
     result=invoke(ctx['cache'],'adjudicate:projects',model_name,review_model(model_name,6000),
                   ProjectVerdicts,messages,log=ctx['log'],deadline_s=180,validator=bind,first=_review_method(model_name),
-                  request_lock=ctx.get('reasoner_lock'),request_abort=ctx.get('review_abort'))
+                  request_lock=ctx.get('reasoner_lock'),request_abort=ctx.get('review_abort'),
+                  cache_when=lambda out:all(v.status!='uncertain' for v in out.verdicts))
     return bind(result)
 
 
