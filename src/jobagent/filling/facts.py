@@ -14,9 +14,19 @@ def norm(s):
 
 def expanded_immigration_support(text):
     q=norm(text)
-    return bool(re.search(r'\bsponsor\w*\b|\bimmigration (?:related )?support\b',q) and
-        (re.search(r'(?<!not )\b(?:include|includes|count|counts)\b.{0,180}\b(?:opt|cpt)\b',q) or
-         re.search(r'\b(?:opt|cpt)\b.{0,50}(?<!not )\bcounts?\b',q)))
+    if not re.search(r'\bsponsor\w*\b|\bimmigration (?:related )?support\b',q):return False
+    if (re.search(r'(?<!not )\b(?:include|includes|count|counts)\b.{0,180}\b(?:opt|cpt)\b',q) or
+            re.search(r'\b(?:opt|cpt)\b.{0,50}(?<!not )\bcounts?\b',q)):
+        return True
+    # An affirmative parenthetical example list defines the scope too. Do not
+    # turn an explicitly excluded OPT example into an expanded requirement.
+    for example in re.findall(r'\([^()]{1,600}\)',str(text)):
+        example=norm(example)
+        if (re.match(r'^(?:e g|eg|for example|such as)\b',example) and
+                re.search(r'\b(?:opt|cpt)\b',example) and
+                not re.search(r'\b(?:not|never|except|exclud\w*)\b',example)):
+            return True
+    return False
 
 
 @dataclass

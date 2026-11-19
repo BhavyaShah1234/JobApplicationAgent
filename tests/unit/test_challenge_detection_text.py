@@ -29,3 +29,21 @@ def test_verification_interstitial_goes_to_human(body):
 ])
 def test_related_employment_and_network_wording_is_not_a_challenge(body):
     assert challenge.detect(page(body)) is None
+
+
+def test_application_email_code_at_end_of_long_form_goes_to_human():
+    body = ('Software engineering job description. ' * 200 +
+            'A verification code was sent to applicant@example.test. '
+            "To submit your application, enter the 8-character code to confirm you're a human.")
+    result = challenge.detect(page(body))
+    assert result and result.kind == 'application-email-code'
+    assert 'applicant@' not in result.excerpt
+
+
+@pytest.mark.parametrize('body', [
+    'A verification code was sent to your email. Enter it to activate your account.',
+    'We build security code verification systems for job applications.',
+    'A security code will be sent before you can submit your application.',
+])
+def test_account_codes_and_descriptions_are_not_application_human_checks(body):
+    assert challenge.detect(page(body)) is None

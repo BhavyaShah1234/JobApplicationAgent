@@ -70,6 +70,13 @@ _SHOWN_JS = """e => { for (let n = e; n && n.nodeType === 1; n = n.parentElement
   if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) < 0.1) return false; }
   const r = e.getBoundingClientRect(); return r.right > 0 && r.left < innerWidth && r.top < innerHeight; }"""
 
+# This notice can appear below a long job description only after Submit. It
+# requires human action in the same attempt, rather than another automatic click.
+_APPLICATION_EMAIL_CODE = re.compile(
+    r"(?is)\b(?:verification|security) code (?:was|has been) sent\b.{0,400}"
+    r"\bto (?:submit|complete) (?:your|the) application\b.{0,200}\benter\b.{0,100}\bcode\b"
+)
+
 
 @dataclass
 class Challenge:
@@ -87,6 +94,8 @@ def detect(page: Page) -> Challenge | None:
         return Challenge("unknown", safe_url(page.url), "Page inspection failed")
     if not text.strip():
         return Challenge("unknown", safe_url(page.url), "Page is blank or transitioning")
+    if _APPLICATION_EMAIL_CODE.search(text):
+        return Challenge("application-email-code", safe_url(page.url), "Application requires an emailed security code")
     blob = f"{title}\n{text[:4000]}\n{page.url}"
     for kind, pattern in _TEXT_SIGNS:
         if pattern.search(blob):
@@ -176,8 +185,10 @@ class Controller:
 
         try:
             while time.monotonic() < deadline:
+                instructions = ("Enter the emailed security code and complete the verification on the page at "
+                                if block.kind == 'application-email-code' else "Solve it in ")
                 answer = self.hitl.ask(
-                    f"{block.kind} verification at {safe_url(page.url)}. Solve it in "
+                    f"{block.kind} verification at {safe_url(page.url)}. " + instructions
                     + ("the dedicated desktop Chrome window. " if self.policy else "http://localhost:6080/vnc.html. ")
                     + "'done' checks readiness; 'skip' stops safely.",
                     done_when=resolved, timeout_s=max(0, deadline-time.monotonic()), poll_s=2,

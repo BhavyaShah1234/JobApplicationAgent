@@ -18,6 +18,15 @@ class Clock:
 
 class Page:
     text = "Application form"
+    url = 'https://jobs.example.com/apply'
+    frames = []
+
+    def title(self):
+        return 'Application'
+
+    def locator(self, selector):
+        assert selector == 'body'
+        return SimpleNamespace(inner_text=lambda **kwargs: self.text)
 
     def wait_for_timeout(self, milliseconds):
         Clock.seconds += milliseconds / 1000
@@ -77,6 +86,27 @@ def test_skipped_post_dispatch_verification_propagates_as_unresolved(monkeypatch
     monkeypatch.setattr(challenge, "guard", skipped)
     with pytest.raises(challenge.Blocked, match="skipped"):
         submit.submitted_page(page, "Application form", tmp_path / "receipt.png")
+
+
+def test_emailed_application_code_uses_human_handoff_in_existing_attempt(monkeypatch, tmp_path):
+    page = setup_clock(monkeypatch)
+    page.text = ('Job description. ' * 400 +
+                 'A verification code was sent to applicant@example.test. '
+                 "To submit your application, enter the 8-character code to confirm you're a human.")
+    calls = []
+    with challenge.session(page, None) as controller:
+        def human_verification(p, block):
+            calls.append(block.kind)
+            assert block.kind == 'application-email-code'
+            Clock.seconds += 120  # a person can take longer than the ordinary receipt timeout
+            p.text = 'Thank you for applying'
+            assert controller.ready(p)
+
+        monkeypatch.setattr(controller, 'wait', human_verification)
+        assert submit.submitted_page(page, 'Application form', tmp_path / 'receipt.png') == (
+            True, 'Thank you for applying', [])
+    assert calls == ['application-email-code']
+    # Page has no fill/click API: the agent must not enter a code or click Submit again.
 
 
 @pytest.mark.parametrize("blocked", [False, True])
