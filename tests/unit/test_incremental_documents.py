@@ -429,6 +429,40 @@ def test_bound_skill_review_keeps_current_scope_and_returns_shared_findings(tmp_
     assert findings[0].agent=='skills' and 'Languages: JVM:' in findings[0].issue
 
 
+def test_skills_context_keeps_only_verbatim_relevant_bounded_posting_excerpts():
+    from jobagent.tools.incremental_documents import skill_posting_context
+    relevant='Bonus: AI frameworks and open standards such as MCP, A2A, and enterprise authentication.'
+    raw='Unrelated benefits.\n'+relevant+'\n'+relevant+'\nSalary: 100000.\nMCP is not ownership evidence.'
+    assert skill_posting_context(raw,[('Protocols',['MCP','A2A'])])==[
+        relevant,'MCP is not ownership evidence.']
+    assert skill_posting_context('We build MCPP tools.',[('Protocols',['MCP'])])==[]
+    assert sum(map(len,skill_posting_context(('MCP '+('x'*800)+'\n')*50,[('Protocols',['MCP'])])))<=5000
+    assert skill_posting_context(raw,[])==[]
+
+
+def test_scoped_skills_review_receives_acronym_context_without_extra_review_calls(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(M.T,'facts_block',lambda:'Owner policy')
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    calls=[]
+    def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
+        calls.append(stage)
+        payload=json.loads(messages[1].content)
+        if stage=='review:skills':
+            assert payload['posting_skill_context']==['Experience with AI open standards such as MCP and A2A.']
+            assert 'Do not invent an unrelated expansion' in messages[0].content
+        else:assert 'posting_skill_context' not in payload
+        return M.Review(findings=[])
+    monkeypatch.setattr(I,'invoke',inspect)
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
+         'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None,
+         'jd_text':'Experience with AI open standards such as MCP and A2A.'}
+    filled=M.T.Filled.model_construct(summary='Engineer.',roles=[],skills=[M.T.SkillLine(category='Protocols',terms=['MCP','A2A'])])
+    assert review(ctx,filled)==[]
+    assert sorted(calls)==['review:experience','review:projects','review:skills','review:summary']
+
+
 @pytest.mark.parametrize('summary,masked',[
     ('Engineer with 3+ years of professional experience in Python.',True),
     ('Engineer with 3 years of Python experience.',True),

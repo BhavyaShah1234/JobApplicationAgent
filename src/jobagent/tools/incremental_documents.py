@@ -448,6 +448,27 @@ def summary_review_parts(summary, company):
     return ' '.join(kept),missions
 
 
+def skill_posting_context(raw_jd, skills):
+    """Keep bounded verbatim posting context for displayed technical terms.
+
+    This disambiguates terminology, not ownership or the candidate's experience.
+    It performs no search and adds no model call.
+    """
+    terms={str(term).split(' (',1)[0].strip() for _,values in skills for term in values}
+    terms.discard('')
+    if not terms:return []
+    pattern=re.compile(r'(?<!\w)(?:'+'|'.join(re.escape(t) for t in sorted(terms,key=len,reverse=True))+r')(?!\w)',re.I)
+    excerpts=[];size=0
+    for line in str(raw_jd or '').splitlines():
+        match=pattern.search(line)
+        if not match:continue
+        excerpt=line[max(0,match.start()-240):match.end()+480].strip()
+        if excerpt in excerpts:continue
+        if size+len(excerpt)>5000:break
+        excerpts.append(excerpt);size+=len(excerpt)
+    return excerpts
+
+
 def review(ctx, filled):
     """Review changed sections with the evidence their particular checks depend on."""
     from jobagent.steps import multi_agent as M
@@ -487,7 +508,8 @@ def review(ctx, filled):
         'experience': {'roles': roles},
         'projects': {'displayed': [{'project':i,**p} for i,p in enumerate(projects,1)],
                      'own_repo_sources': sources,'owner_template_titles':owner_titles},
-        'skills': {'skills': skills, 'owned_template': ctx['r'].skills, 'graph': ctx.get('graph')},
+        'skills': {'skills': skills, 'owned_template': ctx['r'].skills, 'graph': ctx.get('graph'),
+                   'posting_skill_context':skill_posting_context(ctx.get('jd_text',''),skills)},
         'summary': {'summary': summary_for_review,
                     'target_company_mission_propositions':mission_propositions,
                     'roles':[role if dated_history else {k:v for k,v in role.items() if k!='dates'}
@@ -521,6 +543,9 @@ def review(ctx, filled):
             'Automation; GStreamer fits Real-Time Systems used for streaming; a GPU profiler fits Debugging. '
             'Technical concepts and paradigms are allowed skills: Edge Computing fits a real-time/edge '
             'systems domain. Do not reject a technical concept merely for not being a product or tool. '
+            'Use posting_skill_context to disambiguate technical acronyms, not to establish ownership. '
+            'Do not invent an unrelated expansion of an acronym. If its technical meaning or category '
+            'is genuinely ambiguous, make that a suggestion rather than asserting an error. '
             'Do not call these errors or suggest narrower headings. In contrast, a runtime listed as a '
             'Programming Language is a genuine type error. Broad accurate headings are valid. '
             'Do not request padding or finer categories. '
