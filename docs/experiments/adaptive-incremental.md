@@ -109,6 +109,11 @@ and bounded verbatim posting excerpts for displayed
 technical terms. Those excerpts disambiguate acronyms; they do not establish
 candidate ownership. Ambiguous terminology yields a suggestion, while concrete
 category/type errors remain actionable. This adds no separate model call.
+Project adjudication selects IDs from a supplied bank of exact current claims
+and source excerpts. Code resolves those IDs to canonical quotes and retains
+the existing repository and owner-title checks. The model does not reconstruct
+quotes. Rejecting a criticism requires affirmative support for the displayed
+claim; incomplete evidence keeps the claim uncertain, blocking and uncached.
 Successful model outputs
 and reviews are cached in `.incremental/v1/`, keyed by exact prompt, schema,
 model and generation/validation code version. Project cards are refreshed before
