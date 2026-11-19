@@ -9,6 +9,43 @@ def no_questions(_):
     pytest.fail('The exact owner source and offered value are present')
 
 
+@pytest.mark.parametrize('wrapping', [True, False])
+def test_checkbox_group_readers_agree_on_link_punctuation_and_hidden_text(world, wrapping):
+    from jobagent.filling.live_view import LiveView
+    from jobagent.tools import forms
+    label = 'I accept the <a href="#policy">privacy policy</a>. <span hidden>Loading error</span>'
+    box = '<input id=consent name=consents type=checkbox required>'
+    consent = f'<label>{box}{label}</label>' if wrapping else box + f'<label for=consent>{label}</label>'
+    world.setup('<fieldset><legend>Recruitment consent</legend>' + consent +
+                '<label><input name=consents type=checkbox>Send updates</label></fieldset>')
+    world.page.goto('https://fixture.test/apply')
+    live = LiveView(world.page, forms.read_page)
+    view = live.capture(); field = view.fields[0]
+    chosen = forms.fill_field(world.page, view, field, field.options[0], {})
+    incremental = live.refresh(field)
+    snapshot = forms.read_page(world.page).fields[0]
+    assert incremental.value == snapshot.value == chosen
+    assert 'Loading error' not in chosen
+    assert forms.same_value(chosen, incremental.value, 'checkboxes')
+    assert not forms.same_value('; '.join(field.options), incremental.value, 'checkboxes')
+
+
+def test_owner_consent_group_completes_with_linked_captions_without_extra_assistance(world):
+    world.setup('''<fieldset><legend>Recruitment consent</legend>
+      <label><input name=consents type=checkbox required>I accept the <a href="#">policy</a>.</label>
+      <label><input name=consents type=checkbox>Send updates</label></fieldset>''')
+    world.page.goto('https://fixture.test/apply')
+    from jobagent.tools import forms
+    offered = forms.read_page(world.page).fields[0].options
+    result = PlannedFiller([Fact('owner.consent', ['Recruitment consent'], '; '.join(offered),
+                                'owner scoped answers')], no_questions).fill(
+        world.page, advance_pages=False, max_rounds=3)
+    assert result['state'] == 'page_complete', result['blockers']
+    assert result['questions'] == 0 and result['model_calls'] == 0
+    assert any(r.get('fact_id') == 'owner.consent' and r.get('outcome') == 'verified'
+               for r in result['records'])
+
+
 def test_incremental_aria_radio_readback_uses_its_referenced_caption(world):
     world.setup('''<div role=radiogroup aria-label="Permanent authorization" aria-required=true>
       <span role=radio aria-checked=false aria-labelledby=yes onclick="this.setAttribute('aria-checked','true')"></span><label id=yes>Yes</label>

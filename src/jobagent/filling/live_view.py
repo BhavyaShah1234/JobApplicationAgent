@@ -25,10 +25,20 @@ READ = r'''(e,kind)=>{
  const clean=t=>(t||'').replace(/\s+/g,' ').trim();
  const root=e.getRootNode(),tag=e.getAttribute('data-jf');
  const members=[...root.querySelectorAll('[data-jf]')].filter(x=>x.getAttribute('data-jf')===tag&&x.hasAttribute('data-jf-opt'));
+ const caption=(__JOBAGENT_CAPTION__);
  const byIds=(x,attr)=>clean((x.getAttribute(attr)||'').split(/\s+/)
-  .map(id=>x.getRootNode().getElementById(id)?.innerText||'').join(' '));
- const label=x=>byIds(x,'aria-labelledby')||clean(x.getAttribute('aria-label')||
-  x.labels?.[0]?.innerText||x.closest('label')?.innerText||x.value||x.innerText);
+  .map(id=>x.getRootNode().getElementById(id)).filter(Boolean).map(caption).join(' '));
+ const label=x=>{
+  // Native groups use their associated visible captions in the full reader.
+  // innerText joins punctuation around links differently and includes helper
+  // text; it cannot serve as a second definition of the same option.
+  if(x.matches('input')){
+   const own=x.closest('label');
+   const associated=x.id&&x.getRootNode().querySelector(`label[for="${CSS.escape(x.id)}"]`);
+   return (own&&caption(own))||(associated&&caption(associated))||clean(x.getAttribute('aria-label'))||x.value;
+  }
+  return byIds(x,'aria-labelledby')||clean(x.getAttribute('aria-label'))||caption(x);
+ };
  let value=e.isContentEditable?clean(e.innerText):(e.value||'');
  if(kind==='select')value=[...e.selectedOptions].map(x=>clean(x.text)).join('; ');
  if(kind==='checkbox')value=e.checked||e.getAttribute('aria-checked')==='true'?'checked':'';
@@ -47,7 +57,7 @@ READ = r'''(e,kind)=>{
    if(picked)value=clean(picked.innerText);}
  }
  return {value,invalid:e.getAttribute('aria-invalid')==='true'||!!(e.validity&&!e.validity.valid)};
-}'''.replace('__JOBAGENT_WIDGET_VALUE__', forms.WIDGET_VALUE_JS)
+}'''.replace('__JOBAGENT_WIDGET_VALUE__', forms.WIDGET_VALUE_JS).replace('__JOBAGENT_CAPTION__', forms.CAPTION_JS)
 
 
 class LiveView:

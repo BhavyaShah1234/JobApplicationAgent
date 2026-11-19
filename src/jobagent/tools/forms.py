@@ -45,14 +45,8 @@ WIDGET_VALUE_JS = r"""e => {
   return null;
 }"""
 
-FIELDS_JS = r"""(start) => {
-  const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
-    return r.width > 1 && r.height > 1 && s.visibility !== 'hidden' && s.display !== 'none'; };
-  const shown = e => { for (let a = e; a && a !== document.body; a = a.parentElement) {
-      const s = getComputedStyle(a); if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false; }
-    return true; };
-  const clean = t => (t || '').replace(/\s+/g, ' ').trim();
-  const caption = e => {
+CAPTION_JS = r"""e => {
+    const clean = t => (t || '').replace(/\s+/g, ' ').trim();
     // Read the original nodes: detached clones lose CSS visibility and expose
     // hidden loading/error text. Exclude option subtrees before walking text.
     const text=(n,root=false)=>{
@@ -64,7 +58,16 @@ FIELDS_JS = r"""(start) => {
       return [...n.childNodes].map(c=>text(c)).join(' ');
     };
     return clean(text(e,true));
-  };
+  }"""
+
+FIELDS_JS = r"""(start) => {
+  const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
+    return r.width > 1 && r.height > 1 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const shown = e => { for (let a = e; a && a !== document.body; a = a.parentElement) {
+      const s = getComputedStyle(a); if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false; }
+    return true; };
+  const clean = t => (t || '').replace(/\s+/g, ' ').trim();
+  const caption = (__JOBAGENT_CAPTION__);
   // F17: author roots, including closed roots recovered through the DOM protocol, share the same reader.
   const roots = [];
   const walk = r => { roots.push(r); for (const h of r.querySelectorAll('*')) {
@@ -383,7 +386,7 @@ FIELDS_JS = r"""(start) => {
       // Workday lists one question's checkboxes under one form field, each with its own name
       const boxes = ffBoxes.length > 1 ? ffBoxes : (e.name ? sameName : [e]);
       const opts = boxes.map(b => { let l = ownText(b);
-        if (!l && b.id) { const x = b.getRootNode().querySelector(`label[for="${CSS.escape(b.id)}"]`); if (x) l = clean(x.innerText); }
+        if (!l && b.id) { const x = b.getRootNode().querySelector(`label[for="${CSS.escape(b.id)}"]`); if (x) l = caption(x); }
         return l || clean(b.getAttribute('aria-label')) || b.value; });
       const q = groupQuestion(e, e.name);
       boxes.forEach((b, k) => b.setAttribute('data-jf-opt', String(k)));
@@ -508,7 +511,7 @@ FIELDS_JS = r"""(start) => {
     if (r.width >= 120 && r.height >= 24) opaque.push(h.tagName.toLowerCase());
   }
   return {shadowRoots: roots.length - 1, shadowFields, opaque: [...new Set(opaque)].slice(0, 10), fields: out, next: n, adds, buttons: [...new Set(buttons)].slice(0, 60), errors: [...new Set(errors)].slice(0, 20), headings};
-}""".replace('__JOBAGENT_WIDGET_VALUE__', WIDGET_VALUE_JS)
+}""".replace('__JOBAGENT_WIDGET_VALUE__', WIDGET_VALUE_JS).replace('__JOBAGENT_CAPTION__', CAPTION_JS)
 
 
 @dataclass
