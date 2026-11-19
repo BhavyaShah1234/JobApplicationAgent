@@ -26,11 +26,18 @@ def invoke(cache, stage, model_name, model, schema, messages, **kwargs):
         try: return schema.model_validate(saved)
         except (ValueError, TypeError): pass
     started = time.monotonic()
+    from .model_metrics import ModelAudit
+    audit=ModelAudit()
+    original=getattr(model,'callbacks',None)
+    instrumented=hasattr(model,'callbacks') and (original is None or isinstance(original,list))
+    if instrumented:model.callbacks=[*(original or []),audit]
     try:
         result = llm.structured_invoke(model, schema, messages, **kwargs)
     finally:
+        if instrumented:model.callbacks=original
         info = llm.last_call()
         cache.record({'stage': stage, 'event': 'model_stage', 'seconds': time.monotonic()-started,
+                      'writer_starts':audit.starts if instrumented else None,'reported_tokens':audit.tokens,
                       **{k:info.get(k) for k in ('calls','method','waited_s','ok')}})
     result = schema.model_validate(result)
     cache.put(stage, inputs, result.model_dump(mode='json'))
