@@ -51,15 +51,24 @@ def project_quote_bank(projects, owner_policy):
 
     Long source strings become bounded contiguous excerpts with overlap. No text
     is summarized, invented or copied from a different repository.
+
+    Args:
+        projects: Displayed projects with their own evidence and owner titles.
+        owner_policy: The current owner's explicit claims policy.
+
+    Returns:
+        Exact excerpts indexed by stable project, kind and field-path IDs.
     """
     bank={}
     def leaves(value,path):
+        """Yield literal leaf values and their source paths."""
         if isinstance(value,dict):
             for name,child in value.items():yield from leaves(child,path+'.'+str(name))
         elif isinstance(value,list):
             for i,child in enumerate(value):yield from leaves(child,path+'.'+str(i))
         elif value is not None and str(value).strip():yield path,str(value)
     def add(project,kind,scope,value):
+        """Index contiguous excerpts without paraphrasing a source field."""
         for path,text in leaves(value,scope):
             start=0;part=0
             while start<len(text):
