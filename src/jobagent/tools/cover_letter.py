@@ -187,6 +187,8 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
         from .incremental_documents import cache_for, invoke
         cache = cache_for(job_dir)
         bank = attribution.sources(resume_tex, job_dir)
+        bank['company_context'] = {'entity':jd.company or '', 'text':company_md, 'kind':'company'}
+        bank['posting_context'] = {'entity':'Job posting', 'text':jd.model_dump_json(), 'kind':'posting'}
     feedback, best = "", None
     for attempt in range(1, rounds + 1):
         try:
@@ -196,6 +198,8 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
                 messages.append(HumanMessage('For every sentence about a candidate achievement, supply a bindings '
                     'entry: claim = the exact complete sentence in the paragraph, source_id = its owning source ID, '
                     'quote = exact supporting text from that source. Keep each achievement sentence about one source. '
+                    'Also bind sentences with numbers or explicit employer names. Company facts may cite company_context; '
+                    'the position title may cite posting_context. Neither context establishes candidate achievements. '
                     'Do not borrow a number or technology from another employer.\nENTITY SOURCES:\n' + json.dumps(bank)))
                 # The template is part of the cache input even though only its
                 # locked layout/header is rendered after generation.

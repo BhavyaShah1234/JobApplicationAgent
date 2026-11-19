@@ -3,15 +3,22 @@ from .live_view import LiveView
 
 SCHEMA_WATCH = r'''() => {
  const state=window.__jobagentSchemaWatch ||= {dirty:false, roots:new WeakSet()};
- if(!state.observer)state.observer=new MutationObserver(records=>{
+ if(!state.observer){state.accept=records=>{
+   const controls='input,textarea,select,option,[role=combobox],label,legend,[role=alert]';
+   const related=e=>{
+     if(e.closest(controls+',fieldset,.form-field,.application-question,[data-field-path],[data-field-entry-id],[data-automation-id^=formField-]'))return true;
+     if(e.id){const id=CSS.escape(e.id);if(e.getRootNode().querySelector(`[aria-describedby~="${id}"],[aria-labelledby~="${id}"],[for="${id}"]`))return true;}
+     return false;
+   };
    for(const r of records){
      const e=r.target.nodeType===1?r.target:r.target.parentElement;
      // Temporary custom-picker menus are collected by discover_options. Native
      // option and question/help text mutations change actual field semantics.
      if(!e||e.closest('[role=listbox],[role=menu],.react-datepicker'))continue;
-     state.dirty=true;
+     if(related(e)||r.type==='childList' && [...r.addedNodes,...r.removedNodes].some(n=>
+       n.nodeType===1 && (n.matches(controls)||n.querySelector(controls)||n.shadowRoot||window.__jobagentClosedRoots?.get(n))))state.dirty=true;
    }
- });
+ };state.observer=new MutationObserver(state.accept);}
  const roots=[document];
  for(let i=0;i<roots.length;i++){
    const root=roots[i];
@@ -45,7 +52,7 @@ class AdaptiveView(LiveView):
             return any(frame.evaluate('''()=>{
                 const s=window.__jobagentSchemaWatch;
                 if(!s)return true;
-                if(s.observer.takeRecords().length)s.dirty=true;
+                s.accept(s.observer.takeRecords());
                 return s.dirty;
             }''') for frame in self.view.frames.values())
         except Exception:

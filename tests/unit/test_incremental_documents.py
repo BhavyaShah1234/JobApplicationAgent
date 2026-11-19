@@ -89,6 +89,13 @@ def test_ats_detects_mutation_of_the_scored_pdf(tmp_path,monkeypatch):
     with pytest.raises(RuntimeError,match='changed'):final_panel(ctx,state,('hireflow',))
 
 
+def test_changed_jd_is_rejected_before_an_upload(tmp_path,monkeypatch):
+    ctx,state,seen=panel_world(tmp_path,monkeypatch,{'hireflow':80})
+    (tmp_path/'jd.txt').write_text('Changed posting')
+    with pytest.raises(RuntimeError,match='before'):final_panel(ctx,state,('hireflow',))
+    assert not seen
+
+
 def test_letter_cannot_transfer_metric_to_another_employer(monkeypatch):
     paragraph=Paragraph(text='At Beta I cut latency by 30%.',evidence=[],bindings=[
         L.Binding(claim='At Beta I cut latency by 30%.',source_id='a',quote='Cut latency by 30%.')])
@@ -103,3 +110,13 @@ def test_jd_metric_cannot_supply_a_candidate_achievement():
         L.Binding(claim='I cut latency by 40%.',source_id='a',quote='Cut latency by 30%.')])
     issues=L.check(Letter.model_construct(paragraphs=[paragraph]),{'a':{'entity':'Alpha','text':'Cut latency by 30%.'}},None,'m',lambda _:None)
     assert any('40' in i for i in issues)
+
+
+def test_company_number_can_be_quoted_without_becoming_candidate_work(tmp_path,monkeypatch):
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:L.AttributionReview(issues=[]))
+    paragraph=Paragraph(text='Beta launched its platform in 2025.',evidence=[],bindings=[
+        L.Binding(claim='Beta launched its platform in 2025.',source_id='company',quote='Beta launched its platform in 2025.')])
+    bank={'company':{'entity':'Beta','text':'Beta launched its platform in 2025.','kind':'company'}}
+    assert L.check(Letter.model_construct(paragraphs=[paragraph]),bank,ArtifactCache(tmp_path),'m',lambda _:None)==[]

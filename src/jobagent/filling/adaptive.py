@@ -7,7 +7,9 @@ from collections import Counter
 from dataclasses import asdict
 import json
 import os
+import re
 import time
+from pathlib import Path
 
 from jobagent.tools.artifact_cache import digest, write_private
 from .facts import Decision, key, norm, entity_scope
@@ -31,7 +33,7 @@ class AdaptiveFiller(PlannedFiller):
 
     def __init__(self, *args, checkpoint_path=None, source_version='', **kwargs):
         super().__init__(*args, **kwargs)
-        self.checkpoint_path = checkpoint_path
+        self.checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
         self.source_version = source_version
         self.journal = {}
         self.bindings = {}
@@ -40,10 +42,14 @@ class AdaptiveFiller(PlannedFiller):
         self.restored = 0
         self.resumed_keys = set()
         self._live = None
+        package = Path(__file__).parent
+        self.implementation = digest({'code':{name:(package/name).read_text() for name in
+            ('adaptive.py','adaptive_view.py','planned.py','routing.py','facts.py','discovery.py','live_view.py')},
+            'model':getattr(self.model,'model_name','')})
         if checkpoint_path:
             try:
-                saved = json.loads(checkpoint_path.read_text())
-                if saved['version'] == self.VERSION:
+                saved = json.loads(self.checkpoint_path.read_text())
+                if saved['version'] == self.VERSION and saved.get('implementation') == self.implementation:
                     self.journal = saved['decisions']
                     if not isinstance(self.journal, dict): self.journal = {}
             except (OSError, ValueError, KeyError, TypeError):
@@ -53,11 +59,19 @@ class AdaptiveFiller(PlannedFiller):
         """Fingerprint all decision-relevant visible field properties."""
         return digest(schema(field))
 
+    def applicable_inventory(self, inventory):
+        """Exclude only schema branches the delivered schema explicitly disables."""
+        disabled = [f for f in inventory['fields'] if f.get('potential') and f.get('applicability') is False]
+        return {**inventory, 'fields':[f for f in inventory['fields'] if f not in disabled],
+                'explicitly_inapplicable':disabled}
+
     def semantic_id(self, field):
         """Rebind unique questions across navigation without using row position."""
         # Entity row numbers alone are not sufficient to restore a different
         # person's/reordered employer's answers after a browser restart.
-        if entity_scope(field.section) or field.kind == 'file': return None
+        if (entity_scope(field.section) or field.kind in ('file','password') or
+                re.search(r'\b(?:verification|security|one time|authentication|captcha)\b.{0,30}\b(?:code|token)\b',
+                          norm(field.label))): return None
         frame = self._live.view.frames.get(field.frame) if self._live and self._live.view else None
         frame_url = getattr(frame, 'url', '')
         return digest({'step': self.step, 'frame_url': frame_url, 'schema': schema(field)})
@@ -149,7 +163,8 @@ class AdaptiveFiller(PlannedFiller):
                                    'decision': asdict(decision), 'evidence': self.evidence(decision)}
         self.bindings[key(field)] = {'schema': self.signature(field), 'evidence': self.evidence(decision)}
         if self.checkpoint_path:
-            write_private(self.checkpoint_path, {'version': self.VERSION, 'decisions': self.journal,
+            write_private(self.checkpoint_path, {'version': self.VERSION, 'implementation':self.implementation,
+                                                  'decisions': self.journal,
                                                   'inventory': self.inventory})
 
     def settle(self, page, live, field, chosen, actual):

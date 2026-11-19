@@ -38,6 +38,7 @@ def extract(data, source, depth=0, inherited_condition=None, section=''):
                         'required':bool(data.get('required')), 'visible':False,
                         'condition':condition, 'potential':True,
                         'applicable':data.get('applicable') is True,
+                        'applicability':data.get('applicable') if isinstance(data.get('applicable'),bool) else None,
                         'section':section,
                         'options':data.get('options') if isinstance(data.get('options'),list) and all(isinstance(x,str) for x in data['options']) else [],
                         'schema_id':str(data.get('id') or data.get('name') or ''),

@@ -225,7 +225,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
             from .adaptive import AdaptiveFiller
             from jobagent.tools import job_context
             filler_class=AdaptiveFiller
-            shared=job_context.snapshot(env['out_dir'].parent, company=ctx.get('COMPANY',''),
+            shared=job_context.snapshot(Path(env['out_dir']).parent, company=ctx.get('COMPANY',''),
                 candidate=ctx.get('_applicant',{}))
             strategy_options={'checkpoint_path':Path(env['out_dir'])/'adaptive-v1.json',
                               'source_version':shared['fingerprint']}

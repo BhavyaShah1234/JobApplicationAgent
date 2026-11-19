@@ -903,7 +903,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, d
     if strategy == 'incremental':
         from jobagent.tools.incremental_documents import cache_for
         from jobagent.tools import job_context, applicant
-        ctx.update(incremental=True, cache=cache_for(job_dir))
+        ctx.update(incremental=True, cache=cache_for(job_dir), target=s.ats_target)
         ctx['source_snapshot'] = job_context.snapshot(job_dir,company=ctx['company'],
             candidate=applicant.load(),template=template_text,claims=T.declared_claims())
     final = build_graph().invoke({"ctx": ctx, "history": []}, {"recursion_limit": 200})
@@ -923,6 +923,12 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, d
         (job_dir / "resume.pdf").unlink(missing_ok=True)
     lay = layout.check(job_dir / "resume.pdf").issues if best else []
     hard = best.get("hard", []) if best else final.get("hard", [])
+    if strategy == 'incremental':
+        current = job_context.snapshot(job_dir,company=(s.state_dir/'companies'/f'{slug}.md').read_text(),
+            candidate=applicant.load(),template=(s.data_dir/'templates'/'resume.tex').read_text(),claims=T.declared_claims())
+        inputs = ('company','candidate','template','claims_policy','jd.json','jd.txt','skill_suggestions.json')
+        if any(current['sources'][name]!=ctx['source_snapshot']['sources'][name] for name in inputs):
+            hard = [*hard,'Source inputs changed during generation; rerun from the current sources']
     claims = (documents.claims_from_filled(best["f"]) + SG.violations(job_dir, best["f"])) if best else []
     hist = [h for h in final.get("history", []) if h.startswith("ats ")]
     summary = ats_sites.write_summary(job_dir, best["scores"] if best else {}, sites)

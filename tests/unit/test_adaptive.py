@@ -91,3 +91,29 @@ def test_document_quote_dependency_is_not_lost_when_a_fact_is_also_bound(tmp_pat
     filler.narrative_sources['resume']='Built a compiler.'
     filler.observe_view(view)
     assert not filler.cache
+
+
+def test_checkpoint_from_another_implementation_is_not_reused(tmp_path):
+    filler,view=world(tmp_path)
+    accept(filler,view)
+    path=tmp_path/'decisions.json';saved=json.loads(path.read_text());saved['implementation']='old version'
+    path.write_text(json.dumps(saved))
+    resumed,fresh=world(tmp_path);resumed.observe_view(fresh)
+    assert resumed.cache=={}
+
+
+def test_only_explicitly_inapplicable_schema_branches_are_excluded(tmp_path):
+    from jobagent.filling.discovery import extract
+    fields=extract([{'label':'Not for this role','type':'text','required':True,'applicable':False},
+                    {'label':'Unknown applicability','type':'text','required':True},
+                    {'label':'Applicable','type':'text','required':True,'applicable':True}],'test')
+    filler,_=world(tmp_path)
+    inventory=filler.applicable_inventory({'fields':fields})
+    assert [f['label'] for f in inventory['fields']]==['Unknown applicability','Applicable']
+
+
+def test_codes_and_upload_proofs_are_never_checkpointed_as_answers(tmp_path):
+    filler,view=world(tmp_path)
+    assert filler.semantic_id(Field(1,'text','Email verification code')) is None
+    assert filler.semantic_id(Field(1,'password','Password')) is None
+    assert filler.semantic_id(Field(1,'file','Resume')) is None

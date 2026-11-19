@@ -82,6 +82,10 @@ class PlannedFiller:
     def observe_view(self, view):
         """Strategy hook for source/schema invalidation; legacy execution is unchanged."""
 
+    def applicable_inventory(self, inventory):
+        """Retain the existing passive-discovery coverage rules by default."""
+        return inventory
+
     def can_execute(self, planned, current, decision):
         """Whether a planned decision remains bound to the current control."""
         return True
@@ -416,7 +420,7 @@ class PlannedFiller:
                             page.wait_for_timeout(100)
                         added=True;break
                 if added:continue
-                inventory=discovery.inventory()
+                inventory=self.applicable_inventory(discovery.inventory())
                 self.events.append({'event':'inventory','round':round_no,**inventory})
                 if any(f.kind=='password' for f in view.fields):
                     return self.result('blocked',records,started,['authentication is outside the filling experiment'])

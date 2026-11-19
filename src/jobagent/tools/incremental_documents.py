@@ -87,6 +87,9 @@ def final_panel(ctx, state, sites, refine=False):
 
     def evaluate(round_no):
         """Retain exact PDF and posting identities around the external upload panel."""
+        raw = ctx['job_dir']/'jd.txt'
+        if raw.exists() and raw.read_text()!=ctx['jd_text']:
+            raise RuntimeError('JD changed before final ATS scoring')
         before = identity()
         started = time.monotonic()
         ev = M.A.evaluate(ctx['job_dir'], ctx['jd'], ctx['jd_text'], round_no, sites, ctx['log'])
@@ -109,7 +112,7 @@ def final_panel(ctx, state, sites, refine=False):
     ev, panel = evaluate(0)
     best = {**best, 'scores': ev['scores'], 'ev': ev}
     for round_no in range(1, 3 if refine else 1):
-        if not panel['complete'] or panel['average'] is None or panel['average'] >= M.TARGET: break
+        if not panel['complete'] or panel['average'] is None or panel['average'] >= ctx.get('target',M.TARGET): break
         # Route existing ATS feedback directly into the same bounded local
         # layout/validation graph; never call the first-draft writer again.
         local = {**state, 'ctx': ctx, 'best': {**best, 'avg': 0},

@@ -58,3 +58,38 @@ def test_changed_choices_are_replanned_before_dispatch(world,tmp_path):
     assert result['state']=='page_complete',result['blockers']
     assert world.page.locator('#x').input_value()=='Blue'
     assert not any(r.get('answer')=='Red' and r.get('outcome')=='verified' for r in result['records'])
+
+
+def test_repair_stops_after_two_failed_attempts_and_keeps_private_diagnostic(world,tmp_path):
+    world.setup('<label for=x>Email</label><input id=x required oninput="this.value=\'\'">')
+    world.page.goto('https://fixture.test/apply')
+    filler=AdaptiveFiller([Fact('email',['Email'],'one@example.test','owner')],lambda _: {},
+                           checkpoint_path=tmp_path/'saved.json')
+    result=filler.fill(world.page,advance_pages=False,max_rounds=8)
+    assert result['state']=='blocked'
+    assert len([r for r in result['records'] if r.get('outcome')=='failed'])==2
+    assert 'repair budget exhausted' in result['blockers'][0]
+    assert (tmp_path/'saved.png').stat().st_mode & 0o777 == 0o600
+
+
+def test_schema_watcher_observes_recovered_closed_shadow_roots(world):
+    world.setup('<div id=host></div>')
+    world.page.goto('https://fixture.test/apply')
+    world.page.evaluate('''() => {
+      const root=document.getElementById('host').attachShadow({mode:'closed'});
+      root.innerHTML='<label for=x>Email</label><input id=x aria-describedby=help><p id=help>Old help</p>';
+      window.testRoot=root;
+    }''')
+    live=AdaptiveView(world.page,forms.read_page);live.capture()
+    assert not live.changed()
+    world.page.evaluate("window.testRoot.getElementById('help').textContent='New help'")
+    assert live.changed()
+    assert 'New help' in live.capture().fields[0].help
+
+
+def test_unrelated_clock_text_does_not_force_a_full_form_read(world):
+    world.setup('<label for=x>Email</label><input id=x><span id=clock>1</span>')
+    world.page.goto('https://fixture.test/apply')
+    live=AdaptiveView(world.page,forms.read_page);live.capture()
+    world.page.evaluate("document.getElementById('clock').firstChild.textContent='2'")
+    assert not live.changed()
