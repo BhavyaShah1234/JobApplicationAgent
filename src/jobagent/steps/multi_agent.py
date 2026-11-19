@@ -109,6 +109,19 @@ class ProjectsOut(BaseModel):
     swaps: list[ProjectSwap] = Field(default_factory=list, max_length=2)
 
 
+class ProjectEdit(BaseModel):
+    """Target one selected project's rendered variant without replacing its repository."""
+    project: int = Field(ge=1, description="1-based number under PROJECTS")
+    paragraph: str = Field('', max_length=T.PARAGRAPH_MAX, description="Full description, or empty to retain")
+    short: str = Field('', max_length=400, description="Short two-sentence description, or empty to retain")
+    title: str = Field('', max_length=70, description="Readable title, or empty to retain; known template titles stay fixed")
+
+
+class IncrementalProjectsOut(ProjectsOut):
+    """Opt-in repairs can edit the displayed short form and generated title too."""
+    projects: list[ProjectEdit] = Field(default_factory=list, max_length=4)
+
+
 class Finding(BaseModel):
     """One problem the reviewer found: which agent should fix it, what is wrong, and whether it is a real error or only a suggestion."""
     agent: Literal["experience", "projects", "skills", "summary"]
@@ -290,13 +303,19 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
     try:
         if agent == "projects":
             proj = ctx["job_dir"] / "projects.json"
-            msgs = [SystemMessage(with_today(PROJECTS_EDIT_PROMPT)),
+            edit_prompt = PROJECTS_EDIT_PROMPT
+            if ctx.get('incremental'):
+                edit_prompt += ('\nIn projects edits, use short to repair a displayed short description, '
+                    'title to repair a generated name, and paragraph for the full description. '
+                    'Leave untargeted fields empty. Never change a known template title.')
+            msgs = [SystemMessage(with_today(edit_prompt)),
                     HumanMessage(_context(ctx, f, proj.read_text()) + "\n\nTASKS:\n" + "\n".join(f"- {t}" for t in tasks)
                                  + (f"\n\nLAST ROUND: {last}" if last else ""))]
             # A short paragraph repair must not spend ten minutes in a fallback
             # mode after length validation fails. Preserve the previous version
             # on failure; its hard findings still prevent publication.
-            out = _invoke(ctx, agent, model, ProjectsOut, msgs, log=log, deadline_s=180)
+            schema = IncrementalProjectsOut if ctx.get('incremental') else ProjectsOut
+            out = _invoke(ctx, agent, model, schema, msgs, log=log, deadline_s=180)
         elif targeted:
             # targeted edit: only the bullets the validators named (a full rewrite moves every orphan word)
             msgs = T.build_repair_prompt(ctx["r"], ctx["jd"], f, tasks + ([f"LAST ROUND: {last}"] if last else []))
@@ -344,7 +363,10 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
             new = json.dumps(st, indent=1)
         if new:
             st = json.loads(new)
+            known = P.known_entries(r.tex) if ctx.get('incremental') else {}
             for e in st["ranked"]:  # an over-long rewrite takes 5 lines: keep whole sentences up to the limit
+                if (e.get('repo') or '').lower() in known:
+                    e['title'] = known[e['repo'].lower()][0]
                 if len(e["paragraph"]) > P.MAX_PARAGRAPH:
                     e["paragraph"] = P._sentences(e["paragraph"], P.MAX_PARAGRAPH - 10)
             proj.write_text(json.dumps(st, indent=1))

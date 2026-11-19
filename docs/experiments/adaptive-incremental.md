@@ -62,12 +62,21 @@ The incremental document strategy reuses the existing parallel section writers,
 measured layout fitting and bounded targeted repairs. Successful model outputs
 and reviews are cached in `.incremental/v1/`, keyed by exact prompt, schema,
 model and generation/validation code version. Project cards are refreshed before
-selection-cache lookup. The summary runs after changed sections. Semantic review
+selection-cache lookup. Document prompts use the current local date rather than
+the current minute, and the exact normalized prompt is both sent and hashed.
+Source text and its dates are not rewritten. The summary runs after changed sections. Semantic review
 is scoped to section dependencies: changed skills recheck skills and summary;
 changed employer bullets recheck experience and summary. Failed calls are never
 cached. Completed section work survives interruption. Compilation and deterministic
 validity gates still run. `context-manifest.json` records source fingerprints using
 the same source-snapshot interface used by adaptive filling.
+
+Proposed critical project contradictions receive an independent, source-bound
+adjudication. Both claim and evidence quotes must belong to that same project;
+uncertain or unbound results block publication and are not cached. Supported
+subsets, design intentions and the existing owner claims policy remain valid.
+Targeted project repairs can change the full description, displayed short form
+or generated title independently. Known template titles remain protected.
 
 Cover letters use the final resume and bind achievement sentences to exact quotes
 under their owning employer/project. Deterministic quote/number checks precede a

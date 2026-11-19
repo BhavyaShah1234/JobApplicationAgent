@@ -147,14 +147,22 @@ def project_paragraphs(state: str | None) -> list[str]:
 
 
 def apply_project_fixes(state: str | None, fixes: list) -> str | None:
-    """projects.json text with the advice pass's rewritten paragraphs (only for projects on the page; an empty or
-    one-line rewrite is ignored)."""
+    """Apply bound visible-project edits; blank fields and undersized variants retain their old text."""
     if not state or not fixes:
         return state
     st = json.loads(state)
     for fx in fixes:
-        if 1 <= fx.project <= st["kept"] and len(fx.paragraph.strip()) >= 200:
-            st["ranked"][fx.project - 1]["paragraph"] = T.no_dashes(fx.paragraph.strip())
+        if not 1 <= fx.project <= st["kept"]:
+            continue
+        entry = st["ranked"][fx.project - 1]
+        if len(fx.paragraph.strip()) >= 200:
+            entry["paragraph"] = T.no_dashes(fx.paragraph.strip())
+        # The original advice schema has no short/title fields. Opt-in edits
+        # can repair the actual short variant without changing the full one.
+        if len(short := getattr(fx, 'short', '').strip()) >= 100:
+            entry['short'] = T.no_dashes(short)
+        if title := getattr(fx, 'title', '').strip():
+            entry['title'] = title
     return json.dumps(st, indent=1)
 
 

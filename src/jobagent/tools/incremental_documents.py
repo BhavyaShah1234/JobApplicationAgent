@@ -90,8 +90,23 @@ def cache_for(job_dir):
     return ArtifactCache(Path(job_dir) / '.incremental' / 'v1')
 
 
+def _document_messages(messages):
+    """Send and cache a local-day clock; document freshness needs no minute ticks."""
+    from jobagent import clock
+    from jobagent.config import get_settings
+    pattern = re.compile(
+        r"(?m)^Today is [^\n]+\. Judge 'present', 'current', 'latest' and 'recent' against this date\.$"
+    )
+    day = (f"Today is {clock.today().isoformat()} ({get_settings().timezone}). "
+           "Judge 'present', 'current', 'latest' and 'recent' against this local date.")
+    return [message.model_copy(update={'content': pattern.sub(day, message.content)})
+            if message.type == 'system' and isinstance(message.content, str) else message
+            for message in messages]
+
+
 def invoke(cache, stage, model_name, model, schema, messages, *, validator=None, **kwargs):
     """Cache validated outputs only; exception paths and malformed entries never hit."""
+    messages = _document_messages(messages)
     inputs = {'version': job_context.model_version(stage), 'model': model_name,
               'schema': schema.model_json_schema(),
               'messages': [{'type': m.type, 'content': m.content} for m in messages]}

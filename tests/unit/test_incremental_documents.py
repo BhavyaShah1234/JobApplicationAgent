@@ -30,6 +30,33 @@ def test_success_survives_restart_but_prompt_schema_model_and_code_are_dependenc
     assert len(calls)==4
 
 
+def test_document_clock_is_stable_within_local_day_and_is_sent_as_cached(tmp_path,monkeypatch):
+    from datetime import date
+    from langchain_core.messages import SystemMessage
+    from jobagent import clock
+    from jobagent.tools import incremental_documents as I
+    seen=[]
+    def generate(model,schema,messages,**kwargs):
+        seen.append(messages)
+        return Output(text='done')
+    monkeypatch.setattr(I.llm,'structured_invoke',generate)
+    monkeypatch.setattr(clock,'today',lambda:date(2026,11,19))
+    suffix=". Judge 'present', 'current', 'latest' and 'recent' against this date."
+    def call(time):
+        messages=[SystemMessage('Write.\n\nToday is Thursday, November 19, 2026, '+time+
+                                ' MST (America/Phoenix)'+suffix),
+                  HumanMessage('Source date: Today is November 19, 2026, 10:01 AM'+suffix)]
+        return invoke(ArtifactCache(tmp_path),'experience','m',object(),Output,messages)
+    call('10:01 AM');call('10:02 AM')
+    assert len(seen)==1
+    assert seen[0][0].content==('Write.\n\nToday is 2026-11-19 (America/Phoenix). '
+        "Judge 'present', 'current', 'latest' and 'recent' against this local date.")
+    assert '10:01 AM' in seen[0][1].content
+    monkeypatch.setattr(clock,'today',lambda:date(2026,11,20))
+    call('10:02 AM')
+    assert len(seen)==2 and '2026-11-20' in seen[1][0].content
+
+
 def test_failure_and_corruption_never_become_cache_hits(tmp_path,monkeypatch):
     from jobagent.tools import incremental_documents as I
     def fail(*a,**kw):raise RuntimeError('provider down')
@@ -164,6 +191,27 @@ def test_incremental_draft_schema_matches_the_actual_new_bullet_limit():
     ordinary=M.experience_schema(r).model_json_schema()
     assert compact['$defs']['CompactFillBullet']['properties']['text']['maxLength']==M.T.BULLET_MAX
     assert ordinary['$defs']['FillBullet']['properties']['text']['maxLength']==M.T.BULLET_VERBATIM_MAX
+
+
+def test_targeted_project_edit_changes_only_the_bound_visible_variant_and_title(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M
+    from jobagent.steps import ats as A
+    st={'kept':1,'short':['owner/one'],'ranked':[
+        {'repo':'owner/one','title':'one','paragraph':'Full variant retained.','short':'Old short.'},
+        {'repo':'owner/two','title':'two','paragraph':'Not on the page.','short':'Hidden.'}]}
+    fixes=[M.ProjectEdit(project=1,title='Robotic Maze Solver',short='Repaired short. '*12),
+           M.ProjectEdit(project=2,title='Should not change',paragraph='z'*250)]
+    changed=json.loads(A.apply_project_fixes(json.dumps(st),fixes))
+    assert changed['ranked'][0]['short'].startswith('Repaired short.')
+    assert changed['ranked'][0]['title']=='Robotic Maze Solver'
+    assert changed['ranked'][0]['paragraph']==st['ranked'][0]['paragraph']
+    assert changed['ranked'][1]==st['ranked'][1]
+    (tmp_path/'projects.json').write_text(json.dumps(st))
+    monkeypatch.setattr(M.P,'known_entries',lambda _: {'owner/one':('Owner Title','2026')})
+    f=M.T.Filled.model_construct(roles=[],skills=[],summary='Summary')
+    M._merge({'job_dir':tmp_path,'r':SimpleNamespace(tex='',roles=[]),'incremental':True},f,
+             {'projects':M.IncrementalProjectsOut(projects=fixes)})
+    assert json.loads((tmp_path/'projects.json').read_text())['ranked'][0]['title']=='Owner Title'
 
 
 def test_a_critic_cannot_block_a_supported_project_claim_without_a_bound_contradiction(tmp_path,monkeypatch):
