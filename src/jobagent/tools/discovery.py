@@ -90,23 +90,26 @@ def discover(company: str, config: dict | None = None, conn=None, log=print, ref
                       "embedding_calls": stats.get("calls", 0), "judge_cap": MAX_JUDGE, "judged": 0,
                       "judge_failed": 0, "judge_skipped_budget": 0, "unevaluated_semantic": 0}
         judge_fn = matching.model_judge(load_preferences()) if judge == "model" else judge
+        def counted_judge(*args):
+            # Regex exclusions and non-matches never reach the judge. Count
+            # actual attempts, including provider failures, rather than titles.
+            res.budget["judged"] += 1
+            return judge_fn(*args)
         for i, x in enumerate(items):
             loc = decisions[i]
             if loc is not None and loc.verdict == "non_us":
                 m = matching.Match("skipped", "none", reason="not evaluated (outside the United States)")
             else:
                 budget_left = res.budget["judged"] < MAX_JUDGE
-                use = judge_fn if (judge_fn is not None and budget_left) else None
+                use = counted_judge if (judge_fn is not None and budget_left) else None
                 why = "" if judge_fn is None else ("" if budget_left else "judge budget reached")   # no judge by choice: no reason
                 try:
                     m = matching.match_listing(x.title, x.snippet, config, embed_fn, use, degraded=why)
-                    if use is not None:
-                        res.budget["judged"] += 1
                 except Exception as e:  # the judge failed on one listing: NOT validated, so it is reviewed, never auto-queued
                     m = matching.match_listing(x.title, x.snippet, config, embed_fn, None, degraded=f"judge failed: {type(e).__name__}")
                     res.budget["judge_failed"] += 1
                     log(f"discover: {company}: judge failed on {x.title[:40]!r} ({type(e).__name__}); sent to review, not queued")
-                if why:
+                if why and m.detail.get("degraded") == why:
                     res.budget["judge_skipped_budget"] += 1
                 if m.detail.get("degraded") == "embedding budget":
                     res.budget["unevaluated_semantic"] += 1

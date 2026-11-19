@@ -58,6 +58,39 @@ def test_explicit_no_judge_mode_keeps_its_documented_behaviour(tmp_path):
     assert res.counts == {"queued": 3}                                           # a pattern hit is queued as is, by the user's choice
 
 
+def test_unrelated_and_excluded_titles_do_not_spend_the_judge_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(D, "MAX_JUDGE", 1)
+    config = {**CONFIG, "global_exclude_patterns": [r"(?i)\bsenior\b"]}
+    items = [Q.Listing("Acme", title, f"https://boards.greenhouse.io/acme/jobs/{i}",
+                       ["Austin, TX"], req_id=str(i)) for i, title in enumerate([
+                           "Account Executive", "Senior Software Engineer", "Software Engineer",
+                           "Office Administrator", "Senior Software Engineer", "Software Engineer II"])]
+    calls = []
+    def judge(title, *args):
+        calls.append(title)
+        return True, 0.95, "fits"
+    conn = db.connect(tmp_path / "jobs.sqlite")
+    res = D.discover("Acme", config, conn, log=lambda _: None, resolver=lambda *a, **k: FOUND,
+                     collector=lambda *a, **k: items, judge=judge, embed=None)
+    assert calls == ["Software Engineer"]
+    assert res.budget["judged"] == res.budget["judge_skipped_budget"] == 1
+    assert status(conn)["2"][0] == "queued"
+    assert status(conn)["5"][0] == "needs_review"
+    assert all(status(conn)[str(i)][0] == "skipped" for i in (0, 1, 3, 4))
+
+
+def test_failed_judge_calls_still_spend_the_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(D, "MAX_JUDGE", 1)
+    calls = []
+    def broken(title, *args):
+        calls.append(title)
+        raise RuntimeError("provider down")
+    res, conn = run(tmp_path, listings(3), judge=broken, embed=None)
+    assert len(calls) == res.budget["judged"] == res.budget["judge_failed"] == 1
+    assert res.budget["judge_skipped_budget"] == 2
+    assert res.counts == {"needs_review": 3}
+
+
 def test_the_embedding_cap_is_the_real_number_of_embedded_texts_and_excess_titles_stay_inspectable(tmp_path, monkeypatch):
     monkeypatch.setattr(D, "MAX_SEMANTIC", 4)
     embedded = []
