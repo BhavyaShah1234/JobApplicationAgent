@@ -47,7 +47,7 @@ def test_changed_skills_rechecks_skills_and_summary_only(tmp_path,monkeypatch):
     monkeypatch.setattr(M.T,'facts_block',lambda:'owner claims')
     calls=[]
     def generate(model,schema,msgs,**kw):
-        calls.append(msgs[0].content.split('Review ONLY ')[1].split(';')[0]);return M.Review(findings=[])
+        calls.append(msgs[0].content.split('Review ONLY ')[1].split('.')[0]);return M.Review(findings=[])
     monkeypatch.setattr(I.llm,'structured_invoke',generate)
     monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
     f=M.T.Filled.model_construct(summary='A summary.',roles=[],skills=[M.T.SkillLine(category='Languages',terms=['Python'])])
@@ -132,6 +132,18 @@ def test_targeted_bullet_repair_uses_a_repair_budget_not_a_full_draft_budget(mon
     ctx={'models':{'experience':'m'},'r':None,'jd':None,'log':lambda _:None}
     M._run_agent(ctx,'experience',object(),['role_0 bullet 1 states no result'],'')
     assert seen==[3000]
+
+
+def test_title_prefix_is_deterministic_and_nonfatal_policy_remains_unchanged(tmp_path,monkeypatch):
+    from jobagent.steps import multi_agent as M
+    assert M._title_prefix('Autonomy Platform Engineer with 1+ years of experience.','Autonomy Platform Engineer')
+    assert not M._title_prefix('Platform Engineer with experience.','Autonomy Platform Engineer')
+    findings=[M.Finding(agent='summary',severity='error',issue='Incorrect critic claim about title or lower-bound years')]
+    monkeypatch.setattr(M,'content_review',lambda *a:findings)
+    f=M.T.Filled.model_construct(summary='Autonomy Platform Engineer with 1+ years.',roles=[],skills=[])
+    reviewed=M._reviewed_content({'job_dir':tmp_path,'incremental':True},f,{})
+    assert reviewed['semantic_hard']==[]
+    assert reviewed['content_findings']==findings
 
 
 def panel_world(tmp_path,monkeypatch,scores):

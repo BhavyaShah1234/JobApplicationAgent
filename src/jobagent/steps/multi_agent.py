@@ -466,6 +466,8 @@ def check_layout(state: State) -> dict:
     if uncovered:
         tasks["experience"].append(f"REQUIRED JD item indices not covered by any NEW bullet: {uncovered}.")
     tasks["summary"] += summary_issues(f.summary, bool(pages and pages > 1))
+    if ctx.get('incremental') and not _title_prefix(f.summary, jd.title):
+        tasks['summary'].append(f'Open the summary with the exact posting title: {jd.title}')
     empty = [sl.category for sl in f.skills if not sl.render()]
     if empty:
         tasks["skills"].append(f"These categories render empty (their terms repeat other lines): {empty}; give each "
@@ -580,6 +582,14 @@ def summary_issues(summary: str, overflow: bool) -> list[str]:
     return out
 
 
+def _title_prefix(summary: str, title: str) -> bool:
+    """Check the opening directly instead of asking a critic to guess."""
+    import re
+    tokens=lambda text:re.findall(r'\w+',T.summary_text(text).casefold())
+    expected=tokens(title);actual=tokens(summary)
+    return bool(expected) and actual[:len(expected)]==expected
+
+
 def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
     """What disqualifies a version whatever its ATS score (the user's review list): not one page, a one-line project
     description, a blank band at the bottom, an empty skills line. Reads the resume.pdf on disk."""
@@ -647,7 +657,7 @@ def _reviewed_content(ctx: dict, f: T.Filled, state: dict) -> dict:
             findings, error = content_review(ctx, f), ""
         except Exception as exc:
             findings, error = [], f"skills content review unavailable ({type(exc).__name__})"
-    hard = [f"{fd.agent}: {fd.issue}" for fd in findings if (ctx.get("incremental") or fd.agent in {"skills", "projects"}) and fd.severity == "error"]
+    hard = [f"{fd.agent}: {fd.issue}" for fd in findings if fd.agent in {"skills", "projects"} and fd.severity == "error"]
     if error:
         hard.append(error)
     return {"content_hash": fingerprint, "content_findings": findings, "content_error": error, "semantic_hard": hard}
