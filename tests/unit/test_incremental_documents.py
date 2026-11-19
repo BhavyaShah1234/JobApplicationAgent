@@ -92,6 +92,9 @@ def test_review_sampling_does_not_change_drafting_or_other_model_families(monkey
     draft=I.llm.writer(model='qwen35-397b-a17b')
     assert other.temperature==draft.temperature==0
     assert other.extra_body is draft.extra_body is None
+    assert I._review_method('qwen35-397b-a17b')=='json_mode'
+    assert I._review_method('Qwen3.5-397B')=='json_mode'
+    assert I._review_method('another-reviewer')==I.get_settings().llm_structured_method
 
 
 def test_inference_parameters_invalidate_review_cache(tmp_path,monkeypatch):
@@ -285,6 +288,7 @@ def test_summary_review_receives_current_date_and_target_company_context(tmp_pat
     def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
         if stage=='review:summary':seen.extend(messages)
         models[stage]=model_name
+        assert kwargs['first']==I._review_method(model_name)
         return M.Review(findings=[])
     monkeypatch.setattr(I,'invoke',inspect)
     ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{'title':'Engineer','company':'Beta'}),
@@ -379,6 +383,72 @@ def test_tenure_review_keeps_employer_history_and_requires_an_owner_policy():
     reviewed=summary_review_text(text,5,['Acme'])
     assert '3 years at Acme' in reviewed and '2 years' not in reviewed and 'Python' in reviewed
     assert summary_review_text(text,None,['Acme'])==text
+
+
+def test_review_omits_only_the_checked_headline_and_keeps_explicit_employment_claims():
+    from jobagent.tools.incremental_documents import summary_review_text
+    title='Member of Technical Staff, Real Time Systems'
+    original=title+' with experience deploying PyTorch models to production.'
+    assert summary_review_text(original,None,target_title=title)==(
+        'Candidate with experience deploying PyTorch models to production.')
+    explicit=title+' at Acme since 2020. Holds a clearance for 3 years.'
+    reviewed=summary_review_text(explicit,5,['Acme'],target_title=title)
+    assert 'at Acme since 2020' in reviewed and 'clearance for 3 years' in reviewed
+    assert original.startswith(title)
+
+
+@pytest.mark.parametrize('summary,title',[
+    ('C# Engineer with experience.','C++ Engineer'),
+    ('Software Engineering Lead with experience.','Software Engineer'),
+    ('Engineer with experience.','')])
+def test_unmatched_or_partial_headlines_are_never_hidden_from_review(summary,title):
+    from jobagent.tools.incremental_documents import summary_review_text
+    assert summary_review_text(summary,None,target_title=title)==summary
+
+
+def test_mission_projection_preserves_the_factual_proposition_without_implying_employment():
+    from jobagent.tools.incremental_documents import summary_review_parts
+    original="Candidate with Python experience. Committed to advancing Beta's mission of building safer systems."
+    body,missions=summary_review_parts(original,'Beta')
+    assert body=='Candidate with Python experience.'
+    assert missions==['building safer systems']
+    # This deliberately incorrect proposition still goes to the factual reviewer.
+    body,missions=summary_review_parts("Committed to Beta's mission of selling lunar submarines.",'Beta')
+    assert missions==['selling lunar submarines']
+
+
+@pytest.mark.parametrize('sentence',[
+    "Committed to Beta's mission of building systems where I worked since 2020.",
+    "Committed to Beta's mission of building systems after five years at Acme.",
+    "Committed to Other's mission of building safer systems.",
+    'I worked at Beta building safer systems.',
+])
+def test_mission_projection_does_not_hide_explicit_history_or_other_companies(sentence):
+    from jobagent.tools.incremental_documents import summary_review_parts
+    assert summary_review_parts(sentence,'Beta')==(sentence,[])
+
+
+@pytest.mark.parametrize('summary,needs_education',[
+    ('Engineer with experience building PyTorch systems.',False),
+    ('Engineer with a PhD in computing.',True),
+    ('Engineer with five post-baccalaureate years.',True),
+    ('Engineer who graduated from Example University in 2024.',True)])
+def test_summary_education_context_is_scoped_and_excludes_template_comments(tmp_path,monkeypatch,summary,needs_education):
+    from jobagent.tools import incremental_documents as I
+    from jobagent.steps import multi_agent as M
+    seen=[]
+    def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
+        if stage=='review:summary':seen.append(json.loads(messages[1].content))
+        return schema(findings=[])
+    monkeypatch.setattr(I,'invoke',inspect)
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    tex='\\section{Education}\nMaster at Example University, May 2024.\n% Old commented credential\n\\section{Skills}'
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[],tex=tex),
+         'jd':SimpleNamespace(model_dump=lambda **kw:{}),'models':{'router':'m'},
+         'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None}
+    review(ctx,M.T.Filled.model_construct(summary=summary,roles=[],skills=[]))
+    assert bool(seen[0]['education']) is needs_education
+    assert 'commented credential' not in seen[0]['education']
 
 
 @pytest.mark.parametrize('changed',['resume.tex','jd.json','company'])

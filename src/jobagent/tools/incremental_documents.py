@@ -97,6 +97,11 @@ def review_model(model_name, max_tokens=4000, timeout=120):
     return model
 
 
+def _review_method(model_name):
+    """Avoid observed long Qwen tool-call stalls; retain configured modes elsewhere."""
+    return 'json_mode' if re.search(r'qwen(?:3\.5|35)(?:\b|[-_])',model_name,re.I) else get_settings().llm_structured_method
+
+
 def _bound_schema(schema, validator):
     """Feed exact-source validation failures into the shared bounded correction loop."""
     if validator is None:return schema
@@ -175,7 +180,7 @@ def adjudicate_projects(ctx, payload, findings):
                     f"Claim: {verdict.claim_quote!r}; own source: {verdict.source_quote!r}")[:400]))
         return checked
     result=invoke(ctx['cache'],'adjudicate:projects',model_name,review_model(model_name,6000),
-                  ProjectVerdicts,messages,log=ctx['log'],deadline_s=180,validator=bind,
+                  ProjectVerdicts,messages,log=ctx['log'],deadline_s=180,validator=bind,first=_review_method(model_name),
                   request_lock=ctx.get('reasoner_lock'),request_abort=ctx.get('review_abort'))
     return bind(result)
 
@@ -257,17 +262,24 @@ def invoke(cache, stage, model_name, model, schema, messages, *, validator=None,
     return result
 
 
-def summary_review_text(summary, declared_years, employers=()):
+def summary_review_text(summary, declared_years, employers=(), *, target_title=''):
     """Separate policy-authorized tenure from skills, keeping protected history visible.
 
     Args:
         summary: Original prose, which this function never modifies in the published resume.
         declared_years: Owner's experience ceiling, or None without that authorization.
         employers: Source employers whose specific history still requires its dates.
+        target_title: Deterministically checked application headline, not employment history.
 
     Returns:
         Review-only prose that retains the experience and removes authorized numerical tenure.
     """
+    if target_title:
+        from . import tailor
+        plain=tailor.summary_text(summary)
+        prefix=re.escape(tailor.summary_text(target_title)).replace(r'\ ',r'\s+')
+        match=re.match(prefix+r'(?=$|[\s,:;.])',plain,re.I)
+        if match:summary='Candidate '+plain[match.end():].lstrip(' ,:;.')
     if declared_years is None:return summary
     protected=re.compile(r'\b(?:post[- ]?(?:baccalaureate|doctoral|graduate)|bachelor\w*|master\w*|'
                          r'degree|graduat\w*|ph\.?d|certif\w*|clearance|citizen\w*|residen\w*|visa)\b',re.I)
@@ -283,6 +295,29 @@ def summary_review_text(summary, declared_years, employers=()):
         parts[i]=re.sub(r'(?<![\w.])\d+(?:\.\d+)?\+?\s+(?:years?|yrs)\b',
                         'experience',part,flags=re.I)
     return ''.join(parts)
+
+
+def summary_review_parts(summary, company):
+    """Separate a plain mission-interest sentence from candidate-history claims.
+
+    Args:
+        summary: Review-only prose after deterministic headline and tenure checks.
+        company: Exact target company; other company names are never matched.
+
+    Returns:
+        Candidate prose and target mission propositions, both still subject to review.
+        Sentences containing explicit personal history remain candidate prose.
+    """
+    if not company:return summary,[]
+    pattern=re.compile(r'^(?:Committed to\s+(?:(?:advancing|supporting|furthering)\s+)?|Aligned with\s+)'+
+        re.escape(company)+r"(?:['’]s)?\s+mission\s+(?:of|to)\s+(.+?)[.!]?$",re.I)
+    history=re.compile(r'\b(?:I|my|me|we|our|worked|employed|led|built|developed|since|years?)\b|\d',re.I)
+    kept=[];missions=[]
+    for sentence in re.split(r'(?<=[.!?])\s+',summary.strip()):
+        match=pattern.fullmatch(sentence)
+        if match and not history.search(match[1]):missions.append(match[1])
+        else:kept.append(sentence)
+    return ' '.join(kept),missions
 
 
 def review(ctx, filled):
@@ -316,7 +351,9 @@ def review(ctx, filled):
     # Numerical limits remain enforced on the original published summary.
     declared_years=M.T.declared_claims().get('years_experience')
     summary_for_review=summary_review_text(filled.summary,declared_years,
-                                         [role['employer'] for role in roles])
+                                         [role['employer'] for role in roles],
+                                         target_title=(jd.get('title') or '') if M._title_prefix(filled.summary,jd.get('title') or '') else '')
+    summary_for_review,mission_propositions=summary_review_parts(summary_for_review,jd.get('company'))
     dated_history=declared_years is None or bool(re.search(r'\b(?:years?|yrs)\b',summary_for_review,re.I))
     payloads = {
         'experience': {'roles': roles},
@@ -324,13 +361,17 @@ def review(ctx, filled):
                      'own_repo_sources': sources,'owner_template_titles':owner_titles},
         'skills': {'skills': skills, 'owned_template': ctx['r'].skills, 'graph': ctx.get('graph')},
         'summary': {'summary': summary_for_review,
+                    'target_company_mission_propositions':mission_propositions,
                     'roles':[role if dated_history else {k:v for k,v in role.items() if k!='dates'}
                              for role in roles], 'skills': skills,
                     'projects': projects, 'target_job_identity':{name:jd.get(name) for name in ('title','company')}},
     }
     education=re.search(r'\\section\{Education\}(.*?)(?=\\section\{|\\end\{document\})',
                         getattr(ctx['r'],'tex',''),re.S)
-    payloads['summary']['education']=education.group(1) if education else ''
+    credential_claim=re.search(r'\b(?:bachelor\w*|master\w*|ph\.?d|doctor\w*|degree|graduat\w*|'
+        r'post[- ]?baccalaureate|university|college|alumn\w*|gpa|certif\w*|licen[cs]\w*)\b',summary_for_review,re.I)
+    payloads['summary']['education']=(re.sub(r'(?m)(?<!\\)%.*$','',education.group(1))
+                                      if education and credential_claim else '')
     payloads['summary']['company_context']=ctx.get('company','')
     policy=(M.T.facts_block()+'\nThe owner\'s standing confirmation covers generated work duties and impact '
         'metrics. It does not authorize changing identities, dates or credentials, or inventing repo features.')
@@ -347,7 +388,14 @@ def review(ctx, filled):
             'implementation features. Do not recommend alternate projects or report formatting preferences.',
         'skills':'Check only incorrect technical categories and soft skills. Identify the exact displayed '
             'term and its CURRENT category for each finding. A term need fit just ONE component '
-            'of a combined heading. Broad accurate headings are valid. Do not request padding or finer categories. '
+            'of a combined heading. Category membership can mean a relevant technology USED IN that domain, '
+            'not that the term literally IS a system of that name. For example, Python fits Scripting and '
+            'Automation; GStreamer fits Real-Time Systems used for streaming; a GPU profiler fits Debugging. '
+            'Technical concepts and paradigms are allowed skills: Edge Computing fits a real-time/edge '
+            'systems domain. Do not reject a technical concept merely for not being a product or tool. '
+            'Do not call these errors or suggest narrower headings. In contrast, a runtime listed as a '
+            'Programming Language is a genuine type error. Broad accurate headings are valid. '
+            'Do not request padding or finer categories. '
             'The owned template is a reference, not a required inventory: omitted template skills are NOT errors. '
             'If moving a term, recommend a heading that actually includes its type; never call a runtime a '
             'programming language or a concept a library merely to fit an existing heading.',
@@ -363,7 +411,9 @@ def review(ctx, filled):
             'restrictions on policy-authorized overall or domain tenure. '
             'A statement such as 1+ years is a lower bound, not a claim of exactly one year. '
             'A target-company mission/business/interest clause is not a claim of previous employment there; '
-            'check company facts against company_context, not the candidate\'s employer list.'}
+            'check company facts against company_context, not the candidate\'s employer list. '
+            'target_company_mission_propositions contains target business facts extracted from a standalone '
+            'interest statement. Check their factual content only, never infer candidate employment from them.'}
 
     def one(agent):
         """Validate one section against exactly its relevant current dependencies."""
@@ -376,6 +426,7 @@ def review(ctx, filled):
             if agent=='skills':bind_skill_findings(result,skills)
         messages = [SystemMessage(with_today('Review ONLY ' + agent + '. '+instructions[agent] +
             ' Return actionable correctness findings for that agent only, or an empty list when sound. '
+            'Each issue must be one concise sentence of at most 240 characters, not a reasoning transcript. '
             'Do not give positive observations or stylistic preferences. Apply the supplied owner claims policy. '
             'Do not impose additional documentary or dated-domain-experience requirements on claims '
             'that policy explicitly permits. Protected employers, titles, dates and credentials still '
@@ -387,7 +438,8 @@ def review(ctx, filled):
             out = invoke(ctx['cache'], 'review:' + agent, model_name,
                          review_model(model_name,6000 if reasoner else 4000,timeout=120),
                          ProjectReview if agent=='projects' else SkillReview if agent=='skills' else M.Review,
-                         messages, log=ctx['log'], deadline_s=240 if reasoner else 180,validator=bound_agent,
+                         messages, log=ctx['log'], first=_review_method(model_name),
+                         deadline_s=240 if reasoner else 180,validator=bound_agent,
                          request_lock=reasoner_lock if reasoner else None,request_abort=review_abort)
             bound_agent(out)
             if agent=='projects':

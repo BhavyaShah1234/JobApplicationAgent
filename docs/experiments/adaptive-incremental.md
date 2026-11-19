@@ -98,7 +98,12 @@ an intervening profile, JD, template or resume edit invalidates publication whil
 retaining the owner's edits. Review prompts receive the local date and relevant
 company context, so a mission clause is not treated as a previous-employer claim.
 The target job is explicitly labelled as the application destination; its resume
-headline is not interpreted as employment at that company.
+headline is checked in code and omitted from the critic's candidate-history prose.
+Standalone target-mission interest statements become separate company propositions,
+still checked against research; explicit personal history stays in candidate prose.
+Education context is supplied for credential/education claims, with commented-out
+template material excluded. Unrelated education dates cannot become a prerequisite
+for a technical experience statement.
 Policy-authorized overall and domain tenure is omitted only from semantic-review input
 when an owner-declared limit exists; the original summary is preserved, and its
 ceiling is enforced separately, including fractional amounts and an explicit
@@ -109,7 +114,8 @@ budget; reaching that budget cannot certify an invalid packet. The current
 document strategy keeps its previous acceptance policy.
 Skills findings use a typed category-error/soft-skill schema and must identify an
 actual displayed term/category pair. Omitted template terms cannot be submitted as
-missing-skill findings, and broad accurate categories remain valid.
+missing-skill findings. Broad domain headings admit relevant tools, concepts and
+hardware; they do not require a literal type relationship to the heading's noun.
 
 Proposed critical project contradictions receive an independent, source-bound
 adjudication. Both claim and evidence quotes must belong to that same project;
@@ -152,6 +158,10 @@ cache entries. Qwen 3.5 factual reviewers use its endpoint-verified non-thinking
 profile (temperature 0.7, top-p 0.8, presence penalty 1.5); drafting and other model
 families retain their existing settings. Unsupported provider parameters fail
 through the bounded error path rather than silently changing models or modes.
+Qwen factual reviews/adjudication prefer JSON mode after observed tool-call stalls;
+the configured preference remains unchanged for other model families, and the
+shared bounded fallbacks remain available. Review findings request concise issues
+within the existing length bound.
 Source-binding validation failures participate in the same bounded correction
 loop as malformed schema output; invalid evidence never enters the cache. Full incremental experience drafts prefer JSON mode
 after repeated live tool/schema retries; the shared bounded fallbacks remain in
