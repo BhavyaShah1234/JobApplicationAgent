@@ -384,6 +384,19 @@ def test_attribution_uses_the_same_dash_normalization_as_letter_rendering(monkey
                    {'a':{'entity':'Alpha','text':'Improved speed by 30%.'}},None,'m',lambda _:None)==[]
 
 
+def test_target_company_and_posting_title_are_not_confused_with_candidate_employer_attribution(monkeypatch):
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:object())
+    monkeypatch.setattr(I,'invoke',lambda *a,**kw:L.AttributionReview(issues=[]))
+    text='I am interested in the Engineer position at Beta.'
+    paragraph=Paragraph(text=text,evidence=[],bindings=[
+        L.Binding(claim=text,source_id='posting',quote='Engineer at Beta')])
+    bank={'posting':{'entity':'Job posting','text':'Engineer at Beta','kind':'posting'},
+          'company':{'entity':'Beta','text':'Beta builds robots.','kind':'company'},
+          'a':{'entity':'Alpha','text':'Built robots.','kind':'employment'}}
+    assert L.check(Letter.model_construct(paragraphs=[paragraph]),bank,None,'m',lambda _:None)==[]
+
+
 def test_opt_in_project_prompt_has_no_fake_achievement_example_or_contradictory_feature_permission():
     from jobagent.tools import projects as P
     from jobagent.state import JobDescription

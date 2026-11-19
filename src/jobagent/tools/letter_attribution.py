@@ -50,7 +50,8 @@ def normalize(text):
 def check(letter, bank, cache, model_name, log):
     """Check exact provenance first, then review meaning and employer attribution."""
     issues = []
-    entities = {ident: normalize(source['entity']) for ident, source in bank.items()}
+    entities = {ident: normalize(source['entity']) for ident, source in bank.items()
+                if source.get('kind') not in ('company','posting','summary','skills','education')}
     for number, paragraph in enumerate(letter.paragraphs, 1):
         bindings = getattr(paragraph, 'bindings', [])
         for binding in bindings:
@@ -64,7 +65,7 @@ def check(letter, bank, cache, model_name, log):
                 if value not in re.findall(r'\d+(?:\.\d+)?', binding.quote):
                     issues.append(f'paragraph {number}: achievement number {value} is absent from its bound quote')
             mentioned = {ident for ident, name in entities.items() if name and name in normalize(binding.claim)}
-            if mentioned and binding.source_id not in mentioned:
+            if source.get('kind') not in ('company','posting') and mentioned and binding.source_id not in mentioned:
                 issues.append(f'paragraph {number}: achievement is assigned to a different employer/project')
         for sentence in re.split(r'(?<=[.!?])\s+(?=[A-Z])', paragraph.text):
             # Deterministically cover quantified claims and named-entity claims;
