@@ -38,7 +38,7 @@ def clicks(e):
 
 
 def run_review(e, thank_you=True, errors=()):
-    S.submitted_page = lambda page, before, shot, timeout_s=60: (thank_you, "thanks" if thank_you else "", list(errors))
+    S.submitted_page = lambda page, before, shot, timeout_s=60, **kwargs: (thank_you, "thanks" if thank_you else "", list(errors))
     return e.review([], ready=True, blockers=())
 
 
@@ -107,6 +107,34 @@ def test_the_attempt_is_committed_before_the_click(env_for):
     finally:
         S.click_submit = real
     assert seen["rows"] == [("in_progress",)] and seen["app"] == [("submission_in_progress",)]
+
+
+def test_email_action_window_starts_before_a_slow_submit_click_returns(env_for, monkeypatch):
+    from datetime import timedelta
+    e = env_for(PLAIN)
+    current = [datetime(2026, 11, 18, 12, tzinfo=UTC)]
+
+    class MailClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current[0].astimezone(tz) if tz else current[0].replace(tzinfo=None)
+
+    monkeypatch.setattr(S, 'datetime', MailClock)
+    real_click = S.click_submit
+
+    def delayed_click(*args, **kwargs):
+        result = real_click(*args, **kwargs)
+        current[0] += timedelta(seconds=20)
+        return result
+
+    def receipt(page, before, shot, timeout_s=60, *, email_verifier):
+        assert email_verifier.since == datetime(2026, 11, 18, 12, tzinfo=UTC)
+        assert email_verifier.since < current[0]
+        return True, 'thanks', []
+
+    monkeypatch.setattr(S, 'click_submit', delayed_click)
+    monkeypatch.setattr(S, 'submitted_page', receipt)
+    assert e.review([], ready=True, blockers=())[0]['state'] == 'submitted'
 
 
 def test_a_thank_you_page_is_submitted_with_the_page_as_evidence_and_a_frozen_payload(env_for):
@@ -323,7 +351,7 @@ def test_a_genuine_no_button_page_still_settles_as_not_sent(env_for):
 def test_an_approval_that_was_waiting_cannot_send_after_another_review_finished(env_for, first_thank_you):   # verification 2
     e = env_for(PLAIN)
     seed_job(e)
-    S.submitted_page = lambda page, before, shot, timeout_s=60: (first_thank_you, "thanks" if first_thank_you else "", [])
+    S.submitted_page = lambda page, before, shot, timeout_s=60, **kwargs: (first_thank_you, "thanks" if first_thank_you else "", [])
     inner = {}
 
     def other_review_completes():
@@ -455,7 +483,7 @@ def test_the_click_time_is_captured_at_the_click_not_at_settlement(env_for, monk
         return r
     S.click_submit = click
 
-    def slow_receipt(page, before, shot, timeout_s=60):
+    def slow_receipt(page, before, shot, timeout_s=60, **kwargs):
         clock.t += timedelta(seconds=120)                                 # the receipt check takes two minutes
         return True, "thanks", []
     S.submitted_page = slow_receipt
@@ -693,7 +721,7 @@ def run_wizard(tmp_path, monkeypatch, mutate=None):
         def ask(self, prompt, timeout_s=0):
             prompts.append(prompt)
             return "approve"
-    monkeypatch.setattr(S, "submitted_page", lambda page, before, shot, timeout_s=60: (True, "thanks", []))
+    monkeypatch.setattr(S, "submitted_page", lambda page, before, shot, timeout_s=60, **kwargs: (True, "thanks", []))
     monkeypatch.setattr(S, "wait_for_confirmation", lambda *a, **k: None)
     pw, browser, page = browser_page(WIZARD)
     try:

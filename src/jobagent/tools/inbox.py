@@ -35,7 +35,13 @@ _PROTECTED_WORDS = re.compile(
     r"not moving forward|thank you for (applying|your application)|application (received|submitted|status)|"
     r"next steps|recruiter|schedule a call)\b"
 )
-_CODE = re.compile(r"(?<![\d#])(\d{4,8}|[A-Z0-9]{3}-[A-Z0-9]{3})(?![\d])")
+_CODE = re.compile(r"(?<![A-Za-z\d#])(\d{4,8}|[A-Z0-9]{3}-[A-Z0-9]{3})(?![A-Za-z\d])")
+# Eight-character email codes can contain letters (including letters only).
+# Require a code-specific prefix or a standalone line, not an arbitrary nearby word.
+_EMAIL_CODE = re.compile(
+    r"(?m)(?:(?i:\bcode\s*(?:is\s*|:\s*))|^[ \t]*)([A-Z0-9]{8})(?![A-Za-z0-9])"
+    r"(?=[ \t\r]*(?:[.!]|$))"
+)
 _LINK = re.compile(r"https?://[^\s\"'<>)]+", re.I)
 _LINK_HINT = re.compile(r"(?i)(verif|confirm|activat|token|magic|signin|sign-in|login|reset|validate|auth)")
 
@@ -238,6 +244,12 @@ def classify_verification(mail: Mail) -> Verification | None:
     # Prefer a code near the keyword (codes in the subject are the most reliable).
     code = None
     for source in (mail.subject, mail.text):
+        for m in _EMAIL_CODE.finditer(source):
+            if re.search(r"(?i)\bcode\b", source[max(0, m.start() - 300):m.end() + 80]):
+                code = m.group(1)
+                break
+        if code:
+            break
         for m in _CODE.finditer(source):
             window = source[max(0, m.start() - 120): m.end() + 40]
             if _VERIFY_WORDS.search(window) or re.search(r"(?i)\bcode\b", window):
@@ -429,7 +441,8 @@ class Inbox:
             seen.clear()  # re-check: Gmail may deliver late into an existing UID range
 
     def wait_for_verification(self, site: str, since: datetime, kind: str = "portal",
-                              timeout_s: float = 300, address: str | None = None) -> tuple[Mail, Verification]:
+                              timeout_s: float = 300, address: str | None = None,
+                              header_filter=None) -> tuple[Mail, Verification]:
         """Wait for a verification mail from `site` (URL or domain) sent after `since` (the agent's action).
 
         An action is recorded first. A candidate is read only if, from its headers alone, it comes from the site's exact
@@ -452,7 +465,7 @@ class Inbox:
                 return False
             if sender_domain(m) not in allowed:          # the exact registrable domain, not a substring of the address
                 return False
-            return not want or want in m.recipients
+            return (not want or want in m.recipients) and (header_filter is None or header_filter(m))
 
         def match(m: Mail) -> bool:
             v = classify_verification(m)

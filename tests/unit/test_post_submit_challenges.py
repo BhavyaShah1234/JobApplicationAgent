@@ -109,6 +109,45 @@ def test_emailed_application_code_uses_human_handoff_in_existing_attempt(monkeyp
     # Page has no fill/click API: the agent must not enter a code or click Submit again.
 
 
+def test_email_code_callback_can_finish_before_human_handoff(monkeypatch, tmp_path):
+    page = setup_clock(monkeypatch)
+    page.text = ('A verification code was sent to applicant@example.test. '
+                 'To submit your application, enter the 8-character code.')
+    calls = []
+
+    def verify(p):
+        calls.append(1)
+        p.text = 'Thank you for applying'
+        return True
+
+    monkeypatch.setattr(challenge, 'guard', lambda *a, **k: pytest.fail('unnecessary human handoff'))
+    assert submit.submitted_page(page, 'Application form', tmp_path / 'receipt.png', email_verifier=verify)[0]
+    assert calls == [1]
+
+
+def test_unsuccessful_email_verification_falls_back_without_repeating_code(monkeypatch, tmp_path):
+    page = setup_clock(monkeypatch)
+    page.text = ('A verification code was sent to applicant@example.test. '
+                 'To submit your application, enter the 8-character code.')
+    calls = []
+
+    class Verifier:
+        def __call__(self, p):
+            calls.append('code')
+            return False
+
+        def human_handoff(self):
+            calls.append('human')
+
+    def human(p, **kwargs):
+        p.text = 'Thank you for applying'
+        return True
+
+    monkeypatch.setattr(challenge, 'guard', human)
+    assert submit.submitted_page(page, 'Application form', tmp_path / 'receipt.png', email_verifier=Verifier())[0]
+    assert calls == ['code', 'human']
+
+
 @pytest.mark.parametrize("blocked", [False, True])
 def test_readiness_override_preserves_policy_and_restores_session_ready(monkeypatch, blocked):
     page = Page()

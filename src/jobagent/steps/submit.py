@@ -374,7 +374,7 @@ def page_text(page: Page) -> str:
         return ""
 
 
-def submitted_page(page: Page, before: str, shot: Path, timeout_s: float = 60) -> tuple[bool, str, list[str]]:
+def submitted_page(page: Page, before: str, shot: Path, timeout_s: float = 60, *, email_verifier=None) -> tuple[bool, str, list[str]]:
     """(confirmed, the thank-you sentence, errors) after Submit. Only a thank-you / received sentence that was NOT on
     the page before the click counts; it is screenshotted the moment it shows."""
     from jobagent.tools import challenge
@@ -384,6 +384,7 @@ def submitted_page(page: Page, before: str, shot: Path, timeout_s: float = 60) -
 
     deadline = datetime.now() + timedelta(seconds=timeout_s)
     errors: list[str] = []
+    email_attempted = False
     while datetime.now() < deadline:
         page.wait_for_timeout(3000)
         text = page_text(page)
@@ -392,7 +393,15 @@ def submitted_page(page: Page, before: str, shot: Path, timeout_s: float = 60) -
             screenshot(page, str(shot))
             line = next((ln.strip() for ln in text.splitlines() if new[0] in ln), new[0])
             return True, line[:300], []
+        block = challenge.detect(page)
+        if block and block.kind == 'application-email-code' and email_verifier is not None and not email_attempted:
+            email_attempted = True
+            if email_verifier(page):
+                deadline = datetime.now() + timedelta(seconds=timeout_s)
+                continue
         if challenge.guard(page, ready=ready_after_verification):
+            if email_attempted and callable(getattr(email_verifier, 'human_handoff', None)):
+                email_verifier.human_handoff()
             # Human verification can appear only after dispatch. Keep this same
             # attempt open; resolving it never authorizes another Submit click.
             deadline = datetime.now() + timedelta(seconds=timeout_s)
@@ -580,12 +589,15 @@ def make_at_review(job_dir: Path, jd: dict, hitl, inbox, conn, log, ask_s: float
         approval = forms.SubmitApproval(str(job_dir), f"approve@{approved_at}", _issuer=forms._ISSUER, payload_sha=sha,
                                         verify=still_approved)
         before = page_text(page)
+        approved_url = page.url
+        approved_frames = {index: frame.url for index, frame in view.frames.items()}
         try:
             n = begin_attempt(conn, job_dir, sha, payload, approved_at)   # atomic, committed BEFORE the click
         except AttemptRefused as why:
             log(f"submit: not sent: {why}")
             stop = guard(conn, job_dir) or {"state": "submission_uncertain", "message": str(why)}
             return {"state": stop["state"], "message": stop["message"]}
+        verification_since = datetime.now(UTC)  # mail may arrive while click waits for navigation
         mark_action(conn, job_dir, n)
         try:
             clicked = click_submit(page, view, approval)
@@ -614,8 +626,11 @@ def make_at_review(job_dir: Path, jd: dict, hitl, inbox, conn, log, ask_s: float
         with conn:
             conn.execute("UPDATE submission_attempts SET clicked_at = ? WHERE job_dir = ? AND attempt_no = ?", (clicked_at, db.job_key(job_dir), n))
         log(f"submit: clicked {clicked!r}")
+        from jobagent.tools.application_verification import EmailCodeVerifier
+        email_verifier = EmailCodeVerifier(inbox, jd, verification_since, job_dir, n, sha, records, log,
+                                          approved_url=approved_url, approved_frames=approved_frames)
         try:
-            ok, text, errors = submitted_page(page, before, out / "submitted.png")
+            ok, text, errors = submitted_page(page, before, out / "submitted.png", email_verifier=email_verifier)
             page.wait_for_timeout(5000)
             screenshot(page, str(out / "after-submit.png"))
         except BaseException as e:
@@ -632,6 +647,10 @@ def make_at_review(job_dir: Path, jd: dict, hitl, inbox, conn, log, ask_s: float
             settle_attempt(conn, job_dir, n, "submitted", evidence=f"page said: {text}", clicked_at=clicked_at)
             record(conn, job_dir, jd, state="submitted", submitted_at=clicked_at, notes=f"page said: {text}")
             _mark_job(conn, jd, "applied")
+            try:
+                email_verifier.accepted()
+            except Exception:
+                log('submit: receipt recorded; email-verification audit could not be completed')
             log("submit: submitted; watching the inbox for the confirmation")
         else:
             # clicked, but neither a thank-you page nor an error: receipt is NOT proven. Never record this as submitted.

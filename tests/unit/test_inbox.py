@@ -17,6 +17,8 @@ def _mail(subject: str, text: str, sender: str = "no-reply@greenhouse.io", age_h
     [
         ("Your verification code", "Your one-time code is 482913. It expires in 10 minutes.", "otp", "482913", None),
         ("123456 is your Workday code", "Use this code to verify your email.", "otp", "123456", None),
+        ("Security code for your application", "Copy this code into the security code field:\r\n \r\nA1B2C3D4\r\n \r\nCopyright 2026.", "otp", "A1B2C3D4", None),
+        ("Security code for your application", "Your verification code is ABCDEFGH.", "otp", "ABCDEFGH", None),
         ("Verify your email", "Click https://acme.wd5.myworkdayjobs.com/verify?token=abc to confirm your email.",
          "link", None, "https://acme.wd5.myworkdayjobs.com/verify?token=abc"),
         ("Reset your password", "Reset your password here: https://jobs.example.com/reset?t=9", "password_reset",

@@ -36,7 +36,12 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
 - Before re-uploading a same-named document, replace only matching entries in that widget when their filename and
   explicit non-submitting delete control are both unambiguous. Preserve other files/widgets; an old filename alone
   never verifies a new dispatch. Unclear replacement controls block the upload.
-- Record what was sent: a frozen payload and one attempt row per click; a possibly-sent application is never filled or clicked again.
+- Record what was sent: a frozen payload and one ledger row per submission attempt; a possibly-sent application is never refilled or retried
+  without reconciliation. The bounded email-code continuation below belongs to the existing attempt.
+- An ordinary emailed application code may continue the same approved attempt automatically: match fresh mail to the candidate and company,
+  fill only the newly identified code controls, and recheck the original approved answers, uploads and URL before one verification dispatch.
+  A code is not a receipt. A changed application, ambiguous controls, rejected/missing code or actual CAPTCHA goes to human review;
+  no second application attempt is created and no code is written into logs or the verification audit.
 - Keep generated documents valid (one page, hard and claims checks) and tied to the posting they were built for.
 - Record the SHA-256 of the actual resume template read by either writer. Before filling or submission, require it to match
   the current `DATA_DIR/templates/resume.tex`. An edited template or an older document without provenance requires a new

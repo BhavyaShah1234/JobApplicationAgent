@@ -59,7 +59,7 @@ class Env:
         self.before_answer = None
         real_wait = self.page.wait_for_timeout
         self.page.wait_for_timeout = lambda ms: real_wait(min(ms, 100))
-        monkeypatch.setattr(S, "submitted_page", lambda page, before, shot, timeout_s=60: (True, "thanks", []))
+        monkeypatch.setattr(S, "submitted_page", lambda page, before, shot, timeout_s=60, **kwargs: (True, "thanks", []))
         monkeypatch.setattr(S, "wait_for_confirmation", lambda *a, **k: None)
         self.hook = S.make_at_review(self.job, JD, self.hitl, None, self.conn, lambda m: None, mail_s=0)
 

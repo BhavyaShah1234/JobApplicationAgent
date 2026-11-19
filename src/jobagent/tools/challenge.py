@@ -85,7 +85,7 @@ class Challenge:
     excerpt: str
 
 
-def detect(page: Page) -> Challenge | None:
+def detect(page: Page, *, include_application_email: bool = True) -> Challenge | None:
     """Return the challenge on the page, if any. Visible widgets count; hidden/invisible reCAPTCHA badges don't."""
     try:
         title = page.title()
@@ -94,7 +94,7 @@ def detect(page: Page) -> Challenge | None:
         return Challenge("unknown", safe_url(page.url), "Page inspection failed")
     if not text.strip():
         return Challenge("unknown", safe_url(page.url), "Page is blank or transitioning")
-    if _APPLICATION_EMAIL_CODE.search(text):
+    if include_application_email and _APPLICATION_EMAIL_CODE.search(text):
         return Challenge("application-email-code", safe_url(page.url), "Application requires an emailed security code")
     blob = f"{title}\n{text[:4000]}\n{page.url}"
     for kind, pattern in _TEXT_SIGNS:
