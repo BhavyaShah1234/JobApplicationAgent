@@ -226,7 +226,9 @@ def test_a_page_error_also_blocks_the_approved_send(tmp_path, monkeypatch):
 def test_a_complete_page_proceeds_to_the_approved_send_path(tmp_path, monkeypatch):
     ok = forms.Field(id=1, kind="email", label="Email", required=True, value="me@example.org")
     hook, conn, prompts, clicks, S = hook_env(tmp_path, monkeypatch, view_with(ok))
-    out = hook(None, view_with(ok), {"state": "review", "fields": [], "verified": 1, "pages": [], "url": "u",
+    from types import SimpleNamespace
+    page = SimpleNamespace(url="https://careers.example.org/apply")
+    out = hook(page, view_with(ok), {"state": "review", "fields": [], "verified": 1, "pages": [], "url": "u",
                                      "ready_to_submit": True, "blockers": []})
     assert len(clicks) == 1 and isinstance(clicks[0], forms.SubmitApproval)       # the approval object reached the click
     assert out["state"] == "failed" and "NOT READY" not in prompts[0]             # (the stub found no button to click)
