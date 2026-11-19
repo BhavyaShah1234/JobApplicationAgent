@@ -879,11 +879,14 @@ class Repair(BaseModel):
     fixes: list[BulletFix] = Field(min_length=1, max_length=8)
 
 
-REPAIR_PROMPT = f"""You fix specific bullets of a tailored resume. {{coverage_rule}} Each rewritten bullet must
+_REPAIR_TEMPLATE = f"""You fix specific bullets of a tailored resume. {{coverage_rule}} Each rewritten bullet must
 name concrete technologies, state a result (a believable estimated metric is fine;
 list it in `estimated`), stay within the length budget (about {BULLET_TARGET} characters, at most {BULLET_MAX}), not repeat any other bullet, use no academic wording and no
 dashes as punctuation, and describe work done at THAT role's employer (never another employer's work). A change by
 a percentage takes "by"."""
+REPAIR_PROMPT = _REPAIR_TEMPLATE.format(coverage_rule=(
+    'Rewrite ONLY the bullets listed under PROBLEMS, each in place, so that every problem is solved; '
+    'leave all other bullets alone. Each rewritten bullet must keep covering the JD items it covered (shown).'))
 
 
 def build_repair_prompt(r: Resume, jd: JobDescription, f: Filled, issues: list[str], *, section_coverage: bool = False) -> list:
@@ -907,15 +910,13 @@ def build_repair_prompt(r: Resume, jd: JobDescription, f: Filled, issues: list[s
         for k, b in enumerate(e.bullets, 1):
             covers = "; ".join(items[d][1][:80] for d in b.duties if 0 <= d < len(items))
             lines.append(f"  {k}. {b.text}" + (f"   [covers: {covers}]" if covers and b.original is None else ""))
-    coverage_rule=(
+    system=(_REPAIR_TEMPLATE.format(coverage_rule=(
         'Repair the named problems in place. For missing coverage, you may also edit suitable existing bullets. '
         'Preserve previously covered JD indices ACROSS THE WHOLE EXPERIENCE SECTION, not separately in each '
         'bullet. To resolve a repeated duty, keep one occurrence and replace the other with distinct relevant '
         'work, preferably an uncovered JD item. Do not just substitute synonyms. Do not add or remove bullets. '
-        'Leave unrelated bullets unchanged.' if section_coverage else
-        'Rewrite ONLY the bullets listed under PROBLEMS, each in place, so that every problem is solved; '
-        'leave all other bullets alone. Each rewritten bullet must keep covering the JD items it covered (shown).')
-    return [SystemMessage(with_today(REPAIR_PROMPT.format(coverage_rule=coverage_rule))),
+        'Leave unrelated bullets unchanged.')) if section_coverage else REPAIR_PROMPT)
+    return [SystemMessage(with_today(system)),
             HumanMessage("RESUME BULLETS:\n" + "\n".join(lines) + "\n\nPROBLEMS:\n" + "\n".join(issues))]
 
 
