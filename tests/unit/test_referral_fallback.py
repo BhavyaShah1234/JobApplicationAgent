@@ -40,6 +40,49 @@ def test_an_offered_employee_option_still_takes_precedence():
     assert agent.plan([f])[0].value=='Employee Referral'
 
 
+@pytest.mark.parametrize('caption',[
+    'MongoDB Employee (Current or Former)', 'MongoDB Former Employee',
+    'MongoDB Current or Former Employee', 'MongoDB Employee (Former)',
+])
+def test_employee_status_qualifiers_preserve_an_offered_referral_choice(caption):
+    from jobagent.tools import referrals
+    f=field(['Other',caption])
+    assert referrals.answer_for(f,{},'MongoDB')['value']==caption
+
+
+@pytest.mark.parametrize('caption',[
+    'MongoDB Employee (not referred)', 'MongoDB Non-employee referral',
+    'MongoDB Employee Recruiter', 'MongoDB Employee (external recruiter)',
+])
+def test_status_qualifier_support_does_not_accept_negative_or_recruiter_choices(caption):
+    from jobagent.tools import referrals
+    assert referrals._referral_option([caption],'MongoDB')==''
+
+
+def test_adjacent_conditional_employee_source_details_use_the_matching_contact():
+    from jobagent.tools import referrals
+    parent=field(['MongoDB Employee (Current or Former)','Other'])
+    child=Field(id=1,kind='text',label='If you answered MongoDB Employee, MongoDB Event, or Other, please specify here:')
+    referrals.contextualize([parent,child])
+    contact={'name':'Example Employee','email':'employee@example.test'}
+    assert referrals.answer_for(child,contact,'MongoDB')['value']=='Referred by employee: Example Employee (employee@example.test)'
+    assert referrals.answer_for(child,{},'MongoDB')['ask_human']
+
+
+@pytest.mark.parametrize('boundary',['frame','section','unrelated','no_employee_choice'])
+def test_conditional_employee_source_details_remain_bound_to_the_adjacent_source(boundary):
+    from jobagent.tools import referrals
+    parent=field(['Employee Referral','Other'])
+    child=Field(id=1,kind='text',label='If you answered Employee, Event, or Other, please specify here:')
+    if boundary=='frame':child.frame=1
+    if boundary=='section':child.section='Unrelated'
+    if boundary=='no_employee_choice':child.label='If you answered Yes, please specify here:'
+    fields=[parent,child]
+    if boundary=='unrelated':fields.insert(1,Field(id=2,kind='text',label='Favorite food'))
+    referrals.contextualize(fields)
+    assert referrals.answer_for(child,{'name':'Example','email':'e@example.test'}) is None
+
+
 def test_company_named_source_question_uses_the_same_scoped_owner_choice():
     f=field();f.label='How did you hear about Capital One?'
     assert filler([saved()]).plan([f])[0].value=='Contacted by Recruiter'

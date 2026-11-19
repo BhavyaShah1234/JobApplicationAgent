@@ -35,6 +35,10 @@ SOURCE_FOLLOWUP = re.compile(
     r"(?i)^\s*(?:if\s+[\"'“”‘’]?other[\"'“”‘’]?\s*[,;:]?\s*)?"
     r"(?:other\s*[,;:]?\s*)?(?:please\s+)?(?:specify|select)(?:\s+here)?\s*[:*?.]*\s*$"
 )
+SOURCE_CONTACT_FOLLOWUP = re.compile(
+    r"(?i)^\s*if\s+you\s+(?:answered|selected|chose)\s+(.+),\s*"
+    r"(?:please\s+)?specify(?:\s+here)?\s*[:*?.]*\s*$"
+)
 
 
 def contextualize(fields) -> None:
@@ -42,11 +46,16 @@ def contextualize(fields) -> None:
     parent = None
     for field in fields:
         field.source_followup = False
+        conditional = SOURCE_CONTACT_FOLLOWUP.fullmatch(field.label)
+        contact_followup = bool(conditional and REFERRAL.search(conditional.group(1)))
         if SOURCE.search(field.label):
             parent = field
         elif (parent is not None and field.frame == parent.frame
-              and field.section == parent.section and SOURCE_FOLLOWUP.fullmatch(field.label)):
+              and field.section == parent.section
+              and (SOURCE_FOLLOWUP.fullmatch(field.label) or contact_followup)):
             field.source_followup = True
+            if contact_followup:
+                field.help = (field.help + ' Employee referrer contact details for the adjacent sourcing question.').strip()
         elif (parent is not None and field.frame == parent.frame
               and field.section == parent.section and _referral_option([parent.value])
               and PRONOMINAL_CONTACT.search(field.label)):
@@ -183,6 +192,10 @@ def _referral_option(options: list[str], company: str = '') -> str:
             leaf,
         ))
         referral = bool(re.search(r"referr|recommend", leaf))
+        # Employment-status qualifiers preserve the meaning of Employee;
+        # unrelated parentheticals and negative referral choices stay intact.
+        employee_leaf = re.sub(
+            r"\s*\(\s*(?:current|former)(?:\s+or\s+(?:current|former))?\s*\)\s*$", "", leaf)
         knows_employee = bool(re.search(r"\bknow\s+some(?:one|body)\s+at\s+(?:the\s+)?company\b", leaf))
 
         if employee and (referral or "referr" in option.casefold()):
@@ -190,8 +203,8 @@ def _referral_option(options: list[str], company: str = '') -> str:
         elif knows_employee:
             rank = 90
         elif employee and re.fullmatch(
-            r"(?:current\s+)?(?:employee|associate|colleague|co-worker)",
-            leaf,
+            r"(?:(?:current|former)(?:\s+or\s+(?:current|former))?\s+)?(?:employee|associate|colleague|co-worker)",
+            employee_leaf,
         ):
             rank = 90
         elif referral and not re.search(
