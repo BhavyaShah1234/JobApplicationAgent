@@ -55,6 +55,12 @@ def test_parse_roles_dates_and_backfill_markers():
     assert r.skills == [("Languages", "Python, C++")]
 
 
+def test_repo_refresh_does_not_construct_a_provider_client_without_stale_cards(monkeypatch):
+    monkeypatch.setattr(github,'discover_repos',lambda *a,**kw:[])
+    monkeypatch.setattr(repo_cards,'ChatOpenAI',lambda **kw:pytest.fail('No stale repository needs an analysis client'))
+    assert repo_cards.refresh('fixture',log=lambda _:None)==[]
+
+
 def test_latex_escaping_and_unicode():
     assert T.to_latex("100% A&B_c #1") == r"100\% A\&B\_c \#1"
     assert T.to_latex("cut ~40% (45→20 min) и") == r"cut about 40\% (45 to 20 min) "

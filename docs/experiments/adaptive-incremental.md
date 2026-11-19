@@ -169,6 +169,10 @@ Source-binding validation failures participate in the same bounded correction
 loop as malformed schema output; invalid evidence never enters the cache. Full incremental experience drafts prefer JSON mode
 after repeated live tool/schema retries; the shared bounded fallbacks remain in
 place. This preference does not change the current strategy.
+OpenAI SDK chat/embedding client construction shares a short initialization lock
+to prevent its lazy resource-import deadlock under cold parallel startup. Requests
+remain concurrent. Repository refresh skips analysis-client construction when
+there are no stale cards.
 Long factual review requests share one provider dispatch slot after cache lookup;
 cheap reviews remain parallel. Queue wait is recorded separately in stage metrics.
 If a section fails, queued reviews stop before dispatch and diagnostics identify

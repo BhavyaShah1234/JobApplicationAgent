@@ -21,11 +21,26 @@ from pydantic import BaseModel
 from jobagent.config import Settings, get_settings
 
 Role = Literal["planner", "vision", "fast"]
+_CLIENT_INIT_LOCK = threading.RLock()
+
+
+def build_openai_client(factory, **kwargs):
+    """Serialize lazy SDK construction while keeping network requests concurrent.
+
+    Args:
+        factory: Chat or embedding client constructor using the OpenAI SDK.
+        **kwargs: Constructor options, forwarded without modification.
+
+    Returns:
+        The constructed client; its subsequent requests do not hold this lock.
+    """
+    with _CLIENT_INIT_LOCK:
+        return factory(**kwargs)
 
 
 def _primary(role: Role, s: Settings, temperature: float | None = None, timeout: float | None = None,
              max_tokens: int | None = None) -> BaseChatModel:
-    return ChatOpenAI(
+    return build_openai_client(ChatOpenAI,
         model=getattr(s, f"model_{role}"),
         base_url=s.openai_base_url,
         api_key=s.openai_api_key,
@@ -98,7 +113,7 @@ def writer(max_tokens: int = 16000, timeout: float = 600, settings: Settings | N
     (`max_retries=0`) because `structured_invoke` owns the retry policy: retrying inside the client too would multiply the
     waits."""
     s = settings or get_settings()
-    return ChatOpenAI(model=model or WRITER_MODEL.get() or s.model_writer, base_url=s.openai_base_url, api_key=s.openai_api_key,
+    return build_openai_client(ChatOpenAI,model=model or WRITER_MODEL.get() or s.model_writer, base_url=s.openai_base_url, api_key=s.openai_api_key,
                       max_retries=0, timeout=timeout, temperature=0, max_tokens=max_tokens)  # structured_invoke retries
 
 
@@ -381,7 +396,7 @@ class FallbackEmbeddings(Embeddings):
 
 def embeddings(settings: Settings | None = None) -> FallbackEmbeddings:
     s = settings or get_settings()
-    primary = OpenAIEmbeddings(
+    primary = build_openai_client(OpenAIEmbeddings,
         model=s.model_embed,
         base_url=s.openai_base_url,
         api_key=s.openai_api_key,

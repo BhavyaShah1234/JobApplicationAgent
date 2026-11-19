@@ -247,8 +247,9 @@ def refresh(user: str, token: str | None = None, workers: int = 6, force: bool =
         flags = list(pool.map(lambda r: force or needs_analysis(r, load(r.full_name)), repos))
     stale = [r for r, f in zip(repos, flags) if f]
     log(f"repo cards: {len(repos)} repos, {len(repos) - len(stale)} up to date, {len(stale)} to analyse")
-    model = ChatOpenAI(model="glm-5-3", base_url=s.openai_base_url, api_key=s.openai_api_key, max_retries=1,
-                       timeout=400, temperature=0, max_tokens=12000)
+    model = (llm.build_openai_client(ChatOpenAI,model="glm-5-3", base_url=s.openai_base_url,
+                       api_key=s.openai_api_key, max_retries=1,timeout=400, temperature=0, max_tokens=12000)
+             if stale else None)
 
     def one(repo: github.Repo) -> str:
         t0 = datetime.now(UTC)
