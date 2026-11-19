@@ -67,6 +67,24 @@ def test_a_refused_stale_dispatch_replans_even_without_another_successful_field(
     assert not any(r.get('answer')=='Red' and r.get('outcome')=='verified' for r in result['records'])
 
 
+def test_accepted_other_school_is_not_refilled_when_its_placeholder_disappears(world):
+    world.setup('''<label for=s>School</label><input id=s role=combobox required aria-describedby=hint
+       onclick="document.getElementById('menu').hidden=false">
+      <span id=hint>Select...</span><div id=menu role=listbox hidden>
+       <div role=option onmousedown="event.preventDefault()" onclick="document.getElementById('s').value='Other';
+        document.getElementById('hint').remove();this.parentElement.hidden=true">Other</div></div>
+      <label for=c>Favourite colour</label><input id=c required>''')
+    world.page.goto('https://fixture.test/apply');questions=[]
+    def ask(items):questions.append(items);return {}
+    filler=AdaptiveFiller([Fact('school',['School'],'Unlisted University','owner',variants=['Other'])],ask)
+    result=filler.fill(world.page,advance_pages=False,max_rounds=6)
+    assert result['state']=='blocked' and not any('round budget' in b for b in result['blockers'])
+    assert len(questions)==1 and questions[0][0]['label']=='Favourite colour'
+    assert world.page.locator('#s').input_value()=='Other'
+    assert len([r for r in result['records'] if r.get('label')=='School' and r.get('outcome')=='verified'])==1
+    assert not any(r.get('label')=='School' and r.get('outcome')=='failed' for r in result['records'])
+
+
 def test_native_options_and_help_mutations_invalidate_live_inventory(world):
     world.setup('<label for=x>Support</label><select id=x aria-describedby=help><option>No</option></select><p id=help>Visa sponsorship only</p>')
     world.page.goto('https://fixture.test/apply')

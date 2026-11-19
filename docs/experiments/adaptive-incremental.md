@@ -51,7 +51,9 @@ An external source change after earlier wizard pages were filled stops the run
 for reconciliation, rather than certifying answers on pages no longer visible.
 Readback acceptance uses a bounded state poll rather than three fixed delays.
 An unopened partial menu retains its last observed vocabulary for decision scope;
-only a newly observed vocabulary changes that scope. Evicting a menu cache after
+only a newly observed vocabulary changes that scope. Generic menu placeholders
+such as Select... are excluded from decision help, so selecting a value does not
+invalidate that accepted answer; substantive instructions remain part of scope. Evicting a menu cache after
 a failed lookup cannot reset its retry count. A source literal that was tried and
 rejected by a menu becomes one question with the actual offered choices, rather
 than repeated model guesses (for example, Asian versus specific Asian subgroups).
@@ -84,6 +86,10 @@ Source guards span the complete tailoring command and the cover-letter stage;
 an intervening profile, JD, template or resume edit invalidates publication while
 retaining the owner's edits. Review prompts receive the local date and relevant
 company context, so a mission clause is not treated as a previous-employer claim.
+Generic numerical experience tenure is omitted only from semantic-review input
+when an owner-declared limit exists; the original summary is preserved, and its
+ceiling is enforced separately, including fractional amounts and an explicit
+zero-year limit. Substantive skill/credential text remains visible to review.
 
 Proposed critical project contradictions receive an independent, source-bound
 adjudication. Both claim and evidence quotes must belong to that same project;

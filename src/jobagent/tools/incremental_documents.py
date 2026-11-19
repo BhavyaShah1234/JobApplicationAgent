@@ -219,11 +219,20 @@ def review(ctx, filled):
     for project in projects:
         card=cards.get((project['repo'] or '').casefold(),{})
         if card.get('readme'):sources[project['repo']]['readme_excerpt']=card['readme'][:2500]
+    summary_for_review=filled.summary
+    if M.T.declared_claims().get('years_experience') is not None:
+        # Numeric generic tenure is already checked against the owner's limit.
+        # The live critic repeatedly ignored that boundary and assumed full-time
+        # study precluded employment. Keep the remaining substantive prose visible.
+        summary_for_review=re.sub(
+            r'(?<![\w.])\d+(?:\.\d+)?\+?\s+(?:years?|yrs)\s+(?:of\s+)?'
+            r'(?:(?:professional|industry|total)\s+)?experience\b',
+            'owner-declared experience',filled.summary,flags=re.I)
     payloads = {
         'experience': {'roles': roles},
         'projects': {'displayed': projects, 'own_repo_sources': sources},
         'skills': {'skills': skills, 'owned_template': ctx['r'].skills, 'graph': ctx.get('graph')},
-        'summary': {'summary': filled.summary,
+        'summary': {'summary': summary_for_review,
                     'roles':[{k:v for k,v in role.items() if k!='dates'} for role in roles], 'skills': skills,
                     'projects': projects, 'job_identity':{name:jd.get(name) for name in ('title','company')}},
     }

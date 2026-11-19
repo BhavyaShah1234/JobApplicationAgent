@@ -66,6 +66,12 @@ class AdaptiveFiller(PlannedFiller):
     def decision_schema(self, field):
         """An unopened partial menu does not assert that previously read options vanished."""
         spec=schema(field)
+        # React-style controls expose their temporary placeholder through
+        # aria-describedby. Its disappearance on selection is not new guidance.
+        if field.kind=='combobox' and re.fullmatch(
+                r'(?:select|choose)(?:\s+(?:an?\s+)?(?:option|answer|one))?(?:\.{3}|…)?',
+                field.help.strip(),re.I):
+            spec['help']=''
         previous=self.option_inventory.get(key(field))
         if field.kind=='combobox' and not field.options and field.options_state!='complete' and previous:
             spec.update(options=list(previous[0]),options_state=previous[1])

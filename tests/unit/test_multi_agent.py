@@ -1,6 +1,7 @@
 """Multi-agent validator: the Summary's own checks."""
 
 from jobagent.steps import multi_agent as M
+import pytest
 
 
 def _review_fixture():
@@ -96,6 +97,13 @@ def test_review_context_and_fingerprint_agree_on_displayed_variants(tmp_path, mo
     st["ranked"][0]["short"] = "Changed visible text. Still two sentences."
     (tmp_path / "projects.json").write_text(json.dumps(st))
     assert M._content_hash(ctx, f) != fingerprint
+
+
+@pytest.mark.parametrize('limit,claimed,exceeds',[(5,'5.5',True),(5,'6.2',True),(5,'4.5',False),(0,'0.5',True)])
+def test_declared_experience_ceiling_covers_fractional_and_zero_years(monkeypatch,limit,claimed,exceeds):
+    monkeypatch.setattr(M.T,'declared_claims',lambda:{'years_experience':limit})
+    issues=M.summary_issues(f'Engineer with {claimed} years of experience.',False)
+    assert any('more than the declared' in issue for issue in issues)==exceeds
 
 
 def test_optional_non_skill_findings_do_not_trigger_automatic_rewrites(tmp_path, monkeypatch):

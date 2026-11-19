@@ -297,6 +297,29 @@ def test_summary_review_receives_current_date_and_target_company_context(tmp_pat
     assert models['review:skills']==models['review:experience']=='m'
 
 
+@pytest.mark.parametrize('summary,masked',[
+    ('Engineer with 3+ years of professional experience in Python.',True),
+    ('Engineer with 3 years of Python experience.',False)])
+def test_semantic_review_separates_code_checked_generic_tenure_from_substantive_claims(tmp_path,monkeypatch,summary,masked):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(M.T,'facts_block',lambda:'Owner policy')
+    monkeypatch.setattr(M.T,'declared_claims',lambda:{'years_experience':5})
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace())
+    seen=[]
+    def inspect(cache,stage,model_name,model,schema,messages,**kwargs):
+        if stage=='review:summary':seen.append(json.loads(messages[1].content))
+        return M.Review(findings=[])
+    monkeypatch.setattr(I,'invoke',inspect)
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
+         'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None}
+    filled=M.T.Filled.model_construct(summary=summary,roles=[],skills=[])
+    review(ctx,filled)
+    assert ('owner-declared experience' in seen[0]['summary'])==masked
+    assert 'Python' in seen[0]['summary'] and filled.summary==summary
+    assert M.summary_issues('Engineer with 6.2 years of experience.',False)
+
+
 @pytest.mark.parametrize('changed',['resume.tex','jd.json','company'])
 def test_cover_letter_refuses_changed_inputs_without_discarding_owner_edits(tmp_path,monkeypatch,changed):
     from jobagent.steps import tailor as S

@@ -104,6 +104,14 @@ def test_a_transient_readback_error_is_not_an_unavailable_search_choice(tmp_path
     assert key(field) in filler.unavailable_choices
 
 
+def test_menu_placeholder_disappearance_is_not_a_new_instruction(tmp_path):
+    f=Field(1,'combobox','School',help='Select...',options=['Other'],options_state='partial')
+    filler,_=world(tmp_path,[f]);before=filler.signature(f)
+    assert filler.signature(replace(f,help=''))==before
+    assert filler.signature(replace(f,help='Select an option'))==before
+    assert filler.signature(replace(f,help='Select only your most recent school'))!=before
+
+
 def test_corrupt_checkpoint_is_a_miss(tmp_path):
     (tmp_path/'decisions.json').write_text('{broken')
     filler, view = world(tmp_path)
