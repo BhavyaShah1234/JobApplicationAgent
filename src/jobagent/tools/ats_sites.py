@@ -679,15 +679,16 @@ def upload_name() -> str:
     return "_".join(re.sub(r"[^A-Za-z0-9-]", "", p) for p in parts + ["Resume"]) + ".pdf"
 
 
-def record(job_dir: Path, site: str, rnd: int, score: float | None, missing: list[str], raw: dict) -> None:
+def record(job_dir: Path, site: str, rnd: int, score: float | None, missing: list[str], raw: dict, *, identity=None) -> None:
     """One row in ats_runs for this resume version."""
     import hashlib
     import json
 
     from jobagent import db
     from jobagent.tools import ats_result
-    sha = hashlib.sha256((job_dir / "resume.pdf").read_bytes()).hexdigest()
-    raw = {**raw, "job_fingerprint": ats_result.identity(job_dir)[1]}     # every row, manual ones too, names its PDF and its job
+    sha, fingerprint = identity if identity is not None else (
+        hashlib.sha256((job_dir / "resume.pdf").read_bytes()).hexdigest(), ats_result.identity(job_dir)[1])
+    raw = {**raw, "job_fingerprint": fingerprint}     # captured inputs when supplied; every row names its PDF and job
     with (conn := db.connect()):
         conn.execute("INSERT INTO ats_runs (job_dir, site, round, score, missing, raw, resume_sha) "
                      "VALUES (?, ?, ?, ?, ?, ?, ?)",

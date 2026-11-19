@@ -87,13 +87,15 @@ APPLICANT_WORDS = re.compile(r"(?i)^(applicants?|candidates?|people|persons?|ind
                              r"our|employees?|hires?|talent|job ?seekers?|employment|equal|opportunity)$")
 
 
-def evaluate(job_dir: Path, jd: JobDescription, jd_text: str, rnd: int, sites, log=print) -> dict:
+def evaluate(job_dir: Path, jd: JobDescription, jd_text: str, rnd: int, sites, log=print, *, snapshot=None) -> dict:
     """Score the resume on `sites` and record each in ats_runs. Returns {"scores", "missing" (per site: keywords and
     phrases to work in), "advice" (the sites' suggestions), "template" (advice about locked template parts)}."""
     out = {"scores": {}, "missing": {}, "advice": [], "advice_by_site": {}, "template": [], "keep": [], "completed": []}
-    for s in ats_sites.score_all(job_dir / "resume.pdf", jd_text, sites, jd.title or "", log=log,
+    pdf = Path(snapshot['resume']) if snapshot else job_dir / 'resume.pdf'
+    for s in ats_sites.score_all(pdf, jd_text, sites, jd.title or "", log=log,
                                  company=jd.company) if sites else []:
-        ats_sites.record(job_dir, s.site, rnd, s.score, s.missing, s.to_dict())
+        ats_sites.record(job_dir, s.site, rnd, s.score, s.missing, s.to_dict(),
+                         **({'identity':snapshot['identity']} if snapshot else {}))
         if s.score is None and not s.breakdown.get("feedback_only"):
             continue
         out["completed"].append(s.site)

@@ -90,9 +90,29 @@ def final_panel(ctx, state, sites, refine=False):
         raw = ctx['job_dir']/'jd.txt'
         if raw.exists() and raw.read_text()!=ctx['jd_text']:
             raise RuntimeError('JD changed before final ATS scoring')
+        metadata = ctx['job_dir']/'jd.json'
+        if metadata.exists() and ctx['jd'] is not None:
+            from jobagent.state import JobDescription
+            actual = JobDescription.model_validate_json(metadata.read_text())
+            if actual != ctx['jd']:
+                raise RuntimeError('JD metadata changed before final ATS scoring')
         before = identity()
         started = time.monotonic()
-        ev = M.A.evaluate(ctx['job_dir'], ctx['jd'], ctx['jd_text'], round_no, sites, ctx['log'])
+        import tempfile
+        import hashlib
+        private = ctx['job_dir']/'.incremental'
+        private.mkdir(exist_ok=True,mode=0o700)
+        with tempfile.TemporaryDirectory(prefix='ats-input-',dir=private) as directory:
+            frozen = Path(directory)
+            content = (ctx['job_dir']/'resume.pdf').read_bytes()
+            (frozen/'resume.pdf').write_bytes(content)
+            for name in ('resume.tex','filled.json','projects.json'):
+                path=ctx['job_dir']/name
+                if path.exists():(frozen/name).write_bytes(path.read_bytes())
+            fingerprint=ats_sites.job_fingerprint(ctx['jd_text'],ctx['jd'].title or '',ctx['jd'].company)
+            snapshot={'resume':frozen/'resume.pdf',
+                      'identity':(hashlib.sha256(content).hexdigest(),fingerprint)}
+            ev = M.A.evaluate(ctx['job_dir'], ctx['jd'], ctx['jd_text'], round_no, sites, ctx['log'],snapshot=snapshot)
         after = identity()
         if before != after:
             raise RuntimeError('resume or JD changed during final ATS scoring')

@@ -44,7 +44,7 @@ class AdaptiveFiller(PlannedFiller):
         self._live = None
         package = Path(__file__).parent
         self.implementation = digest({'code':{name:(package/name).read_text() for name in
-            ('adaptive.py','adaptive_view.py','planned.py','routing.py','facts.py','discovery.py','live_view.py')},
+            ('adaptive.py','adaptive_view.py','planned.py','routing.py','facts.py','discovery.py','live_view.py','adapter.py')},
             'model':getattr(self.model,'model_name','')})
         if checkpoint_path:
             try:

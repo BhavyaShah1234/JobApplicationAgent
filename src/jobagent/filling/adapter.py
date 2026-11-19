@@ -89,23 +89,47 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                settings.data_dir/'master_profile.yaml',job/'jd.json',job/'jd.txt',job/'resume.tex',
                job/'resume.pdf',job/'cover_letter.pdf',job/'application'/'answers.md',
                settings.state_dir/'companies'/f"{env.get('company','')}.md"]
-        stamp=digest({'date':now().date().isoformat(),'files':{
-            str(p):hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None for p in paths}})
+        file_hashes={str(p):hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None for p in paths}
+        today=now().date().isoformat()
+        stamp=digest({'date':today,'files':file_hashes})
         previous=ctx.get('_adaptive_source_stamp')
         if previous and stamp!=previous:
-            fresh=A.context(job,env.get('company',''))
-            original=ctx.get('_jd',{})
-            if any(fresh.get('_jd',{}).get(k)!=original.get(k) for k in ('company','source_url','apply_url')):
-                raise ValueError('Job identity changed during filling; restart this application')
-            ctx.update(fresh)
+            old_files=ctx.get('_adaptive_file_hashes',{})
+            learned_path=str(settings.data_dir/'learned.yaml')
+            core_changed=any(value!=old_files.get(name) for name,value in file_hashes.items() if name!=learned_path)
+            core_changed=core_changed or today!=ctx.get('_adaptive_source_date')
+            current=ctx.get('_experimental_filler')
+            if core_changed:
+                if current and any(step<page_no for step,_ in current.record_state):
+                    raise ValueError('Source inputs changed after an earlier page was filled; restart to reconcile every page')
+                fresh=A.context(job,env.get('company',''))
+                original=ctx.get('_jd',{})
+                if any(fresh.get('_jd',{}).get(k)!=original.get(k) for k in ('company','source_url','apply_url')):
+                    raise ValueError('Job identity changed during filling; restart this application')
+                ctx.update(fresh)
+                if ctx.get('_application_address'):
+                    ctx.pop('_personal_address',None)
+                    application_address.prepare(ctx,env['out_dir'],model,log)
             for name in ('_experimental_compiled_facts','_experimental_learned_entries',
                          '_experimental_learned_retrieval','_experimental_learned_facts'):
                 ctx.pop(name,None)
-            current=ctx.get('_experimental_filler')
             if current:
+                external=core_changed
+                external=external or (file_hashes.get(learned_path)!=old_files.get(learned_path) and
+                    file_hashes.get(learned_path)!=ctx.get('_adaptive_own_learned_sha'))
+                if external:
+                    # A newer owner source must not be silently overridden by
+                    # an earlier in-memory human literal. Independent compiled
+                    # facts remain cached and are invalidated by their own hash.
+                    current.session_facts.clear();current.session_fact_steps.clear();current.human_answers.clear()
+                    for field_key,decision in list(current.cache.items()):
+                        if decision.source=='human' or decision.fact_id.startswith('human:'):
+                            current.cache.pop(field_key,None)
                 current.narrative_sources.update({name:ctx.get(key,'') for name,key in
                     [('resume','RESUME'),('jd','_jd_text'),('company','COMPANY'),('cover_letter','COVER_LETTER')]})
         ctx['_adaptive_source_stamp']=stamp
+        ctx['_adaptive_source_date']=today
+        ctx['_adaptive_file_hashes']=file_hashes
         current=ctx.get('_experimental_filler')
         if current:current.source_version=stamp
 
@@ -215,6 +239,8 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                 values[str(q['id'])]=text
             ctx.pop('_experimental_learned_entries',None)
             ctx.pop('_experimental_learned_retrieval',None)
+        if ctx.get('_filling_strategy')=='adaptive' and learned.path().is_file():
+            ctx['_adaptive_own_learned_sha']=hashlib.sha256(learned.path().read_bytes()).hexdigest()
         return values
 
     filler=ctx.get('_experimental_filler')

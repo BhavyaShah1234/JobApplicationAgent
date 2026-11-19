@@ -63,11 +63,13 @@ def panel_world(tmp_path,monkeypatch,scores):
     from jobagent.steps import multi_agent as M
     (tmp_path/'resume.pdf').write_bytes(b'valid-pdf-fixture')
     seen=[]
-    def evaluate(job,jd,text,rnd,sites,log):
+    def evaluate(job,jd,text,rnd,sites,log,**kwargs):
         seen.append((rnd,sites))
         return {'scores':scores,'missing':{},'advice':[],'completed':list(scores)}
     monkeypatch.setattr(M.A,'evaluate',evaluate)
-    ctx={'job_dir':tmp_path,'jd':None,'jd_text':'Exact JD','log':lambda _:None,'sites':(),'incremental':True}
+    from jobagent.state import JobDescription
+    ctx={'job_dir':tmp_path,'jd':JobDescription(company='Fixture',title='Engineer'),'jd_text':'Exact JD',
+         'log':lambda _:None,'sites':(),'incremental':True}
     state={'ctx':ctx,'best':{'scores':{},'f':None,'hard':[],'layout':0}}
     return ctx,state,seen
 
@@ -82,7 +84,7 @@ def test_final_panel_once_without_refinement_and_missing_provider_stays_incomple
 def test_ats_detects_mutation_of_the_scored_pdf(tmp_path,monkeypatch):
     from jobagent.steps import multi_agent as M
     ctx,state,seen=panel_world(tmp_path,monkeypatch,{'hireflow':80})
-    def mutate(*a):
+    def mutate(*a,**kwargs):
         (tmp_path/'resume.pdf').write_bytes(b'other')
         return {'scores':{'hireflow':80}}
     monkeypatch.setattr(M.A,'evaluate',mutate)
@@ -94,6 +96,32 @@ def test_changed_jd_is_rejected_before_an_upload(tmp_path,monkeypatch):
     (tmp_path/'jd.txt').write_text('Changed posting')
     with pytest.raises(RuntimeError,match='before'):final_panel(ctx,state,('hireflow',))
     assert not seen
+
+
+def test_mutation_cannot_relabel_an_immutable_scan_as_the_new_resume_and_jd(tmp_path,monkeypatch):
+    import hashlib,sqlite3
+    from jobagent import db
+    from jobagent.steps import ats as A
+    from jobagent.tools import ats_sites,ats_result
+    from jobagent.state import JobDescription
+    conn=sqlite3.connect(':memory:');conn.row_factory=sqlite3.Row
+    conn.execute('CREATE TABLE ats_runs(id INTEGER PRIMARY KEY,job_dir TEXT,site TEXT,round INTEGER,score REAL,missing TEXT,raw TEXT,resume_sha TEXT)')
+    monkeypatch.setattr(db,'connect',lambda:conn)
+    jd=JobDescription(company='Fixture',title='Engineer')
+    (tmp_path/'jd.json').write_text(jd.model_dump_json());(tmp_path/'jd.txt').write_text('Old posting')
+    (tmp_path/'resume.pdf').write_bytes(b'Old PDF')
+    frozen=tmp_path/'frozen.pdf';frozen.write_bytes(b'Old PDF')
+    sha=hashlib.sha256(b'Old PDF').hexdigest();fingerprint=ats_sites.job_fingerprint('Old posting','Engineer','Fixture')
+    def scan(path,*args,**kwargs):
+        assert path.read_bytes()==b'Old PDF'
+        (tmp_path/'resume.pdf').write_bytes(b'New PDF');(tmp_path/'jd.txt').write_text('New posting')
+        yield ats_sites.SiteScore('hireflow',88,True)
+    monkeypatch.setattr(ats_sites,'score_all',scan)
+    A.evaluate(tmp_path,jd,'Old posting',0,('hireflow',),lambda _:None,
+               snapshot={'resume':frozen,'identity':(sha,fingerprint)})
+    row=conn.execute('SELECT * FROM ats_runs').fetchone()
+    assert row['resume_sha']==sha and json.loads(row['raw'])['job_fingerprint']==fingerprint
+    assert ats_result.gather(tmp_path,('hireflow',),conn=conn)['average'] is None
 
 
 def test_letter_cannot_transfer_metric_to_another_employer(monkeypatch):
