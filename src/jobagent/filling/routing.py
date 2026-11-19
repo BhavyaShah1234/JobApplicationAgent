@@ -93,7 +93,7 @@ def family(text):
       ('phone',forms.PHONE_CODE_Q.pattern+r'|\bphone\b|telephone|\bmobile\b'),
       ('preferred_name',r'preferred name|what.*call you|nickname'),
       ('legal_name',r'legal name|^full name$|^name$|^typed signature$|^electronic signature$'),
-      ('location',r'current location|where.*(?:located|based)|location city|city.*state.*resid'),
+      ('location',r'^location$|current location|where.*(?:located|based)|location city|city.*state.*resid'),
     ]
     return next((kind for kind,pat in rules if re.search(pat,q)), 'other')
 
@@ -105,6 +105,15 @@ class Route:
     sources:list[str]
     fact_ids:list[str]
     reason:str=''
+
+
+def field_family(field):
+    """Use explicit office guidance to disambiguate a bare contact-style Location."""
+    if not entity_scope(field.section) and norm(field.label)=='location' and re.search(
+            r'\boffice\b|\b(?:job|position|preferred work) locations?\b',
+            norm(field.section+' '+field.help)):
+        return 'office_preferences'
+    return family(field.label)
 
 
 def fact_family(fact):
@@ -264,7 +273,7 @@ def needs_entity_binding(label,section='',help_text='',kind=''):
 
 
 def candidates(field,facts):
-    kind=family(field.label)
+    kind=field_family(field)
     projected=education_query_facts(field,facts,kind)
     if projected is not None:return projected
     allowed=[x for x in facts if scope_allows(field,x)]
@@ -279,6 +288,10 @@ def candidates(field,facts):
                     'location':{'city','state','country','location','address'}}
         if kind in components:
             return [x for x in allowed if not x.record and any(norm(a) in components[kind] for a in x.aliases)]
+    if kind in ('country','location') and (group:=entity_scope(field.section)):
+        components={'country'} if kind=='country' else {'city','state','country','location','address'}
+        return [x for x in allowed if entity_scope(x.section)==group and
+                (x.record or any(norm(a) in components for a in x.aliases))]
     if kind=='current_title':
         values=[x for x in allowed if x.section=='Work Experience 1' and not x.record and any(norm(a)=='job title' for a in x.aliases)]
         if values:return values
@@ -292,6 +305,10 @@ def candidates(field,facts):
     if exact:
         sheet=[x for x in exact if x.id.startswith('application.answer.')]
         return sheet or exact
+    if kind=='location' and party=='applicant' and not entity_scope(field.section):
+        city=[x for x in allowed if not x.record and any(
+            norm(a)=='current location city' for a in x.aliases)]
+        if city:return city
     if kind=='phone' and forms.PHONE_CODE_Q.search(field.label):
         # Reworded dial-code questions need the code component, not the phone
         # number/device/extension or the entire record. Its variants retain
@@ -318,7 +335,7 @@ def candidates(field,facts):
 
 
 def route(field,facts):
-    kind=family(field.label);found=[x for x in candidates(field,facts) if same_qualification(field,x)]
+    kind=field_family(field);found=[x for x in candidates(field,facts) if same_qualification(field,x)]
     # A portal may call a country selector simply 'location'. Its actual
     # catalogue disambiguates the answer type before choosing a source.
     catalogue={norm(o) for o in field.options}

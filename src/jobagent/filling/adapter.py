@@ -160,9 +160,9 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
     def prepare(fields):
         refresh_adaptive_sources()
         matches=A.match_entries(fields,ctx.get('_jd',{}).get('company',''),ctx.get('_applicant') or {})
-        from .routing import family
+        from .routing import family,field_family
         address_needed=any(e.get('question') in {'Current address','Current location (city)'} for _,e in matches.values()) or any(
-            f.kind in ('text','combobox','select') and family(f.label)=='location' for f in fields)
+            f.kind in ('text','combobox','select') and field_family(f)=='location' for f in fields)
         if env.get('out_dir') and not ctx.get('_application_address') and address_needed:
             application_address.prepare(ctx,env['out_dir'],model,log)
         if '_experimental_compiled_facts' not in ctx:

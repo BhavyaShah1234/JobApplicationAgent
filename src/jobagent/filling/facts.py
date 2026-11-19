@@ -73,6 +73,7 @@ ENTITY_COMPONENTS = {
     'phone country','phone country code','country phone code','dial code','phone device type','phone extension',
     'skills','technical skills',
     'address','street address','address line 1','address line 2','city','town','state','province',
+    'location','current location','current location city',
     'region','country','zip','zip code','postal code','post code','pincode','language','languages','years of relevant experience','years of experience',
 }
 

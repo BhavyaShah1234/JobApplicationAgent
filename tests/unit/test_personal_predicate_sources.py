@@ -19,6 +19,34 @@ VISA='11a) * Are you now, or have you in the past, been on a J-1 or J-2 exchange
 def no_ask(questions):raise AssertionError(questions)
 
 
+def test_bare_contact_location_uses_the_prepared_city_without_a_model_or_question():
+    facts=compile_facts({'contact':[
+        {'question':'Current location (city)','answer':'Sunnyvale, California'},
+        {'question':'Current address','answer':{'city':'Sunnyvale','state':'California','country':'United States'}},
+    ]},'')
+    f=Field(0,'combobox','Location',required=True,section='Autofill from resume',options_state='partial')
+    filler=PlannedFiller(facts,no_ask,model=object())
+    filler.invoke=lambda *a,**kw:pytest.fail('A prepared city needs no model lookup')
+    decision=filler.plan([f])[0]
+    assert decision.value=='Sunnyvale, California' and 'Current location (city)' in decision.fact_id
+
+
+def test_bare_location_preserves_country_office_and_employment_scope():
+    from jobagent.filling.routing import route,candidates
+    facts=compile_facts({'contact':[
+        {'question':'Current location (city)','answer':'Sunnyvale, California'},
+        {'question':'Current address','answer':{'country':'United States'}},
+    ]},'')
+    country=Field(0,'select','Location',options=['Canada','India','Japan','United States'])
+    assert route(country,facts).family=='country'
+    office=Field(0,'combobox','Location',help='Select the office location for this position')
+    assert route(office,facts).family=='office_preferences'
+    employer=Field(0,'text','Location',section='Work Experience 1',help='Office location')
+    assert route(employer,facts).family=='location'
+    assert not any('Current location (city)' in f.id for f in candidates(employer,facts))
+    assert PlannedFiller(facts,no_ask).plan([employer],allow_human=False)[0].value is None
+
+
 def field(label):
     return Field(0,'textarea' if label==COUNTRIES else 'combobox',label,required=True,
                  options=[] if label==COUNTRIES else ['Yes','No'],options_state='complete')
