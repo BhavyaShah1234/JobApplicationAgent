@@ -70,7 +70,7 @@ def experience_schema(r: T.Resume) -> type[BaseModel]:
         A pydantic model class with `role_0 ... role_N` and `notes`.
     """
     fields = {f"role_{i}": (list[T.FillBullet], Field(min_length=T.MIN_BULLETS, max_length=T.MAX_BULLETS,
-                                                      description=f"Bullets for: {role.title} at {role.company}"))
+                                                      description=f"Use {T.MIN_BULLETS}-{T.MAX_BULLETS} bullets for {role.title} at {role.company}; do not omit this role"))
               for i, role in enumerate(r.roles)}
     fields["notes"] = (str, Field(max_length=600, description="How duties were distributed across roles"))
     return create_model("ExperienceOut", **fields)

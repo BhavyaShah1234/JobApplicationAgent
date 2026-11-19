@@ -35,7 +35,7 @@ class ProjectEntry(BaseModel):
 
 class Projects(BaseModel):
     projects: list[ProjectEntry] = Field(min_length=MIN_PROJECTS, max_length=MAX_PROJECTS)
-    notes: str = Field(max_length=500, description="Why these projects for this job")
+    notes: str = Field(max_length=500, description="One brief sentence explaining the selection, at most 300 characters")
 
 
 PROMPT = """You choose the projects for the Projects section of a resume tailored to one job posting, from cards
