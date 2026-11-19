@@ -41,6 +41,7 @@ MAX_LLM_CHARS = 24_000
 EXTRACT_PROMPT = """You extract job postings into a schema. Rules:
 - Copy facts from the posting; never invent or infer pay, locations, sponsorship or requirements that aren't stated.
 - Unknown → null or an empty list.
+- title: use the exact posting heading, retaining seniority and level/grade numbers; do not shorten it to a generic title in the description.
 - One list item per bullet/requirement, lightly trimmed, keeping the posting's wording.
 - technical_skills: concrete technologies, languages, frameworks, tools and platforms named anywhere in the posting.
 - Separate basic/minimum/required qualifications from preferred/nice-to-have ones as the posting does.
@@ -108,6 +109,35 @@ def _fill_from_jsonld(jd: JobDescription, posting: dict) -> None:
     org = posting.get("hiringOrganization")
     if not jd.company and isinstance(org, dict) and org.get("name"):
         jd.company = str(org["name"])
+
+
+def _posting_headings(page: Page) -> list[str]:
+    """Read visible primary headings outside a description-only selector.
+
+    Nested secondary headings (often locations) are separate context, not part
+    of the title. This does not alter the verbatim description saved in jd.txt.
+    """
+    return page.eval_on_selector_all('h1,[role=heading][aria-level="1"]', r'''es=>[
+      ...new Set(es.filter(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);
+        return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0';}).map(e=>{
+        const text=(n,root=false)=>{
+          if(n.nodeType===Node.TEXT_NODE)return n.textContent;
+          if(n.nodeType!==Node.ELEMENT_NODE || (!root&&n.matches('h2,h3,h4,h5,h6,[role=heading]')))return '';
+          const s=getComputedStyle(n);
+          if(n.hidden||n.getAttribute('aria-hidden')==='true'||s.display==='none'||s.visibility==='hidden'||s.opacity==='0')return '';
+          return [...n.childNodes].map(c=>text(c)).join(' ');
+        };
+        return text(e,true).replace(/\s+/g,' ').trim().slice(0,500);
+      }).filter(Boolean))].slice(0,8)''')
+
+
+def _retain_heading_grade(jd: JobDescription, headings: list[str]) -> None:
+    """Restore an explicitly displayed grade when extraction kept only its base title."""
+    normalize=lambda text:re.sub(r'\s+',' ',str(text)).strip().casefold()
+    base=normalize(jd.title)
+    if not base:return
+    compatible=[h for h in headings if re.fullmatch(re.escape(base)+r'\s+(?:[1-9]\d*|i{1,3}|iv|v|vi{1,3}|ix|x)',normalize(h))]
+    if len(compatible)==1:jd.title=compatible[0]
 
 
 def _best_text(page: Page, remembered: str | None) -> tuple[str | None, str]:
@@ -374,7 +404,9 @@ def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
             blocks += [jdtext.Block("h", f"Attachment: {label}")] + [
                 jdtext.Block("p", line.strip()) for line in attached.splitlines() if line.strip()]
         memory.note("postings can link the job description as a file")
-    source = (_jsonld_text(posting).split("[description]")[0] + "\n" if posting else "") + f"[job description]\n{jd_text}"
+    headings = _posting_headings(page)
+    source = ('[visible primary headings]\n'+json.dumps(headings)+'\n' if headings else '') + \
+        (_jsonld_text(posting).split("[description]")[0] + "\n" if posting else "") + f"[job description]\n{jd_text}"
     messages = [SystemMessage(with_today(EXTRACT_PROMPT)), HumanMessage(f"Posting URL: {url}\n\n{source[:MAX_LLM_CHARS]}")]
     # The fast model (~8x quicker, same quality in the benchmark) does the extraction; the large one is the
     # fallback when it errors or misses title/company/locations.
@@ -388,6 +420,7 @@ def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
     if jd is None or not (jd.title and jd.company and jd.locations):
         jd = llm.structured(JobDescription, "planner").invoke(messages)
         memory.note("fast model missed core fields; planner model used")
+    _retain_heading_grade(jd,headings)
     jd.source_url, jd.portal = url, portal
     jd.apply_url = jd.apply_url or (posting or {}).get("url") or url
     # Sections of jd.txt, labelled by the fast model (content, not just heading wording), fill the lists verbatim.

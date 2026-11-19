@@ -75,6 +75,14 @@ FIELDS_JS = r"""(start) => {
   walk(document);
   const all = sel => roots.flatMap(r => [...r.querySelectorAll(sel)]);
   const anchor = e => { let x = e; while (x.getRootNode() instanceof ShadowRoot) x = x.getRootNode().host; return x; };
+  const mediaControl = e => {
+    // Media Chrome / native player controls remain media controls across their
+    // author shadow roots. An ordinary application slider is still a field.
+    for(let a=e;a;a=a.parentElement || a.getRootNode()?.host){
+      if(a.matches?.('video,audio,media-controller,media-time-range,media-volume-range,mux-player'))return true;
+    }
+    return false;
+  };
   const byIds = (ids, ctx) => clean((ids || '').split(/\s+/).map(i => (ctx ? ctx.getRootNode() : document).getElementById(i))
       .filter(Boolean).map(x => caption(x)).join(' '));
   const ownText = e => { const l = e.closest('label'); return l ? caption(l) : ''; };
@@ -373,7 +381,7 @@ FIELDS_JS = r"""(start) => {
       const l = e.closest('label') || (e.id && e.getRootNode().querySelector(`label[for="${CSS.escape(e.id)}"]`));
       if (!l || !vis(l)) continue; }
     if (!shown(seenBox) && !(t === 'radio' || t === 'checkbox')) continue;
-    if (e.closest('[data-jf-skip], header, nav, [role=banner], [data-automation-id=navigationContainer]')) continue;
+    if (mediaControl(e) || e.closest('[data-jf-skip], header, nav, [role=banner], [data-automation-id=navigationContainer]')) continue;
     if (e.closest('[data-automation-id=promptOption], [data-automation-id=activeListContainer], [role=option]')) continue;  // inside an open option list
     // a group is the boxes sharing a name inside one question (Workday repeats a name in every work-experience entry)
     const scope = e.closest('fieldset, [role=group], [role=radiogroup], [data-automation-id^=formField-], .application-question') || e.getRootNode();
@@ -1137,8 +1145,18 @@ def locate(view: PageView, f: Field):
     return loc
 
 
-def _open_options(frame: Frame, loc, page: Page) -> list[str]:
+def _scroll_to_control(loc):
+    """Prepare the viewport without smooth-scroll stalls across embedded forms.
+
+    This scrolls only; Playwright still enforces visibility, stability and normal
+    click/fill actionability. Hidden or moving controls are never forced.
+    """
+    loc.evaluate("e=>e.scrollIntoView({behavior:'instant',block:'center',inline:'nearest'})")
     loc.scroll_into_view_if_needed(timeout=5000)
+
+
+def _open_options(frame: Frame, loc, page: Page) -> list[str]:
+    _scroll_to_control(loc)
     loc.click(timeout=8000)
     try:
         # Other closed pickers can retain hidden option nodes. Wait for actual
@@ -1390,7 +1408,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 except Exception:pass
             page.wait_for_timeout(500)
         raise FillError(f"{name} was attached but the page never showed it")
-    loc.scroll_into_view_if_needed(timeout=5000)
+    _scroll_to_control(loc)
     if f.calendar:return fill_calendar(page,view,f,answer)
     if f.kind == "text" and loc.evaluate("e => /location|city|place|autocomplete/i.test([e.name, e.id, e.className, "
                                          "e.getAttribute('data-qa')].join(' ')) || !!e.getAttribute('aria-autocomplete')"):

@@ -63,6 +63,10 @@ current date facts along with the other watched inputs.
 An external source change after earlier wizard pages were filled stops the run
 for reconciliation, rather than certifying answers on pages no longer visible.
 Readback acceptance uses a bounded state poll rather than three fixed delays.
+Embedded controls receive an ordinary instant scroll before Playwright's normal
+actionability checks, avoiding observed smooth-scroll stability timeouts. This
+does not force clicks or expose hidden controls. Media-player controls are
+excluded through their composed media container, while application sliders remain.
 An unopened partial menu retains its last observed vocabulary for decision scope;
 only a newly observed vocabulary changes that scope. Generic menu placeholders
 such as Select... are excluded from decision help, so selecting a value does not
@@ -84,6 +88,10 @@ application link without executing its handler. Controls belonging to a form
 with visible fields remain excluded; fragment/script addresses cannot use this
 path. A button's nonstandard `href` is not a native link: some menu flows publish
 an inert fallback there and require their own supported entry mechanism.
+Scraping supplies visible primary headings independently of description-only
+selectors and preserves a unique explicitly displayed role grade. Nested
+location headings and hidden text do not become title content; `jd.txt` retains
+the original description.
 
 `application/adaptive-v1.json` stores serializable accepted decisions and field
 schemas. Restoration requires unique matching semantics and current evidence;
