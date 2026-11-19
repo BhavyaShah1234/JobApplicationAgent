@@ -110,3 +110,26 @@ def test_profile_file_change_reloads_evidence_and_updates_only_the_changed_answe
     assert world.page.locator('#e').input_value()=='new@example.test'
     assert world.page.locator('#f').input_value()=='Casey'
     assert context['_experimental_filler'].questions==before
+
+
+def test_contacts_csv_change_refreshes_the_referral_and_date_context(world,monkeypatch):
+    from jobagent.filling.adapter import fill_page
+    from jobagent.config import get_settings
+    world.setup(CONTACT);world.page.goto('https://fixture.test/apply')
+    path=get_settings().data_dir/'asu_contacts.csv';path.write_text('First contact')
+    original=A.context
+    def context(*args):
+        fresh=original(*args)
+        fresh.update(REFERRAL={'name':path.read_text(),'email':'employee@example.test'},
+                     TODAY='2026-11-19',DATE_FACTS='Dates for '+path.read_text())
+        return fresh
+    monkeypatch.setattr(A,'context',context)
+    ctx=context(world.job,'fixture');ctx['_filling_strategy']='adaptive'
+    out=world.job/'application';out.mkdir();env={'out_dir':out,'company':'fixture'}
+    fill_page(world.page,ctx,{},SourceModel(),lambda _:None,[],1,env)
+    path.write_text('New contact')
+    fill_page(world.page,ctx,{},SourceModel(),lambda _:None,[],1,env)
+    filler=ctx['_experimental_filler']
+    assert filler.referral_context['contact']['name']=='New contact'
+    assert filler.narrative_sources['date_facts']=='Dates for New contact'
+    assert filler.questions==0 and world.page.locator('#e').input_value()=='casey@example.test'

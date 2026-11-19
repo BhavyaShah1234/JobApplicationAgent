@@ -77,6 +77,37 @@ def test_document_transport_preference_is_a_cache_dependency(tmp_path,monkeypatc
     assert calls==['function_calling','json_mode']
 
 
+def test_cache_hits_do_not_wait_for_a_reasoner_dispatch_slot(tmp_path,monkeypatch):
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:Output(text='done'))
+    invoke(ArtifactCache(tmp_path),'review','m',object(),Output,[HumanMessage('q')])
+    class Occupied:
+        def __enter__(self):raise AssertionError('a cache hit must not acquire the provider dispatch lock')
+        def __exit__(self,*args):pass
+    assert invoke(ArtifactCache(tmp_path),'review','m',object(),Output,[HumanMessage('q')],request_lock=Occupied()).text=='done'
+
+
+def test_long_reasoner_reviews_dispatch_serially_while_other_reviews_remain_independent(tmp_path,monkeypatch):
+    import threading,time
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import incremental_documents as I
+    monkeypatch.setattr(M.T,'facts_block',lambda:'Owner policy')
+    monkeypatch.setattr(I.llm,'writer',lambda *a,**kw:SimpleNamespace(model_name=kw['model']))
+    lock=threading.Lock();active=0;peak=0;calls=[]
+    def generate(model,schema,messages,**kwargs):
+        nonlocal active,peak
+        if model.model_name==I.get_settings().model_planner:
+            with lock:active+=1;peak=max(peak,active);calls.append(model.model_name)
+            time.sleep(.02)
+            with lock:active-=1
+        return M.Review(findings=[])
+    monkeypatch.setattr(I.llm,'structured_invoke',generate)
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
+         'models':{'router':'cheap-reviewer'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None}
+    review(ctx,M.T.Filled.model_construct(summary='Engineer.',roles=[],skills=[]))
+    assert peak==1 and len(calls)==2
+
+
 def test_semantically_unbound_outputs_do_not_enter_the_cache(tmp_path,monkeypatch):
     from jobagent.tools import incremental_documents as I
     monkeypatch.setattr(I.llm,'structured_invoke',lambda *a,**kw:Output(text='unbound'))

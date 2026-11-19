@@ -43,6 +43,10 @@ Narrative-backed answers also depend on their documents. Source-file changes
 reload context once per change; a change of posting identity stops filling.
 Independent accepted answers survive a changed neighbouring field. Before each
 dispatch the planner checks that the live field still matches its decision.
+Literal human replies retain their own question/help/choice scope; two equally
+labelled questions cannot overwrite each other's fact ID. Changed scope reopens
+a declined question. Referral CSV/alias edits refresh the referral context and
+current date facts along with the other watched inputs.
 An external source change after earlier wizard pages were filled stops the run
 for reconciliation, rather than certifying answers on pages no longer visible.
 Readback acceptance uses a bounded state poll rather than three fixed delays.
@@ -97,6 +101,8 @@ Both validator model identities and provider/transport configuration participate
 in workflow invalidation. Full incremental experience drafts prefer JSON mode
 after repeated live tool/schema retries; the shared bounded fallbacks remain in
 place. This preference does not change the current strategy.
+Long factual review requests share one provider dispatch slot after cache lookup;
+cheap reviews remain parallel. Queue wait is recorded separately in stage metrics.
 
 The external ATS panel runs after local resume validation, using the configured
 providers and their existing repeats, quotas and feedback-only distinctions.

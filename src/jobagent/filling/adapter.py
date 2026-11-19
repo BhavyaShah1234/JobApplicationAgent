@@ -86,7 +86,8 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         from jobagent.tools.artifact_cache import digest
         settings=get_settings();job=Path(env['out_dir']).parent
         paths=[settings.data_dir/'applicant.yaml',settings.data_dir/'learned.yaml',
-               settings.data_dir/'master_profile.yaml',job/'jd.json',job/'jd.txt',job/'resume.tex',
+               settings.data_dir/'master_profile.yaml',settings.data_dir/'asu_contacts.csv',
+               settings.data_dir/'company_aliases.yaml',job/'jd.json',job/'jd.txt',job/'resume.tex',
                job/'resume.pdf',job/'cover_letter.pdf',job/'application'/'answers.md',
                settings.state_dir/'companies'/f"{env.get('company','')}.md"]
         file_hashes={str(p):hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None for p in paths}
@@ -126,7 +127,10 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                         if decision.source=='human' or decision.fact_id.startswith('human:'):
                             current.cache.pop(field_key,None)
                 current.narrative_sources.update({name:ctx.get(key,'') for name,key in
-                    [('resume','RESUME'),('jd','_jd_text'),('company','COMPANY'),('cover_letter','COVER_LETTER')]})
+                    [('resume','RESUME'),('jd','_jd_text'),('company','COMPANY'),('cover_letter','COVER_LETTER'),
+                     ('today','TODAY'),('date_facts','DATE_FACTS')]})
+                current.referral_context = {'company':ctx.get('_jd',{}).get('company',''),
+                                            'contact':ctx.get('REFERRAL',{})}
         ctx['_adaptive_source_stamp']=stamp
         ctx['_adaptive_source_date']=today
         ctx['_adaptive_file_hashes']=file_hashes

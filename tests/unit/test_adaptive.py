@@ -124,3 +124,38 @@ def test_codes_and_upload_proofs_are_never_checkpointed_as_answers(tmp_path):
     filler,view=world(tmp_path,[code])
     accept(filler,view,code,Decision('123456','human'))
     assert '123456' not in (tmp_path/'decisions.json').read_text()
+
+
+def test_changed_help_cannot_reuse_a_literal_human_reply_with_the_same_choices(tmp_path):
+    field=Field(1,'select','Do you need sponsorship?',help='Visa sponsorship only',options=['Yes','No'],required=True,identity='support')
+    filler,view=world(tmp_path,[field]);responses=iter(['No','Yes'])
+    filler.ask=lambda items:{str(item['id']):next(responses) for item in items}
+    assert filler.plan([field])[1].value=='No'
+    changed=replace(field,help='Includes OPT and CPT documentation')
+    view.fields=[changed]
+    assert filler.plan([changed])[1].value=='Yes'
+    assert filler.questions==2
+
+
+def test_changed_question_scope_reopens_a_previously_declined_question(tmp_path):
+    field=Field(1,'select','Which support option applies?',options=['Yes','No'],identity='support')
+    filler,view=world(tmp_path,[field]);filler.ask=lambda _:{}
+    assert filler.plan([field])[1].value is None
+    assert (filler.step,key(field)) in filler.declined
+    changed=replace(field,required=True,help='New scope and required')
+    view.fields=[changed];filler.observe_view(view)
+    filler.ask=lambda _:{'1':'Yes'}
+    assert filler.plan([changed])[1].value=='Yes'
+
+
+def test_same_label_human_replies_keep_their_own_value_and_scope_on_later_rounds(tmp_path):
+    fields=[Field(1,'select','Do you need sponsorship?',help='Visa only',options=['Yes','No'],identity='visa'),
+            Field(2,'select','Do you need sponsorship?',help='Includes OPT documentation',options=['Yes','No'],identity='opt')]
+    filler,view=world(tmp_path,fields)
+    filler.ask=lambda _: {'1':'No','2':'Yes'}
+    first=filler.plan(fields)
+    assert first[1].fact_id!=first[2].fact_id
+    assert [filler.session_facts[first[n].fact_id].value for n in (1,2)]==['No','Yes']
+    filler.ask=lambda _: (_ for _ in ()).throw(AssertionError('unchanged scoped answers must survive'))
+    again=filler.plan(fields)
+    assert [again[n].value for n in (1,2)]==['No','Yes']

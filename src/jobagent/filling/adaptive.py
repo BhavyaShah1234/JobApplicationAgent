@@ -4,7 +4,7 @@ Stored decisions are proposals on reopening, never proof that a live control is
 filled. Upload proofs and approval capabilities are deliberately not serialized.
 """
 from collections import Counter
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 import os
 import re
@@ -41,6 +41,7 @@ class AdaptiveFiller(PlannedFiller):
         self.invalidations = 0
         self.restored = 0
         self.resumed_keys = set()
+        self.human_scopes = {}
         self._live = None
         package = Path(__file__).parent
         self.implementation = digest({'code':{name:(package/name).read_text() for name in
@@ -108,7 +109,11 @@ class AdaptiveFiller(PlannedFiller):
                 self.cache.pop(field_key, None)
                 self.rendered.pop(field_key, None)
                 self.human_answers.pop((self.step, field_key), None)
-                if changed: self.failures.pop(field_key, None)
+                if changed:
+                    self.failures.pop(field_key, None)
+                    self.technical_failures.pop(field_key, None)
+                    self.declined.discard((self.step,field_key))
+                    if decision:self._forget_humans(set(decision.fact_id.split(',')))
                 self.invalidations += 1
                 if ident: self.journal.pop(ident, None)
             if (not ident or counts[ident] != 1 or field.invalid or field_key in self.cache): continue
@@ -132,11 +137,51 @@ class AdaptiveFiller(PlannedFiller):
         # Schema-only future questions lack the complete visible help and
         # options. They are hints, never reusable decisions for another schema.
         self.prepared = {}
+        stale = {ident for ident,spec in self.human_scopes.items()
+                 if (fact:=self.session_facts.get(ident)) is not None and any(
+                     norm(field.label) in {norm(alias) for alias in fact.aliases}
+                     and (fact.target_key is None or fact.target_key==key(field))
+                     and (not entity_scope(fact.section) or entity_scope(fact.section)==entity_scope(field.section))
+                     and self.signature(field)!=spec for field in fields)}
+        self._forget_humans(stale)
         decisions = super().plan(fields, allow_human)
+        replaced = set()
         for field in fields:
+            decision = decisions[field.id]
+            fact = self.session_facts.get(decision.fact_id)
+            if fact is None or fact.instructions or decision.value is None:continue
+            if (fact.target_key==key(field) and self.human_scopes.get(fact.id)==self.signature(field)):
+                continue
+            # The shared planner's global question alias can collapse two
+            # same-labelled human replies. Give each literal its own live field
+            # and semantic scope before another round can resolve from it.
+            ident = 'human:'+digest({'step':self.step,'field':key(field),'schema':schema(field)})[:24]
+            self.session_facts[ident] = replace(fact,id=ident,value=decision.value,variants=[],target_key=key(field))
+            self.session_fact_steps[ident] = self.step
+            replaced.add(fact.id)
+            decisions[field.id] = replace(decision,fact_id=ident)
+            self.cache[key(field)] = decisions[field.id]
+            self.human_answers[(self.step,key(field))] = decisions[field.id]
+        self._forget_humans(replaced)
+        for field in fields:
+            for ident in decisions[field.id].fact_id.split(','):
+                if ident in self.session_facts:self.human_scopes[ident]=self.signature(field)
             self.bindings[key(field)] = {'schema': self.signature(field),
                                          'evidence': self.evidence(decisions[field.id])}
         return decisions
+
+
+    def _forget_humans(self, ids):
+        """A literal reply to an earlier question scope cannot answer changed help/options."""
+        ids = ids & self.session_facts.keys()
+        if not ids:return
+        for ident in ids:
+            self.session_facts.pop(ident,None);self.session_fact_steps.pop(ident,None)
+            self.human_scopes.pop(ident,None)
+        self.facts=[fact for fact in self.facts if fact.id not in ids]
+        for bank in (self.cache,self.human_answers):
+            for ident,decision in list(bank.items()):
+                if ids & set(decision.fact_id.split(',')):bank.pop(ident,None)
 
     def can_execute(self, planned, current, decision):
         """Refuse dispatch if a rerender changed options, question meaning or evidence."""
