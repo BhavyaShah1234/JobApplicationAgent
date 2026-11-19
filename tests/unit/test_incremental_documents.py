@@ -621,7 +621,8 @@ def test_incremental_letter_closing_cannot_supply_a_name_or_placeholder():
 
 
 @pytest.mark.parametrize('raw',['Built routing—reduced latency by 20%.',
-    'Built pipelines, cutting failed runs 20%.','Connected storage -> realtime exports.'])
+    'Built pipelines, cutting failed runs 20%.','Connected storage -> realtime exports.',
+    'Predicted temperature with R² = 0.984.'])
 def test_final_project_evidence_survives_rendered_punctuation_but_excludes_an_unused_variant(tmp_path,raw):
     from jobagent.tools import tailor as T
     (tmp_path/'projects.json').write_text(json.dumps({'kept':2,'ranked':[

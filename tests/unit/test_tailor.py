@@ -61,6 +61,15 @@ def test_latex_escaping_and_unicode():
     assert T.to_plain(r"30\% \& more") == "30% & more"
 
 
+@pytest.mark.parametrize('plain,latex', [
+    ('R² = 0.984', r'R\textsuperscript{2} = 0.984'),
+    ('CO₂ at 10⁻³ and x₁₂', r'CO\textsubscript{2} at 10\textsuperscript{-3} and x\textsubscript{12}'),
+])
+def test_scientific_scripts_survive_rendering_and_source_roundtrip(plain, latex):
+    assert T.to_latex(plain) == latex
+    assert T.to_plain(latex) == plain
+
+
 def test_soft_duties():
     assert T.is_soft("Partner with architects and stakeholders to translate ambiguous requirements.")
     assert not T.is_soft("Ensure machine safety compliance. Partner with EHS on guarding.")

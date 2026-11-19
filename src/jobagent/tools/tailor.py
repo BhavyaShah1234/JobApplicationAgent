@@ -121,11 +121,17 @@ def parse(tex: str) -> Resume:
 # --- LaTeX text <-> plain text ------------------------------------------------------------------------------------
 
 _UNESC = [("\\%", "%"), ("\\&", "&"), ("\\$", "$"), ("\\#", "#"), ("\\_", "_"), ("--", "–")]
+_SUPER = str.maketrans('⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾', '0123456789+-=()')
+_SUB = str.maketrans('₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎', '0123456789+-=()')
 
 
 def to_plain(latex: str) -> str:
     r"""Turn LaTeX-escaped text (`\%`, `\&`, ...) back into plain text."""
     out = latex
+    for command, table in (('textsuperscript', _SUPER), ('textsubscript', _SUB)):
+        reverse = {value: chr(key) for key, value in table.items()}
+        out = re.sub(r'\\' + command + r'\{([0-9+\-=()]+)\}',
+                     lambda match: match.group(1).translate(str.maketrans(reverse)), out)
     for a, b in _UNESC:
         out = out.replace(a, b)
     return out
@@ -143,7 +149,7 @@ def summary_text(latex: str) -> str:
     return to_plain(text).strip()
 
 
-_KEEP = set("–’‘“”®™°±×→")
+_KEEP = set("–’‘“”®™°±×→") | set(map(chr, _SUPER)) | set(map(chr, _SUB))
 # Dashes used as punctuation (em dash, or a spaced en dash / double hyphen) read as AI-written text. Ranges like
 # "2025–2026" are not touched.
 DASH = re.compile(r"\s*—\s*|\s+(–|--)\s+")
@@ -178,7 +184,13 @@ def to_latex(plain: str) -> str:
     # The template's default (OT1) font encoding prints a bare < > as ¡ ¿ and × as Ö; use commands that work in any
     out = (out.replace("<", "\\textless{}").replace(">", "\\textgreater{}").replace("×", "$\\times$")
            .replace("±", "$\\pm$"))
-    return out.replace("~", "\\textasciitilde{}").replace("^", "\\textasciicircum{}").replace("–", "--")
+    out = out.replace("~", "\\textasciitilde{}").replace("^", "\\textasciicircum{}").replace("–", "--")
+    # OT1 cannot print these Unicode glyphs. Dropping them changes facts such as
+    # R² into R, or CO₂ into CO. Insert only our own commands after escaping.
+    for command, table in (('textsuperscript', _SUPER), ('textsubscript', _SUB)):
+        out = re.sub('[' + ''.join(map(chr, table)) + ']+',
+                     lambda match: '\\' + command + '{' + match.group().translate(table) + '}', out)
+    return out
 
 
 def has_command(latex: str) -> bool:

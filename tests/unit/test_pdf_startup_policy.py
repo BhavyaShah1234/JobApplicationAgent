@@ -25,3 +25,13 @@ def test_pdf_compiler_keeps_text_and_links_but_omits_the_optional_startup_action
 def test_pdf_compiler_also_supports_a_document_without_hyperref(tmp_path):
     pages,error=compile_pdf(r'\documentclass{article}\begin{document}Plain text\end{document}',tmp_path)
     assert pages==1 and not error
+
+
+def test_scientific_metric_exponents_and_subscripts_reach_the_compiled_pdf(tmp_path):
+    from jobagent.tools.tailor import to_latex
+    tex=r'\documentclass{article}\begin{document}' + to_latex('R² = 0.984; CO₂; 10⁻³') + r'\end{document}'
+    pages,error=compile_pdf(tex,tmp_path)
+    assert pages==1 and not error
+    text=subprocess.check_output(['pdftotext',str(tmp_path/'resume.pdf'),'-'],text=True)
+    compact=''.join(text.split()).replace('−','-')
+    assert 'R2=0.984' in compact and 'CO2' in compact and '10-3' in compact
