@@ -117,6 +117,37 @@ def test_generic_technical_compound_connector_does_not_trigger_a_duty_rewrite():
     assert T.duplicates(T.parse(TEX),f,substantive=True)==[]
 
 
+def test_shared_multiword_technologies_do_not_turn_distinct_actions_into_duplicate_work():
+    f=_filled('Developed AI-native features with multimodal LLMs and computer vision, enabling real-time detections and search.',
+              'Fine-tuned multimodal LLMs and computer vision models, improving detection accuracy by 20% for security applications.')
+    assert T.duplicates(T.parse(TEX),f)
+    assert T.duplicates(T.parse(TEX),f,substantive=True)==[]
+    f.roles[0].bullets[1].text=f.roles[0].bullets[0].text
+    assert T.duplicates(T.parse(TEX),f,substantive=True)
+
+
+def test_repeated_duties_remain_duplicates_after_technical_vocabulary_is_discounted():
+    f=_filled('Built scalable REST APIs with Python, cutting response latency by 20%.',
+              'Built scalable REST APIs with Python, cutting response latency by 30%.')
+    assert T.duplicates(T.parse(TEX),f,substantive=True)
+
+
+def test_recruiting_and_values_are_not_experience_but_real_preferred_requirements_stay_required():
+    from jobagent.state import JobDescription
+    posting=JobDescription(title='Engineer',company='Example',responsibilities=[
+        "We're hiring experienced Software Engineers to work on our growing SaaS product.",
+        'As part of the team, you will build Python services.',
+        'If you are a motivated engineer, we want to hear from you.'],basic_qualifications=[
+        'You want to impact the world: our software helps customers.',
+        'You are a team player: our engineering teams collaborate.',
+        'You are a team player with 3 years of experience in Python.'],
+        preferred_qualifications=['Experience with PostgreSQL.'])
+    items=T.jd_items(posting)
+    assert [x[1] for x in items]==['As part of the team, you will build Python services.',
+        'You are a team player with 3 years of experience in Python.','Experience with PostgreSQL.']
+    assert all(need=='REQUIRED' for _,_,need in items)
+
+
 def test_quality_flags_academic_wording_and_missing_tech():
     f = _filled("Partnered with faculty to translate research goals into solutions.",
                 "Built Azure Data Factory pipelines, cutting failed runs 30%.")

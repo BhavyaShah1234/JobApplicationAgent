@@ -94,6 +94,37 @@ def test_coverage_barrier_rejects_cosmetic_progress_and_failed_requests(monkeypa
     with pytest.raises(RuntimeError,match='repair failed'):M.ensure_incremental_coverage(ctx,f)
 
 
+def test_partial_coverage_repairs_accumulate_without_losing_accepted_work(monkeypatch):
+    jd,f=_coverage_repair_fixture()
+    jd.responsibilities.append('Improve Docker container reliability.')
+    ctx={'incremental':True,'r':_coverage_template(),'jd':jd,'log':lambda _:None}
+    calls=[]
+    def run(context,agent,current,tasks,last):
+        calls.append(current.model_copy(deep=True))
+        index=2 if len(calls)==1 else 3
+        position=1 if len(calls)==1 else 2
+        old=current.roles[0].bullets[position-1]
+        patch=M.IncrementalRepair(fixes=[M.IncrementalBulletFix(role=0,bullet=position,
+            text=old.text,duties=[*old.duties,index])])
+        M.validate_incremental_repair(current,jd,patch,template=ctx['r'],require_coverage=True)
+        return agent,patch
+    monkeypatch.setattr(M,'_run_agent',run)
+    updated=M.ensure_incremental_coverage(ctx,f)
+    assert len(calls)==2 and calls[1].roles[0].bullets[0].duties==[0,2]
+    assert M.T.fill_checks(ctx['r'],jd,updated)[0]==[]
+    assert [b.text for b in updated.roles[0].bullets]==[b.text for b in f.roles[0].bullets]
+
+
+def test_failed_unchanged_incremental_section_edit_exhausts_retry_loop(tmp_path,monkeypatch):
+    jd,f=_coverage_repair_fixture();f.roles[0].bullets[0].duties=[0,2]
+    ctx={'incremental':True,'r':_coverage_template(),'jd':jd,'job_dir':tmp_path,'log':lambda _:None}
+    monkeypatch.setattr(M,'_run_agent',lambda context,agent,*a:(agent,None))
+    result=M.edit_sections({'ctx':ctx,'f':f,'tasks':{'experience':['Fix duplicated duties.']}})
+    assert M._content_hash(ctx,result['f'])==M._content_hash(ctx,f)
+    assert [b.duties for b in result['f'].roles[0].bullets]==[b.duties for b in f.roles[0].bullets]
+    assert result['layout_pass']==M.LAYOUT_PASSES
+
+
 def test_false_original_markers_are_normalized_before_requesting_coverage(monkeypatch):
     jd,f=_coverage_repair_fixture()
     f.roles[0].bullets[0].duties=[0,2]

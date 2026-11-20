@@ -187,9 +187,13 @@ def validate_incremental_repair(f, jd, repair, *, template, require_coverage=Fal
     covered=lambda v:{d for e in v.roles for b in e.bullets if b.original is None for d in b.duties if 0<=d<n}
     if lost:=covered(f)-covered(proposed):
         raise ValueError(f'Repair removed previously covered JD indices: {sorted(lost)}')
-    if require_coverage and (missing:=T.fill_checks(template,jd,proposed,len(template.roles)*T.MAX_BULLETS)[0]):
-        raise ValueError(f'Coverage-only repair must clear required JD indices {missing}; '
-                         'rewrite suitable existing bullets to support them, not just formatting')
+    if require_coverage:
+        slots=len(template.roles)*T.MAX_BULLETS
+        before_missing=set(T.fill_checks(template,jd,f,slots)[0])
+        missing=set(T.fill_checks(template,jd,proposed,slots)[0])
+        if not missing < before_missing:
+            raise ValueError(f'Coverage-only repair must clear at least one required JD index without losing coverage; '
+                             f'remaining {sorted(missing)}; cosmetic edits do not count')
     if all(by_role[fx.role].bullets[fx.bullet-1].text==fx.text and
            by_role[fx.role].bullets[fx.bullet-1].duties==fx.duties and
            by_role[fx.role].bullets[fx.bullet-1].original is None for fx in repair.fixes):
@@ -197,8 +201,10 @@ def validate_incremental_repair(f, jd, repair, *, template, require_coverage=Fal
     previous=set(T.quality(template,jd,f))
     if regressions:=[issue for issue in T.quality(template,jd,proposed) if issue not in previous]:
         raise ValueError('Repair introduced quality defects: '+'; '.join(regressions[:2]))
+    changed_targets={(fx.role,fx.bullet) for fx in repair.fixes
+                     if by_role[fx.role].bullets[fx.bullet-1].text!=fx.text}
     repeated=[issue for issue in T.duplicates(template,proposed,substantive=True) if
-              any((int(role),int(bullet)) in targets for role,bullet in re.findall(r'role_(\d+) bullet (\d+)',issue))]
+              any((int(role),int(bullet)) in changed_targets for role,bullet in re.findall(r'role_(\d+) bullet (\d+)',issue))]
     if repeated:raise ValueError('Repair leaves an edited duty duplicated: '+'; '.join(repeated[:2]))
 
 
@@ -452,7 +458,11 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
                         'duties indices. An annotation-only change is allowed when the existing text already '
                         'supports that JD item. Otherwise rewrite the text to support it. Preserve all previously '
                         'covered indices across the section. For duplicate duties, change one to distinct relevant '
-                        'work rather than repeating the same duty with synonyms. Leave unrelated bullets alone.')
+                        'work rather than repeating the same duty with synonyms. Leave unrelated bullets alone. '
+                        'Prefer an annotation-only patch when the current NEW bullet already supports a missing item: '
+                        'copy its exact text and return the UNION of its old and newly supported duties. '
+                        'A partial repair that closes some gaps is accepted; never erase earlier coverage to fit all gaps '
+                        'in one response. Return no more than eight fixes and keep every text within the schema limit.')
                 })))
                 out=_invoke(ctx,agent,model,incremental_repair_schema(ctx['jd']),msgs,log=log,first='json_mode',
                     validator=lambda repair:validate_incremental_repair(f,ctx['jd'],repair,template=ctx['r'],
@@ -562,21 +572,25 @@ def ensure_incremental_coverage(ctx, f):
     template,jd=ctx['r'],ctx['jd'];slots=len(template.roles)*T.MAX_BULLETS
     normalized=T.normalize_originals(template,f.model_copy(deep=True))
     if normalized!=f:f=normalized
-    missing=T.fill_checks(template,jd,f,slots)[0]
-    if not missing:return f
-    required=set(T.coverage_target(jd,slots)[0])
-    covered={d for role in f.roles for bullet in role.bullets if bullet.original is None for d in bullet.duties}
-    capacity=sum(len(role.bullets) for role in f.roles)*T.ITEMS_PER_BULLET
-    tasks=[f'REQUIRED JD item indices not covered by any NEW bullet: {missing}.']
-    if len(required|covered)>capacity:
-        tasks.append(f'Add bullets up to {T.MAX_BULLETS} per role to fit the feasible required coverage.')
-    ctx['log'](f'repairing required JD coverage before summary/review: {missing}')
-    _,out=_run_agent({**ctx,'_require_coverage':True},'experience',f,tasks,'')
-    if out is None:raise RuntimeError(f'Required JD coverage repair failed for {missing}; no packet published')
-    updated=_merge(ctx,f,{'experience':out})
-    if remaining:=T.fill_checks(template,jd,updated,slots)[0]:
-        raise RuntimeError(f'Required JD coverage repair left {remaining}; no packet published')
-    return updated
+    for attempt in range(2):
+        missing=T.fill_checks(template,jd,f,slots)[0]
+        if not missing:return f
+        required=set(T.coverage_target(jd,slots)[0])
+        covered={d for role in f.roles for bullet in role.bullets if bullet.original is None for d in bullet.duties}
+        capacity=sum(len(role.bullets) for role in f.roles)*T.ITEMS_PER_BULLET
+        tasks=[f'REQUIRED JD item indices not covered by any NEW bullet: {missing}.']
+        if len(required|covered)>capacity:
+            tasks.append(f'Add bullets up to {T.MAX_BULLETS} per role to fit the feasible required coverage.')
+        ctx['log'](f'repairing required JD coverage before summary/review (pass {attempt+1}/2): {missing}')
+        _,out=_run_agent({**ctx,'_require_coverage':True},'experience',f,tasks,'')
+        if out is None:raise RuntimeError(f'Required JD coverage repair failed for {missing}; no packet published')
+        updated=_merge(ctx,f,{'experience':out})
+        remaining=T.fill_checks(template,jd,updated,slots)[0]
+        if not set(remaining)<set(missing):
+            raise RuntimeError(f'Required JD coverage repair left {remaining} without progress; no packet published')
+        f=updated
+    if remaining:raise RuntimeError(f'Required JD coverage repair left {remaining}; no packet published')
+    return f
 
 
 # --- nodes -------------------------------------------------------------------------------------------------------
@@ -943,6 +957,7 @@ def edit_sections(state: State) -> dict:
     progress(ctx["log"], "documents", "running", "Fixing findings", detail=", ".join(f"{a} ({len(t)})" for a, t in tasks.items()))
     if ctx.get('incremental'):
         before=_content_hash(ctx,f)
+        coverage_before=[(e.role,tuple((tuple(b.duties),b.original) for b in e.bullets)) for e in f.roles]
         other = {a: t for a, t in tasks.items() if a != 'summary'}
         with ThreadPoolExecutor(len(other) or 1) as ex:
             outs = dict(ex.map(with_context(lambda a: _run_agent(ctx, a, f, other[a], state.get('last', ''))), other))
@@ -954,7 +969,12 @@ def edit_sections(state: State) -> dict:
         if summary_tasks:
             _, summary = _run_agent(ctx, 'summary', updated, summary_tasks, state.get('last', ''))
             updated = _merge(ctx, updated, {'summary': summary})
-        return {'f': updated, 'tasks': {}}
+        result={'f':updated,'tasks':{}}
+        coverage_after=[(e.role,tuple((tuple(b.duties),b.original) for b in e.bullets)) for e in updated.roles]
+        if coverage_before==coverage_after and before==_content_hash(ctx,updated):
+            ctx['log']('No section repair made progress; stopping repeated identical repair rounds')
+            result['layout_pass']=LAYOUT_PASSES
+        return result
     with ThreadPoolExecutor(len(tasks) or 1) as ex:
         outs = dict(ex.map(with_context(lambda a: _run_agent(ctx, a, f, tasks[a], state.get("last", ""))), list(tasks)))
     return {"f": _merge(ctx, f, outs), "tasks": {}}

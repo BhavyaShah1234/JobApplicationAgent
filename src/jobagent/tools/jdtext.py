@@ -92,6 +92,34 @@ class Section:
         return self.bullets or self.paragraphs
 
 
+def non_experience_category(text: str) -> str | None:
+    """Identify explicit recruiting or motivational prose without dropping hard requirements.
+
+    Text remains in the original posting and its summary/values. This narrow
+    correction does not reclassify actual duties just because they mention people.
+
+    Args:
+        text: One original posting item, unchanged by this classification.
+
+    Returns:
+        The appropriate non-experience category, or None to retain the original.
+    """
+    low = ' '.join(text.casefold().replace('’', "'").split())
+    if re.search(r'\b(?:\d+(?:\.\d+)?\+?\s+years?|experience\s+(?:with|in|developing)|'
+                 r'proficien\w*|expertise|must\b|certif\w*|bachelor\w*|master\w*|degree|knowledge of)\b', low):
+        return None
+    if re.match(r"we(?:'re| are)\s+(?:hiring|seeking|looking for)\b", low) or (
+            low.startswith('if you ') and re.search(r'\bwe want to hear from you\b', low)):
+        if re.search(r"\b(?:who(?: will| can)?|to|you(?:'ll| will))\s+"
+                     r"(?:build|design|develop|test|deploy|implement|architect|maintain|automate|debug|optimi[sz]e|ship|operate)\b", low):
+            return None
+        return 'role_summary'
+    if re.match(r"you\s+(?:want to\b|believe\b|are\s+(?:a\s+)?(?:life[- ]long learner|team player)\b|"
+                r"are passionate\b|care deeply\b)", low):
+        return 'values'
+    return None
+
+
 def blocks(page: Page, *, html: str | None = None, selector: str | None = None) -> list[Block]:
     raw = page.evaluate(_BLOCKS_JS, {"html": html, "sel": selector})
     return promote_colon_headings([Block(b["k"], b["t"]) for b in raw])
@@ -195,7 +223,10 @@ heading — companies use creative headings):
 - values: traits, culture, "who you are", what they value (not hard requirements)
 - benefits: perks, benefits, what they offer
 - technical_skills: a list of technologies / tools / stack
-- role_summary: overview of the role in prose; company: about the company; compensation: pay / salary text
+- role_summary: overview/recruiting introduction in prose (including 'we are hiring' introductions);
+  company: about the company; compensation: pay / salary text
+- Motivational 'you want to ...' or 'you are a team player' text is values, even when it mentions software.
+  Actual experience, qualifications and day-to-day duties retain their appropriate categories.
 - other: anything else (legal/EEO text, how to apply, location notes)"""
 
 

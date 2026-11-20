@@ -45,6 +45,8 @@ EXTRACT_PROMPT = """You extract job postings into a schema. Rules:
 - One list item per bullet/requirement, lightly trimmed, keeping the posting's wording.
 - technical_skills: concrete technologies, languages, frameworks, tools and platforms named anywhere in the posting.
 - Separate basic/minimum/required qualifications from preferred/nice-to-have ones as the posting does.
+- responsibilities contain actual work, not recruiting introductions; put role descriptions in role_summary.
+- Put motivational/culture statements in values, not qualifications just because they mention technologies.
 - company: the employer's brand name as people know it ("NVIDIA", "General Mills"), never a legal entity,
   subsidiary code or payroll name ("2100 NVIDIA USA", "Genl Mills India P")."""
 
@@ -237,8 +239,9 @@ def completeness_problems(jd: JobDescription, secs: list, labels: dict[int, str]
     """Checks that don't trust the model's own labels."""
     problems = []
     reqs = len(jd.basic_qualifications) + len(jd.preferred_qualifications)
-    labelled = sum(len(s.items) for i, s in enumerate(secs)
-                   if labels.get(i) in ("basic_qualifications", "preferred_qualifications"))
+    labelled = sum(sum(jdtext.non_experience_category(t) is None for t in s.items)
+                   for i, s in enumerate(secs) if labels.get(i) in
+                   ("basic_qualifications", "preferred_qualifications"))
     if labelled and reqs < labelled:
         problems.append("requirement items from the job description")
     # independent signal: heading rules see a requirements section, but nothing ended up in the lists
@@ -281,12 +284,18 @@ def apply_labeled(jd: JobDescription, secs: list, labels: dict[int, str]) -> Non
     for i, sec in enumerate(secs):
         cat = labels.get(i)
         if cat in LIST_CATEGORIES:
-            items = grouped.setdefault(cat, [])
-            items += [t for t in sec.items if t not in items]
+            grouped.setdefault(cat, [])
+            for text in sec.items:
+                corrected = (jdtext.non_experience_category(text) if cat in
+                             ('responsibilities','basic_qualifications','preferred_qualifications') else None) or cat
+                items = grouped.setdefault(corrected, [])
+                if text not in items:items.append(text)
     if "technical_skills" in grouped:  # keep skills the model found elsewhere in the text too
         grouped["technical_skills"] += [s for s in jd.technical_skills if s not in grouped["technical_skills"]]
     for cat, items in grouped.items():
-        setattr(jd, cat, items)
+        if cat == 'role_summary':
+            jd.role_summary = jd.role_summary or ' '.join(items)[:1500]
+        else:setattr(jd, cat, items)
     page_items = {_norm_item(t) for items in grouped.values() for t in items}
     for cat in LIST_CATEGORIES:
         if cat not in grouped:

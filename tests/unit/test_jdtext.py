@@ -149,6 +149,33 @@ def test_apply_labeled_fills_lists_verbatim():
     assert jd.role_summary == "Role text." and jd.technical_skills == ["AutoCAD"]
 
 
+def test_mixed_section_items_keep_recruiting_copy_out_of_required_work_without_losing_source_text():
+    from jobagent.tools.scrape import apply_labeled,completeness_problems
+    intro="We're hiring experienced engineers for our rapidly growing SaaS product."
+    trait='You are a team player: our software teams win together.'
+    duty='Develop Python services.'
+    requirement='Experience with PostgreSQL.'
+    secs=[jdtext.Section('The Role',[],[intro,duty]),jdtext.Section('Requirements',[trait,requirement])]
+    jd=JobDescription(title='Engineer',company='Example')
+    labels={0:'responsibilities',1:'basic_qualifications'}
+    apply_labeled(jd,secs,labels)
+    assert jd.responsibilities==[duty] and jd.basic_qualifications==[requirement]
+    assert jd.values==[trait] and jd.role_summary==intro
+    assert 'requirement items from the job description' not in completeness_problems(jd,secs,labels,'','')
+
+
+@pytest.mark.parametrize('text',[
+    'You are a team player with expertise in Python.',
+    'We are hiring engineers with 4 years of experience in Go.',
+    'You want to build systems and must know PostgreSQL.',
+    'Design APIs and mentor teammates.',
+    'We are seeking an engineer who will design Python APIs.',
+    'We are looking for engineers to build distributed Go services.',
+])
+def test_recruiting_filter_preserves_explicit_requirements_and_real_duties(text):
+    assert jdtext.non_experience_category(text) is None
+
+
 NVIDIA_LIKE = """
 <div><p>We are looking for a New College Graduate SoC Software Engineer.</p>
 <p><span><b>What you’ll be doing:</b></span></p><ul><li>Develop SoC software</li></ul>

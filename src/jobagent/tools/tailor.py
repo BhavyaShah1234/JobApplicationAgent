@@ -502,19 +502,22 @@ def is_technical(text: str, jd: JobDescription) -> bool:
 
 
 def jd_items(jd: JobDescription) -> list[tuple[str, str, str]]:
-    """The JD items Experience bullets are written from: (kind, text, need) with need in REQUIRED / PREFERRED /
-    soft. Technical duties and basic qualifications are required, technical preferred ones preferred; soft or
-    generic duties ("Adapt quickly") may be folded in or skipped; education, authorisation, pay and physical
-    requirements are left out, and "N+ years of" is stripped so the skill behind it stays."""
+    """Return required experience coverage under the existing all-preferred writing policy.
+
+    Actual responsibilities, technical basic qualifications and coverable preferred
+    qualifications are required. Recruiting/values prose, credentials, logistics
+    and administrative clauses stay in the JD but are not work-experience duties.
+    """
+    from .jdtext import non_experience_category
     # every responsibility, soft-sounding ones included, becomes Experience bullets (written as technical work)
     items = [("duty", d, "REQUIRED") for d in jd.responsibilities
-             if not NON_SKILL.search(d) and not ADMIN_DUTY.search(d)]
+             if not NON_SKILL.search(d) and not ADMIN_DUTY.search(d) and not non_experience_category(d)]
     for kind, quals in (("basic", jd.basic_qualifications), ("preferred", jd.preferred_qualifications)):
         for q in quals:
             q = _YEARS.sub("", q.lstrip("-• ").strip())
             # a preferred qualification is bullet material even without a tool in it ("consumer goods / supply
             # chain experience"); a basic one only when technical (the rest are traits the summary carries)
-            if q and not NON_SKILL.search(q) and not NOT_BULLET.search(q) and (kind == "preferred" or is_technical(q, jd)):
+            if q and not NON_SKILL.search(q) and not NOT_BULLET.search(q) and not non_experience_category(q) and (kind == "preferred" or is_technical(q, jd)):
                 items.append((kind, q[0].upper() + q[1:], "REQUIRED"))
     return items
 
@@ -759,6 +762,11 @@ def duplicates(r: Resume, f: Filled, *, substantive: bool = False) -> list[str]:
     stop = {"and", "the", "to", "for", "of", "a", "an", "in", "on", "with", "by", "into", "from"}
     if substantive:stop |= {'using','via'}
     tokens=lambda text:re.findall(r'[a-z0-9]+(?:-[a-z0-9]+)*',text.lower().replace('‑','-')) if substantive else _words(text)
+    technical = set()
+    if substantive:
+        terms = list(GENERIC_NAMES) + [to_plain(v) for _,v in getattr(r,'skills',[])]
+        terms += [term for line in f.skills for term in line.render()]
+        technical = {word for term in terms for word in tokens(term)}
     items = [(e.role, k, b.text) for e in f.roles for k, b in enumerate(e.bullets)]
     out = []
     for x in range(len(items)):
@@ -770,10 +778,12 @@ def duplicates(r: Resume, f: Filled, *, substantive: bool = False) -> list[str]:
             grams = lambda w: {tuple(w[i:i + 4]) for i in range(len(w) - 3) if not set(w[i:i + 4]) <= stop}
             shared = grams(wa) & grams(wb)
             if substantive:
-                shared={gram for gram in shared if len({w for w in gram if w not in stop and len(w)>=3})>=3}
+                shared={gram for gram in shared if len({w for w in gram if w not in stop|technical and len(w)>=3})>=3}
             sa, sb = set(wa) - stop, set(wb) - stop
             overlap = len(sa & sb) / max(1, min(len(sa), len(sb)))
-            if shared or overlap > 0.5:
+            copied = substantive and wa == wb
+            content_overlap = not substantive or len({w for w in sa & sb if w not in technical and len(w)>=3}) >= 3
+            if shared or (overlap > 0.5 and content_overlap) or copied:
                 why = f"shared phrase \"{' '.join(sorted(shared)[0])}\"" if shared else f"{overlap:.0%} same words"
                 out.append(f"role_{ra} bullet {ka + 1} and role_{rb} bullet {kb + 1} repeat each other ({why}): "
                            f"\"{ta}\" / \"{tb}\"")
