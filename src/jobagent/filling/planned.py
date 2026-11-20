@@ -178,7 +178,7 @@ class PlannedFiller:
         self.routes.extend(asdict(r) for r in routes.values())
         for f in fields:
             d=self.human_answers.get((self.step,key(f))) or self.cache.get(key(f)) or self.prepared.get(self.question_key(f)) or resolve(f,self.facts)
-            if self.referral_context is not None and d.source!='human':
+            if self.referral_context is not None and d.source!='human' and not d.fact_id.startswith('application.answer.'):
                 from jobagent.tools import referrals
                 company=self.referral_context.get('company','')
                 policy=referrals.answer_for(f,self.referral_context.get('contact',{}),company)

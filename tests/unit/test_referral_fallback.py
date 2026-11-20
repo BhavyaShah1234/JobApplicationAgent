@@ -158,3 +158,12 @@ def test_unreadable_menu_is_not_treated_as_missing_employee_referral():
     from jobagent.tools import referrals
     f = field(['Employee Referral']); f.options_state = 'unreadable'
     assert referrals.answer_for(f, {})['ask_human']
+
+
+def test_current_job_owner_source_answer_is_not_lost_on_restart():
+    from jobagent.filling.routing import answer_sheet_facts
+    f = field(['Career site', 'Employee Referral'])
+    facts = answer_sheet_facts('| # | Question | Answer |\n| 1 | '+QUESTION+' | Career site |')
+    decision = filler(facts).plan([f])[0]
+    assert decision.value == 'Career site'
+    assert decision.fact_id.startswith('application.answer.')
