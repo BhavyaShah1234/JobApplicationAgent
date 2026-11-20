@@ -13,11 +13,12 @@ def test_city_lookup_uses_a_single_country_qualifier(monkeypatch, location):
     queries = []
     def geocode(query):
         queries.append(query)
-        return {"address": {"country_code": "us", "state": "California", "ISO3166-2-lvl4": "US-CA"}}
+        return {"address": {"country_code": "us", "state": "California", "city": "San Jose", "ISO3166-2-lvl4": "US-CA"}}
     monkeypatch.setattr(A.lookup, "geocode", geocode)
     target = A._target([location], lambda message: None)
     assert queries == ["San Jose, United States"]
     assert target["state_code"] == "CA"
+    assert target["city"] == "San Jose"
 
 
 @pytest.fixture
@@ -51,12 +52,12 @@ def prepared_address_lookups(monkeypatch):
     return targets
 
 
-def _context(state="Minnesota"):
+def _context(state="Minnesota", city="Saint Paul"):
     return {
         "_jd": {
             "locations": ["Corporate Headquarters, United States of America"],
             "locations_resolved": [{
-                "city": "Headquarters City",
+                "city": city,
                 "state": state,
                 "country": "United States",
             }],
@@ -72,12 +73,12 @@ def test_headquarters_uses_resolved_state_and_reuses_selection(
     first = A.prepare(ctx, tmp_path, None, log=lambda message: None)
     second = A.prepare(_context(), tmp_path, None, log=lambda message: None)
 
-    assert first["address"]["city"] == "Minneapolis"
+    assert first["address"]["city"] == "Saint Paul"
     assert first["address"]["state"] == "Minnesota"
     assert second == first
     assert len(prepared_address_lookups) == 1
     assert ctx["_application_address"] == first
-    assert "Minneapolis" in ctx["APPLICANT"]
+    assert "Saint Paul" in ctx["APPLICANT"]
 
 
 def test_changed_resolved_state_invalidates_cached_address(
@@ -85,7 +86,7 @@ def test_changed_resolved_state_invalidates_cached_address(
 ):
     A.prepare(_context(), tmp_path, None, log=lambda message: None)
     selected = A.prepare(
-        _context("Colorado"), tmp_path, None, log=lambda message: None,
+        _context("Colorado", "Denver"), tmp_path, None, log=lambda message: None,
     )
 
     assert selected["address"]["city"] == "Denver"
@@ -107,3 +108,37 @@ def test_foreign_resolved_location_falls_back_to_original_us_state(
 
     assert selected["state_code"] == "AZ"
     assert selected["address"]["city"] == "Phoenix"
+
+
+@pytest.mark.parametrize('location', ['Scottsdale, AZ', 'Scottsdale, Arizona', 'Scottsdale Arizona, United States'])
+def test_explicit_job_city_wins_over_state_dictionary(monkeypatch, location):
+    monkeypatch.setattr(A.lookup, 'geocode', lambda _: pytest.fail('Explicit city/state needs no lookup'))
+    assert A._target([location], lambda _: None) == {'city': 'Scottsdale', 'state': 'Arizona', 'state_code': 'AZ'}
+
+
+def test_dictionary_applies_only_when_no_city_is_given(monkeypatch):
+    monkeypatch.setattr(A.lookup, 'geocode', lambda _: pytest.fail('State-only needs no lookup'))
+    assert A._target(['Arizona'], lambda _: None)['city'] == 'Phoenix'
+    assert A._target(['Arizona', 'Scottsdale, AZ'], lambda _: None)['city'] == 'Scottsdale'
+
+
+def test_original_explicit_city_precedes_different_research_city(tmp_path, prepared_address_lookups):
+    ctx = _context('Arizona', 'Phoenix')
+    ctx['_jd']['locations'] = ['Scottsdale, AZ']
+    assert A.prepare(ctx, tmp_path, None, log=lambda _: None)['address']['city'] == 'Scottsdale'
+
+
+@pytest.mark.parametrize('legacy', [True, False])
+def test_wrong_city_cache_is_rejected_even_with_same_jd_labels(tmp_path, prepared_address_lookups, legacy):
+    ctx = _context('Arizona', 'Scottsdale')
+    ctx['_jd']['locations'] = ['Scottsdale, AZ']
+    A.prepare(ctx, tmp_path, None, log=lambda _: None)
+    path = tmp_path/'address.json'; bad = json.loads(path.read_text())
+    bad['address']['city'] = 'Phoenix'
+    if legacy:
+        bad['location_policy'] = 'state-known-city-v2'
+        bad.pop('target')
+    path.write_text(json.dumps(bad))
+    selected = A.prepare(ctx, tmp_path, None, log=lambda _: None)
+    assert selected['address']['city'] == 'Scottsdale'
+    assert len(prepared_address_lookups) == 2

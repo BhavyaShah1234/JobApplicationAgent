@@ -37,7 +37,7 @@ def _street(text: str) -> str:
     return " ".join(aliases.get(word, word) for word in _key(text).split())
 
 
-ADDRESS_LOCATION_POLICY = "state-known-city-v2"
+ADDRESS_LOCATION_POLICY = "explicit-city-first-v3"
 
 STATE_CITIES = {
     "AL": ("Alabama", "Birmingham"),
@@ -144,14 +144,38 @@ def _city_key(city: str) -> str:
     return "new york" if normalized == "new york city" else normalized
 
 
-def _target(locations: list[str], log) -> dict:
+def _explicit_city(location: str, code: str) -> str:
+    """Retain a city preceding a state; country qualifiers are not cities."""
+    text = re.sub(r"(?i)\b(?:united states(?: of america)?|usa|us)\b", "", location).strip(" ,")
+    state = STATE_CITIES[code][0]
+    city = re.sub(r"(?i)(?:^|[,\s]+)(?:" + re.escape(state) + "|" + code + r")\s*$", "", text).strip(" ,")
+    if city == text or not city or _key(city) in {"remote", "hybrid", "onsite", "united states"}:
+        return ""
+    # Broad geography such as 'Remote, Arizona' is still state-only.
+    return city if not re.search(r"(?i)\b(?:remote|anywhere|headquarters|corporate|united states)\b", city) else ""
+
+
+def _target(locations: list[str], log, *, allow_geocode: bool = True) -> dict | None:
+    fallback = None
+    unresolved = []
     for location in locations:
         location = str(location).strip()
         if not location:
             continue
 
         code = _state_from_label(location)
+        if code is not None:
+            state, default_city = STATE_CITIES[code]
+            if city := _explicit_city(location, code):
+                log(f"address: JD location {location!r} -> selected {city}, {state}")
+                return {"city": city, "state": state, "state_code": code}
+            fallback = fallback or {"city": default_city, "state": state, "state_code": code}
+        elif not re.search(r"(?i)\b(?:headquarters|corporate|remote|anywhere)\b", location) and _key(location) not in {
+                "united states", "united states of america", "us", "usa"}:
+            unresolved.append(location)
 
+    for location in unresolved if allow_geocode else []:
+        code = None
         # City-only locations need a geocoder to identify their state.
         if code is None:
             log(f"address: resolving the state for {location!r}")
@@ -182,7 +206,10 @@ def _target(locations: list[str], log) -> dict:
         if code is None:
             continue
 
-        state, city = STATE_CITIES[code]
+        state, _ = STATE_CITIES[code]
+        city = next((address.get(k) for k in ("city", "town", "village", "municipality") if address.get(k)), "")
+        if not city:
+            continue
         log(
             f"address: JD location {location!r} -> "
             f"selected {city}, {state}"
@@ -193,6 +220,11 @@ def _target(locations: list[str], log) -> dict:
             "state_code": code,
         }
 
+    if fallback is not None and (allow_geocode or not unresolved):
+        log(f"address: JD specifies a state only -> selected {fallback['city']}, {fallback['state']}")
+        return fallback
+    if not allow_geocode:
+        return None
     raise RuntimeError(
         "No US state could be resolved from jd.json locations; "
         "provide a state name, state abbreviation, or resolvable US city. "
@@ -440,9 +472,10 @@ def prepare(ctx: dict, out_dir, model, log=print) -> dict:
         for value in jd.get("locations") or []
         if str(value).strip()
     ]
-    locations = list(dict.fromkeys(resolved_locations + original_locations))
+    locations = list(dict.fromkeys(original_locations + resolved_locations))
     cache = out_dir / "address.json"
     selected = None
+    target = _target(locations, log, allow_geocode=False)
 
     if cache.exists():
         try:
@@ -454,6 +487,10 @@ def prepare(ctx: dict, out_dir, model, log=print) -> dict:
                 saved.get("location_policy") == ADDRESS_LOCATION_POLICY
                 and saved.get("jd_locations") == locations
                 and saved.get("source_url")
+                and isinstance(saved.get("target"), dict)
+                and _city_key(address.get("city", "")) == _city_key(saved["target"].get("city", ""))
+                and _key(address.get("state", "")) == _key(saved["target"].get("state", ""))
+                and (target is None or saved["target"] == target)
                 and all(
                     isinstance(address.get(k), str) and address[k].strip()
                     for k in required
@@ -464,7 +501,7 @@ def prepare(ctx: dict, out_dir, model, log=print) -> dict:
             pass
 
     if selected is None:
-        target = _target(locations, log)
+        target = target or _target(locations, log)
         query = f"random address in {target['city']}, {target['state']}"
         log(f"address: searching {query!r}")
 
@@ -591,6 +628,7 @@ def prepare(ctx: dict, out_dir, model, log=print) -> dict:
                     "address": address,
                     "source_url": url,
                     "state_code": target["state_code"],
+                    "target": target,
                     "verified_at": now().isoformat(),
                 }
                 cache.write_text(json.dumps(selected, indent=2))
@@ -604,6 +642,7 @@ def prepare(ctx: dict, out_dir, model, log=print) -> dict:
             selected = _mapped_address(target, locations, log)
 
             if selected is not None:
+                selected["target"] = target
                 cache.write_text(json.dumps(selected, indent=2))
 
         if selected is None:
