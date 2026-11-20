@@ -450,6 +450,26 @@ def prepare(ctx: dict, out_dir, model, log=print) -> dict:
         for value in jd.get("locations") or []
         if str(value).strip()
     ]
+    original_cities = set()
+    original_states = set()
+    for label in original_locations:
+        code = _state_from_label(label)
+        if code:
+            original_states.add(code)
+            city = _explicit_city(label, code)
+        else:
+            city = re.sub(r"(?i)\b(?:united states(?: of america)?|usa|us)\b", "", label).strip(" ,-/")
+            if re.search(r"(?i)\b(?:headquarters|corporate|remote|anywhere)\b", city):
+                city = ''
+        if city:
+            original_cities.add(_city_key(city))
+    if original_cities:
+        resolved_locations = [label for label in resolved_locations if
+            (code := _state_from_label(label)) and _city_key(_explicit_city(label, code)) in original_cities]
+    elif original_states:
+        # Research must not turn an explicitly state-only JD into an invented
+        # city preference; this is the dictionary's intended fallback case.
+        resolved_locations = []
     locations = list(dict.fromkeys(original_locations + resolved_locations))
     cache = out_dir / "address.json"
     selected = None

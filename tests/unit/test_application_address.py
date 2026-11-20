@@ -158,3 +158,15 @@ def test_unresolved_explicit_city_does_not_become_the_state_dictionary_city(monk
     monkeypatch.setattr(A.lookup, 'geocode', lambda _: {'address': {'country_code':'us', 'state':'Arizona', 'city':'Phoenix'}})
     with pytest.raises(RuntimeError, match='city/state'):
         A._target(['Scottsdale', 'Arizona'], lambda _: None)
+
+
+def test_state_only_jd_uses_dictionary_despite_an_added_research_city(tmp_path, prepared_address_lookups):
+    ctx = _context('Arizona', 'Scottsdale'); ctx['_jd']['locations'] = ['Arizona']
+    assert A.prepare(ctx, tmp_path, None, log=lambda _: None)['address']['city'] == 'Phoenix'
+
+
+def test_conflicting_research_city_cannot_hide_a_failed_city_only_resolution(tmp_path, monkeypatch):
+    ctx = _context('Arizona', 'Phoenix'); ctx['_jd']['locations'] = ['Scottsdale']
+    monkeypatch.setattr(A.lookup, 'geocode', lambda _: {'address': {'country_code':'us', 'state':'Arizona', 'city':'Phoenix'}})
+    with pytest.raises(RuntimeError, match='city/state'):
+        A.prepare(ctx, tmp_path, None, log=lambda _: None)
