@@ -51,7 +51,8 @@ def model_version(stage=None):
     names = ('steps/multi_agent.py', 'tools/tailor.py', 'tools/projects.py',
              'tools/cover_letter.py', 'tools/skillgraph.py', 'tools/incremental_documents.py',
              'tools/letter_attribution.py', 'steps/tailor.py', 'tools/job_context.py',
-             'tools/repo_cards.py', 'tools/layout.py', 'tools/documents.py', 'tools/document_review.py', 'tools/bundle.py', 'llm.py')
+             'tools/repo_cards.py', 'tools/layout.py', 'tools/documents.py', 'tools/document_review.py',
+             'tools/jdtext.py', 'tools/bundle.py', 'llm.py')
     if stage in ('experience','projects','skills','summary'):
         names=('steps/multi_agent.py','tools/tailor.py','tools/projects.py','tools/skillgraph.py')
     elif stage=='project-selection':

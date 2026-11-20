@@ -235,7 +235,7 @@ class ProjectEdit(BaseModel):
 
 
 class IncrementalProjectsOut(ProjectsOut):
-    """Opt-in repairs can edit the displayed short form and generated title too."""
+    """Repairs can edit the displayed short form and generated title too."""
     projects: list[ProjectEdit] = Field(default_factory=list, max_length=4)
 
 
@@ -310,6 +310,7 @@ full descriptions use three. Do not demand expansion of a valid short variant.
   unsupported product features or feature counts are different. Sentence-ending and bare-slug checks also run in code;
 - experience: actual employer contradictions, substantive repeated duties or genuinely missing main duties.
   Each bullet inherits its employer/title/dates from the printed role heading; do not require their repetition;
+  recruiting values of the target company are not accomplishments at another employer;
 - skills: tools placed under a category that does not describe them (for example ML frameworks under Frontend or
   deployment platforms under Databases); soft skills listed. Empty-category checks run in code. Report only correctness problems, never
   short lines or missing keywords. Prefer moving terms or merging compatible categories over adding padding;
@@ -445,12 +446,11 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
         if agent == "projects":
             proj = ctx["job_dir"] / "projects.json"
             edit_prompt = PROJECTS_EDIT_PROMPT
-            if ctx.get('incremental'):
-                edit_prompt += ('\nIn projects edits, use short to repair a displayed short description, '
-                    'title to repair a generated name, and paragraph for the full description. '
-                    'Leave untargeted fields empty. Never change a known template title.')
-            title_matches=[re.match(r'Project (\d+) is titled with its bare repo name',task) for task in tasks] if ctx.get('incremental') else []
-            title_only=bool(ctx.get('incremental') and tasks and all(title_matches))
+            edit_prompt += ('\nIn projects edits, use short to repair a displayed short description, '
+                'title to repair a generated name, and paragraph for the full description. '
+                'Leave untargeted fields empty. Never change a known template title.')
+            title_matches=[re.match(r'Project (\d+) is titled with its bare repo name',task) for task in tasks]
+            title_only=bool(tasks and all(title_matches))
             if title_only:
                 edit_prompt += '\nThis is a TITLE-ONLY repair: return the requested project numbers and new names. Do not rewrite descriptions or swap repositories.'
             msgs = [SystemMessage(with_today(edit_prompt)),
@@ -459,8 +459,27 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
             # A short paragraph repair must not spend ten minutes in a fallback
             # mode after length validation fails. Preserve the previous version
             # on failure; its hard findings still prevent publication.
-            schema = project_title_schema([int(match[1]) for match in title_matches]) if title_only else \
-                     IncrementalProjectsOut if ctx.get('incremental') else ProjectsOut
+            schema = project_title_schema([int(match[1]) for match in title_matches]) if title_only else IncrementalProjectsOut
+            if not title_only:
+                from jobagent.tools.incremental_documents import _bound_schema
+                def completed_projects(result):
+                    """Correct truncated descriptions inside the bounded model call.
+
+                    Args:
+                        result: Project edits proposed for the current displayed version.
+
+                    Raises:
+                        ValueError: An edited description stops before its final sentence.
+                    """
+                    entries = []
+                    for fix in result.projects:
+                        for field in ('paragraph', 'short'):
+                            if text := getattr(fix, field, '').strip():
+                                entries.append({'paragraph': text})
+                    entries.extend({'paragraph': swap.entry.paragraph} for swap in result.swaps)
+                    if issues := P.content_findings({'ranked': entries, 'kept': len(entries)}):
+                        raise ValueError('; '.join(issues) + '; rewrite more concisely instead of cutting text')
+                schema = _bound_schema(schema, completed_projects)
             out = _invoke(ctx, agent, model, schema, msgs, log=log, deadline_s=180)
         elif targeted:
             # targeted edit: only the bullets the validators named (a full rewrite moves every orphan word)
@@ -564,7 +583,7 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
             new = json.dumps(st, indent=1)
         if new:
             st = json.loads(new)
-            known = P.known_entries(r.tex) if ctx.get('incremental') else {}
+            known = P.known_entries(r.tex)
             for e in st["ranked"]:  # an over-long rewrite takes 5 lines: keep whole sentences up to the limit
                 if (e.get('repo') or '').lower() in known:
                     e['title'] = known[e['repo'].lower()][0]

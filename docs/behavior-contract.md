@@ -69,6 +69,9 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
   code-verified facts before treating them as defects. Uncertain findings remain blocking; deterministic quality
   and source checks cannot be voted away. A bullet that explicitly names its real stack is not rejected solely
   for also using a phrase such as "AI tools".
+- Keep target-company cultural-values prose out of required Experience coverage, while preserving mixed technical
+  requirements. Employer names alone do not satisfy the named-technology rule. Both document strategies can repair
+  the actually displayed short project description, and reject truncated replacements within the bounded model call.
 - Retry an invalid cover-letter stage without rebuilding an unchanged valid resume. Prefer a compiled one-page
   letter, retain its exact PDF instead of recompiling it at publication, and require its header to match the final resume.
   Changed generation code, project metadata or layout measurements invalidate the corresponding workflow cache.

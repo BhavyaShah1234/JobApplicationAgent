@@ -420,6 +420,9 @@ Experience bullets:
   advocating data-driven decisions, teamwork) still becomes a technical bullet: the system, analysis or artifact
   that did it (e.g. "Translated stakeholder objectives into KPI dashboards in Looker on BigQuery, cutting
   reporting time 30%"). Never a bullet about soft skills alone.
+- The target company's recruiting values are context, not past employment: never claim to have championed that
+  company's culture or worked there under a different employer's heading. Keep company-value alignment in the
+  Summary or cover letter as an intention, rather than turning it into an Experience accomplishment.
 - Write every role as professional industry work. Never use wording that makes it look academic, unpaid, student
   or volunteer work: no "faculty", "professor", "lab", "coursework", "class", "student", "thesis", "volunteer",
   "unpaid", "academic", "research codebase", "research goals". Use "teams", "stakeholders", "production" instead.
@@ -861,6 +864,11 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
     tech |= {t.strip().lower() for s in f.skills for t in s.terms}
     tech |= {"llm", "llms", "gpu", "gpus", "cuda", "reinforcement learning", "machine learning", "deep learning",
              "computer vision", "neural network", "transformer", "etl", "api", "apis", "rest", "microservices"}
+    # Employer names are proper nouns, but do not establish a technology.
+    # Explicitly listed technologies still count through the separate tech set
+    # (for example a product which also happens to name the hiring company).
+    identities = {word.casefold() for name in [jd.company] + [role.company for role in r.roles]
+                  for word in re.findall(r'[A-Za-z][\w+#.-]*', name or '')}
     out, no_result = [], []
     for e in f.roles:
         for k, b in enumerate(e.bullets):
@@ -877,7 +885,8 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
                 out.append(f"{where} uses academic/unpaid wording \"{m.group(0)}\"")
             low = b.text.lower()
             # "AI", "ML", "LLM" or "machine learning" name a field, not a tool: they don't count
-            named = {w for w in set(TOOLISH.findall(b.text)) | proper_nouns(b.text) if w.lower() not in GENERIC_NAMES}
+            named = {w for w in set(TOOLISH.findall(b.text)) | proper_nouns(b.text)
+                     if w.lower() not in GENERIC_NAMES | identities}
             has_tool = bool(named) or any(re.search(r"(?<![a-z])" + re.escape(t) + r"(?![a-z])", low)
                                         for t in tech if t and t not in GENERIC_NAMES and not GENERIC_TOOLS.fullmatch(t))
             if not has_tool:

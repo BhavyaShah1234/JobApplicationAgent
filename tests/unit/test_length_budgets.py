@@ -105,7 +105,8 @@ def test_fill_checks_only_expects_what_the_page_can_hold():
 
 class TemplateResume:
     def __init__(self):
-        self.roles = [type("Role", (), {"bullets": ["Built the original data pipeline for the team."]})()]
+        self.roles = [T.Role(header='', title='Engineer', company='Acme',
+                             bullets=['Built the original data pipeline for the team.'], span=(0, 0))]
         self.skills = []
 
 

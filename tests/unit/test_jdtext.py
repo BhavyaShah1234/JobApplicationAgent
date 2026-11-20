@@ -176,6 +176,27 @@ def test_recruiting_filter_preserves_explicit_requirements_and_real_duties(text)
     assert jdtext.non_experience_category(text) is None
 
 
+@pytest.mark.parametrize('values', [
+    "Champion, role model, and embed Acme's cultural principles (Focus on Customers, Build for the Long Term).",
+    "Embody the company's core values as we scale globally.",
+    'Uphold our organizational values and be inclusive.',
+])
+def test_cultural_values_are_context_not_required_experience(values):
+    from jobagent.tools import tailor as T
+    assert jdtext.non_experience_category(values) == 'values'
+    jd = JobDescription(title='Engineer', company='Acme', responsibilities=[values, 'Develop Python services.'])
+    assert [text for _, text, _ in T.jd_items(jd)] == ['Develop Python services.']
+
+
+@pytest.mark.parametrize('duty', [
+    'Champion secure development and implement Python security checks reflecting our core values.',
+    'Embody core values and maintain Kubernetes deployments.',
+    'Must champion core values and implement security controls.',
+])
+def test_values_filter_retains_mixed_technical_requirements(duty):
+    assert jdtext.non_experience_category(duty) is None
+
+
 NVIDIA_LIKE = """
 <div><p>We are looking for a New College Graduate SoC Software Engineer.</p>
 <p><span><b>What you’ll be doing:</b></span></p><ul><li>Develop SoC software</li></ul>

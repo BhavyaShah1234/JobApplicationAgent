@@ -108,6 +108,12 @@ def non_experience_category(text: str) -> str | None:
     if re.search(r'\b(?:\d+(?:\.\d+)?\+?\s+years?|experience\s+(?:with|in|developing)|'
                  r'proficien\w*|expertise|must\b|certif\w*|bachelor\w*|master\w*|degree|knowledge of)\b', low):
         return None
+    if re.match(r'(?:champion|embody|uphold|embrace|exemplify|role model)\b', low) and re.search(
+            r'\b(?:cultural principles|(?:company|corporate|organizational|core) values)\b', low):
+        # Recruiting values are not evidence of work at the target employer.
+        # Retain a mixed item that also assigns actual technical work.
+        if not re.search(r'\b(?:implement|deploy|debug|test|automate|maintain)\w*\b', low):
+            return 'values'
     if re.match(r"we(?:'re| are)\s+(?:hiring|seeking|looking for)\b", low) or (
             low.startswith('if you ') and re.search(r'\bwe want to hear from you\b', low)):
         if re.search(r"\b(?:who(?: will| can)?|to|you(?:'ll| will))\s+"

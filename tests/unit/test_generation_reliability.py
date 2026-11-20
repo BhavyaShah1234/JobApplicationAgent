@@ -264,12 +264,52 @@ def test_generic_tool_description_is_allowed_when_the_actual_stack_is_named():
     template = SimpleNamespace(roles=[role], skills=[('Languages', 'Python, TensorFlow')])
     jd = JobDescription(title='Engineer', company='Acme', technical_skills=['Python', 'TensorFlow'])
     value = filled()
-    value.roles = [T.FillRole(role=0, bullets=[T.FillBullet(text=text, duties=[]) for text in (
+    value.roles = [T.FillRole(role=0, bullets=[T.FillBullet(text=text, duties=[0]) for text in (
         'Developed AI tools using Python and TensorFlow, enhancing data processing efficiency by 35%.',
         'Built AI tools, reducing review time by 20%.')])]
     issues = T.quality(template, jd, value)
     assert not any('bullet 1' in issue for issue in issues)
     assert any('bullet 2' in issue and 'names no technology' in issue for issue in issues)
+
+
+def test_employer_name_is_not_a_technology_but_an_explicit_product_still_is():
+    from jobagent.state import JobDescription
+    template = T.parse(r'\section{Summary}Old.\section{Experience}\section{Projects}\section{Education}MS\section{Technical Skills}')
+    value = filled()
+    value.roles = [T.FillRole(role=0, bullets=[T.FillBullet(text=text, duties=[]) for text in (
+        "Championed Samsara's cultural principles while scaling AI solutions globally.",
+        'Integrated Samsara telematics, reducing reporting time by 20%.')])]
+    jd = JobDescription(title='Engineer', company='Samsara')
+    assert any('bullet 1' in issue and 'names no technology' in issue for issue in T.quality(template, jd, value))
+    jd.technical_skills = ['Samsara telematics']
+    assert not any('bullet 2' in issue for issue in T.quality(template, jd, value))
+
+
+@pytest.mark.parametrize('incremental', [False, True])
+def test_native_project_repair_can_correct_a_short_variant_and_rejects_truncation(tmp_path, monkeypatch, incremental):
+    from jobagent.steps import ats as A
+    from pydantic import ValidationError
+    before = {'kept': 1, 'short': ['owner/source'], 'ranked': [{
+        'repo': 'owner/source', 'title': 'Source Project', 'paragraph': 'Retain this full description.',
+        'short': 'Built cloud automation. It ensures consistent, validated AWS'}]}
+    (tmp_path / 'projects.json').write_text(json.dumps(before))
+    monkeypatch.setattr(M.llm, 'writer', lambda *a, **kw: object())
+    monkeypatch.setattr(M, '_context', lambda *a, **kw: 'Actual project sources')
+    complete = ('Teams needed reliable cloud deployment. Built a Python and Terraform deployment system '
+                'with validated configuration and repeatable infrastructure updates.')
+    def generate(ctx, stage, model, schema, messages, **kwargs):
+        with pytest.raises(ValidationError, match='complete sentence'):
+            schema.model_validate({'projects': [{'project': 1, 'short': before['ranked'][0]['short']}]})
+        return schema.model_validate({'projects': [{'project': 1, 'short': complete}]})
+    monkeypatch.setattr(M, '_invoke', generate)
+    _, out = M._run_agent({'job_dir': tmp_path, 'models': {'projects': 'fixture'},
+                          'log': lambda _: None, 'incremental': incremental},
+                         'projects', None, ['Repair project 1 unfinished displayed short description.'], '')
+    assert out is not None
+    after = json.loads(A.apply_project_fixes(json.dumps(before), out.projects))
+    assert after['ranked'][0]['paragraph'] == before['ranked'][0]['paragraph']
+    assert after['ranked'][0]['short'] == complete
+    assert M.P.content_findings(after) == []
 
 
 def review_world(tmp_path, monkeypatch):
