@@ -6,6 +6,7 @@ set -euo pipefail
 : "${SCREEN_GEOMETRY:=1920x1080x24}"
 : "${VNC_PORT:=5900}"
 : "${NOVNC_PORT:=6080}"
+: "${DASHBOARD_ALLOW_HOSTS:=}"
 LOG_DIR=/app/state/logs
 mkdir -p "$LOG_DIR"
 
