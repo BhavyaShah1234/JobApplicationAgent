@@ -9,7 +9,10 @@ A row the candidate changed is marked `user_edited`: a later discovery run no lo
 Companies are kept in `watchlist`: the wish "work on this company". `jobagent run <company>` finds its openings.
 """
 
+import concurrent.futures
+import ipaddress
 import re
+import socket
 import sqlite3
 from urllib.parse import urlsplit
 
@@ -19,6 +22,65 @@ REQUEUE_FROM = {"skipped", "needs_review", "failed", "blocked", "scraped", "queu
 DELETE_FROM = {"queued", "needs_review", "skipped", "failed", "blocked"}
 TEXT_LIMIT = 200
 ATS_HOSTS = ("greenhouse.io", "lever.co", "ashbyhq.com", "myworkdayjobs.com", "smartrecruiters.com", "workable.com", "icims.com")
+
+
+DNS_TIMEOUT_S = 4.0
+_DNS = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="dns-check")
+
+
+def _resolve(host: str, port: int) -> list[str]:
+    """Addresses a name points at, with a time limit (a stuck resolver must not hold a dashboard request).
+
+    Args:
+        host: Name to look up.
+        port: Port the browser would use.
+
+    Returns:
+        The addresses; empty when the name does not exist.
+
+    Raises:
+        ValueError: The lookup did not answer within `DNS_TIMEOUT_S` (the link is refused rather than trusted).
+    """
+    future = _DNS.submit(socket.getaddrinfo, host, port, 0, socket.SOCK_STREAM)
+    try:
+        return [i[4][0].split("%")[0] for i in future.result(timeout=DNS_TIMEOUT_S)]
+    except concurrent.futures.TimeoutError as exc:
+        raise ValueError("could not check where that address points (DNS did not answer); try again in a moment") from exc
+    except OSError:
+        return []
+
+
+def check_public_url(url: str) -> None:
+    """Refuse a link the agent's browser must never be sent to: another machine's network, this machine, or a cloud metadata address.
+
+    Args:
+        url: What the candidate typed into the dashboard.
+
+    Raises:
+        ValueError: Not http(s), has credentials, or its host is (or resolves to) a loopback, private, link-local or otherwise non-public address.
+    """
+    p = urlsplit(url.strip())
+    host = (p.hostname or "").lower().rstrip(".")
+    if p.scheme not in {"http", "https"} or not host or p.username or p.password:
+        raise ValueError("only plain http(s) job links without a login in them are accepted")
+    if host == "localhost" or host.endswith((".localhost", ".local", ".internal", ".lan", ".home", ".corp")):
+        raise ValueError("that address is on this machine or a private network")
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is None and re.fullmatch(r"[0-9a-fx.]+", host):             # legacy IPv4 spellings a browser accepts: 0x7f.1, 2130706433, 0177.0.0.1
+        try:
+            literal = ipaddress.ip_address(socket.inet_aton(host))
+        except OSError:
+            literal = None
+    if literal is not None:
+        if not literal.is_global:
+            raise ValueError("that address is on this machine or a private network")
+        return
+    addresses = _resolve(host, p.port or (443 if p.scheme == "https" else 80))      # [] = unresolvable: the browser fails on it too, nothing internal is reached
+    if any(not ipaddress.ip_address(a).is_global for a in addresses):
+        raise ValueError("that name points at this machine or a private network")
 
 
 def guess_company(url: str) -> str:
@@ -96,8 +158,10 @@ def add_url(conn: sqlite3.Connection, url: str, *, company: str = "", where: str
     if where not in {"top", "normal", "bottom"}:
         raise ValueError("where must be top, normal or bottom")
     canon = Q.canonical_url(url)
-    if urlsplit(canon).scheme not in {"http", "https"} or not urlsplit(canon).hostname:
-        return {"input": url, "result": "refused", "note": "not a web address"}
+    try:
+        check_public_url(canon)
+    except ValueError as exc:
+        return {"input": url, "result": "refused", "note": str(exc)}
     with conn:
         conn.execute("BEGIN IMMEDIATE") if not conn.in_transaction else None
         row = conn.execute("SELECT id, status, company FROM jobs WHERE url = ?", (canon,)).fetchone()

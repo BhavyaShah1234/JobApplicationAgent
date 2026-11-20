@@ -201,3 +201,11 @@ def test_a_database_not_yet_upgraded_still_lists_the_queue(tmp_path):
     c.close()
     rows = data.queue(s)
     assert rows and "company" in rows[0]
+
+
+def test_a_run_input_that_points_inside_the_network_is_refused(env):
+    s, srv, started = env
+    for bad in ("http://127.0.0.1:8765/api/queue", "https://169.254.169.254/latest", "file:///etc/passwd"):
+        code, out = call(srv, "POST", "/api/run", {"inputs": [bad], "through": "scrape", "limit": 1})
+        assert code == 400, bad
+    assert not started

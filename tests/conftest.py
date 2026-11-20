@@ -28,3 +28,11 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.browser)
         if tiers.is_simulation(item):
             item.add_marker(pytest.mark.simulation)
+
+
+
+@pytest.fixture(autouse=True)
+def _public_dns_for_link_checks(monkeypatch):
+    """Dashboard link checks resolve names; no test may depend on (or wait for) a real resolver. Every name answers with a public address."""
+    from jobagent.tools import queue_admin
+    monkeypatch.setattr(queue_admin, "_resolve", lambda host, port: ["93.184.216.34"])

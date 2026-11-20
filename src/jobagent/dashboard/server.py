@@ -105,6 +105,9 @@ def start_run(settings, inputs, through: str, limit: int, popen=subprocess.Popen
         x = x.strip()
         if not x or len(x) > 500 or "\n" in x or "\r" in x or x.startswith("-"):
             raise ValueError(f"not an acceptable input: {x[:40]!r}")
+        if re.match(r"(?i)[a-z][a-z0-9+.-]*://", x):                   # a link: public web addresses only (not this machine, a private network, file:, ftp:...)
+            from jobagent.tools.queue_admin import check_public_url
+            check_public_url(x)
         clean.append(x)
     if type(limit) is not int or not 1 <= limit <= 20:
         raise ValueError("limit must be between 1 and 20")

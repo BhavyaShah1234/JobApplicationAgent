@@ -8,6 +8,8 @@ from jobagent import db
 from jobagent.tools import jobqueue as Q
 from jobagent.tools import queue_admin as QA
 
+QA_REAL_RESOLVE = QA._resolve                                  # the conftest replaces QA._resolve in every test; this keeps the real one
+
 
 @pytest.fixture
 def conn(tmp_path):
@@ -204,3 +206,30 @@ def test_a_pasted_link_joins_the_company_of_its_board_siblings(conn):
     assert conn.execute("SELECT company FROM jobs WHERE url LIKE '%newco%'").fetchone()[0] == "newco"
     QA.add(conn, "https://job-boards.greenhouse.io/doordashusa%/jobs/9")                                 # LIKE wildcards in a link are not wildcards
     assert conn.execute("SELECT company FROM jobs WHERE url LIKE '%9' AND source = 'dashboard'").fetchone()[0] != "DoorDash"
+
+
+@pytest.mark.parametrize("url", ["http://localhost:8765/api", "http://127.0.0.1/", "http://[::1]/x", "http://169.254.169.254/latest/meta-data/",
+                                 "http://10.0.0.5/job", "http://192.168.1.1/", "http://user:pw@jobs.example.test/1", "file:///etc/passwd", "ftp://x.test/a",
+                                 "http://intranet.corp/jobs/1", "http://printer.local/", "http://0x7f.1/", "http://2130706433/"])
+def test_links_to_this_machine_or_a_private_network_are_refused(conn, url):
+    out = QA.add(conn, url)
+    assert out[0]["result"] == "refused" and conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+
+
+def test_a_name_that_resolves_to_a_private_address_is_refused_and_a_public_one_is_not(conn, monkeypatch):
+    answers = {"rebind.example.test": ["10.1.2.3"], "mixed.example.test": ["93.184.216.34", "127.0.0.1"], "jobs.example.test": ["93.184.216.34"], "gone.example.test": []}
+    monkeypatch.setattr(QA, "_resolve", lambda host, port: answers[host])
+    assert QA.add(conn, "https://rebind.example.test/jobs/1")[0]["result"] == "refused"
+    assert QA.add(conn, "https://mixed.example.test/jobs/1")[0]["result"] == "refused"                   # one private answer is enough
+    assert QA.add(conn, "https://jobs.example.test/jobs/1")[0]["result"] == "added"
+    assert QA.add(conn, "https://gone.example.test/jobs/2")[0]["result"] == "added"                      # unresolvable: nothing internal is reached
+
+
+def test_a_stuck_resolver_refuses_quickly_instead_of_hanging(conn, monkeypatch):
+    import time
+    monkeypatch.setattr(QA, "_resolve", QA_REAL_RESOLVE)
+    monkeypatch.setattr(QA, "DNS_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(QA.socket, "getaddrinfo", lambda *a, **k: time.sleep(3))
+    started = time.monotonic()
+    out = QA.add(conn, "https://slow.example.test/jobs/1")
+    assert out[0]["result"] == "refused" and "DNS" in out[0]["note"] and time.monotonic() - started < 2
