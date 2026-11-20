@@ -102,3 +102,15 @@ test("read-only hides every control", async () => {
   for (const name of ["Add", "Run queue", "Edit", "Run now", "Add company"]) expect(screen.queryByRole("button", { name })).toBeNull();
   expect(screen.queryByRole("checkbox")).toBeNull();
 });
+
+test("a blocked posting has its own tab and can be put back in the queue", async () => {
+  const blocked = row({ id: 5, title: "Role 5", status: "blocked", position: undefined, notes: "filling: Why us?", url: "https://jobs.example.test/5" });
+  const fetch = mockFetch({ "/api/queue": [...QUEUE, blocked], "/api/watchlist": WATCH, "/api/queue/state": { changed: 1, refused: [] } });
+  render(<Queue config={{ read_only: false }} />);
+  await userEvent.click(await screen.findByRole("tab", { name: /Blocked/ }));
+  expect(await screen.findByText("Role 5")).toBeInTheDocument();
+  expect(screen.getByText("filling: Why us?")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("checkbox", { name: "Select Acme Role 5" }));
+  await userEvent.click(screen.getByRole("button", { name: "Put in queue" }));
+  expect(body(fetch, "/api/queue/state")).toEqual({ ids: [5], action: "queue" });
+});

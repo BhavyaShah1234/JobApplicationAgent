@@ -6,7 +6,7 @@ import Chip from "../components/Chip.jsx";
 import Empty from "../components/Empty.jsx";
 import FetchError from "../components/FetchError.jsx";
 
-const FILTERS = [["queued", "Queued"], ["running", "Running"], ["needs_review", "Needs review"], ["skipped", "Set aside"], ["failed", "Failed"], ["all", "All"]];
+const FILTERS = [["queued", "Queued"], ["running", "Running"], ["needs_review", "Needs review"], ["skipped", "Set aside"], ["blocked", "Blocked"], ["failed", "Failed"], ["all", "All"]];
 const WHERE = [["normal", "By match score"], ["top", "Next to run"], ["bottom", "Last"]];
 
 async function act(path, body, setMsg, reload) {
