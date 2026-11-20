@@ -142,3 +142,19 @@ def test_wrong_city_cache_is_rejected_even_with_same_jd_labels(tmp_path, prepare
     selected = A.prepare(ctx, tmp_path, None, log=lambda _: None)
     assert selected['address']['city'] == 'Scottsdale'
     assert len(prepared_address_lookups) == 2
+
+
+def test_city_only_original_cannot_be_replaced_by_a_different_research_city(monkeypatch):
+    monkeypatch.setattr(A.lookup, 'geocode', lambda _: {'address': {'country_code':'us', 'state':'Arizona', 'city':'Scottsdale'}})
+    assert A._target(['Scottsdale', 'Phoenix, Arizona'], lambda _: None)['city'] == 'Scottsdale'
+
+
+def test_matching_resolved_city_avoids_redundant_geocoding(monkeypatch):
+    monkeypatch.setattr(A.lookup, 'geocode', lambda _: pytest.fail('Already resolved same city'))
+    assert A._target(['Scottsdale', 'Scottsdale, Arizona'], lambda _: None)['city'] == 'Scottsdale'
+
+
+def test_unresolved_explicit_city_does_not_become_the_state_dictionary_city(monkeypatch):
+    monkeypatch.setattr(A.lookup, 'geocode', lambda _: {'address': {'country_code':'us', 'state':'Arizona', 'city':'Phoenix'}})
+    with pytest.raises(RuntimeError, match='city/state'):
+        A._target(['Scottsdale', 'Arizona'], lambda _: None)

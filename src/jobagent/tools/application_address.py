@@ -157,12 +157,11 @@ def _explicit_city(location: str, code: str) -> str:
 
 def _target(locations: list[str], log, *, allow_geocode: bool = True) -> dict | None:
     fallback = None
-    unresolved = []
-    for location in locations:
-        location = str(location).strip()
+    city_seen = False
+    for value in locations:
+        location = str(value).strip()
         if not location:
             continue
-
         code = _state_from_label(location)
         if code is not None:
             state, default_city = STATE_CITIES[code]
@@ -170,65 +169,44 @@ def _target(locations: list[str], log, *, allow_geocode: bool = True) -> dict | 
                 log(f"address: JD location {location!r} -> selected {city}, {state}")
                 return {"city": city, "state": state, "state_code": code}
             fallback = fallback or {"city": default_city, "state": state, "state_code": code}
-        elif not re.search(r"(?i)\b(?:headquarters|corporate|remote|anywhere)\b", location) and _key(location) not in {
-                "united states", "united states of america", "us", "usa"}:
-            unresolved.append(location)
-
-    for location in unresolved if allow_geocode else []:
-        code = None
-        # City-only locations need a geocoder to identify their state.
-        if code is None:
-            log(f"address: resolving the state for {location!r}")
-            try:
-                # A duplicate country qualifier can make Nominatim return no
-                # result for an otherwise valid city (e.g. San Jose, United
-                # States of America, United States). Keep a single US qualifier.
-                city_query = re.sub(r"(?i)\b(?:united states(?: of america)?|usa|us)\b", "", location).strip(" ,")
-                query = ", ".join(part for part in (city_query, "United States") if part)
-                hit = lookup.geocode(query) or {}
-            except Exception as exc:
-                log(
-                    f"address: state lookup failed for {location!r} "
-                    f"({type(exc).__name__})"
-                )
-                continue
-
-            address = hit.get("address") or {}
-            if address.get("country_code") != "us":
-                continue
-
-            iso = address.get("ISO3166-2-lvl4", "")
-            if iso.startswith("US-") and iso[3:] in STATE_CITIES:
-                code = iso[3:]
-            else:
-                code = _state_from_label(address.get("state", ""))
-
-        if code is None:
             continue
-
-        state, _ = STATE_CITIES[code]
+        if re.search(r"(?i)\b(?:headquarters|corporate|remote|anywhere)\b", location):
+            continue
+        city_query = re.sub(r"(?i)\b(?:united states(?: of america)?|usa|us)\b", "", location).strip(" ,-/")
+        if not city_query:
+            continue
+        city_seen = True
+        # Research can supply a missing state, but cannot replace the JD city.
+        for other in locations:
+            other_code = _state_from_label(str(other))
+            if other_code and _city_key(_explicit_city(str(other), other_code)) == _city_key(city_query):
+                return {"city": city_query, "state": STATE_CITIES[other_code][0], "state_code": other_code}
+        if not allow_geocode:
+            return None
+        log(f"address: resolving the state for {location!r}")
+        try:
+            hit = lookup.geocode(f"{city_query}, United States") or {}
+        except Exception as exc:
+            log(f"address: state lookup failed for {location!r} ({type(exc).__name__})")
+            continue
+        address = hit.get("address") or {}
+        if address.get("country_code") != "us":
+            continue
+        iso = address.get("ISO3166-2-lvl4", "")
+        code = iso[3:] if iso.startswith("US-") and iso[3:] in STATE_CITIES else _state_from_label(address.get("state", ""))
         city = next((address.get(k) for k in ("city", "town", "village", "municipality") if address.get(k)), "")
-        if not city:
+        if code is None or not city or _city_key(city) != _city_key(city_query):
             continue
-        log(
-            f"address: JD location {location!r} -> "
-            f"selected {city}, {state}"
-        )
-        return {
-            "city": city,
-            "state": state,
-            "state_code": code,
-        }
-
-    if fallback is not None and (allow_geocode or not unresolved):
+        log(f"address: JD location {location!r} -> selected {city}, {STATE_CITIES[code][0]}")
+        return {"city": city, "state": STATE_CITIES[code][0], "state_code": code}
+    if fallback is not None and not city_seen:
         log(f"address: JD specifies a state only -> selected {fallback['city']}, {fallback['state']}")
         return fallback
     if not allow_geocode:
         return None
     raise RuntimeError(
-        "No US state could be resolved from jd.json locations; "
-        "provide a state name, state abbreviation, or resolvable US city. "
-        "Application not started."
+        "No valid US city/state could be resolved from jd.json locations; "
+        "provide a state-only location or a resolvable US city. Application not started."
     )
 
 
@@ -490,7 +468,9 @@ def prepare(ctx: dict, out_dir, model, log=print) -> dict:
                 and isinstance(saved.get("target"), dict)
                 and _city_key(address.get("city", "")) == _city_key(saved["target"].get("city", ""))
                 and _key(address.get("state", "")) == _key(saved["target"].get("state", ""))
-                and (target is None or saved["target"] == target)
+                and (saved["target"] == target if target is not None else any(
+                    _city_key(re.sub(r"(?i)\b(?:united states(?: of america)?|usa|us)\b", "", label).strip(" ,-/"))
+                    == _city_key(address.get("city", "")) for label in original_locations))
                 and all(
                     isinstance(address.get(k), str) and address[k].strip()
                     for k in required
