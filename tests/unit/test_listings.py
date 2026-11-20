@@ -84,3 +84,71 @@ def test_wordpress_style_job_links_carry_the_requisition_and_the_city_from_the_t
             '<a href="https://cafevalleyjobs.com/food-safety-technician-phoenix-az-179452/">Food Safety Technician Job – Phoenix, AZ</a>')
     got = L.parse_dom(page, "https://cafevalleyjobs.com/", "Cafe Valley")
     assert [(g.req_id, g.locations) for g in got] == [("180034", ["Marion, IN"]), ("179452", ["Phoenix, AZ"])]
+
+
+# --- Workable, Rippling and Gem (shapes taken from the live public boards, 2026-11-20) -----------------------------
+
+def test_workable_listings_get_the_apply_url_place_and_remote_flag():
+    data = {"nextPage": "tok", "results": [
+        {"shortcode": "19A136F8E2", "title": "Open-Source Machine Learning Engineer - US Remote", "remote": True, "state": "published", "published": "2026-05-29T00:00:00.000Z",
+         "location": {"city": "New York", "region": "New York", "country": "United States", "countryCode": "US"}},
+        {"shortcode": "INT1", "title": "Internal only", "isInternal": True, "state": "published", "location": {}},
+        {"shortcode": "DRAFT", "title": "Draft", "state": "draft", "location": {}}]}
+    got = L.parse_workable(data, "Hugging Face", "huggingface")
+    assert len(got) == 1
+    a = got[0]
+    assert (a.url, a.locations, a.posted, a.req_id, a.snippet, a.portal) == (
+        "https://apply.workable.com/huggingface/j/19A136F8E2/", ["New York, United States"], "2026-05-29", "19A136F8E2", "Remote", "workable")
+
+
+def test_workable_pages_are_followed_with_the_page_token_and_stop_when_there_is_none():
+    calls = []
+
+    def get_json(url, method="GET", body=None, **kw):
+        calls.append((url, method, dict(body or {})))
+        if "token" not in (body or {}):
+            return {"nextPage": "P2", "results": [{"shortcode": "A", "title": "One", "state": "published", "location": {"country": "United States"}}]}
+        return {"results": [{"shortcode": "B", "title": "Two", "state": "published", "location": {"country": "United States"}}]}
+    careers = {"board": {"family": "workable", "token": "acme", "url": "https://apply.workable.com/acme"}, "url": "https://apply.workable.com/acme"}
+    got = L.collect(careers, "Acme", get_json=get_json)
+    assert [x.req_id for x in got] == ["A", "B"] and calls[0][1] == "POST" and calls[1][2]["token"] == "P2" and len(calls) == 2
+
+
+def test_rippling_merges_the_same_posting_listed_once_per_location():
+    items = [{"id": "x1", "name": "ML Engineer", "url": "https://ats.rippling.com/rippling/jobs/x1", "department": {"name": "AI"},
+              "locations": [{"name": "San Francisco, CA", "city": "San Francisco", "state": "California", "country": "United States"}]},
+             {"id": "x1", "name": "ML Engineer", "url": "https://ats.rippling.com/rippling/jobs/x1", "department": {"name": "AI"},
+              "locations": [{"name": "Seattle, WA", "city": "Seattle", "state": "Washington", "country": "United States"}]},
+             {"id": "x2", "name": "Remote role", "url": "https://ats.rippling.com/rippling/jobs/x2", "locations": [{"name": "Remote (US)"}]}]
+    got = L.parse_rippling(items, "Rippling")
+    assert [x.req_id for x in got] == ["x1", "x2"]
+    assert got[0].locations == ["San Francisco, California, United States", "Seattle, Washington, United States"] and got[1].locations == ["Remote (US)"]
+    assert got[0].snippet == "AI" and got[0].portal == "rippling"
+
+
+def test_rippling_pages_are_read_until_the_last_one():
+    pages = {0: {"items": [{"id": "a", "name": "A", "url": "u/a", "locations": []}], "totalPages": 2}, 1: {"items": [{"id": "b", "name": "B", "url": "u/b", "locations": []}], "totalPages": 2}}
+    seen = []
+
+    def get_json(url, *a, **k):
+        page = int(url.split("page=")[1].split("&")[0])
+        seen.append(page)
+        return pages[page]
+    got = L.collect({"board": {"family": "rippling", "token": "rippling"}, "url": "https://ats.rippling.com/rippling"}, "Rippling", get_json=get_json)
+    assert [x.req_id for x in got] == ["a", "b"] and seen == [0, 1]
+
+
+def test_gem_listings():
+    data = [{"absolute_url": "https://jobs.gem.com/retool/4003629005", "title": "Software Engineer", "first_published_at": "2022-03-25T18:46:39.000Z",
+             "id": "4003629005", "requisition_id": "16", "location": {"name": "San Francisco, United States"}, "content_plain": "ABOUT RETOOL"}]
+    a = L.parse_gem(data, "Retool")[0]
+    assert (a.url, a.locations, a.posted, a.req_id, a.snippet, a.portal) == (
+        "https://jobs.gem.com/retool/4003629005", ["San Francisco, United States"], "2022-03-25", "16", "ABOUT RETOOL", "gem")
+
+
+def test_the_new_boards_are_recognised_from_their_addresses_and_marketing_sites_are_not():
+    from jobagent.tools.careers import board_of
+    assert board_of("https://apply.workable.com/huggingface/j/19A136F8E2/")["token"] == "huggingface"
+    assert board_of("https://ats.rippling.com/rippling/jobs/abc") == {"family": "rippling", "token": "rippling", "url": "https://ats.rippling.com/rippling"}
+    assert board_of("https://jobs.gem.com/retool/4003629005")["family"] == "gem"
+    assert board_of("https://www.rippling.com/careers") is None and board_of("https://www.gem.com/pricing") is None

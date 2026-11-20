@@ -44,6 +44,7 @@ ATS = [("workday", r"(^|\.)myworkdayjobs\.com$|(^|\.)myworkdaysite\.com$"), ("gr
        ("ultipro", r"(^|\.)ultipro\.com$|(^|\.)ukg\.com$"), ("oracle", r"(^|\.)oraclecloud\.com$"),
        ("taleo", r"(^|\.)taleo\.net$"), ("bamboohr", r"(^|\.)bamboohr\.com$"), ("workable", r"(^|\.)workable\.com$"),
        ("jobvite", r"(^|\.)jobvite\.com$"), ("breezy", r"(^|\.)breezy\.hr$"),
+       ("rippling", r"^ats\.rippling\.com$"), ("gem", r"^jobs\.gem\.com$"),
        ("kpmg", r"(^|\.)kpmguscareers\.com$")]
 
 
@@ -64,7 +65,7 @@ def board_of(url: str) -> dict | None:
     if family == "greenhouse":
         token = (q.get("for") or q.get("board") or [""])[0] or next(
             (x for x in parts if x not in ("embed", "v1", "boards", "job_board", "jobs", "job_app")), "")
-    elif family in ("lever", "ashby", "smartrecruiters", "workable", "breezy"):
+    elif family in ("lever", "ashby", "smartrecruiters", "workable", "breezy", "rippling", "gem"):
         token = parts[0] if parts else ""
     elif family == "workday":
         host = p.netloc.lower()

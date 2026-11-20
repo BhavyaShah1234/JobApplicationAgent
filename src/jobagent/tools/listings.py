@@ -110,6 +110,45 @@ def parse_smartrecruiters(data: dict, company: str, token: str) -> list[Listing]
     return out
 
 
+def parse_workable(data: dict, company: str, token: str) -> list[Listing]:
+    """Workable's public board (`apply.workable.com/<token>`): one listing per published posting, located by its city, region and country."""
+    out = []
+    for j in (data or {}).get("results", []):
+        if j.get("state", "published") != "published" or j.get("isInternal"):
+            continue
+        loc = j.get("location") or {}
+        place = ", ".join(dict.fromkeys(x for x in [loc.get("city"), loc.get("region"), loc.get("country")] if x))
+        out.append(Listing(company, j.get("title", ""), f"https://apply.workable.com/{token}/j/{j.get('shortcode', '')}/",
+                           [place] if place else [], _iso(j.get("published")), str(j.get("shortcode") or ""),
+                           "Remote" if j.get("remote") else "", "workable"))
+    return out
+
+
+def parse_rippling(items: list, company: str) -> list[Listing]:
+    """Rippling's public board (`ats.rippling.com/<token>`): the same posting is listed once per location, so locations are merged by id."""
+    merged: dict[str, Listing] = {}
+    for j in items or []:
+        jid = str(j.get("id") or "")
+        if not jid:
+            continue
+        places = [", ".join(dict.fromkeys(x for x in [l.get("city"), l.get("state") or l.get("stateCode"), l.get("country")] if x)) or l.get("name", "")
+                  for l in j.get("locations") or []]
+        if jid not in merged:
+            merged[jid] = Listing(company, j.get("name", ""), j.get("url", ""), [], "", jid, (j.get("department") or {}).get("name", ""), "rippling")
+        merged[jid].locations = list(dict.fromkeys([*merged[jid].locations, *(p for p in places if p)]))
+    return list(merged.values())
+
+
+def parse_gem(data: list, company: str) -> list[Listing]:
+    """Gem's public board (`jobs.gem.com/<token>`): a list of postings with their location name and plain-text description."""
+    out = []
+    for j in data or []:
+        name = (j.get("location") or {}).get("name", "")
+        out.append(Listing(company, j.get("title", ""), j.get("absolute_url", ""), [name] if name else [], _iso(j.get("first_published_at")),
+                           str(j.get("requisition_id") or j.get("id") or ""), (j.get("content_plain") or "")[:600], "gem"))
+    return out
+
+
 def parse_workday(data: dict, company: str, host: str, site: str) -> list[Listing]:
     out = []
     for j in (data or {}).get("jobPostings", []):
@@ -207,6 +246,27 @@ def collect(careers: dict, company: str, queries: list[str] | None = None, log=p
     if fam == "smartrecruiters":
         return parse_smartrecruiters(get_json(f"https://api.smartrecruiters.com/v1/companies/{token}/postings?limit=100"),
                                      company, token)
+    if fam == "workable":
+        body, found = {"query": "", "location": [], "department": [], "worktype": [], "remote": []}, []
+        for _ in range(10):                                           # follow Workable's page token, at most 10 pages
+            data = get_json(f"https://apply.workable.com/api/v3/accounts/{token}/jobs", "POST", body)
+            found += parse_workable(data, company, token)
+            if not (data or {}).get("nextPage"):
+                break
+            body = {**body, "token": data["nextPage"]}
+            time.sleep(PAUSE_S)
+        return found
+    if fam == "rippling":
+        items = []
+        for page in range(10):                                        # 100 postings a page, at most 1000
+            data = get_json(f"https://ats.rippling.com/api/v2/board/{token}/jobs?page={page}&pageSize=100") or {}
+            items += data.get("items") or []
+            if page + 1 >= int(data.get("totalPages") or 1) or not data.get("items"):
+                break
+            time.sleep(PAUSE_S)
+        return parse_rippling(items, company)
+    if fam == "gem":
+        return parse_gem(get_json(f"https://api.gem.com/job_board/v0/{token}/job_posts/"), company)
     if fam == "workday":
         tenant, wd, site = token.split("/")
         host = f"{tenant}.{wd}.myworkdayjobs.com"
