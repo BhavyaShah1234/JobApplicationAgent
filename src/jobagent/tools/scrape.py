@@ -169,7 +169,7 @@ def _best_text(page: Page, remembered: str | None) -> tuple[str | None, str]:
 SECTION_RULES = [
     ("preferred_qualifications", re.compile(r"(?i)prefer|nice[- ]to[- ]have|bonus|plus\b|ideal(ly)?|desired|stand out|"
                                             r"thrive|(great|good|strong) fit")),
-    ("basic_qualifications", re.compile(r"(?i)minimum|basic|require|must[- ]have|qualifications|need to see|"
+    ("basic_qualifications", re.compile(r"(?i)minimum|basic|require|must[- ]have|qualifications|need to see|experience must (?:include|involve)\b|"
                                         r"what you('ll)? (need|bring)|you (have|bring)|skills (and|&) experience")),
     ("responsibilities", re.compile(r"(?i)responsib|what you('ll| will)? (be )?do(ing)?\b|your role|the role|in this role|"
                                     r"day[- ]to[- ]day|you will|key duties|duties|what you('ll| will) work on")),
@@ -291,7 +291,9 @@ def apply_labeled(jd: JobDescription, secs: list, labels: dict[int, str]) -> Non
             cat = qualification
         if cat in LIST_CATEGORIES:
             grouped.setdefault(cat, [])
-            for text in sec.items:
+            items = ([sec.heading] if cat in ('basic_qualifications','preferred_qualifications') and
+                     re.search(r'(?i)\bexperience must (?:include|involve)\b', sec.heading) else []) + sec.items
+            for text in items:
                 corrected = (jdtext.non_experience_category(text) if cat in
                              ('responsibilities','basic_qualifications','preferred_qualifications') else None) or cat
                 items = grouped.setdefault(corrected, [])
