@@ -14,7 +14,7 @@ DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_
                         'outside_activity','employer_personal_ties','immigration_support'})
 PURPOSE_BOUND=DECLARATIONS | {'owner_identifier','work_documentation','government_employment',
     'age_threshold','work_restrictions','citizenship_countries','citizenship_status','visa_history','veteran'}
-DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys() | {'education_summary'}
+DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys() | {'education_summary','read_ack'}
 
 GOVERNMENT_HISTORY=frozenset({'current or former government employee',
     'are you a current or former government employee',
@@ -49,7 +49,8 @@ def family(text):
       ('external_sharing',r'(?:shar|send|forward|disclos).*?(?:external|partner|third part)'),
       ('clearance_eligibility',r'(?:eligible|eligibility|obtain).*clearance'),
       ('clearance_held',r'(?:hold|have|possess|active).*clearance'),
-      ('arbitration',r'arbitration'),('read_ack',r'confirm i have read the above'),
+      ('arbitration',r'arbitration'),
+      ('read_ack',r'confirm i have read the above|^i (?:understand|acknowledge) (?:that|the|this|these|how)\b'),
       ('ai_consent',r'ai (?:notetaker|transcri)|use ai.*transcri'),
       ('sms_consent',r'sms|whatsapp|text messages'),
       ('future_contact',r'future (?:job |employment )?opportunit|talent community'),
@@ -311,6 +312,10 @@ def candidates(field,facts):
             # declaration covering exactly the same predicate and parameters.
             return [x for x in allowed if x in exact or (fact_family(x)==kind and same_qualification(field,x))]
         return exact
+    if kind=='read_ack':
+        # A contact address or acknowledgement of a different statement cannot
+        # prove this declaration, including any actions it says were completed.
+        return []
     if kind=='location' and party=='applicant' and not entity_scope(field.section):
         city=[x for x in allowed if not x.record and any(
             norm(a)=='current location city' for a in x.aliases)]

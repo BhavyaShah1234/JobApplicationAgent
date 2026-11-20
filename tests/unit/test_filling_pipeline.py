@@ -141,6 +141,54 @@ def test_posting_answer_sheet_has_purpose_specific_consent_and_priority():
     assert resolve(field,[conflicting,*fs]).value=='Yes'
 
 
+@pytest.mark.parametrize('channel',['email','phone'])
+def test_notification_acknowledgement_is_not_a_contact_question(channel):
+    label=f'I understand that next steps will be sent via {channel} and I have marked the sender addresses above as safe.'
+    field=forms.Field(id=0,kind='checkbox',label=label,required=True)
+    facts=[Fact('email',['Email'],'owner@example.test','applicant/contact'),
+           Fact('phone',['Phone'],'5551234567','applicant/contact'),
+           Fact('other',['I understand that I have read the privacy notice.'],'Yes','applicant/consents')]
+    assert route(field,facts).family=='read_ack'
+    assert resolve_routed(field,facts).value is None
+    approved=Fact('exact',[label],'Yes','applicant/consents')
+    assert resolve_routed(field,[*facts,approved]).value=='Yes'
+
+
+@pytest.mark.parametrize('adaptive',[False,True])
+def test_unanswered_acknowledgement_asks_owner_instead_of_dispatching_contact_literal(adaptive):
+    from jobagent.filling.adaptive import AdaptiveFiller
+    from jobagent.filling.facts import Decision
+    label='I understand that next steps will be sent via email and I have marked the sender addresses above as safe.'
+    field=forms.Field(id=0,kind='checkbox',label=label,required=True)
+    asked=[]
+    def ask(questions):
+        asked.append(questions);return {}
+    filler=(AdaptiveFiller if adaptive else PlannedFiller)(
+        [Fact('email',['Email'],'owner@example.test','applicant/contact')],ask,
+        source_resolver=lambda fields,answers:{0:Decision('owner@example.test','legacy contact shortcut','email')})
+    assert filler.plan([field])[0].value is None
+    assert len(asked)==1 and asked[0][0]['label']==label
+    assert filler.failures=={}
+
+
+@pytest.mark.parametrize('adaptive',[False,True])
+def test_notification_ack_stays_unchecked_without_owner_confirmation(world,adaptive):
+    from jobagent.filling.adaptive import AdaptiveFiller
+    label='I understand that next steps will be sent via email and I have marked the sender addresses above as safe.'
+    world.setup('<label for=email>Email</label><input id=email type=email required>'
+                f'<label for=ack>{label}</label><input id=ack type=checkbox required>')
+    world.page.goto('https://fixture.test/apply');asked=[]
+    def ask(questions):
+        asked.append(questions);return {}
+    filler=(AdaptiveFiller if adaptive else PlannedFiller)(
+        [Fact('email',['Email'],'owner@example.test','applicant/contact')],ask)
+    result=filler.fill(world.page,advance_pages=False)
+    assert result['state']=='blocked' and len(asked)==1
+    assert world.page.locator('#email').input_value()=='owner@example.test'
+    assert not world.page.locator('#ack').is_checked() and filler.failures=={}
+    assert not any('repair budget' in issue for issue in result['blockers'])
+
+
 def test_writer_constraints_cannot_be_waived_by_a_model_checker():
     from types import SimpleNamespace
     from jobagent.filling.planned import Mappings,Mapping,Supported
