@@ -256,3 +256,82 @@ def test_original_backfill_and_zero_numbered_duties_survive_structured_file_roun
     assert schema(text=bullet.text, duties=[]).duties == []
     with pytest.raises(ValueError):
         schema(text=bullet.text, duties=[0])
+
+
+def test_generic_tool_description_is_allowed_when_the_actual_stack_is_named():
+    from jobagent.state import JobDescription
+    role = SimpleNamespace(bullets=[], title='Engineer', company='Acme', dates='2026')
+    template = SimpleNamespace(roles=[role], skills=[('Languages', 'Python, TensorFlow')])
+    jd = JobDescription(title='Engineer', company='Acme', technical_skills=['Python', 'TensorFlow'])
+    value = filled()
+    value.roles = [T.FillRole(role=0, bullets=[T.FillBullet(text=text, duties=[]) for text in (
+        'Developed AI tools using Python and TensorFlow, enhancing data processing efficiency by 35%.',
+        'Built AI tools, reducing review time by 20%.')])]
+    issues = T.quality(template, jd, value)
+    assert not any('bullet 1' in issue for issue in issues)
+    assert any('bullet 2' in issue and 'names no technology' in issue for issue in issues)
+
+
+def review_world(tmp_path, monkeypatch):
+    from jobagent.state import JobDescription
+    from jobagent.tools import incremental_documents as I
+    role = SimpleNamespace(title='Engineer', company='Acme', dates='2026', bullets=[])
+    template = SimpleNamespace(tex=r'\section{Education}Master of Science.\section{Technical Skills}', roles=[role], skills=[])
+    value = filled(); value.summary = 'Software Engineer II with Python experience and production delivery.'
+    value.roles = [T.FillRole(role=0, bullets=[T.FillBullet(text=text, duties=[0]) for text in (
+        'Built Python APIs, reducing latency by 20%.', 'Deployed Docker services, cutting failures by 30%.')])]
+    value.skills = [T.SkillLine(category=name, terms=[term]) for name, term in (
+        ('Languages', 'Python'), ('Cloud', 'AWS'), ('Monitoring', 'Prometheus'))]
+    ctx = {'job_dir': tmp_path, 'r': template, 'jd': JobDescription(title='Software Engineer II', company='Acme'),
+           'company': 'Acme builds software.', 'models': {'router': 'critic'}, 'log': lambda _: None}
+    monkeypatch.setattr(I, 'review_model', lambda *args, **kwargs: object())
+    return ctx, value
+
+
+def test_independent_review_rejects_provably_false_critic_errors_without_dropping_other_findings(tmp_path, monkeypatch):
+    from jobagent.tools import document_review as R
+    ctx, value = review_world(tmp_path, monkeypatch)
+    findings = [M.Finding(agent=agent, issue=issue, severity='error') for agent, issue in (
+        ('summary', 'Does not open with Software Engineer II'), ('skills', 'Monitoring category is empty'),
+        ('experience', 'The bullets do not repeat their employer name'))]
+    def adjudicate(model, schema, messages, **kwargs):
+        if 'findings' in schema.model_fields:
+            return M.Review(findings=findings)
+        data = json.loads(messages[-1].content)
+        assert data['code_verified']['summary_title_prefix_matches'] is True
+        assert data['sources']['role:0']['employer'] == 'Acme'
+        return schema.model_validate({'verdicts': [{'finding': i, 'status': 'rejected', 'claim_id': claim,
+            'source_id': source, 'reason': 'The supplied current document establishes this fact.'}
+            for i, claim, source in ((0, 'summary', 'posting'), (1, 'skills', 'skills'), (2, 'experience', 'role:0'))]})
+    monkeypatch.setattr(R.llm, 'structured_invoke', adjudicate)
+    monkeypatch.setattr(M.llm, 'writer', lambda *args, **kwargs: object())
+    assert M.content_review(ctx, value) == []
+
+
+@pytest.mark.parametrize('status', ['confirmed', 'uncertain'])
+def test_independent_review_preserves_real_and_unsettled_errors(tmp_path, monkeypatch, status):
+    from jobagent.tools import document_review as R
+    ctx, value = review_world(tmp_path, monkeypatch)
+    finding = M.Finding(agent='skills', issue='A runtime is incorrectly categorized as a language', severity='error')
+    def adjudicate(model, schema, messages, **kwargs):
+        return schema.model_validate({'verdicts': [{'finding': 0, 'status': status, 'claim_id': 'skills',
+            'source_id': 'skills', 'reason': 'Needs a concrete category correction.'}]})
+    monkeypatch.setattr(R.llm, 'structured_invoke', adjudicate)
+    result = R.adjudicate(ctx, value, [finding])
+    assert len(result) == 1 and result[0].severity == 'error' and result[0].issue.startswith(status)
+
+
+def test_independent_review_cannot_borrow_another_projects_source(tmp_path, monkeypatch):
+    from jobagent.tools import document_review as R
+    ctx, value = review_world(tmp_path, monkeypatch)
+    state = {'kept': 2, 'short': [], 'ranked': [
+        {'repo': f'owner/p{i}', 'title': f'Project {i}', 'paragraph': 'Built Python services.', 'stack': ['Python']}
+        for i in range(2)]}
+    (tmp_path/'projects.json').write_text(json.dumps(state))
+    finding = M.Finding(agent='projects', issue='Unsupported implementation claim', severity='error')
+    def adjudicate(model, schema, messages, **kwargs):
+        return schema.model_validate({'verdicts': [{'finding': 0, 'status': 'rejected', 'claim_id': 'project:0',
+            'source_id': 'repo:1', 'reason': 'The other repository supports it.'}]})
+    monkeypatch.setattr(R.llm, 'structured_invoke', adjudicate)
+    with pytest.raises(ValueError, match='own repository'):
+        R.adjudicate(ctx, value, [finding])

@@ -878,12 +878,13 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
             low = b.text.lower()
             # "AI", "ML", "LLM" or "machine learning" name a field, not a tool: they don't count
             named = {w for w in set(TOOLISH.findall(b.text)) | proper_nouns(b.text) if w.lower() not in GENERIC_NAMES}
-            if not named and not any(re.search(r"(?<![a-z])" + re.escape(t) + r"(?![a-z])", low)
-                                     for t in tech if t and t not in GENERIC_NAMES):
+            has_tool = bool(named) or any(re.search(r"(?<![a-z])" + re.escape(t) + r"(?![a-z])", low)
+                                        for t in tech if t and t not in GENERIC_NAMES and not GENERIC_TOOLS.fullmatch(t))
+            if not has_tool:
                 out.append(f"{where} names no technology/tool (AI / ML / LLM alone don't count): name the stack")
             if not RESULT.search(b.text):
                 no_result.append(f"{where} states no result")
-            if m := GENERIC_TOOLS.search(b.text):
+            if (m := GENERIC_TOOLS.search(b.text)) and not has_tool:
                 out.append(f"{where} says \"{m.group(0)}\": name the actual tools (e.g. LangChain, PyTorch, BigQuery)")
     if DASH.search(f.summary):
         out.append("the summary uses a dash as punctuation; rewrite with a comma, semicolon or colon")

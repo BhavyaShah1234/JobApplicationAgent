@@ -308,11 +308,12 @@ full descriptions use three. Do not demand expansion of a valid short variant.
   more posting-specific wording, or a preferred descriptive title is a suggestion. Do not confuse one repo's features
   with another's. Estimated impact metrics allowed by the candidate's claims policy are not contradictions;
   unsupported product features or feature counts are different. Sentence-ending and bare-slug checks also run in code;
-- experience: bullets that don't fit their employer, repeat each other, or miss the posting's main duties;
+- experience: actual employer contradictions, substantive repeated duties or genuinely missing main duties.
+  Each bullet inherits its employer/title/dates from the printed role heading; do not require their repetition;
 - skills: tools placed under a category that does not describe them (for example ML frameworks under Frontend or
-  deployment platforms under Databases); an empty category; soft skills listed. Report only these correctness problems, never
+  deployment platforms under Databases); soft skills listed. Empty-category checks run in code. Report only correctness problems, never
   short lines or missing keywords. Prefer moving terms or merging compatible categories over adding padding;
-- summary: claims the rest of the resume doesn't show; not opening with the posting's title.
+- summary: unsupported factual claims. Opening-title checks run in code; do not rejudge the title prefix.
 The opening job title is a TARGET headline, not employment at that company. Apply CANDIDATE FACTS: authorized
 work duties, impact estimates and overall/domain tenure within the declared ceiling do not need extra dated
 proof. Locked Education establishes the listed degrees; never infer missing education because it is outside
@@ -950,13 +951,14 @@ def content_review(ctx: dict, f: T.Filled) -> list:
     job = {"title": ctx["jd"].title, "responsibilities": ctx["jd"].responsibilities,
            "basic": ctx["jd"].basic_qualifications, "preferred": ctx["jd"].preferred_qualifications,
            "skills": ctx["jd"].technical_skills}
-    msgs = [SystemMessage(REVIEW_PROMPT),
+    msgs = [SystemMessage(with_today(REVIEW_PROMPT)),
             HumanMessage(f"POSTING: {json.dumps(job)}\n\n" + _context(ctx, f, proj.read_text() if proj.exists() else None, visible_only=True))]
     try:
         out = llm.structured_invoke(llm.writer(4000, timeout=120, model=ctx["models"]["router"]), Review, msgs,
                                     log=ctx["log"], deadline_s=180)
         ctx["log"](f"  content review: {len(out.findings)} finding(s)")
-        return out.findings
+        from jobagent.tools.document_review import adjudicate
+        return adjudicate(ctx, f, out.findings)
     except Exception as e:
         ctx["log"](f"  content review failed ({type(e).__name__})")
         raise

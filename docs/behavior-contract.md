@@ -65,6 +65,10 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
   Retry an unavailable semantic review on the unchanged draft before blocking; never cache a failed review as success.
   Exhausted draft/coverage repairs may request one fresh draft with the remaining findings. Unexpected programming
   errors and invalid credentials still fail closed. Rejected drafts are retained separately in `.generation-drafts`.
+- Independently adjudicate proposed default-writer critic errors against supplied document/source IDs and
+  code-verified facts before treating them as defects. Uncertain findings remain blocking; deterministic quality
+  and source checks cannot be voted away. A bullet that explicitly names its real stack is not rejected solely
+  for also using a phrase such as "AI tools".
 - Retry an invalid cover-letter stage without rebuilding an unchanged valid resume. Prefer a compiled one-page
   letter, retain its exact PDF instead of recompiling it at publication, and require its header to match the final resume.
   Changed generation code, project metadata or layout measurements invalidate the corresponding workflow cache.

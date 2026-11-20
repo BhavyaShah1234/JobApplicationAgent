@@ -698,6 +698,8 @@ def review(ctx, filled):
     instructions={
         'experience':'Check bullet attribution and substantive duplication. Owner-provided titles and dates are '
             'immutable; concurrent/overlapping roles are allowed and must not be called a contradiction. '
+            'Each bullet inherits its employer/title/dates from the printed role heading; never require '
+            'repeating those facts inside each bullet. Missing repetition is not an attribution error. '
             'Do not report generic phrasing as a factual error. Duties and impact metrics allowed by the owner '
             'policy do not need additional proof.',
         'projects':'Check each DISPLAYED description against its OWN repository facts. Unsupported product '
