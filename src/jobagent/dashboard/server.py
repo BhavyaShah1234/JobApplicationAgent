@@ -110,16 +110,38 @@ def start_run(settings, inputs, through: str, limit: int, popen=subprocess.Popen
         raise ValueError("limit must be between 1 and 20")
     if browser_mode not in ('auto', 'docker', 'desktop') or type(no_ats) is not bool or type(force) is not bool:
         raise ValueError('invalid browser mode or run options')
+    args = ["run", *clean, "--through", through, "--limit", str(limit), '--browser-mode', browser_mode]
+    if no_ats:
+        args.append('--no-ats')
+    if force:
+        args.append('--force')
+    return _launch(settings, args, popen)
+
+
+def start_queue_run(settings, through: str, limit: int, company: str | None = None, popen=subprocess.Popen, *, browser_mode='auto') -> dict:
+    """`jobagent queue run --through ... --limit ...`: work the queued postings in the candidate's order, up to the review screen. ValueError for anything not allowed."""
+    if through not in THROUGH:
+        raise ValueError(f"through must be one of {', '.join(THROUGH)} (the dashboard never submits)")
+    if type(limit) is not int or not 1 <= limit <= 20:
+        raise ValueError("limit must be between 1 and 20")
+    if browser_mode not in ('auto', 'docker', 'desktop'):
+        raise ValueError('invalid browser mode')
+    args = ["queue", "run", "--through", through, "--limit", str(limit), "--browser-mode", browser_mode]
+    if company:
+        if not isinstance(company, str) or len(company) > 120 or company.startswith("-") or "\n" in company:
+            raise ValueError("not an acceptable company name")
+        args += ["--company", company]
+    return _launch(settings, args, popen)
+
+
+def _launch(settings, args: list[str], popen=subprocess.Popen) -> dict:
+    """Start `jobagent <args>` detached, one dashboard run at a time, with a run log the Runs page can show."""
     active = _ACTIVE_RUNS.get(str(settings.state_dir.resolve()))
     if active is not None and active.poll() is None:
         raise ValueError('a dashboard run is already active; follow it under Jobs or answer its Questions first')
     exe = shutil.which("jobagent")
     cmd = [exe] if exe else [sys.executable, "-m", "jobagent.main"]
-    cmd += ["run", *clean, "--through", through, "--limit", str(limit), '--browser-mode', browser_mode]
-    if no_ats:
-        cmd.append('--no-ats')
-    if force:
-        cmd.append('--force')
+    cmd += args
     from jobagent.log import RunLog
     run_id = uuid.uuid4().hex[:12]
     directory = settings.state_dir / 'logs'
@@ -236,7 +258,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(vnc_status(self.server.novnc_url))
         if url.path == "/api/config":
             return self._json({"read_only": self.server.read_only, "novnc": self.server.novnc_url})
-        routes = {"/api/overview": lambda: {**data.overview(s), "read_only": self.server.read_only}, "/api/queue": lambda: data.queue(s), "/api/applications": lambda: data.applications(s),
+        routes = {"/api/overview": lambda: {**data.overview(s), "read_only": self.server.read_only}, "/api/queue": lambda: data.queue(s), "/api/watchlist": lambda: data.watchlist(s), "/api/applications": lambda: data.applications(s),
                   "/api/review": lambda: data.review(s), "/api/hitl": lambda: data.hitl_pending(s), "/api/runs": lambda: data.runs(s),
                   "/api/outcomes": lambda: data.outcomes(s), "/api/pipeline": lambda: data.pipeline(s), "/api/analytics": lambda: data.analytics(s)}
         if url.path in routes:
@@ -272,6 +294,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/hitl/answer":
                 return self._json(self._answer(s, body))
+            if path.startswith(("/api/queue/", "/api/watchlist/")):
+                return self._json(self._queue_action(s, path, body))
             if path == "/api/run":
                 with self.server.lock:
                     return self._json(start_run(s, body.get("inputs"), str(body.get("through", "apply")), body.get("limit", 5), self.server.popen,
@@ -280,12 +304,57 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc)}, 400)
         self._json({"error": "not found"}, 404)
 
+    def _queue_action(self, settings, path: str, body: dict) -> dict:
+        """Edit the queue and the company list (add, edit, reorder, set aside, put back, delete) or run the queue; one write transaction each."""
+        from jobagent import db
+        from jobagent.tools import queue_admin as QA
+        conn = db.connect(settings.state_dir / "jobs.sqlite")
+        try:
+            if path == "/api/queue/add":
+                return {"results": QA.add(conn, body.get("text"), where=str(body.get("where", "normal")))}
+            if path == "/api/queue/reorder":
+                return {"count": QA.reorder(conn, body.get("ids"))}
+            if path == "/api/queue/move":
+                return {"position": QA.move(conn, body.get("id"), str(body.get("to", "")))}
+            if path == "/api/queue/state":
+                return QA.set_state(conn, body.get("ids"), str(body.get("action", "")))
+            if path == "/api/queue/edit":
+                if type(body.get("id")) is not int:
+                    raise ValueError("give the posting id")
+                return {"changed": QA.edit(conn, body["id"], **{k: body.get(k) for k in ("company", "title", "location", "notes")})}
+            if path == "/api/queue/delete":
+                return QA.delete(conn, body.get("ids"))
+            if path == "/api/queue/run":
+                with self.server.lock:
+                    return start_queue_run(settings, str(body.get("through", "apply")), body.get("limit", 5), body.get("company") or None,
+                                           self.server.popen, browser_mode=body.get("browser_mode", "auto"))
+            if path == "/api/watchlist/add":
+                return QA.add_company(conn, body.get("company"), max_jobs=body.get("max_jobs", 5), note=body.get("note", ""))
+            if path == "/api/watchlist/update":
+                if type(body.get("id")) is not int:
+                    raise ValueError("give the company id")
+                return QA.watch_update(conn, body["id"], enabled=body.get("enabled"), max_jobs=body.get("max_jobs"),
+                                       note=body.get("note"), remove=bool(body.get("remove")))
+            if path == "/api/watchlist/run":
+                names = body.get("companies")
+                if not isinstance(names, list) or not 1 <= len(names) <= 10 or not all(isinstance(n, str) for n in names):
+                    raise ValueError("give between 1 and 10 company names")
+                with self.server.lock:
+                    out = start_run(settings, names, str(body.get("through", "apply")), body.get("limit", 5), self.server.popen,
+                                    browser_mode=body.get("browser_mode", "auto"), no_ats=bool(body.get("no_ats", False)))
+                QA.mark_watch_run(conn, names)
+                return out
+        finally:
+            conn.close()
+        raise LookupError("not found")
+
     @staticmethod
     def _answer(settings, body: dict) -> dict:
         from jobagent.tools.hitl import Hitl, submission_prompt
-        rid, value = str(body.get("id", "")), body.get("value")
-        if not rid or not isinstance(value, str) or len(value) > 5000:
-            raise ValueError("give the question id and a text answer (at most 5000 characters)")
+        from jobagent.tools.hitl import compose_reply
+        rid = str(body.get("id", ""))
+        if not rid:
+            raise ValueError("give the question id")
         h = Hitl(settings.state_dir / "hitl", lambda m: None)
         req = next((r for r in h.list_pending() if r.id == rid), None)
         if req is None:
@@ -294,7 +363,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("this question asks for a secret: answer it in a terminal (`jobagent hitl answer " + rid + "`), never in a web page")
         if req.terminal_only or submission_prompt(req.prompt):
             raise ValueError('submission approval must be answered in a terminal; this dashboard cannot approve or send an application')
-        h.answer(rid, value)
+        h.answer(rid, compose_reply(req, body))
         return {"answered": rid}
 
 

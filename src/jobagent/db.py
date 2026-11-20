@@ -215,6 +215,17 @@ SELECT a.id AS application_id, a.company, a.title, a.state, a.submitted_at, COUN
                   x.received_at LIMIT 1) AS furthest_stage
 FROM applications a LEFT JOIN outcome_events e ON e.application_id = a.id AND e.needs_review = 0
 GROUP BY a.id;
+-- Dashboard: companies the candidate wants worked on. `jobagent run <company>` discovers their openings; the row only remembers the wish.
+CREATE TABLE IF NOT EXISTS watchlist (
+    id          INTEGER PRIMARY KEY,
+    company     TEXT NOT NULL,
+    company_key TEXT NOT NULL UNIQUE,
+    note        TEXT,
+    max_jobs    INTEGER NOT NULL DEFAULT 5,       -- at most this many openings per run
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    added_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    last_run_at TEXT
+);
 """
 
 MIGRATIONS = [("applications", "job_id", "INTEGER REFERENCES jobs(id) ON DELETE RESTRICT"),
@@ -231,6 +242,8 @@ MIGRATIONS = [("applications", "job_id", "INTEGER REFERENCES jobs(id) ON DELETE 
               ("jobs", "company_slug", "TEXT"), ("jobs", "req_id", "TEXT"), ("jobs", "posted_at", "TEXT"),
               ("jobs", "role_id", "TEXT"), ("jobs", "match_stage", "TEXT"), ("jobs", "match_score", "REAL"),
               ("jobs", "source", "TEXT"),
+              ("jobs", "priority", "INTEGER NOT NULL DEFAULT 0"),      # the candidate's order: higher goes first (dashboard)
+              ("jobs", "user_edited", "INTEGER NOT NULL DEFAULT 0"),   # 1 = the candidate set status/fields; discovery no longer overwrites them
               ("jobs", "claimed_by", "TEXT"), ("jobs", "lease_until", "TEXT"),      # F13: who is working on a running job, until when
               # step 15: what the submitted resume was (frozen at submission): hash, checker scores, role family, skills
               ("applications", "resume_sha", "TEXT"), ("applications", "ats_average", "REAL"),

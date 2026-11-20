@@ -917,9 +917,11 @@ def ask_human(hitl, f: forms.Field, company: str, host: str, log, timeout_s: flo
     from jobagent.tools.hitl import HitlTimeout
     opts = f" Options: {' | '.join(f.options[:25])}." if f.options else ""
     try:
+        from jobagent.tools.hitl import question_spec
         ans = hitl.ask(f"{company} application asks: \"{f.label[:250]}\"{opts} Reply with the answer for this "
                        "application, or 'rule: <how to answer questions like this>' to teach the agent for every "
-                       "company ('skip' leaves it empty).", timeout_s=timeout_s).strip()
+                       "company ('skip' leaves it empty).", timeout_s=timeout_s,
+                       questions=[question_spec(f, quick=["skip"])], context={"company": company}).strip()
     except HitlTimeout:
         log(f"apply: no answer to \"{f.label[:60]}\" within {timeout_s / 60:.0f} min; left for review")
         return "answer", ""
@@ -936,7 +938,9 @@ def ask_human(hitl, f: forms.Field, company: str, host: str, log, timeout_s: flo
         try:
             again = hitl.ask(f"Your reply {ans[:80]!r} to \"{f.label[:200]}\" looks like the answer to a different "
                              f"question ({why}). Reply again with the answer to THIS question, 'keep' to use your reply "
-                             "as it is, or 'skip'.", timeout_s=timeout_s).strip()
+                             "as it is, or 'skip'.", timeout_s=timeout_s, context={"company": company},
+                             questions=[{**question_spec(f, quick=["keep", "skip"]), "kind": "text", "options": [], "help":
+                                         f"You said {ans[:80]!r}, which looks like the answer to another question ({why})."}]).strip()
         except HitlTimeout:
             log("apply: no second reply; the field is left for review")
             return "answer", ""
@@ -1050,7 +1054,11 @@ def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict,
         try:
             ans = env["hitl"].ask(f"{env['company']} application needs your address ({', '.join(f.label[:30] for f in addr)}). "
                                   "Fill 'Current address' in data/applicant.yaml, then answer 'done' ('skip' leaves it "
-                                  "for review).", timeout_s=env.get("ask_s", 1800)).strip().lower()
+                                  "for review).", timeout_s=env.get("ask_s", 1800), context={"company": env["company"]},
+                                  questions=[{"id": "address", "label": "Fill 'Current address' in data/applicant.yaml, then confirm", "kind": "text",
+                                              "options": [], "required": True, "quick": ["done", "skip"], "section": "", "help":
+                                              "Fields: " + ", ".join(f.label[:30] for f in addr), "multiple": False,
+                                              "options_complete": True, "current": ""}]).strip().lower()
         except HitlTimeout:
             ans = ""
         if ans == "done":

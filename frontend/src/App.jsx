@@ -86,7 +86,7 @@ export default function App() {
         {tab === "browser" && <Browser config={config} />}
         {tab === "questions" && <Questions config={config} onChange={reload} />}
         {tab === "review" && <Review />}
-        {tab === "queue" && <Queue />}
+        {tab === "queue" && <Queue config={config} />}
         {tab === "runs" && <Runs />}
         {tab === "outcomes" && <Outcomes />}
         {tab === "start" && !config.read_only && <StartRun onStarted={() => go("jobs")} />}

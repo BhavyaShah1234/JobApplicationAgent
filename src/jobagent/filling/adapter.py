@@ -221,7 +221,9 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         if hitl is None:return {}
         prompt=(f"{env.get('company','')} application needs these answers. Reply with a JSON object mapping IDs to answers; "
                 "use null to skip. For one question, plain text is also accepted.\n"+json.dumps(questions,ensure_ascii=False))
-        reply=hitl.ask(prompt,timeout_s=env.get('ask_s',1800)).strip()
+        from jobagent.tools.hitl import question_spec
+        reply=hitl.ask(prompt,timeout_s=env.get('ask_s',1800),context={'company':env.get('company','')},
+                       questions=[question_spec(q,quick=['skip']) for q in questions],reply_format='json').strip()
         if reply.lower()=='skip':return {}
         try:values=json.loads(reply)
         except (ValueError,TypeError):values={str(questions[0]['id']):reply} if len(questions)==1 else {}

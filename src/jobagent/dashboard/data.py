@@ -77,9 +77,27 @@ def queue(settings, limit: int = 300) -> list[dict]:
     if conn is None:
         return []
     try:
-        keep = ("id", "company", "title", "location", "status", "notes", "role_id", "match_score", "claimed_by", "updated_at", "url")
-        return [{k: (str(r[k])[:200] if isinstance(r.get(k), str) else r.get(k)) for k in keep if k in r}
-                for r in _rows(conn, "SELECT * FROM jobs ORDER BY updated_at DESC, id DESC LIMIT ?", (limit,))]
+        from jobagent.tools import queue_admin
+        try:
+            return queue_admin.listing(conn, limit)             # in the order the runner takes them, with positions
+        except sqlite3.Error:                                   # a database the agent has not upgraded yet (no priority column)
+            keep = ("id", "company", "title", "location", "status", "notes", "role_id", "match_score", "claimed_by", "updated_at", "url")
+            return [{k: (str(r[k])[:200] if isinstance(r.get(k), str) else r.get(k)) for k in keep if k in r}
+                    for r in _rows(conn, "SELECT * FROM jobs ORDER BY updated_at DESC, id DESC LIMIT ?", (limit,))]
+    finally:
+        conn.close()
+
+
+def watchlist(settings) -> list[dict]:
+    """The companies the candidate wants worked on, each with how many postings are known and queued."""
+    conn = ro_conn(settings)
+    if conn is None:
+        return []
+    try:
+        from jobagent.tools import queue_admin
+        return queue_admin.watch_listing(conn)
+    except sqlite3.Error:
+        return []
     finally:
         conn.close()
 
@@ -144,6 +162,14 @@ def review(settings, conn=None) -> list[dict]:
             conn.close()
 
 
+def _legacy_questions(r) -> list[dict]:
+    """A question written without structure (older code, or "do this in noVNC, then answer 'done'"): one text question, with a button for a quoted one-word reply."""
+    import re
+    quick = [w for w in dict.fromkeys(re.findall(r"""answer\s+['"`]([A-Za-z]{2,12})['"`]""", r.prompt, re.I))][:3]
+    return [{"id": "reply", "label": r.prompt[:400], "kind": "text", "options": [], "required": True, "section": "", "help": "",
+             "multiple": False, "options_complete": True, "current": "", "quick": [q.lower() for q in quick]}]
+
+
 def hitl_pending(settings) -> list[dict]:
     """Questions the agent is waiting on. A secret is listed (so you know to answer it) but is answered only in a terminal."""
     from jobagent.tools.hitl import Request, _alive, process_namespace, submission_prompt
@@ -162,7 +188,9 @@ def hitl_pending(settings) -> list[dict]:
         if r.pid_namespace and r.pid_namespace == process_namespace() and not _alive(r.pid):
             continue
         terminal = r.secret or r.terminal_only or submission_prompt(r.prompt)
-        rows.append({'id': r.id, 'prompt': r.prompt, 'secret': bool(r.secret),
+        questions = r.questions or _legacy_questions(r)
+        rows.append({'questions': questions, 'reply_format': r.reply_format, 'structured': bool(r.questions),
+                     'id': r.id, 'prompt': r.prompt, 'secret': bool(r.secret),
                      'terminal_only': terminal, 'context': r.context,
                      'default': None if r.secret else r.default, 'created': r.created,
                      'terminal_command': host_command(['jobagent', 'hitl', 'answer', r.id], interactive=r.secret)

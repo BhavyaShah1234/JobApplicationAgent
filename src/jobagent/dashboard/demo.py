@@ -11,7 +11,7 @@ def _ts(minutes_ago: float) -> str:
     return (datetime.now(UTC) - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def seed(root: Path, secret_question: bool = True, history: bool = False) -> dict:
+def seed(root: Path, secret_question: bool = True, history: bool = False, structured: bool = False) -> dict:
     """Create the demo data under `root` and return the settings-style paths. Safe to call twice (existing rows are kept)."""
     from jobagent import db
     state, outputs, data = root / "state", root / "outputs", root / "data"
@@ -35,6 +35,8 @@ def seed(root: Path, secret_question: bool = True, history: bool = False) -> dic
             conn.execute("INSERT OR IGNORE INTO applications (job_dir, company, title, url, portal, state, filled_at, submitted_at) VALUES (?,?,?,?,?,?,?,?)",
                          (str(d.relative_to(root)), co, title, f"https://jobs.example.test/{i}", "greenhouse", state_, _ts(filled),
                           _ts(filled) if state_ == "confirmed" else None))
+        conn.execute("INSERT OR IGNORE INTO watchlist (company, company_key, max_jobs) VALUES ('Example Robotics', 'example-robotics', 3)")
+        conn.execute("INSERT OR IGNORE INTO watchlist (company, company_key, max_jobs, enabled) VALUES ('Sample Cloud Co', 'sample-cloud', 5, 0)")
         app3 = conn.execute("SELECT id FROM applications WHERE state = 'confirmed'").fetchone()[0]
         conn.execute("INSERT OR IGNORE INTO outcome_events (application_id, stage, message_id, subject, received_at, classifier, confidence) VALUES (?,?,?,?,?,?,?)",
                      (app3, "confirmation", "<demo-1@example.test>", "We received your application", _ts(3900), "rule", 0.9))
@@ -48,6 +50,22 @@ def seed(root: Path, secret_question: bool = True, history: bool = False) -> dic
         (state / "hitl" / "pending" / f"{rid}.json").write_text(json.dumps(
             {"id": rid, "prompt": prompt, "secret": secret, "default": None, "vault_target": ["portal", "example"] if secret else None,
              "created": _ts(5), "pid": pid}))
+    if structured:
+        def q(id_, label, kind, options=(), **kw):
+            """One demo question in the shape `tools.hitl.question_spec` produces."""
+            return {"id": id_, "label": label, "kind": kind, "options": list(options), "required": kw.pop("required", True), "section": kw.pop("section", ""),
+                    "help": kw.pop("help", ""), "multiple": kind == "checkboxes", "options_complete": True, "current": "", "quick": kw.pop("quick", [])}
+        ctx = {"company": "Example Robotics", "title": "Robotics Engineer", "stage": "apply"}
+        for rid, prompt, qs, fmt in (
+                ("dem1sel1", 'Example Robotics application asks: "Country of residence"', [q("f1", "Country of residence", "select", ["United States", "Canada", "United Kingdom", "India", "Germany"], quick=["skip"])], "text"),
+                ("dem1rad1", 'Example Robotics application asks: "Are you legally authorized to work in the US?"', [q("f2", "Are you legally authorized to work in the US?", "radio", ["Yes", "No"])], "text"),
+                ("dem1bat1", "Example Robotics application needs these answers.", [
+                    q("f3", "How did you hear about us?", "checkboxes", ["LinkedIn", "Referral", "Company website", "Job board"], section="About you"),
+                    q("f4", "Earliest start date", "text", help="Month and year, as the form asks"),
+                    q("f5", "Salary expectation (USD)", "number", required=False),
+                    q("f6", "Preferred office", "select", ["Boston", "Pittsburgh", "Remote"])], "json")):
+            (state / "hitl" / "pending" / f"{rid}.json").write_text(json.dumps(
+                {"id": rid, "prompt": prompt, "secret": False, "default": None, "created": _ts(3), "pid": pid, "context": ctx, "questions": qs, "reply_format": fmt}))
     for stem, step, job, lines, ago in (("2026-11-16T101500-apply-example-robotics-aaaa1111", "apply", "example-robotics", [("info", "apply: page 1"), ("ok", "apply: reached the review screen")], 60),
                                          ("2026-11-16T103000-tailor-sample-cloud-bbbb2222", "tailor", "sample-cloud", [("info", "tailor: writing"), ("warn", "tailor: retrying with json mode"), ("error", "tailor: RuntimeError: model down")], 30),
                                          ("2026-11-16T104500-run-cccc3333", "run", "", [("info", "queue: Example Robotics - Robotics Engineer")], 0.2)):

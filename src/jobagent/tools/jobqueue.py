@@ -104,9 +104,9 @@ def enqueue(conn: sqlite3.Connection, item: Listing, match: Match, location: Dec
                             "AND status != 'skipped'", (company_slug, item.req_id, url)).fetchone()
         if twin:
             return "duplicate"
-    row = conn.execute("SELECT status FROM jobs WHERE url = ?", (url,)).fetchone()
-    if row and row["status"] not in OPEN:
-        return "unchanged"
+    row = conn.execute("SELECT status, user_edited FROM jobs WHERE url = ?", (url,)).fetchone()
+    if row and (row["status"] not in OPEN or row["user_edited"]):
+        return "unchanged"                                  # past queued, or the candidate decided it in the dashboard
     with conn:
         conn.execute(
             "INSERT INTO jobs (url, company, title, location, portal, status, notes, company_slug, req_id, posted_at, "
@@ -132,13 +132,13 @@ def pending(conn: sqlite3.Connection, status: str = "queued", company: str | Non
         limit: At most this many rows.
 
     Returns:
-        Matching `jobs` rows ordered by match score, then id.
+        Matching `jobs` rows ordered by the candidate's priority (dashboard), then match score, then id.
     """
     sql, args = "SELECT * FROM jobs WHERE status = ?", [status]
     if company:
         sql += " AND company_slug = ?"
         args.append(slug(company))
-    sql += " ORDER BY COALESCE(match_score, 0) DESC, id"
+    sql += " ORDER BY COALESCE(priority, 0) DESC, COALESCE(match_score, 0) DESC, id"
     if limit:
         sql += f" LIMIT {int(limit)}"
     return conn.execute(sql, args).fetchall()
@@ -183,7 +183,7 @@ def claim(conn: sqlite3.Connection, worker: str, company: str | None = None, lea
             if full:
                 sql += f" AND employer_key(COALESCE(NULLIF(company_slug, ''), company, '')) NOT IN ({','.join('?' * len(full))})"
                 args += list(full)
-        sql += " ORDER BY COALESCE(match_score, 0) DESC, id LIMIT 1"
+        sql += " ORDER BY COALESCE(priority, 0) DESC, COALESCE(match_score, 0) DESC, id LIMIT 1"
         row = conn.execute(sql, args).fetchone()
         if row is None:
             conn.execute("COMMIT")

@@ -74,3 +74,14 @@ The score chart uses the same exact PDF/JD identity and complete required-provid
 If nothing loads, first check the harness is running, obtain the correct access link, and inspect `scripts/dashboard.sh logs`. Development fixtures remain separate: `jobagent.dashboard.demo.seed(root)` creates invented records only in the explicitly supplied test root.
 
 **Not in this step:** approving or submitting, editing data files, secrets, authentication beyond the local token, server-pushed updates (the page polls automatically).
+
+## Queue editor and structured questions (2026-11-20)
+
+**Queue tab** (not shown when the dashboard is read-only):
+- *Add job links or companies*: one per line. A link goes into the queue (`source = dashboard`, position top / by score / last); a company name goes on the **company list** (`watchlist` table), and *Run now* starts `jobagent run <company>` to find its openings. Links already applied to, running or closed are refused with the reason; the same link in another spelling is not queued twice.
+- *Run the queue*: `jobagent queue run --through scrape|tailor|apply --limit N`. Never submits.
+- *Queue table*: filter by status; drag rows or use the arrows (top / up / down / bottom) to change the order the runner takes them (`jobs.priority`, higher first, then match score); edit company / title / location / note; select rows to set aside, put back, or delete. A running posting cannot be touched; a posting with an application on record or already applied cannot be deleted or requeued.
+- A row you change is marked `user_edited` (✎): later discovery no longer overwrites its status or fields, so something you set aside stays aside.
+- Routes (all POST, behind the token, CSRF header and Host check, refused when read-only): `/api/queue/{add,reorder,move,state,edit,delete,run}`, `/api/watchlist/{add,update,run}`; GET `/api/queue`, `/api/watchlist`. Logic: `tools/queue_admin.py`.
+
+**Questions tab**: a question raised with `questions=[...]` (`tools/hitl.question_spec`) shows the company, role and step, the kind of answer (short text, number, dropdown, search list, pick one, tick any that apply, yes/no box) and *every option*. A choice is checked against the offered options on the server; a button word (skip / done / keep) is always accepted. A batch (several questions from one form page) is answered at once and sent back as the JSON object the filler reads. Secrets and submission approval still show the terminal command, with the options visible but disabled. A plain prompt (older requests, "answer 'done'") keeps the text box, plus a button for a quoted one-word reply. Wired at: `steps/apply.py` (`ask_human`, the misfit re-ask, the address ask) and `filling/adapter.py` (`ask`).
