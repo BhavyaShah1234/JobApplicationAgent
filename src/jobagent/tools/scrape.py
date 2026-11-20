@@ -283,6 +283,12 @@ def apply_labeled(jd: JobDescription, secs: list, labels: dict[int, str]) -> Non
     grouped: dict[str, list[str]] = {}
     for i, sec in enumerate(secs):
         cat = labels.get(i)
+        if cat == 'technical_skills' and (qualification := classify_heading(sec.heading or '')) in (
+                'basic_qualifications','preferred_qualifications'):
+            # Explicit qualifications do not stop being requirements because
+            # their bullets name technologies. Keep the extracted stack too.
+            grouped.setdefault('technical_skills', [])
+            cat = qualification
         if cat in LIST_CATEGORIES:
             grouped.setdefault(cat, [])
             for text in sec.items:
