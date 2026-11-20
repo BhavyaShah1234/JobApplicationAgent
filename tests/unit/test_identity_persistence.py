@@ -127,7 +127,7 @@ def state(d):
 def test_publish_moves_every_file_and_removes_the_one_the_version_does_not_have(tmp_path):
     old_version(tmp_path)
     bundle.publish(tmp_path, {"resume.tex": "NEW tex", "resume.pdf": b"NEW pdf", "projects.json": None, "filled.json": "NEW filled"})
-    assert state(tmp_path) == {"resume.tex": "NEW tex", "resume.pdf": "NEW pdf", "projects.json": None, "filled.json": "NEW filled"}
+    assert state(tmp_path) == {"resume.tex": "NEW tex", "resume.pdf": "NEW pdf", "resume.layout.json": None, "projects.json": None, "filled.json": "NEW filled"}
     assert not list(tmp_path.glob(".*.new")) and not (tmp_path / bundle.JOURNAL).exists()
 
 
@@ -158,7 +158,7 @@ def test_a_crash_after_the_journal_is_completed_never_left_half_applied(tmp_path
     monkeypatch.setattr(bundle, "_apply", real_apply)
     assert documents.verify(tmp_path)["ok"] is False and "interrupted" in " ".join(documents.verify(tmp_path)["reasons"])
     assert bundle.recover(tmp_path) is True
-    assert state(tmp_path) == {"resume.tex": "NEW tex", "resume.pdf": "NEW pdf", "projects.json": None, "filled.json": "NEW filled"}
+    assert state(tmp_path) == {"resume.tex": "NEW tex", "resume.pdf": "NEW pdf", "resume.layout.json": None, "projects.json": None, "filled.json": "NEW filled"}
 
 
 def test_a_rollback_restores_source_pdf_and_every_piece_of_metadata(tmp_path):
@@ -169,7 +169,7 @@ def test_a_rollback_restores_source_pdf_and_every_piece_of_metadata(tmp_path):
     f = type("F", (), {"model_copy": lambda self, deep=False: self, "model_dump_json": lambda self, indent=1: "BEST filled"})()
     best = {"tex": "BEST tex", "pdf": b"BEST pdf", "projects": None, "f": f, "ev": {"missing": [], "advice": []}}
     out = M._rollback({"ctx": {"job_dir": tmp_path}, "best": best, "ats_round": 3}, "undone")
-    assert state(tmp_path) == {"resume.tex": "BEST tex", "resume.pdf": "BEST pdf", "projects.json": None, "filled.json": "BEST filled"}
+    assert state(tmp_path) == {"resume.tex": "BEST tex", "resume.pdf": "BEST pdf", "resume.layout.json": None, "projects.json": None, "filled.json": "BEST filled"}
     assert out["history"] == ["rollback"]
 
 

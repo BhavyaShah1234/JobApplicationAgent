@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 
 JOURNAL = ".publish.json"
-BUNDLE_FILES = ("resume.tex", "resume.pdf", "projects.json", "filled.json")
+BUNDLE_FILES = ("resume.tex", "resume.pdf", "resume.layout.json", "projects.json", "filled.json")
 
 
 class JobBusy(RuntimeError):

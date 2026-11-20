@@ -263,7 +263,7 @@ def tailor_world(monkeypatch, tmp_path, run_job_result, letter=None, policy="war
     monkeypatch.setenv("ATS_SHORTFALL", policy)
     get_settings.cache_clear()
 
-    def fake_run_job(dd, slug, models, sites, log=print):
+    def fake_run_job(dd, slug, models, sites, log=print, **kwargs):
         if write and run_job_result["produced"]:
             (dd / "resume.pdf").write_bytes(PDF)
         return {"template_sha256":D.template_fingerprint(),**run_job_result}
@@ -440,12 +440,14 @@ def patch_validators(monkeypatch, hard=(), summary="Engineer with five years of 
     from jobagent.steps import multi_agent as M
     from jobagent.tools import tailor as T
     monkeypatch.setattr(T, "Filled", SimpleNamespace(model_validate_json=lambda s: SimpleNamespace(summary=json.loads(s)["summary"], skills=[])))
+    monkeypatch.setattr(T, "parse", lambda text: SimpleNamespace(roles=[], skills=[], tex=text))
     monkeypatch.setattr(M, "hard_issues", lambda ctx, f: list(hard))
     monkeypatch.setattr(T, "declared_claims", lambda: {"years_experience": 5})
 
 
 def write_filled(d, summary="Engineer with five years of experience."):
     (d / "filled.json").write_text(json.dumps({"summary": summary}))
+    (d / "jd.json").write_text('{"title":"Engineer","company":"Acme"}')
 
 
 def test_refresh_keeps_a_finding_the_layout_checker_still_reports(monkeypatch, tmp_path):                    # verification 2
@@ -499,7 +501,7 @@ def test_both_writers_apply_the_claims_policy_to_the_generated_summary(monkeypat
             return {"template_sha256":D.template_fingerprint(),"problems": [], "uncovered": [], "layout": [], "ats": {"average": 93.0}, "letter": {"issues": [], "words": 200}}
         monkeypatch.setattr(TT, "main", fake_main)
 
-        def team_run_job(dd, slug, models, sites, log=print, summary=summary):
+        def team_run_job(dd, slug, models, sites, log=print, summary=summary, **kwargs):
             (dd / "resume.pdf").write_bytes(PDF)
             (dd / "filled.json").write_text(json.dumps({"summary": summary}))
             return {**RJ_GOOD,"template_sha256":D.template_fingerprint(), "claims_issues": D.claims_from_filled(SimpleNamespace(summary=summary))}

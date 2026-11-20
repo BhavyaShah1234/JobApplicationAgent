@@ -225,21 +225,48 @@ def from_card(c: dict) -> ProjectEntry:
 
 
 def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = None, rediscover: bool = True,
-           log=print, *, cache=None, model_name="") -> Chosen:
+           log=print, *, cache=None, model_name="", feedback="") -> Chosen:
     """Refresh the repo cards (new/changed repos only), rank them for this job, pick and write 2-4 projects."""
-    cards = repo_cards.refresh(user, token, rediscover=rediscover, log=log)
+    try:
+        cards = repo_cards.refresh(user, token, rediscover=rediscover, log=log)
+    except Exception as exc:
+        # Only template-linked repos or repos already inventoried for THIS
+        # account may be reused. Never scan another account's cards as fallback.
+        names = set(known_entries(r.tex))
+        from jobagent.config import get_settings
+        inventory = get_settings().state_dir / 'github' / f'{user.lower()}.json'
+        try:
+            names.update(item['full_name'] for item in json.loads(inventory.read_text()).get('repos', []))
+        except (OSError, ValueError, KeyError):
+            pass
+        cards = []
+        for name in sorted(names):
+            try:
+                card = repo_cards.load(name)
+            except (OSError, ValueError):
+                continue
+            if card:
+                cards.append(card)
+        if not cards:
+            raise RuntimeError('Project sources are unavailable and no account-bound saved repo cards exist') from exc
+        log(f'projects: refresh unavailable ({type(exc).__name__}); reusing {len(cards)} account-bound saved repo cards')
     job_text = " ".join([jd.title or ""] + jd.responsibilities + jd.basic_qualifications +
                         jd.preferred_qualifications + jd.technical_skills)
-    cands = repo_cards.rank(cards, job_text)
+    cands = repo_cards.rank(cards, job_text, log=log)
     # The template's own projects (the user's chosen showcase, e.g. SolBot) are always candidates, ranked or not
     known_repos = set(known_entries(r.tex))
     have = {c["full_name"].lower() for _, c in cands}
-    cands += [(s, c) for s, c in repo_cards.rank(cards, job_text, k=len(cards), min_substance=0)
+    cands += [(s, c) for s, c in repo_cards.rank(cards, job_text, k=len(cards), min_substance=0, log=log)
               if c["full_name"].lower() in known_repos and c["full_name"].lower() not in have]
     log("projects: top candidates: " + ", ".join(f"{c['full_name']} {s:.2f}" for s, c in cands))
     known = known_entries(r.tex)
     by_name = {c["full_name"].lower(): c for _, c in cands}
-    messages = build_prompt(cands, jd, known, **({'grounded':True} if cache is not None else {}))
+    # Ground repository features in BOTH strategies. The ungrounded instruction
+    # to invent features contradicts the source validator and wastes repairs.
+    messages = build_prompt(cands, jd, known, grounded=True)
+    if feedback:
+        messages.append(HumanMessage("The previous document draft failed these checks. Correct any project-related "
+                                     "findings using each repository's own evidence:\n" + feedback))
     out, chosen = None, []
     for _ in range(3):
         try:
@@ -248,6 +275,8 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
                 out = invoke(cache,'project-selection',model_name,model,Projects,messages,log=log)
             else:
                 out = llm.structured_invoke(model, Projects, messages, log=log)
+        except llm.LLMConfigError:
+            raise
         except Exception as e:  # timeout / token limit: one more try
             log(f"projects: model error {type(e).__name__}; retrying")
             continue

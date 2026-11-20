@@ -133,7 +133,7 @@ def tailor_world(monkeypatch, tmp_path):
 
     def run_job(d, slug, models, sites, log=print, **kwargs):
         calls["resume"] += 1
-        for n in ("resume.pdf", "resume.tex", "filled.json"):
+        for n in ("resume.pdf", "resume.tex", "filled.json", "resume.layout.json"):
             (d / n).write_text(f"{n} #{calls['resume']}")
         return {"produced": True, "average": 91.0, "scores": {"jobscan": 91}, "pages": 1, "hard_issues": [], "average_complete": True,
                 "average_missing": [], "average_sites": ["jobscan"], "claims_issues": [],

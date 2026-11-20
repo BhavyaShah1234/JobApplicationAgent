@@ -58,6 +58,16 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
   invocation has 180 seconds total across modes/retries; explicit model settings may change those budgets.
 - In the default multi-agent writer, bind semantic review to the visible candidate version. Reuse unchanged findings,
   review edited content again, and reject skills-category errors or an unavailable content review before spending ATS scans.
+- Keep a locally validated resume independently of ATS availability. A failed provider leaves its score missing;
+  document validity and the configured ATS warn/block policy remain separate. Later failed edits restore the exact
+  accepted source, PDF, filled structure, projects and layout measurements.
+- Apply the same bullet-quality, coverage, summary and serialized-structure checks to both document strategies.
+  Retry an unavailable semantic review on the unchanged draft before blocking; never cache a failed review as success.
+  Exhausted draft/coverage repairs may request one fresh draft with the remaining findings. Unexpected programming
+  errors and invalid credentials still fail closed. Rejected drafts are retained separately in `.generation-drafts`.
+- Retry an invalid cover-letter stage without rebuilding an unchanged valid resume. Prefer a compiled one-page
+  letter, retain its exact PDF instead of recompiling it at publication, and require its header to match the final resume.
+  Changed generation code, project metadata or layout measurements invalidate the corresponding workflow cache.
 
 **Learning is advisory.** Recommendations appear only at declared looks (100, 200, 400, 800, 1600 resolved applications); behavior switches are off by default; the site-mix switch is unsupported.
 

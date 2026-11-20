@@ -329,10 +329,11 @@ def test_optional_non_skill_findings_do_not_trigger_automatic_rewrites(tmp_path,
     from types import SimpleNamespace
 
     f = _review_fixture()
+    f.skills += [M.T.SkillLine(category="Languages", terms=["Python"]), M.T.SkillLine(category="Cloud", terms=["AWS"])]
     ctx = {"r": SimpleNamespace(roles=[], skills=[]), "jd": None, "job_dir": tmp_path, "log": lambda _: None}
     monkeypatch.setattr(M, "render", lambda _: (f, "tex", [], 1, ""))
     monkeypatch.setattr(M.T, "fill_checks", lambda *a: ([], []))
-    monkeypatch.setattr(M.T, "duplicates", lambda *a: [])
+    monkeypatch.setattr(M.T, "duplicates", lambda *a, **kw: [])
     monkeypatch.setattr(M.T, "quality", lambda *a: [])
     monkeypatch.setattr(M, "summary_issues", lambda *a: [])
     monkeypatch.setattr(M, "hard_issues", lambda *a: [])

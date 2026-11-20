@@ -309,12 +309,13 @@ def test_changed_skills_rechecks_skills_and_summary_only(tmp_path,monkeypatch):
     assert sorted(calls[4:])==['skills','summary']
 
 
-def test_initial_experience_prompt_is_independent_of_project_thread_timing(tmp_path,monkeypatch):
+@pytest.mark.parametrize('incremental', [False, True])
+def test_initial_experience_prompt_is_independent_of_project_thread_timing(tmp_path,monkeypatch,incremental):
     from jobagent.steps import multi_agent as M
     from langchain_core.messages import SystemMessage
     monkeypatch.setattr(M.T,'facts_block',lambda:'owner claims')
     monkeypatch.setattr(M.T,'build_fill_prompt',lambda *a,**kw:[SystemMessage('base'),HumanMessage('JD')])
-    ctx={'job_dir':tmp_path,'r':SimpleNamespace(skills=[]),'jd':None,'company':'Company','incremental':True}
+    ctx={'job_dir':tmp_path,'r':SimpleNamespace(skills=[],roles=[]),'jd':None,'company':'Company','incremental':incremental}
     before=M._section_messages(ctx,'experience',None,[],'')
     (tmp_path/'projects.json').write_text('This previous output must not be read')
     ctx['candidates']=[(1,{'full_name':'another/project'})]
@@ -658,7 +659,7 @@ def test_targeted_bullet_repair_uses_a_repair_budget_not_a_full_draft_budget(mon
     assert seen==[3000]
 
 
-def test_title_prefix_is_deterministic_and_incremental_review_errors_remain_blocking(tmp_path,monkeypatch):
+def test_title_prefix_is_deterministic_and_both_strategies_preserve_review_errors(tmp_path,monkeypatch):
     from jobagent.steps import multi_agent as M
     assert M._title_prefix('Autonomy Platform Engineer with 1+ years of experience.','Autonomy Platform Engineer')
     assert not M._title_prefix('Platform Engineer with experience.','Autonomy Platform Engineer')
@@ -667,7 +668,7 @@ def test_title_prefix_is_deterministic_and_incremental_review_errors_remain_bloc
     f=M.T.Filled.model_construct(summary='Autonomy Platform Engineer with 1+ years.',roles=[],skills=[])
     reviewed=M._reviewed_content({'job_dir':tmp_path,'incremental':True},f,{})
     assert reviewed['semantic_hard']==['summary: '+findings[0].issue]
-    assert M._reviewed_content({'job_dir':tmp_path},f,{})['semantic_hard']==[]
+    assert M._reviewed_content({'job_dir':tmp_path},f,{})['semantic_hard']==reviewed['semantic_hard']
     assert reviewed['content_findings']==findings
 
 
@@ -700,13 +701,18 @@ def test_posting_bounds_are_exposed_and_enforced_in_draft_and_patch_schemas():
         with pytest.raises(ValidationError):patch.model_validate({'fixes':[{'role':0,'bullet':1,**wrong}]})
 
 
-def test_empty_posting_is_rejected_before_requesting_impossible_coverage():
+def test_posting_without_numbered_duties_never_requests_an_invented_index():
     from jobagent.state import JobDescription
     from jobagent.steps import multi_agent as M
     jd=JobDescription(company='Fixture',title='Engineer')
     r=SimpleNamespace(roles=[SimpleNamespace(title='Engineer',company='Fixture')])
-    with pytest.raises(ValueError,match='no experience coverage items'):M.experience_schema(r,compact=True,jd=jd)
-    with pytest.raises(ValueError,match='no experience coverage items'):M.incremental_repair_schema(jd)
+    schema = M.experience_schema(r,compact=True,jd=jd)
+    bullet = {'text':'Built Python services, cutting errors by 20%.', 'duties':[]}
+    assert schema.model_validate({'role_0':[bullet]*M.T.MIN_BULLETS,'notes':''}).role_0[0].duties == []
+    patch = M.incremental_repair_schema(jd)
+    assert patch.model_validate({'fixes':[{'role':0,'bullet':1,**bullet}]}).fixes[0].duties == []
+    with pytest.raises(ValueError):
+        patch.model_validate({'fixes':[{'role':0,'bullet':1,**bullet,'duties':[0]}]})
 
 
 def test_targeted_project_edit_changes_only_the_bound_visible_variant_and_title(tmp_path,monkeypatch):
@@ -923,6 +929,7 @@ def test_optional_refinement_scores_the_selected_bundle_and_restores_rejected_or
     def version(label):
         return {'scores':{},'f':M.T.Filled.model_construct(roles=[],skills=[],summary=label),
                 'hard':[],'layout':0,'tex':label,'pdf':label.encode(),
+                'layout_meta':json.dumps({'version':label,'free_pt':4}),
                 'projects':json.dumps({'version':label}),'filled':json.dumps({'summary':label})}
     old,new=version('old'),version('new');state['best']=old
     bundle.publish(tmp_path,M._version_files(old))

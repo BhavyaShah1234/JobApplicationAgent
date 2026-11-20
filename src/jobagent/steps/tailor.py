@@ -38,7 +38,7 @@ def report(r, jd, f, pages, problems, uncovered, missing, warn, rounds, filled_i
              f"- Required JD items covered by new bullets: **{need - len(uncovered)}/{need}**"
              + (f" (missing: {uncovered})" if uncovered else ""),
              f"- JD tech-stack items not found verbatim anywhere: {', '.join(missing) or 'none'}", ""]
-    dups = T.duplicates(r, f) + T.quality(r, jd, f)
+    dups = T.duplicates(r, f, substantive=True) + T.quality(r, jd, f)
     if problems or warn or dups:
         lines += ["## Problems", ""] + [f"- {p}" for p in problems + warn + dups] + [""]
     ph = [b.text for e in f.roles for b in e.bullets if T.PLACEHOLDER.search(b.text)]
@@ -111,22 +111,20 @@ def cover_letter(job_dir: str | Path, company_slug: str, log=print, *, increment
 
     s = get_settings()
     job_dir = Path(job_dir) if Path(job_dir).is_absolute() else Path("/app") / job_dir
-    if incremental:
-        from jobagent.tools.job_context import SourceGuard
-        guard = SourceGuard([job_dir/name for name in ('resume.tex','resume.pdf','filled.json','projects.json','jd.json','jd.txt')] +
-            [s.state_dir/'companies'/f'{company_slug}.md', CL.template_path(),
-             s.data_dir/'templates'/'resume.tex', s.data_dir/'master_profile.yaml', s.data_dir/'applicant.yaml'])
+    from jobagent.tools.job_context import SourceGuard
+    guard = SourceGuard([job_dir/name for name in ('resume.tex','resume.pdf','filled.json','projects.json','jd.json','jd.txt')] +
+        [s.state_dir/'companies'/f'{company_slug}.md', CL.template_path(),
+         s.data_dir/'templates'/'resume.tex', s.data_dir/'master_profile.yaml', s.data_dir/'applicant.yaml'])
     jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
     company = (s.state_dir / "companies" / f"{company_slug}.md").read_text()
     writer = llm.writer(8000)
     cl = CL.write(job_dir, jd, company, writer, log=log, **({'incremental':True} if incremental else {}))
-    if incremental:
-        try:
-            guard.check()
-        except RuntimeError:
-            from jobagent.tools import documents
-            documents.begin_rewrite(job_dir)
-            raise
+    try:
+        guard.check()
+    except RuntimeError:
+        from jobagent.tools import documents
+        documents.begin_rewrite(job_dir)
+        raise
     changes = job_dir / "changes.md"
     text = changes.read_text() if changes.exists() else ""
     text = text.split("\n## Cover letter\n", 1)[0].rstrip("\n") + "\n"  # replace an earlier letter's section
@@ -254,6 +252,11 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
                         f"accomplishment with named tools and a result (at most {T.MAX_NO_RESULT} bullet in the whole resume may "
                         "lack a result), or replace it with another duty: "
                         + " | ".join(dups))
+        from jobagent.steps import multi_agent
+        summary_problems = multi_agent.summary_issues(f.summary, bool(pages and pages > 1))
+        if not multi_agent._title_prefix(f.summary, jd.title):
+            summary_problems.append(f"Open the Summary with the exact posting title: {jd.title}")
+        asks.extend(summary_problems)
         if pages == 1 and not uncovered:
             # How the page reads (rendered PDF): blank bottom, wasted lines, half-empty skills lines. Project
             # paragraphs are fixed before the rounds, so their length is reported but isn't the rounds' to fix.
@@ -265,11 +268,11 @@ def main(job_dir: str, company_slug: str, rediscover: bool = True, ats: bool = T
                 visual = [v for v in layout.review(job_dir / "resume.pdf", log=log)
                           if v.split(" ", 1)[0] in VISUAL_ONLY]
             log(f"round {attempt}: layout {len(lay_issues)} issue(s), visual {len(visual)}")
-            score = (len(dups), len(lay_issues) + len(visual), -len(proj.entries) if proj else 0)
+            score = (len(dups) + len(summary_problems), len(lay_issues) + len(visual), -len(proj.entries) if proj else 0)
             if last_ok is None or score < last_ok[8]:  # keep the best one-page round
                 last_ok = (f, uncovered, missing, warn, problems, pages, filled_in, tex, score,
                            (list(proj.entries), proj.short) if proj else None, lay.issues + visual)
-            if not dups and not lay_issues and not visual:  # clean on paper and on the page: stop
+            if not dups and not summary_problems and not lay_issues and not visual:  # clean on paper and on the page: stop
                 break
             if lay_issues or visual:
                 pool = [t for t in template_skills if t.lower() not in tex.lower()][:12]

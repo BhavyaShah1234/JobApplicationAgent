@@ -22,7 +22,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 HEADINGS = re.compile(r"(?i)^(summary|experience|projects|education|technical skills|skills|publications)$")
-BLANK_PT = 36          # more free height than this at the bottom (about 3 lines of small text) = page not filled
+BLANK_PT = 24          # same two-line tolerance used by the document acceptance gate
 ORPHAN_FRAC = 0.2      # a bullet's last line narrower than this share of the text width = a wasted line
 SKILL_FILL = 0.6       # a skills category whose (last) line ends before this share of the width = mostly empty
 
@@ -99,6 +99,9 @@ def check(pdf: Path) -> Layout:
         return lay
     bbox = _bbox(pdf)
     rs = rows(pdf, bbox=bbox)
+    if len(rs) < 3:
+        lay.issues.append("the resume is missing readable body text")
+        return lay
     page = re.search(r'<page width="([\d.]+)" height="([\d.]+)"', bbox)
     if page:
         w, h = map(float, page.groups())
@@ -205,7 +208,7 @@ def page_png(pdf: Path, dpi: int = 110) -> bytes:
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(["pdftoppm", "-r", str(dpi), "-png", "-singlefile", "-f", "1", "-l", "1", str(pdf),
-                        f"{tmp}/page"], check=True)
+                        f"{tmp}/page"], check=True, timeout=60)
         return Path(tmp, "page.png").read_bytes()
 
 
@@ -214,11 +217,11 @@ def review(pdf: Path, model: str | None = None, log=None) -> list[str]:
     from jobagent import llm
     from jobagent.config import get_settings
     name = model or get_settings().model_vision
-    img = base64.b64encode(page_png(pdf)).decode()
-    msgs = [SystemMessage(REVIEW_PROMPT),
-            HumanMessage(content=[{"type": "text", "text": "The resume page:"},
-                                  {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img}"}}])]
     try:
+        img = base64.b64encode(page_png(pdf)).decode()
+        msgs = [SystemMessage(REVIEW_PROMPT),
+                HumanMessage(content=[{"type": "text", "text": "The resume page:"},
+                                      {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img}"}}])]
         out = llm.structured_invoke(llm.writer(3000, timeout=300, model=name), VisualReview, msgs, log=log)
     except Exception as e:
         if log:

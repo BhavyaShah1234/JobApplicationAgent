@@ -182,9 +182,11 @@ def to_latex(plain: str) -> str:
     """Make plain text safe for the resume's LaTeX: escape special characters, replace arrows and non-ASCII punctuation, and use commands that print correctly in the template's font encoding."""
     plain = by_percent(no_dashes(plain))
     plain = "".join(c for c in re.sub(r"~\s*(?=\d)", "about ", re.sub(r"\s*(→|->)\s*", " to ", plain)).replace("‑", "-") if ord(c) < 128 or c in _KEEP)
-    out = plain.replace("\\", "\\textbackslash{}")
-    for ch in "%&$#_":
-        out = out.replace(ch, "\\" + ch)
+    # Escape input in one pass, before inserting any commands of our own.
+    # In particular, braces in JSON/code examples are text, not TeX groups.
+    escapes = {c: "\\" + c for c in "%&$#_{}"}
+    escapes["\\"] = "\\textbackslash{}"
+    out = "".join(escapes.get(c, c) for c in plain)
     # The template's default (OT1) font encoding prints a bare < > as ¡ ¿ and × as Ö; use commands that work in any
     out = out.replace("<", "\\textless{}").replace(">", "\\textgreater{}")
     for symbol,command in _MATH.items():out=out.replace(symbol,command)
@@ -216,6 +218,10 @@ def compile_pdf(tex: str, out_dir: Path, name: str = "resume") -> tuple[int, str
     whose vertical spacing TeX had to squeeze counts as one page more."""
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{name}.tex").write_text(tex)
+    # A failed attempt must not leave the PDF or measurements of another
+    # attempt beside its new .tex. Kept versions are restored by bundle.publish.
+    for suffix in ("pdf", "layout.json"):
+        (out_dir / f"{name}.{suffix}").unlink(missing_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         # \vbadness=0 makes TeX report a page whose spacing it had to squeeze to fit ("Tight \vbox"); the \typeout
         # logs the height left free on the last page (for the layout validator)
@@ -227,22 +233,32 @@ def compile_pdf(tex: str, out_dir: Path, name: str = "resume") -> tuple[int, str
         body = body.replace("\\end{document}", "\\par\\typeout{JOBAGENT-SPACE=\\the\\pagegoal/\\the\\pagetotal}\n"
                             "\\end{document}", 1)
         Path(tmp, f"{name}.tex").write_text(body)
-        run = subprocess.run(["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", f"{name}.tex"],
-                             cwd=tmp, capture_output=True, text=True, timeout=180)
+        try:
+            run = subprocess.run(["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", f"{name}.tex"],
+                                 cwd=tmp, capture_output=True, text=True, timeout=180)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return 0, f"LaTeX compiler unavailable: {type(exc).__name__}: {str(exc)[:200]}"
         if run.returncode:
-            errs = [l for l in Path(tmp, f"{name}.log").read_text(errors="replace").splitlines() if l.startswith("!")]
-            return 0, " | ".join(errs[:3]) or run.stdout[-300:]
-        Path(out_dir / f"{name}.pdf").write_bytes(Path(tmp, f"{name}.pdf").read_bytes())
-        info = subprocess.run(["pdfinfo", f"{name}.pdf"], cwd=tmp, capture_output=True, text=True).stdout
+            log_path = Path(tmp, f"{name}.log")
+            errs = [l for l in (log_path.read_text(errors="replace") if log_path.exists() else "").splitlines() if l.startswith("!")]
+            return 0, " | ".join(errs[:3]) or (run.stdout or run.stderr or "LaTeX compilation failed")[-300:]
+        try:
+            info = subprocess.run(["pdfinfo", f"{name}.pdf"], cwd=tmp, capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return 0, f"Cannot inspect compiled PDF: {type(exc).__name__}"
+        count = re.search(r"Pages:\s+(\d+)", info.stdout)
+        if info.returncode or not count:
+            return 0, "The compiler did not produce a readable PDF"
         log = Path(tmp, f"{name}.log").read_text(errors="replace")
         squeezed = "Tight \\vbox" in log
         space = re.search(r"JOBAGENT-SPACE=([\d.]+)pt/([\d.]+)pt", log)
         goal, total = (float(space.group(1)), float(space.group(2))) if space else (0.0, 0.0)
         # \pagegoal is \maxdimen on a page nothing has started yet: no reading then
         free = round(goal - total, 1) if space and goal < 10000 else None
+        (out_dir / f"{name}.pdf").write_bytes(Path(tmp, f"{name}.pdf").read_bytes())
         (out_dir / f"{name}.layout.json").write_text(json.dumps({"free_pt": free}))
     # A squeezed page doesn't really fit: it counts as one page too many, so the caller shortens the content.
-    return int(re.search(r"Pages:\s+(\d+)", info).group(1)) + squeezed, ""
+    return int(count.group(1)) + squeezed, ""
 
 
 # --- Experience bullets from the JD's duties, skills from its tech stack ----------------------------------------
@@ -272,7 +288,8 @@ class FillBullet(BaseModel):
     """One bullet the model writes: its text (plain, past tense, length-bounded), which job-description items it covers, the template bullet it reuses (if any), and any numbers it estimated and the candidate must confirm."""
     text: str = Field(max_length=BULLET_VERBATIM_MAX, description=f"Plain text, no LaTeX, past tense, about {BULLET_TARGET} "
                       f"characters, at most {BULLET_MAX} unless copied verbatim from an original bullet")
-    duties: list[int] = Field(min_length=1, max_length=3, description="Indices of the JD ITEMS this bullet covers")
+    duties: list[int] = Field(default_factory=list, max_length=3,
+                             description="Indices of the JD ITEMS this bullet covers; empty for a reused original")
     original: int | None = Field(None, description="Index of this role's original bullet if reused, else null")
     estimated: list[str] = Field(default_factory=list, max_length=3,
                                  description="Each number/metric in this bullet that you estimated (e.g. '22%', '40 s')")

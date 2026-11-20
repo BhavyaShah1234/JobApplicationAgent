@@ -22,6 +22,7 @@ from jobagent.config import get_settings
 from jobagent.state import JobDescription
 from jobagent.tools.tailor import DASH, TOOLISH, compile_pdf, proper_nouns, to_latex, to_plain
 from jobagent.tools.letter_attribution import Binding
+from jobagent.tools import bundle
 
 SLOTS = ("<<RECIPIENT>>", "<<SUBJECT>>", "<<SALUTATION>>", "<<BODY>>", "<<CLOSING>>")
 # Words TOOLISH matches that aren't technologies (letter boilerplate, degrees, places).
@@ -216,6 +217,12 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
     resume_tex = (job_dir / "resume.tex").read_text()
     resume = resume_text(resume_tex)
     template = template_path().read_text()
+    # The final resume's contact block is authoritative. A separately saved
+    # letter template must not silently keep an older name/contact line.
+    contact = re.search(r"\\begin\{center\}.*?\\end\{center\}", resume_tex, re.S)
+    old_contact = re.search(r"\\begin\{center\}.*?\\end\{center\}", template, re.S)
+    if contact and old_contact:
+        template = template[:old_contact.start()] + contact.group(0) + template[old_contact.end():]
     if incremental:
         from . import letter_attribution as attribution
         from .incremental_documents import cache_for, invoke
@@ -255,8 +262,11 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
                 letter = attach_sources(draft, bank)
             else:
                 letter = llm.structured_invoke(model, Letter, messages, log=log)
-        except Exception as e:  # timeout / token limit: next round
+        except llm.LLMConfigError:
+            raise
+        except Exception as e:  # timeout / token limit: next round, with actionable feedback
             log(f"cover letter round {attempt}: model error {type(e).__name__}")
+            feedback = f"The previous draft could not be validated: {type(e).__name__}: {str(e)[-500:]}. Correct its structure and source bindings."
             continue
         # Apply the same punctuation policy as to_latex before checking the
         # content. Otherwise a verbatim JD title with an en dash fails every
@@ -267,11 +277,20 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
             "paragraphs": [p.model_copy(update={"text": DASH.sub(", ", p.text)}) for p in letter.paragraphs],
         })
         issues = consistency(letter, resume, jd, company_md)
+        if not header_matches(template, resume_tex):
+            issues.append("the cover letter header differs from the resume")
         if incremental:
-            try:
-                issues += attribution.check(letter, bank, cache, get_settings().model_planner, log)
-            except Exception as exc:
-                issues.append(f'achievement attribution review unavailable ({type(exc).__name__})')
+            for review_attempt in range(2):
+                try:
+                    issues += attribution.check(letter, bank, cache, get_settings().model_planner, log)
+                    break
+                except llm.LLMConfigError:
+                    raise
+                except Exception as exc:
+                    if review_attempt:
+                        issues.append(f'achievement attribution review unavailable ({type(exc).__name__})')
+                    else:
+                        log("Retrying cover-letter attribution review on the unchanged letter")
         tex = render(template, letter, jd)
         pages, err = compile_pdf(tex, job_dir, name="cover_letter")
         log(f"cover letter round {attempt}: {pages or 'compile error'} page(s), {len(issues)} consistency issue(s)")
@@ -279,20 +298,24 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
             issues.append(f"LaTeX error: {err}")
         if pages and pages > 1:
             issues.append(f"{pages} pages; it must be one: shorten to ~300 words")
-        if best is None or len(issues) < len(best[1]):
-            best = (letter, issues, tex)
+        if not pages and not err:
+            issues.append("no readable cover-letter PDF was produced")
+        rank = (pages == 1 and not err, -len(issues))
+        if best is None or rank > best[0]:
+            pdf = job_dir / "cover_letter.pdf"
+            meta = job_dir / "cover_letter.layout.json"
+            best = (rank, letter, list(issues), tex, pages,
+                    pdf.read_bytes() if not err and pdf.exists() else None,
+                    meta.read_text() if not err and meta.exists() else None)
         if not issues:
             break
         feedback = "Fix these problems: " + " | ".join(issues)
     if best is None:
         raise RuntimeError("every cover letter round failed")
-    letter, issues, tex = best
-    pages, err = compile_pdf(tex, job_dir, name="cover_letter")  # the best round, not necessarily the last
-    if err:
-        issues = [i for i in issues if not i.startswith("LaTeX error")] + [f"LaTeX error: {err}"]
-        (job_dir / "cover_letter.pdf").unlink(missing_ok=True)
-    elif pages and pages > 1 and not any("pages; it must be one" in i for i in issues):
-        issues = issues + [f"{pages} pages; it must be one"]
+    _, letter, issues, tex, pages, pdf, meta = best
+    # Publish the exact already-compiled best attempt, rather than recompiling
+    # it and risking losing a good PDF to a final infrastructure failure.
+    bundle.publish(job_dir, {"cover_letter.tex": tex, "cover_letter.pdf": pdf, "cover_letter.layout.json": meta})
     if incremental:
         from .artifact_cache import write_private
         write_private(job_dir/'incremental-letter-metrics-v1.json', {'version':1,'elapsed_s':time.monotonic()-started,

@@ -19,7 +19,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 NAME = "documents.json"
-STALE = ("resume.pdf", "resume.tex", "filled.json", "cover_letter.pdf", "cover_letter.tex", NAME)
+STALE = ("resume.pdf", "resume.tex", "resume.layout.json", "filled.json", "projects.json", "changes.md", "cover_letter.pdf", "cover_letter.tex",
+         "cover_letter.layout.json", NAME)
 EXIT_OK, EXIT_INVALID, EXIT_BELOW_TARGET = 0, 1, 8
 
 
@@ -183,6 +184,9 @@ def assess(job_dir: Path, *, resume: dict, letter: dict | None, ats: dict, polic
         blockers.append("cover letter: not written")
     else:
         lpages, lproblem = pdf_check(job_dir / "cover_letter.pdf")
+        letter = {**letter, "issues": list(letter.get("issues", []))}
+        if letter.get("header_matches_resume") is False:
+            letter["issues"].append("the cover letter header differs from the resume")
         l_valid = not lproblem and lpages == 1 and not letter.get("issues")
         if lproblem:
             blockers.append(f"cover letter: {lproblem}")
@@ -328,8 +332,16 @@ def resume_findings(job_dir: Path) -> dict:
         return {"evidence": False, "reason": "filled.json is missing or invalid", "hard": [], "claims": []}
     if not (job_dir / "resume.pdf").exists():
         return {"evidence": False, "reason": "resume.pdf is missing", "hard": [], "claims": claims_from_filled(f)}
+    from jobagent.config import get_settings
+    from jobagent.state import JobDescription
+    try:
+        template = T.parse((get_settings().data_dir / "templates/resume.tex").read_text())
+        jd = JobDescription.model_validate_json((job_dir / "jd.json").read_text())
+    except (OSError, ValueError) as exc:
+        return {"evidence": False, "reason": f"template/JD validation sources are missing or invalid ({type(exc).__name__})",
+                "hard": [], "claims": claims_from_filled(f)}
     from jobagent.tools import skillgraph
-    return {"evidence": True, "reason": "", "hard": M.hard_issues({"job_dir": job_dir}, f),
+    return {"evidence": True, "reason": "", "hard": M.hard_issues({"job_dir": job_dir, "r": template, "jd": jd}, f),
             "claims": claims_from_filled(f) + skillgraph.violations(job_dir, f)}
 
 

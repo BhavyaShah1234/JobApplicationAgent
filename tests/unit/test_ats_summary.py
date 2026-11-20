@@ -125,10 +125,11 @@ def test_multi_agent_final_average_drops_a_stale_limited_score(job, monkeypatch,
     # template preflight failures are covered in test_template_preflight.py.
     from jobagent.tools import documents
     monkeypatch.setattr(documents, "validate_template", lambda *args, **kwargs: None)
-    monkeypatch.setattr(multi.T, "parse", lambda text: None)
+    monkeypatch.setattr(multi.T, "parse", lambda text: SimpleNamespace(roles=[], skills=[], tex=""))
     monkeypatch.setattr(multi.layout, "check", lambda path: SimpleNamespace(issues=[]))
     monkeypatch.setattr(multi.layout, "page_count", lambda path: 1)
-    best = {"tex": "final resume", "pdf": b"final PDF", "f": SimpleNamespace(model_dump_json=lambda **kwargs: "{}"),
+    best = {"tex": "final resume", "pdf": b"final PDF", "f": multi.T.Filled.model_construct(
+                summary="Engineer", roles=[], skills=[], notes="score aggregation fixture"),
             "scores": {name: 99 for name in ats_sites.AVERAGE_SITES}, "hard": []}
     monkeypatch.setattr(multi, "build_graph", lambda: SimpleNamespace(invoke=lambda *args: {
         "best": best, "history": ["ats 99"], "ats_round": 1,

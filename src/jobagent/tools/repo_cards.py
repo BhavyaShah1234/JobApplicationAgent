@@ -278,10 +278,24 @@ def refresh(user: str, token: str | None = None, workers: int = 6, force: bool =
     return cards
 
 
-def rank(cards: list[dict], job_text: str, k: int = 8, min_substance: int = 2) -> list[tuple[float, dict]]:
+def rank(cards: list[dict], job_text: str, k: int = 8, min_substance: int = 2, log=print) -> list[tuple[float, dict]]:
     pool = [c for c in cards if c["substance"] >= min_substance and c["kind"] not in ("config", "trivial")
             and not c["full_name"].lower().endswith(".github.io")]
-    jv = llm.embeddings().embed_query(job_text)
+    if not pool:
+        return []
+    try:
+        jv = llm.embeddings().embed_query(job_text)
+        if not jv or not any(jv) or any(len(c.get('embedding', [])) != len(jv) or not any(c['embedding']) for c in pool):
+            raise ValueError('missing or incompatible project search vectors')
+    except Exception as exc:
+        # Retrieval is optional; repository evidence is not. Rank the same
+        # verified cards lexically instead of losing the document build because
+        # the separate embedding service is down or changed vector dimensions.
+        log(f'projects: semantic ranking unavailable ({type(exc).__name__}); using keyword overlap on saved repo cards')
+        words = lambda text: set(re.findall(r'[a-z0-9+#]+', text.casefold()))
+        target = words(job_text)
+        return sorted(((len(target & words(_embed_text(c))) / max(1, len(target)), c) for c in pool),
+                      key=lambda pair: (-pair[0], pair[1]['full_name'].casefold()))[:k]
 
     def cos(a, b):
         return sum(x * y for x, y in zip(a, b)) / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))

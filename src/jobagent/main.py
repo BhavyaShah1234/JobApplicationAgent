@@ -469,13 +469,11 @@ def tailor_cmd(
     from jobagent.tools import workflow as W
     from jobagent.tools.tailor import PDF_STARTUP_POLICY
     wf = W.Workflow(d)
-    source_guard = None
-    if strategy == 'incremental':
-        from jobagent.tools.job_context import SourceGuard
-        from jobagent.tools.cover_letter import template_path
-        source_guard = SourceGuard([d/name for name in ('jd.json','jd.txt')] +
-            [s.data_dir/'templates'/'resume.tex', template_path(), s.data_dir/'master_profile.yaml',
-             s.data_dir/'applicant.yaml', s.state_dir/'companies'/f'{company}.md'])
+    from jobagent.tools.job_context import SourceGuard
+    from jobagent.tools.cover_letter import template_path
+    source_guard = SourceGuard([d/name for name in ('jd.json','jd.txt')] +
+        [s.data_dir/'templates'/'resume.tex', template_path(), s.data_dir/'master_profile.yaml',
+         s.data_dir/'applicant.yaml', s.state_dir/'companies'/f'{company}.md'])
     def check_sources():
         """Invalidate the packet, retaining owner edits, if sources changed between stages."""
         if source_guard:
@@ -515,28 +513,32 @@ def tailor_cmd(
 
         model = s.model_writer  # the same model for every agent (chosen 2026-11-02)
         sites = () if no_ats else M.SITES
+        resume_outputs = ["resume.pdf", "resume.tex", "filled.json", "resume.layout.json"]
+        if "\\section{Projects}" in (s.data_dir / "templates" / "resume.tex").read_text():
+            resume_outputs.append("projects.json")
         # F15: each finished stage is kept. A rerun after a crash (or a second `tailor`) reuses the resume if its inputs and files
         # are unchanged, and redoes only the cover letter; `--force` rebuilds everything.
         from jobagent.log import progress
         progress(log, "documents", "running", "Resume")
         rj, how = wf.run("resume", lambda: M.run_job(d, company, {k: model for k in M.DEFAULT_MODELS}, sites, log=log,
-                         **({"document_strategy":strategy,"ats_refine":ats_refine} if strategy=="incremental" else {})),
+                         document_strategy=strategy, ats_refine=ats_refine),
                          inputs={"jd": jd_sha, "jd_text": txt_sha, "template": template_sha, "profile": profile_sha, "model": model,
                                  "sites": list(sites), "document_strategy":strategy,"ats_refine":ats_refine,
                                  "ats_providers":{name:M.ats_sites.provider_version(name) for name in sites},
-                                 "incremental_version":job_context.model_version() if strategy=='incremental' else None,
+                                 "generation_version":job_context.model_version(),
                                  **({'incremental_validators':{'projects':s.model_planner,'summary':s.model_planner,'letter':s.model_planner},
                                      'incremental_provider':{'base_url':s.openai_base_url,'method':s.llm_structured_method}} if strategy=='incremental' else {}),
                                  "claims_profile":W.sha_file(s.data_dir/'master_profile.yaml'),
                                  "skills": _skill_inputs(d, s), "document_provenance": 1,
                                  "project_content_validation": 1, "versioned_content_review": 3,
                                  "pdf_startup_policy": PDF_STARTUP_POLICY},
-                         outputs=["resume.pdf", "resume.tex", "filled.json"], force=force, log=log,
-                         check=lambda r: None if r.get("produced") else (r.get("failure") or "no valid resume was produced"))
+                         outputs=resume_outputs, force=force, log=log,
+                         check=lambda r: None if r.get("produced") and not r.get("hard_issues") and not r.get("claims_issues")
+                             else (r.get("failure") or "; ".join(r.get("hard_issues", []) + r.get("claims_issues", [])) or "no valid resume was produced"))
         log(f"resume ({how}): average {rj['average']} {rj['scores']}, {rj['pages']} page(s), hard issues {rj['hard_issues']}")
         check_sources()
         cl = None
-        if (rj["produced"] and rj.get("template_sha256")
+        if (rj["produced"] and not rj.get("hard_issues") and not rj.get("claims_issues") and rj.get("template_sha256")
                 and rj["template_sha256"] == documents.template_fingerprint()):
             # Do not spend another model call when the source changed during generation.
             progress(log, "documents", "running", "Cover letter", detail=f"resume done: average {rj['average']}")
@@ -544,11 +546,14 @@ def tailor_cmd(
                              inputs={"resume_tex": W.sha_file(d / "resume.tex"), "profile": profile_sha, "model": model,
                                      "jd":jd_sha,"letter_template":W.sha_file(letter_template_path()),
                                      "document_strategy":strategy,
-                                     "incremental_version":job_context.model_version() if strategy=='incremental' else None,
+                                     "generation_version":job_context.model_version(),
+                                     "projects":W.sha_file(d/'projects.json'),
                                      **({'incremental_validator':s.model_planner} if strategy=='incremental' else {}),
                                      **({'incremental_provider':{'base_url':s.openai_base_url,'method':s.llm_structured_method}} if strategy=='incremental' else {}),
                                      "candidate_credentials": 1, "pdf_startup_policy": PDF_STARTUP_POLICY},
-                             outputs=["cover_letter.pdf", "cover_letter.tex"], force=force, log=log)
+                             outputs=["cover_letter.pdf", "cover_letter.tex"], force=force, log=log,
+                             check=lambda r: ("; ".join(r.get("issues", [])) or "cover letter validation failed")
+                                 if r.get("valid") is False or r.get("issues") or r.get("header_matches_resume") is False else None)
             log(f"cover letter ({how}): {cl['words']} words, {len(cl['issues'])} issue(s)")
         res = documents.assess(d, resume=rj, letter=cl, ats={"average": rj["average"], "complete": rj["average_complete"],
                                                              "missing": rj["average_missing"], "scored": bool(rj["average_sites"])},

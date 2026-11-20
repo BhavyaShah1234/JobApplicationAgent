@@ -20,6 +20,8 @@ import hashlib
 import json
 import operator
 import re
+import shutil
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -54,10 +56,14 @@ SITES = ats_sites.DEFAULT_SITES
 # 3 validator fix passes and 3 ATS rounds after the first score (5 and 5 until 2026-11-08: the user asked for 3)
 LAYOUT_PASSES, ATS_ROUNDS, TARGET = 3, 3, 90.0
 SUMMARY_RECONCILE = 'Reconcile the summary with the final changed experience, projects and skills; preserve accurate text.'
-BLANK_HARD_PT = 24  # more free height than this (about 2 lines) at the bottom disqualifies a version
+BLANK_HARD_PT = layout.BLANK_PT  # generation, repairs and acceptance use the same measured threshold
 # Tasks that need the whole Experience section rewritten (coverage, length); anything else is a targeted bullet edit
 FULL_REWRITE = __import__("re").compile(r"(?i)not covered|pages?; it must be one|overflows|failed to compile|"
                                         r"add bullets")
+
+
+class DraftFailure(RuntimeError):
+    """A recoverable exhausted draft/coverage request, distinct from an unexpected code failure."""
 
 
 # --- section outputs ----------------------------------------------------------------------------------------
@@ -83,12 +89,12 @@ def _posting_bullet_schema(base, jd, name):
 
     Returns:
         A subclass retaining strict integer references and the bullet budget.
-
-    Raises:
-        ValueError: The posting has no coverable experience items.
+        Without numbered items, references must be empty instead of fabricated.
     """
     count=len(T.jd_items(jd))
-    if not count:raise ValueError('Posting has no experience coverage items; check the scraped JD before drafting')
+    if not count:
+        return create_model(name, __base__=base, duties=(list[int], Field(default_factory=list, max_length=0,
+            description='No numbered duties were supplied; use an empty list, never invent an index')))
     index=Annotated[int,Field(strict=True,ge=0,lt=count)]
     return create_model(name,__base__=base,duties=(list[index],Field(
         min_length=1,max_length=T.ITEMS_PER_BULLET,
@@ -307,6 +313,10 @@ full descriptions use three. Do not demand expansion of a valid short variant.
   deployment platforms under Databases); an empty category; soft skills listed. Report only these correctness problems, never
   short lines or missing keywords. Prefer moving terms or merging compatible categories over adding padding;
 - summary: claims the rest of the resume doesn't show; not opening with the posting's title.
+The opening job title is a TARGET headline, not employment at that company. Apply CANDIDATE FACTS: authorized
+work duties, impact estimates and overall/domain tenure within the declared ceiling do not need extra dated
+proof. Locked Education establishes the listed degrees; never infer missing education because it is outside
+Experience. Employer identities, titles, dates, credentials and repository implementation features remain protected.
 Return an empty list if the resume is sound."""
 
 ROUTER_PROMPT = """You are the ATS validator of a resume team. Online ATS checkers scored the resume; their MISSING
@@ -343,6 +353,8 @@ class State(TypedDict, total=False):
     hard: list
     budget_feedback: dict            # initial limited-site feedback retained during unlimited-site refinements
     history: Annotated[list, operator.add]
+    local_best: dict                 # locally validated version, retained even if a later edit/scorer fails
+    ats_unavailable: bool
 
 
 def _context(ctx: dict, f: T.Filled | None, project_state: str | None, *, visible_only: bool = False) -> str:
@@ -350,6 +362,9 @@ def _context(ctx: dict, f: T.Filled | None, project_state: str | None, *, visibl
     r = ctx["r"]
     parts = [T.facts_block(), "TEMPLATE SKILLS (the candidate's own): " +
              "; ".join(f"{c}: {T.to_plain(v)}" for c, v in r.skills)]
+    education = re.search(r"\\section\{Education\}(.*?)(?=\\section\{|\\end\{document\})", getattr(r, "tex", ""), re.S)
+    if education:
+        parts.append("LOCKED CANDIDATE EDUCATION (authoritative):\n" + T.to_plain(education.group(1)))
     if hint := SG.hint_text(ctx.get("graph")).strip():
         parts.append(hint)
     if f is not None:
@@ -387,10 +402,10 @@ def _context(ctx: dict, f: T.Filled | None, project_state: str | None, *, visibl
 
 def _section_messages(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last: str) -> list:
     """The step 9 prompt (all rules and the posting) with the agent's role, the current resume and its tasks."""
-    base = T.build_fill_prompt(ctx["r"], ctx["jd"], ctx["company"], 16)
+    base = T.build_fill_prompt(ctx["r"], ctx["jd"], ctx["company"], len(ctx["r"].roles) * T.MAX_BULLETS)
     system = SystemMessage(ROLE_PROMPTS[agent] + "\n\n" + base[0].content)
     proj = (ctx["job_dir"] / "projects.json")
-    if ctx.get('incremental') and agent=='experience' and f is None:
+    if agent=='experience' and f is None:
         # Initial experience is independent of concurrently selected projects.
         # Reading yesterday's projects.json here makes both the prompt and its
         # cache key depend on thread timing or an interrupted previous build.
@@ -401,6 +416,8 @@ def _section_messages(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str
         extra += "\n\nTASKS FOR YOU (from the validators):\n" + "\n".join(f"- {t}" for t in tasks)
     if last:
         extra += f"\n\nLAST ROUND: {last}"
+    if ctx.get("draft_feedback"):
+        extra += "\n\nPREVIOUS DRAFT FAILED THESE CHECKS; correct them in this new draft:\n" + ctx["draft_feedback"]
     if f is not None:
         extra += "\n\nKeep everything in your section that no task asks you to change."
     return [system, HumanMessage(base[1].content + "\n\n" + extra)]
@@ -470,8 +487,7 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
             else:
                 out = _invoke(ctx, agent, model, T.Repair, msgs, log=log)
         else:
-            schema = (experience_schema(ctx['r'],compact=bool(ctx.get('incremental')),
-                                        **({'jd':ctx['jd']} if ctx.get('incremental') else {}))
+            schema = (experience_schema(ctx['r'],compact=True, jd=ctx['jd'])
                       if agent=='experience' else {'skills':SkillsOut,'summary':IncrementalSummaryOut if ctx.get('incremental') else SummaryOut}[agent])
             # Live compact drafts repeatedly exhausted tool/schema retries,
             # then succeeded in JSON mode. Prefer that transport for the full
@@ -504,6 +520,8 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
                           **({'first':'json_mode'} if ctx.get('incremental') and agent in ('experience','summary') else {}))
         log(f"  {agent} agent ({ctx['models'][agent]}): {time.monotonic() - t0:.0f}s")
         return agent, out
+    except llm.LLMConfigError:
+        raise
     except Exception as e:
         log(f"  {agent} agent ({ctx['models'][agent]}): failed {type(e).__name__}: {str(e)[:120]}")
         return agent, None
@@ -575,6 +593,7 @@ def ensure_incremental_coverage(ctx, f):
     for attempt in range(2):
         missing=T.fill_checks(template,jd,f,slots)[0]
         if not missing:return f
+        remaining = missing
         required=set(T.coverage_target(jd,slots)[0])
         covered={d for role in f.roles for bullet in role.bullets if bullet.original is None for d in bullet.duties}
         capacity=sum(len(role.bullets) for role in f.roles)*T.ITEMS_PER_BULLET
@@ -583,13 +602,30 @@ def ensure_incremental_coverage(ctx, f):
             tasks.append(f'Add bullets up to {T.MAX_BULLETS} per role to fit the feasible required coverage.')
         ctx['log'](f'repairing required JD coverage before summary/review (pass {attempt+1}/2): {missing}')
         _,out=_run_agent({**ctx,'_require_coverage':True},'experience',f,tasks,'')
-        if out is None:raise RuntimeError(f'Required JD coverage repair failed for {missing}; no packet published')
+        if out is None:
+            ctx['log']('Targeted coverage repair failed; trying one full experience rewrite before giving up')
+            break
         updated=_merge(ctx,f,{'experience':out})
         remaining=T.fill_checks(template,jd,updated,slots)[0]
         if not set(remaining)<set(missing):
-            raise RuntimeError(f'Required JD coverage repair left {remaining} without progress; no packet published')
+            ctx['log']('Targeted coverage repair made no progress; trying one full experience rewrite')
+            break
         f=updated
-    if remaining:raise RuntimeError(f'Required JD coverage repair left {remaining}; no packet published')
+    if remaining:
+        _, out = _run_agent({**ctx, '_require_coverage': True}, 'experience', f,
+            [f'REQUIRED JD item indices not covered by any NEW bullet: {remaining}.',
+             f'Add bullets up to {T.MAX_BULLETS} per role as needed: rewrite the whole experience section, '
+             'covering every feasible required index and retaining all previously covered duties.'], '')
+        if out is None:
+            raise DraftFailure(f'Required JD coverage repair failed for {remaining}; no packet published')
+        try:
+            updated = _merge(ctx, f, {'experience': out})
+        except (ValueError, AttributeError) as exc:
+            raise DraftFailure(f'Required JD coverage repair left {remaining}; no valid full rewrite returned') from exc
+        remaining = T.fill_checks(template, jd, updated, slots)[0]
+        if remaining:
+            raise DraftFailure(f'Required JD coverage repair left {remaining}; no packet published')
+        f = updated
     return f
 
 
@@ -606,6 +642,7 @@ def write_initial(state: State) -> dict:
         token = optional_secret("github", "token")
         chosen = P.choose(r, jd, llm.writer(8000, timeout=300, model=ctx["models"]["projects"]),
                           github.profile_user(r.tex), token, rediscover=False, log=log,
+                          feedback=ctx.get('draft_feedback', ''),
                           **({'cache':ctx['cache'],'model_name':ctx['models']['projects']} if ctx.get('incremental') else {}))
         P.save_state(ctx["job_dir"], list(chosen.entries), chosen)
         ctx["candidates"] = chosen.candidates
@@ -613,11 +650,12 @@ def write_initial(state: State) -> dict:
         return chosen
 
     with ThreadPoolExecutor(2) as ex:
-        fut_p = ex.submit(with_context(projects))
+        fut_p = ex.submit(with_context(projects)) if P.projects_span(r.tex) else None
         _, exp = _run_agent(ctx, "experience", None, [], "")
-        fut_p.result()
+        if fut_p is not None:
+            fut_p.result()
     if exp is None:
-        raise RuntimeError("the experience agent failed on the first draft")
+        raise DraftFailure("the experience agent failed on the first draft")
     roles = [T.FillRole(role=i, bullets=getattr(exp, f"role_{i}")) for i in range(len(r.roles))]
     f = T.Filled(summary=T.summary_text(r.summary), roles=roles,
                  skills=[T.SkillLine(category=c, terms=[T.to_plain(v)]) for c, v in r.skills][:8] or
@@ -667,13 +705,23 @@ def plan_space(ctx: dict, f: T.Filled) -> tuple[T.Filled, str, list[str], int, s
     """Space planner: full project paragraphs come before extra bullets. Fit the projects; while fewer than
     min(3, available) projects fit in full, drop a 4th bullet (one whose duty another bullet covers) and refit.
     Returns the planned resume and its compiled render."""
-    st = json.loads((ctx["job_dir"] / "projects.json").read_text())
+    path = ctx["job_dir"] / "projects.json"
+    if not path.exists():
+        tex, problems = T.apply_fill(ctx["r"], f)
+        return f, tex, problems, *T.compile_pdf(tex, ctx["job_dir"])
+    st = json.loads(path.read_text())
     want = min(3, len(st["ranked"]))
     best = None
     for _ in range(5):
         tex, problems, pages, err, kept, n_short = _fit(ctx, f)
         full = kept - n_short
-        key = (pages == 1 and not err, min(full, want), sum(len(e.bullets) for e in f.roles))
+        # Dropping a useful bullet to force a third FULL project must not undo
+        # the fill-space repair by creating a blank band. Two full projects
+        # remain mandatory; a third may use its valid short variant.
+        measured = layout.check(ctx["job_dir"] / "resume.pdf") if pages == 1 and not err else None
+        filled_page = measured is not None and (measured.free_pt is None or measured.free_pt <= BLANK_HARD_PT)
+        key = (filled_page and full >= min(2, want), pages == 1 and not err,
+               min(full, want), sum(len(e.bullets) for e in f.roles))
         if best is None or key > best[0]:
             best = (key, f, tex, problems, pages, err)
         if (pages == 1 and not err and full >= want) or not (cut := _removable(ctx, f)):
@@ -714,7 +762,7 @@ def check_layout(state: State) -> dict:
         tasks["experience"].append(f"The resume is {pages} pages; it must be one: shorten every bullet to one line "
                                    f"(about {T.BULLET_TARGET} characters, at most {T.BULLET_MAX}) and drop the least relevant bullet of the longest role.")
         tasks["skills"].append("The resume overflows one page: at most 2 tools per term, merge near-duplicates.")
-    tasks["experience"] += T.duplicates(r, f, **({'substantive':True} if ctx.get('incremental') else {})) + T.quality(r, jd, f)
+    tasks["experience"] += T.duplicates(r, f, substantive=True) + T.quality(r, jd, f)
     slots = len(r.roles) * T.MAX_BULLETS          # the most bullets the page layout allows (F18)
     uncovered = T.fill_checks(r, jd, f, slots)[0]
     if uncovered:
@@ -726,6 +774,9 @@ def check_layout(state: State) -> dict:
     if empty:
         tasks["skills"].append(f"These categories render empty (their terms repeat other lines): {empty}; give each "
                                "real, different skills or drop it.")
+    if len(f.skills) < 3:
+        tasks["skills"].append("Supply at least three coherent, nonempty categories using only permitted skills. "
+                               "Do not restore a skill removed by the ownership gate.")
     lay = layout.check(job_dir / "resume.pdf") if pages == 1 and not err else None
     proj_path = job_dir / "projects.json"
     st = json.loads(proj_path.read_text()) if proj_path.exists() else None
@@ -756,7 +807,7 @@ def check_layout(state: State) -> dict:
         if lay.free_pt and lay.free_pt > 12 and st and st["short"]:
             tasks["projects"].append(f"About {round(lay.free_pt / 11)} line(s) are free but projects are in their short "
                                      "form: make every paragraph a full 3 sentences of 300-380 characters.")
-        if lay.free_pt and lay.free_pt > 12 and full_projects >= min(3, len(st["ranked"]) if st else 0):
+        if lay.free_pt and lay.free_pt > BLANK_HARD_PT and full_projects >= min(3, len(st["ranked"]) if st else 0):
             # space beyond full projects: more bullets (the space planner trims them again if projects need room)
             thin = [e for e in f.roles if len(e.bullets) < T.MAX_BULLETS]
             if thin:
@@ -768,6 +819,12 @@ def check_layout(state: State) -> dict:
                     f"About {round(lay.free_pt / 11)} line(s) of the page are free: add bullets (up to {T.MAX_BULLETS} "
                     f"per role) to {[f'role_{e.role} ({len(e.bullets)} now)' for e in thin]}, preferring the candidate's "
                     f"own template bullets that fit the posting: {spare}. Keep every REQUIRED item covered.")
+            elif st:
+                tasks["projects"].append(
+                    f"About {round(lay.free_pt / 11)} blank lines remain and every role is already at its bullet limit. "
+                    f"Expand the displayed full project descriptions toward {T.PARAGRAPH_MAX} characters using "
+                    "additional facts from each project's OWN source card. Keep three complete sentences and "
+                    "do not add features or borrow another repository's work.")
     if st and st["kept"] - len(st["short"]) < min(2, len(st["ranked"])):
         tasks["summary"].append(f"Projects are squeezed to short forms: shorten the Summary to at most {T.SUMMARY_TIGHT} characters.")
         tasks["skills"].append("Projects are squeezed to short forms: keep every category to one line.")
@@ -807,8 +864,12 @@ def check_layout(state: State) -> dict:
     log(f"validator pass {state.get('layout_pass', 0)}: {pages} page(s), {n} finding(s) "
         f"{ {a: len(t) for a, t in tasks.items()} }" +
         "".join(f"\n    [{a}] {t[:200]}" for a, ts in tasks.items() for t in ts))
+    hard = hard_issues(ctx, f) + reviewed_content.get("semantic_hard", []) + problems
+    kept = {}
+    if pages == 1 and not err and not hard and all((job_dir / name).is_file() for name in ("resume.pdf", "resume.tex")):
+        kept["local_best"] = _snapshot(ctx, f, hard, reviewed_content)
     return {"f": f, "tasks": tasks, "layout_issues": [x for t in tasks.values() for x in t],
-            "hard": hard_issues(ctx, f) + reviewed_content.get("semantic_hard", []),
+            "hard": hard, **kept,
             "layout_pass": state.get("layout_pass", 0) + 1, "history": [f"validator {n}"],
             "reviewed": reviewed, "skills_padding_attempted": padding_attempted, **reviewed_content}
 
@@ -862,7 +923,7 @@ def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
     if lay.pages == 1 and lay.free_pt is not None and lay.free_pt > BLANK_HARD_PT:
         out.append(f"{round(lay.free_pt / 11)} blank lines at the bottom")
     out += [f"empty skills line {sl.category}" for sl in f.skills if not sl.render()]
-    if ctx.get('incremental'):
+    if ctx.get('r') is not None and ctx.get('jd') is not None:
         # Reaching a repair budget must not turn outstanding correctness
         # findings into an accepted, apparently valid final packet.
         out += T.duplicates(ctx['r'],f,substantive=True) + T.quality(ctx['r'],ctx['jd'],f)
@@ -871,6 +932,12 @@ def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
             out.append(f'Open the summary with the exact posting title: {ctx["jd"].title}')
         uncovered=T.fill_checks(ctx['r'],ctx['jd'],f,len(ctx['r'].roles)*T.MAX_BULLETS)[0]
         if uncovered:out.append(f'Required resume coverage targets remain unresolved: {uncovered}')
+        # Rendering mutates filtered skill lines. Validate the serialized form
+        # too, so a PDF cannot pass while its filled.json cannot be loaded later.
+        try:
+            T.Filled.model_validate_json(f.model_dump_json())
+        except ValueError as exc:
+            out.append(f'Resume structure cannot be reloaded: {str(exc)[:500]}')
     return out
 
 
@@ -914,18 +981,24 @@ def _content_hash(ctx: dict, f: T.Filled) -> str:
 
 def _reviewed_content(ctx: dict, f: T.Filled, state: dict) -> dict:
     fingerprint = _content_hash(ctx, f)
-    if fingerprint == state.get("content_hash"):
+    if fingerprint == state.get("content_hash") and not state.get("content_error"):
         findings, error = state.get("content_findings", []), state.get("content_error", "")
     else:
-        try:
-            findings, error = content_review(ctx, f), ""
-        except Exception as exc:
-            from jobagent.tools.incremental_documents import ReviewUnavailable
-            error = str(exc) if ctx.get('incremental') and isinstance(exc,ReviewUnavailable) else \
-                    f"{'document' if ctx.get('incremental') else 'skills'} content review unavailable ({type(exc).__name__})"
-            findings = []
+        for attempt in range(2):
+            try:
+                findings, error = content_review(ctx, f), ""
+                break
+            except llm.LLMConfigError:
+                raise
+            except Exception as exc:
+                from jobagent.tools.incremental_documents import ReviewUnavailable
+                error = str(exc) if ctx.get('incremental') and isinstance(exc,ReviewUnavailable) else \
+                        f"document content review unavailable ({type(exc).__name__})"
+                findings = []
+                if attempt == 0 and ctx.get("log"):
+                    ctx["log"]("Retrying the unavailable content review on the unchanged draft; no content rewrite")
     hard = [f"{fd.agent}: {fd.issue}" for fd in findings
-            if (ctx.get('incremental') or fd.agent in {"skills", "projects"}) and fd.severity == "error"]
+            if fd.severity == "error"]
     if error:
         hard.append(error)
     return {"content_hash": fingerprint, "content_findings": findings, "content_error": error, "semantic_hard": hard}
@@ -980,6 +1053,20 @@ def edit_sections(state: State) -> dict:
     return {"f": _merge(ctx, f, outs), "tasks": {}}
 
 
+def _snapshot(ctx: dict, f: T.Filled, hard: list, reviewed: dict | None = None, ev: dict | None = None) -> dict:
+    """Keep exact source, PDF, measurements and review identity as one recoverable version."""
+    directory = ctx["job_dir"]
+    read = lambda name: (directory / name).read_text() if (directory / name).exists() else None
+    ev = ev or {"scores": {}, "missing": {}, "advice": [], "keep": [], "template": [], "completed": []}
+    return {"avg": A.average(ev["scores"]), "scores": dict(ev["scores"]), "f": f.model_copy(deep=True),
+            "layout": len(layout.check(directory / "resume.pdf").issues), "hard": list(hard),
+            "tex": read("resume.tex"), "pdf": (directory / "resume.pdf").read_bytes(),
+            "layout_meta": read("resume.layout.json"), "projects": read("projects.json"),
+            "filled": f.model_dump_json(indent=1) if hasattr(f, "model_dump_json") else None,
+            "ev": ev, "content_suggestions": [fd.issue for fd in (reviewed or {}).get("content_findings", [])
+                                               if fd.severity == "suggestion"]}
+
+
 def score(state: State) -> dict:
     """ATS validator: score the current page (one page only); keep it if better than the best so far, else roll back."""
     ctx = state["ctx"]
@@ -995,7 +1082,7 @@ def score(state: State) -> dict:
         return _rollback(state, "UNDONE: the edit broke the one-page layout; keep lines short") if best else \
             {"ats_round": rnd + 1, "last": "the page overflowed: shorten bullets"}
     hard = list(dict.fromkeys(hard_issues(ctx, f) + state.get("semantic_hard", [])))
-    if ctx.get('incremental'):hard=list(dict.fromkeys(hard+problems))
+    hard=list(dict.fromkeys(hard+problems))
     if state.get("content_hash") and _content_hash(ctx, f) != state["content_hash"]:
         hard.append("skills content changed after its semantic review")
     if hard:
@@ -1006,13 +1093,31 @@ def score(state: State) -> dict:
     budget_sites = tuple(name for name in ctx["sites"] if name in ats_sites.BUDGET_SITES)
     first_score = best is None
     sites = tuple(name for name in ctx["sites"] if first_score or name not in budget_sites)
-    ev = A.evaluate(job_dir, jd, ctx["jd_text"], rnd, sites, log)
+    # Scorer availability is not document validity. Save the locally accepted
+    # page before external work, and never rewrite it as an "overflow" merely
+    # because a provider failed. ATS warn/block policy is applied by documents.
+    local = _snapshot(ctx, f, hard, state)
+    def evaluate(selected):
+        """Score selected providers while retaining the independent document result.
+
+        Args:
+            selected: ATS provider names to attempt in this pass.
+
+        Returns:
+            Provider feedback, or an explicitly incomplete result on failure.
+        """
+        try:
+            return A.evaluate(job_dir, jd, ctx["jd_text"], rnd, selected, log)
+        except Exception as exc:
+            log(f"ATS scoring unavailable ({type(exc).__name__}); retaining the validated resume")
+            return {"scores": {}, "missing": {}, "advice": [], "template": [], "keep": [], "completed": []}
+    ev = evaluate(sites)
     required = [name for name in sites if name not in ats_sites.OPTIONAL_SITES]
 
     missing_sites = [name for name in required if name not in ev["completed"]]
 
     if missing_sites:
-        again = A.evaluate(job_dir, jd, ctx["jd_text"], rnd, tuple(missing_sites), log)
+        again = evaluate(tuple(missing_sites))
         ev["scores"].update(again["scores"])
         ev["missing"].update(again["missing"])
 
@@ -1023,10 +1128,10 @@ def score(state: State) -> dict:
         missing_sites = [name for name in required if name not in ev["completed"]]
 
     if missing_sites:
-        log(f"ats round {rnd}: {missing_sites} failed twice; this round doesn't count")
-        if best:
-            return _rollback(state, "a checker failed; the same version will be rescored")
-        return {"ats_round": rnd + 1, "last": ""}
+        log(f"ats round {rnd}: {missing_sites} failed twice; keeping documents with an incomplete ATS result")
+        local.update(scores=dict(ev["scores"]), ev=ev)
+        return {"best": local, "scores": ev["scores"], "ats_unavailable": True,
+                "ats_round": rnd + 1, "last": "ATS providers unavailable; documents retained"}
     budget_feedback = state.get("budget_feedback", {})
     if first_score:
         budget_feedback = {
@@ -1052,11 +1157,7 @@ def score(state: State) -> dict:
             return _rollback(state, f"UNDONE: the last edits moved the scores to {ev['scores']} (average {avg}, best "
                                     f"{best['avg']}) with page problems {hard}; try different wording or other items",
                              ev)
-    proj = job_dir / "projects.json"
-    new_best = {"avg": avg, "scores": ev["scores"], "f": f.model_copy(deep=True), "layout": n_layout, "hard": hard,
-                "tex": (job_dir / "resume.tex").read_text(), "pdf": (job_dir / "resume.pdf").read_bytes(),
-                "projects": proj.read_text() if proj.exists() else None, "filled": f.model_dump_json(indent=1) if hasattr(f, "model_dump_json") else None, "ev": ev,
-                "content_suggestions": [fd.issue for fd in state.get("content_findings", []) if fd.severity == "suggestion"]}
+    new_best = {**local, "avg": avg, "scores": ev["scores"], "ev": ev}
     last = f"KEPT: the scores are {ev['scores']} (average {avg})" if best else ""
     return {"best": new_best, "scores": ev["scores"], "ats_round": rnd + 1, "last": last,
             "budget_feedback": budget_feedback,
@@ -1066,7 +1167,8 @@ def score(state: State) -> dict:
 def _version_files(best: dict) -> dict:
     """A kept version as the bundle of files that describe it: its source, PDF, projects layout and structure. A version that
     had no projects layout means NO such file (a later attempt's must not survive a rollback to it)."""
-    files = {"resume.tex": best["tex"], "resume.pdf": best["pdf"], "projects.json": best.get("projects")}
+    files = {"resume.tex": best["tex"], "resume.pdf": best["pdf"], "projects.json": best.get("projects"),
+             "resume.layout.json": best.get("layout_meta")}
     if best.get("filled"):
         files["filled.json"] = best["filled"]
     elif hasattr(best.get("f"), "model_dump_json"):
@@ -1095,7 +1197,7 @@ def after_score(state: State) -> str:
         `done` when the result is final (a content error, a dry run with no ATS sites, the target reached, or the rounds used up); otherwise the name of the next node.
     """
     best = state.get("best")
-    if state.get("content_error") or (not state["ctx"]["sites"] and state.get("hard") and not best):
+    if state.get("ats_unavailable") or state.get("content_error") or (not state["ctx"]["sites"] and state.get("hard") and not best):
         return "done"
     if not state["ctx"]["sites"] and best:  # dry run (no ATS sites): the drafted, layout-checked page is the result
         return "done"
@@ -1170,6 +1272,20 @@ def build_graph(start="write"):
     return g.compile()
 
 
+def _failed_draft(job_dir: Path, attempt: int, final: dict, findings: list[str]) -> None:
+    """Retain failed work for diagnosis, separately from uploadable validated artifacts."""
+    parent = job_dir / ".generation-drafts"
+    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory = Path(tempfile.mkdtemp(dir=parent, prefix=f"attempt-{attempt}-"))
+    for name in ("resume.tex", "resume.pdf", "resume.layout.json", "projects.json", "filled.json"):
+        path = job_dir / name
+        if path.is_file():
+            shutil.copy2(path, directory / name)
+    if final.get("f") is not None:
+        (directory / "filled.json").write_text(final["f"].model_dump_json(indent=1))
+    (directory / "findings.json").write_text(json.dumps({"valid": False, "findings": findings}, indent=2))
+
+
 def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, document_strategy=None, ats_refine=False) -> dict:  # noqa: C901
     """One job through the agent graph; leaves the best one-page version in job_dir."""
     started = time.monotonic()
@@ -1200,17 +1316,55 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, d
         ctx.update(incremental=True, cache=cache_for(job_dir), target=s.ats_target)
         ctx['source_snapshot'] = job_context.snapshot(job_dir,company=ctx['company'],
             candidate=applicant.load(),template=template_text,claims=T.declared_claims())
-    final = build_graph().invoke({"ctx": ctx, "history": []}, {"recursion_limit": 200})
-    best = final.get("best")
+    final, attempts = {}, []
+    for draft_attempt in range(2):
+        try:
+            final = build_graph().invoke({"ctx": ctx, "history": []}, {"recursion_limit": 200})
+        except llm.LLMConfigError:
+            raise
+        except DraftFailure as exc:
+            # A failed coverage barrier/first draft gets one new complete draft,
+            # rather than making its first unsuccessful repair the final result.
+            attempts.append({"attempt": draft_attempt + 1, "failure": str(exc)[:1200]})
+            _failed_draft(job_dir, draft_attempt + 1, {}, [str(exc)[:1200]])
+            if draft_attempt:
+                final = {"hard": [str(exc)[:1200]], "history": []}
+                break
+            ctx["draft_feedback"] = str(exc)[:1200]
+            log("First generation attempt failed; making one fresh draft with its failure feedback")
+            continue
+        if final.get("best") or final.get("local_best"):
+            break
+        if final.get("content_error"):
+            attempts.append({"attempt": draft_attempt + 1, "failure": final["content_error"]})
+            _failed_draft(job_dir, draft_attempt + 1, final, final.get("hard", []))
+            break
+        feedback = "\n".join(final.get("hard", []) + final.get("layout_issues", []))[:3000]
+        attempts.append({"attempt": draft_attempt + 1, "failure": feedback})
+        _failed_draft(job_dir, draft_attempt + 1, final, final.get("hard", []) + final.get("layout_issues", []))
+        ctx["draft_feedback"] = feedback
+        if not draft_attempt:
+            log("Section repairs exhausted; making one fresh draft with the exact remaining findings")
+    (job_dir / "generation-attempts.json").write_text(json.dumps(attempts, indent=2))
+    best = final.get("best") or final.get("local_best")
+    if not final.get("best") and best:
+        log("Restoring the earlier locally validated version; later edits did not improve it")
     if best:
         bundle.publish(job_dir, _version_files(best))      # source, PDF, projects layout and structure: one version (F25)
         if strategy == 'incremental' and sites:
             from jobagent.tools.incremental_documents import final_panel
-            best, panel_history = final_panel(ctx, final, sites, ats_refine)
+            try:
+                best, panel_history = final_panel(ctx, {**final, "best": best}, sites, ats_refine)
+            except Exception as exc:
+                log(f"Final ATS panel unavailable ({type(exc).__name__}); keeping the validated documents")
             bundle.publish(job_dir, _version_files(best))
-        budget = tuple(name for name in sites if name in ats_sites.BUDGET_SITES) if strategy == 'current' else ()
+        budget = tuple(name for name in sites if name in ats_sites.BUDGET_SITES) if strategy == 'current' and not final.get('ats_unavailable') else ()
         if budget:
-            final_ev = A.evaluate(job_dir, jd, ctx["jd_text"], final.get("ats_round", 0) + 1, budget, log)
+            try:
+                final_ev = A.evaluate(job_dir, jd, ctx["jd_text"], final.get("ats_round", 0) + 1, budget, log)
+            except Exception as exc:
+                log(f"Final limited-credit ATS scoring unavailable ({type(exc).__name__}); keeping the validated documents")
+                final_ev = {"scores": {}}
             best["scores"] = {**{name: value for name, value in best["scores"].items() if name not in budget},
                               **final_ev["scores"]}
     if not best:                    # no valid best version: whatever the graph left behind is not a resume
@@ -1224,6 +1378,11 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, d
         if any(current['sources'][name]!=ctx['source_snapshot']['sources'][name] for name in inputs):
             hard = [*hard,'Source inputs changed during generation; rerun from the current sources']
     claims = (documents.claims_from_filled(best["f"]) + SG.violations(job_dir, best["f"])) if best else []
+    if best:
+        from jobagent.steps.tailor import report
+        uncovered, missing, warnings = T.fill_checks(ctx["r"], jd, best["f"], len(ctx["r"].roles) * T.MAX_BULLETS)
+        (job_dir / "changes.md").write_text(report(ctx["r"], jd, best["f"], layout.page_count(job_dir / "resume.pdf"),
+            hard, uncovered, missing, warnings, final.get("history", [])))
     hist = [h for h in final.get("history", []) if h.startswith("ats ")]
     summary = ats_sites.write_summary(job_dir, best["scores"] if best else {}, sites)
     avg = summary["average"]
