@@ -129,7 +129,10 @@ def test_reopened_prefilled_form_is_read_back_instead_of_assumed_verified(world,
     def filler():return AdaptiveFiller(facts,lambda _: {},checkpoint_path=tmp_path/'saved.json')
     first=filler().fill(world.page,advance_pages=False)
     assert first['state']=='page_complete'
-    resumed=filler().fill(world.page,advance_pages=False)
+    world.page.evaluate("() => {window.rewrites=0; document.getElementById('x').oninput=()=>rewrites++;}")
+    next_run=filler();next_run.step=4
+    resumed=next_run.fill(world.page,advance_pages=False)
+    assert world.page.evaluate('rewrites')==0
     assert resumed['state']=='page_complete'
     assert any(r.get('outcome')=='verified' for r in resumed['records'])
     assert resumed['adaptive']['restored_decisions']==1

@@ -45,6 +45,7 @@ class Fact:
     target_key: tuple | None = None
     date_policy: str = ''
     policy_fact_id: str = ''
+    policy_context: str = ''
 
 
 @dataclass

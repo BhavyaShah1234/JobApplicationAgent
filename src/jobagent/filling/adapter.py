@@ -210,7 +210,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                 value=('Yes' if value else 'No') if isinstance(value,bool) else '' if value is None else str(value)
                 ident='learned:'+str(entry.get('company',''))+':'+entry['question']
                 fact=Fact(ident,[entry['question'],*(entry.get('seen') or [])],value,ident,
-                          instructions=entry.get('instructions',''))
+                          instructions=entry.get('instructions',''),policy_context=entry.get('policy_context',''))
                 known[ident]=fact
         filler=ctx['_experimental_filler']
         filler.facts=[fact for fact in filler.facts if fact.id not in known]+list(known.values())
@@ -239,7 +239,10 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
             else:
                 from .routing import needs_entity_binding
                 if not needs_entity_binding(q['label'],q.get('section',''),q.get('help',''),q.get('kind','')):
-                    learned.add(q['label'],q['options'],text,env.get('company',''),env.get('host',''))
+                    from jobagent.tools import referrals
+                    confirmation = ({'policy_context': referrals.SOURCE_POLICY} if referrals.SOURCE.search(q['label'])
+                                    and text in q['options'] and not referrals._referral_option(q['options']) else {})
+                    learned.add(q['label'],q['options'],text,env.get('company',''),env.get('host',''),**confirmation)
                 values[str(q['id'])]=text
             ctx.pop('_experimental_learned_entries',None)
             ctx.pop('_experimental_learned_retrieval',None)

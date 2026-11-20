@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 
 from jobagent.config import get_settings
 
+SOURCE_POLICY = 'employee-referral-v2'
+
 
 SOURCE = re.compile(
     r"(?i)"
@@ -253,6 +255,8 @@ def answer_for(field, contact: dict, company: str = "") -> dict | None:
     if source and field.kind in (
         "select", "combobox", "radio", "buttons", "checkboxes",
     ):
+        if getattr(field, 'options_state', '') == 'unreadable':
+            return _answer('', 'source options could not be read; employee-referral availability is unknown')
         if field.options:
             option = _referral_option(field.options, company) or next((x for x in field.options if x.strip().lower()=='other'),'')
             return _answer(

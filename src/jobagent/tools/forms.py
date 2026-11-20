@@ -333,6 +333,15 @@ FIELDS_JS = r"""(start) => {
   const ctl = 'input, select, textarea, [contenteditable=true], [role=textbox], [role=combobox], button[aria-haspopup=listbox], [role=checkbox], [role=radio], [role=spinbutton]';
   for (const e of all(ctl)) {
     const t = (e.getAttribute('type') || '').toLowerCase();
+    // Site locale menus can navigate away from an embedded application. They
+    // are not the applicant's spoken-language answer. Keep actual form fields.
+    if (e.tagName === 'SELECT' && !e.required && e.getAttribute('aria-required') !== 'true' &&
+        !e.closest('form') && e.closest('footer,nav,[role=contentinfo],[role=navigation],[class*=footer i]')) {
+      const locale = /language|locale/i.test([e.id,e.name,e.getAttribute('aria-label'),e.title].join(' '));
+      const names = new Set(['english','deutsch','español','français','italiano','português','日本語','한국어','中文']);
+      const applicantQuestion = /preferred|proficiency|speak|native|fluent|correspondence|communication/i.test(question(e));
+      if (!applicantQuestion && (locale || [...e.options].filter(o=>names.has(clean(o.text).toLowerCase())).length >= 3)) continue;
+    }
     if (t === 'hidden' || t === 'submit' || t === 'image' || t === 'reset' || e.disabled) continue;
     if (e.getAttribute('aria-disabled') === 'true' || e.closest('.select2-container--disabled')) continue;
     if (e.matches('select.select2-hidden-accessible')) continue;
@@ -1180,6 +1189,10 @@ def discover_options(page: Page, view: PageView, log=print, *, fields=None) -> N
         try:
             loc = locate(view, f)
             search_picker = loc.get_attribute("data-uxi-widget-type") == "selectinput"
+            source_question = bool(referrals.SOURCE.search(f.label))
+            if search_picker and f.value and source_question and referrals._referral_option([f.value]):
+                f.options, f.options_state = [f.value], 'partial'
+                continue
             if search_picker and f.value and not referrals.SOURCE.search(f.label):
                 # A selected chip can cover the now-empty search input. Opening
                 # it needlessly times out and can clear the choice. These are
@@ -1190,18 +1203,36 @@ def discover_options(page: Page, view: PageView, log=print, *, fields=None) -> N
                 f.options = [x.strip() for x in f.value.split(';') if x.strip()] if f.multiple else [f.value]
                 f.options_state = 'partial'
                 continue
-            f.options = _open_options(view.frames[f.frame], loc, page)
+            try:
+                f.options = _open_options(view.frames[f.frame], loc, page)
+            except Exception:
+                if not (search_picker and f.value and source_question):
+                    raise
+                # A wrong, previously selected source can cover the input.
+                # Ordinary readable prefills are left intact during discovery.
+                _clear_search_picker(page, loc)
+                f.value = ''
+                f.options = _open_options(view.frames[f.frame], loc, page)
             f.options_state = 'partial'
+            if search_picker and f.value and source_question and f.value not in f.options:
+                # The visible entries are categories, not the selected leaf.
+                _clear_search_picker(page, loc)
+                f.value = ''
             if search_picker and not f.value and len(f.options) <= 15:
-                f.options = _expand_categories(page, view.frames[f.frame], loc, f.options)
+                f.options = _expand_categories(page, view.frames[f.frame], loc, f.options,
+                                               **({'require_complete': True} if source_question else {}))
+                if source_question and f.options:
+                    f.options_state = 'complete'
         except Exception as e:
+            if referrals.SOURCE.search(f.label):
+                f.options_state = 'unreadable'
             log(f"forms: options of \"{f.label[:50]}\" unreadable: {type(e).__name__}")
         finally:
             page.keyboard.press("Escape")
             page.wait_for_timeout(30)
 
 
-def _expand_categories(page: Page, frame: Frame, loc, top: list[str]) -> list[str]:
+def _expand_categories(page: Page, frame: Frame, loc, top: list[str], *, require_complete: bool = False) -> list[str]:
     """Workday pickers list categories whose entries open on a click: list them as "Category > Entry"."""
     out = []
     for cat in top:
@@ -1220,10 +1251,16 @@ def _expand_categories(page: Page, frame: Frame, loc, top: list[str]) -> list[st
                              "[data-automation-id=selectedItemList] [aria-label*=delete i]').forEach(b => b.click())")
                 continue
             sub = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o) and o not in top]
+            if require_complete and len(sub) > 40:
+                raise FillError('Source category exceeds the bounded option inventory')
             out += [f"{cat} > {o}" for o in sub[:40]] or [cat]
         except Exception:
+            if require_complete:
+                raise FillError('Source menu could not be completely enumerated')
             out.append(cat)
     page.keyboard.press("Escape")
+    if require_complete and len(out) > 300:
+        raise FillError('Source menu exceeds the bounded option inventory')
     return out[:300]
 
 
@@ -1430,6 +1467,12 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         loc.fill(answer, timeout=8000)  # no suggestions: a plain text box after all
         return answer
     if f.kind in ("text", "email", "tel", "url", "number", "textarea", "date", "password"):
+        # A resumed source-backed proposal still needs fresh DOM readback, but
+        # retyping an exact value needlessly fires change handlers/autosaves.
+        if f.kind != 'password' and not f.invalid and loc.get_attribute('aria-invalid') != 'true':
+            current = loc.evaluate("e => 'value' in e ? e.value : e.innerText")
+            if current == answer:
+                return current
         loc.fill(answer, timeout=8000)
         loc.blur() if hasattr(loc, "blur") else None
         return answer

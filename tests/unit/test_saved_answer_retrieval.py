@@ -110,3 +110,13 @@ def test_nationality_is_not_a_source_for_a_race_subgroup():
     facts=[Fact('profile',['Race'],'Asian','applicant/EEO/Race'),
            Fact('nationality',['Citizenship'],'India','applicant/Citizenship')]
     assert resolve(field,facts).value is None
+
+
+def test_owner_confirmed_source_exception_keeps_policy_provenance(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    monkeypatch.setattr(learned, 'get_settings', lambda: SimpleNamespace(data_dir=tmp_path, state_dir=tmp_path))
+    question = 'How did you hear about us?'
+    learned.add(question, ['Career site'], 'Career site', 'fixture', 'portal.test', policy_context='employee-referral-v2')
+    assert learned.load()[0]['policy_context'] == 'employee-referral-v2'
+    learned.add(question, ['Career site'], 'Career site', 'fixture', 'portal.test')
+    assert 'policy_context' not in learned.load()[0], 'An ordinary later write must not inherit confirmation metadata'

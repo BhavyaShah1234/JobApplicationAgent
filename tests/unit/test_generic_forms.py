@@ -351,3 +351,47 @@ def test_desktop_application_links_stay_in_the_dedicated_tab(page):
     forms.click_button(page,forms.read_page(page),re.compile('begin application',re.I))
     page.wait_for_url('https://apply.unseen-example.org/start')
     assert len(page.context.pages)==1
+
+
+def test_embedded_application_does_not_fill_site_locale_navigation(page):
+    import html
+    application = '<label for=email>Email</label><input id=email required><label for=language>Preferred language</label><select id=language><option>English</option><option>French</option></select>'
+    page.set_content('<footer><select id=locale onchange="window.localeChanged=true"><option>Deutsch</option><option>English</option><option>Français</option></select></footer>'
+                     '<iframe srcdoc="'+html.escape(application, quote=True)+'"></iframe>')
+    fields = forms.read_page(page).fields
+    assert len(fields) == 2
+    assert {f.label for f in fields} == {'Email', 'Preferred language'}
+    assert not page.evaluate('!!window.localeChanged')
+
+
+@pytest.mark.parametrize('kind', ['text', 'email', 'tel', 'url', 'number', 'textarea', 'date'])
+def test_exact_prefilled_text_is_read_back_without_input_or_change_events(page, kind):
+    value = '2026-01-01' if kind == 'date' else '42' if kind == 'number' else 'https://example.test' if kind == 'url' else 'owner@example.test'
+    control = '<textarea id=x>'+value+'</textarea>' if kind == 'textarea' else '<input id=x type="'+kind+'" value="'+value+'">'
+    page.set_content('<label for=x>Known</label>'+control+'<script>window.writes=0; x.oninput=x.onchange=()=>writes++;</script>')
+    view = forms.read_page(page)
+    assert forms.fill_field(page, view, view.fields[0], value, {}) == value
+    assert page.evaluate('writes') == 0
+    forms.fill_field(page, forms.read_page(page), forms.read_page(page).fields[0], '2026-02-01' if kind == 'date' else '43' if kind == 'number' else 'https://new.example.test' if kind == 'url' else 'new@example.test', {})
+    assert page.evaluate('writes') > 0
+
+
+def test_source_discovery_removes_wrong_existing_chip_before_reading_the_menu(page):
+    selected_search_picker(page, 'How Did You Hear About Us?', 'Career site', ['Career site', 'Employee Referral'])
+    # The old selection covers the input until its Delete control is used.
+    page.locator('#pick').evaluate("e=>e.style.pointerEvents='none'")
+    page.evaluate("() => {new MutationObserver(()=>{if(!chips.children.length)pick.style.pointerEvents='auto'}).observe(chips,{childList:true});}")
+    view = forms.read_page(page)
+    forms.discover_options(page, view)
+    assert 'Employee Referral' in view.fields[0].options
+    assert view.fields[0].options_state == 'complete'
+    assert page.evaluate('deleteWrites') >= 1
+
+
+@pytest.mark.parametrize('wrapper,required,label', [
+    ('form', '', 'Language'), ('div', 'required', 'Language'), ('div', '', 'Preferred communication language'),
+])
+def test_footer_location_does_not_hide_a_real_applicant_language_question(page, wrapper, required, label):
+    page.set_content('<footer><'+wrapper+'><label for=language>'+label+'</label><select id=language '+required+'><option>English</option><option>Deutsch</option><option>Français</option></select></'+wrapper+'></footer>')
+    fields = forms.read_page(page).fields
+    assert len(fields) == 1 and fields[0].label == label

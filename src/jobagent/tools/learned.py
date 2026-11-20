@@ -87,7 +87,7 @@ def reusable(entry: dict, question: str = '') -> bool:
         [question, entry['question'], *(entry.get('seen') or [])])
 
 
-def add(question: str, options: list[str], answer: str, company: str, portal: str, rule: str = "") -> dict:
+def add(question: str, options: list[str], answer: str, company: str, portal: str, rule: str = "", *, policy_context: str = "") -> dict:
     """Keep the candidate's reply. A rule replaces an earlier rule for the same question; a plain answer replaces the
     same company's earlier answer. Aggregate qualification literals remain current-application replies and are not stored."""
     if rule:
@@ -96,6 +96,8 @@ def add(question: str, options: list[str], answer: str, company: str, portal: st
     else:
         item = {"question": question, "seen": [question], "answer": answer, "options": options[:30] or None,
                 "company": company, "portal": portal, "date": now().strftime("%Y-%m-%d")}
+        if policy_context:
+            item['policy_context'] = policy_context
         if application_only(question):
             return {**item, 'scope': 'current_application', 'stored': False}
     with _locked():

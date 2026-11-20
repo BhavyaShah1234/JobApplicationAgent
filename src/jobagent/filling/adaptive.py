@@ -10,6 +10,7 @@ import os
 import re
 import time
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from jobagent.tools.artifact_cache import digest, write_private
 from jobagent.tools import forms
@@ -107,8 +108,12 @@ class AdaptiveFiller(PlannedFiller):
                 re.search(r'\b(?:code|pin|passcode|token|otp|password|captcha)\b',
                           norm(' '.join((field.label,field.help,field.section))))): return None
         frame = self._live.view.frames.get(field.frame) if self._live and self._live.view else None
-        frame_url = getattr(frame, 'url', '')
-        return digest({'step': self.step, 'frame_url': frame_url, 'schema': self.decision_schema(field)})
+        address = urlsplit(getattr(frame, 'url', ''))
+        frame_url = urlunsplit((address.scheme, address.netloc, address.path, '', ''))
+        # A restarted draft can begin at a different wizard position. The
+        # locally counted page number is not the identity of that portal step.
+        return digest({'headings': [norm(h) for h in self._live.view.headings] if self._live else [],
+                       'frame_url': frame_url, 'schema': self.decision_schema(field)})
 
     def evidence(self, decision):
         """Fingerprint bound facts, or conservatively the broader narrative/policy."""

@@ -194,3 +194,27 @@ def test_same_label_human_replies_keep_their_own_value_and_scope_on_later_rounds
     filler.ask=lambda _: (_ for _ in ()).throw(AssertionError('unchanged scoped answers must survive'))
     again=filler.plan(fields)
     assert [again[n].value for n in (1,2)]==['No','Yes']
+
+
+def test_resume_uses_portal_context_instead_of_local_page_counter(tmp_path):
+    filler, view = world(tmp_path)
+    view.headings = ['Software Engineer', 'Application Questions 2 of 2']
+    filler.step = 1
+    accept(filler, view)
+    resumed, fresh = world(tmp_path, [replace(view.fields[0], identity='new', frame_identity='new-session')])
+    resumed.step = 4
+    fresh.headings = list(view.headings)
+    resumed.observe_view(fresh)
+    assert resumed.restored == 1
+    assert resumed.cache[key(fresh.fields[0])].value == 'one@example.test'
+    assert resumed.record_state == {}, 'A restored proposal is not live verification'
+
+
+def test_same_question_in_different_portal_step_is_not_restored(tmp_path):
+    filler, view = world(tmp_path)
+    view.headings = ['Current employment']
+    accept(filler, view)
+    resumed, fresh = world(tmp_path)
+    fresh.headings = ['Previous employment']
+    resumed.observe_view(fresh)
+    assert not resumed.cache

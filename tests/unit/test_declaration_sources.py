@@ -78,3 +78,29 @@ def test_unanswered_acknowledgement_asks_owner_instead_of_dispatching_contact_li
     assert len(asked)==1 and asked[0][0]['label']==label
     assert filler.failures=={}
 
+
+
+@pytest.mark.parametrize('adaptive', [False, True])
+def test_technical_skills_use_owner_technical_confirmation_not_spoken_language(adaptive):
+    from jobagent.filling.adaptive import AdaptiveFiller
+    question = 'Do you have professional experience working with the specific language or tech stack for this role (e.g., Python, Java, React)?'
+    field = forms.Field(0, 'radio', question, required=True, options=['Yes', 'No'])
+    english = Fact('spoken', ['Languages'], 'English', 'applicant/experience/Languages/answer/0/language')
+    owner = Fact('technical', ['Do you possess the technical skills required for this job?'], 'Yes', 'learned:any:owner-technical-confirmation')
+    assert route(field, [english]).family == 'technical_skill_possession'
+    assert resolve_routed(field, [english]).value is None
+    assert not binding_valid(field, [english], 'Yes', route(field, [english]))
+    assert resolve_routed(field, [english, owner]).fact_id == owner.id
+    filler = (AdaptiveFiller if adaptive else PlannedFiller)([english, owner], lambda _: pytest.fail('Owner confirmed'))
+    decision = filler.plan([field])[0]
+    assert decision.value == 'Yes' and decision.fact_id == owner.id
+
+
+def test_technical_skill_confirmation_does_not_establish_years_or_credentials():
+    owner = Fact('technical', ['Do you possess the technical skills required for this job?'], 'Yes', 'owner')
+    for label in ['Do you have 5 years of professional experience with this tech stack?',
+                  'Do you have the required degree and technical skills?',
+                  'Do you have the technical certification required for this job?']:
+        f = forms.Field(0, 'radio', label, required=True, options=['Yes', 'No'])
+        decision = resolve_routed(f, [owner])
+        assert decision is None or decision.value is None

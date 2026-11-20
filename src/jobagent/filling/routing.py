@@ -14,7 +14,7 @@ DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_
                         'outside_activity','employer_personal_ties','immigration_support'})
 PURPOSE_BOUND=DECLARATIONS | {'owner_identifier','work_documentation','government_employment',
     'age_threshold','work_restrictions','citizenship_countries','citizenship_status','visa_history','veteran',
-    'enterprise_software_experience'}
+    'enterprise_software_experience','technical_skill_possession'}
 DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys() | {'education_summary','read_ack','residency'}
 
 GOVERNMENT_HISTORY=frozenset({'current or former government employee',
@@ -70,6 +70,7 @@ def family(text):
       ('technical_interests',r'technical (?:area|domain)|engineering (?:organization|preference)|engineer profile'),
       ('why_company',r'why.*(?:work|join|interest)|why (?:this|our) company'),
       ('enterprise_software_experience',r'^(?!.*\b(?:years?|months?)\b)(?:(?:have you (?:ever )?(?:worked|been employed)|do you have (?:any )?experience|experience)\b.*\benterprise (?:software|saas) environment\b|enterprise (?:software|saas) environment$)'),
+      ('technical_skill_possession',r'^(?!.*\b(?:years?|months?|degree|certification|licen[cs]e)\b)(?:do you (?:have|possess)|have you|are you (?:experienced|proficient))\b.*\b(?:technical skills|tech(?:nology)? stack|programming languages?|specific language)\b'),
       ('technical_experience',r'describe.*experience|technical experience question'),
       ('project',r'favorite project|favourite project|proudest|accomplishment'),
       ('owner_identifier',r'\b(?:program|employee|applicant|candidate|referral|referrer|membership|registration|identification|passport|tax|social security)\b.{0,32}\b(?:code|id|number|identifier)\b|\bssn\b'),

@@ -9,14 +9,14 @@ from jobagent.tools.forms import Field
 QUESTION='How Did You Hear About Us? *'
 
 
-def saved(company='capital-one', value='Contacted by Recruiter'):
+def saved(company='capital-one', value='Contacted by Recruiter', confirmed=True):
     source=f'learned:{company}:{QUESTION}'
-    return Fact(source,[QUESTION],value,source)
+    return Fact(source,[QUESTION],value,source,policy_context='employee-referral-v2' if confirmed else '')
 
 
 def field(options=None):
     return Field(id=0,kind='combobox',label=QUESTION,required=True,
-                 options=options or ['Contacted by Recruiter','Internet'],options_state='partial')
+                 options=options or ['Contacted by Recruiter','Internet'],options_state='complete')
 
 
 def filler(facts=()):
@@ -138,3 +138,23 @@ def test_generic_followup_cannot_borrow_a_source_across_a_boundary(boundary):
     if boundary=='unrelated':fields.insert(1,Field(id=2,kind='text',label='Favorite food'))
     referrals.contextualize(fields)
     assert referrals.answer_for(child,{}) is None
+
+
+@pytest.mark.parametrize('options_state', ['partial', 'unreadable'])
+def test_a_partial_or_unreadable_source_menu_does_not_validate_a_saved_fallback(options_state):
+    f = field(); f.options_state = options_state
+    d = filler([saved()]).plan([f], allow_human=False)[0]
+    assert d.value != 'Contacted by Recruiter'
+
+
+def test_historical_source_answer_without_current_policy_confirmation_cannot_override_referral():
+    legacy = saved('paypal', 'Direct Source Candidates > PayPal Career site', confirmed=False)
+    agent = PlannedFiller([legacy], lambda _: {}, referral_context={'company': 'PayPal', 'contact': {}})
+    f = field(['Direct Source Candidates > PayPal Career site'])
+    assert agent.plan([f], allow_human=False)[0].value is None
+
+
+def test_unreadable_menu_is_not_treated_as_missing_employee_referral():
+    from jobagent.tools import referrals
+    f = field(['Employee Referral']); f.options_state = 'unreadable'
+    assert referrals.answer_for(f, {})['ask_human']

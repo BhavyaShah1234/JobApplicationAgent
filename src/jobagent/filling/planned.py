@@ -154,12 +154,15 @@ class PlannedFiller:
     def _saved_source_fallback(self, field):
         """Reuse only this employer's explicit, currently offered source answer."""
         from jobagent.tools import referrals
+        if field.options_state != 'complete':
+            return None
         company=norm((self.referral_context or {}).get('company','')).replace(' ','')
         matches={}
         for fact in self.facts:
             source=fact.source.split(':',2)
             if len(source)!=3 or source[0]!='learned' or norm(source[1]).replace(' ','')!=company or source[1]=='any':continue
-            if fact.authority!='owner' or fact.instructions or not any(referrals.SOURCE.search(a) for a in fact.aliases):continue
+            if (fact.authority!='owner' or fact.instructions or fact.policy_context != referrals.SOURCE_POLICY or
+                    not any(referrals.SOURCE.search(a) for a in fact.aliases)):continue
             offered=next((o for o in field.options if norm(o)==norm(fact.value)),None)
             if offered is not None:matches[offered]=fact
         if len(matches)>1:return Decision(None,reason='conflicting company-specific source answers')
