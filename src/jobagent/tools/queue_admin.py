@@ -43,6 +43,26 @@ def guess_company(url: str) -> str:
     return "unknown"
 
 
+def known_company(conn: sqlite3.Connection, url: str) -> str:
+    """The company name already used for postings on the same job board, so a pasted link joins the same pacing bucket as its siblings.
+
+    Args:
+        conn: Open job database.
+        url: A job posting address.
+
+    Returns:
+        The company of the first earlier posting under the same board address (`host/first-path-segment` on a known job board, else the host),
+        or an empty string when there is none.
+    """
+    p = urlsplit(url)
+    host = (p.hostname or "").lower()
+    parts = [x for x in p.path.split("/") if x]
+    board = f"{p.scheme}://{p.netloc.lower()}" + (f"/{parts[0]}" if host.endswith(ATS_HOSTS) and not host.endswith("myworkdayjobs.com") and parts else "")
+    like = board.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%"
+    row = conn.execute("SELECT company FROM jobs WHERE url LIKE ? ESCAPE '\\' AND COALESCE(company, '') != '' AND source IS NOT 'dashboard' ORDER BY id LIMIT 1", (like,)).fetchone()
+    return row["company"] if row else ""
+
+
 def _clean(value, limit: int = TEXT_LIMIT) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
 
@@ -83,7 +103,7 @@ def add_url(conn: sqlite3.Connection, url: str, *, company: str = "", where: str
         row = conn.execute("SELECT id, status, company FROM jobs WHERE url = ?", (canon,)).fetchone()
         prio = {"top": _top(conn) + 1, "bottom": _bottom(conn) - 1, "normal": 0}[where]
         if row is None:
-            name = _clean(company) or guess_company(canon)
+            name = _clean(company) or known_company(conn, canon) or guess_company(canon)
             cur = conn.execute("INSERT INTO jobs (url, company, title, status, notes, company_slug, source, user_edited, priority) "
                                "VALUES (?,?,?,?,?,?,?,?,?)", (canon, name, "", "queued", "added by you in the dashboard",
                                                               Q.slug(name), "dashboard", 1, prio))

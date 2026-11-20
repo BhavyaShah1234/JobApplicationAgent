@@ -187,3 +187,20 @@ def test_an_old_database_without_the_new_columns_is_upgraded_in_place(tmp_path):
     c = db.connect(p)
     assert c.execute("SELECT priority, user_edited FROM jobs").fetchone()[:] == (0, 0)
     c.close()
+
+
+def test_a_pasted_link_joins_the_company_of_its_board_siblings(conn):
+    """`job-boards.greenhouse.io/doordashusa/...` must not become a second, unpaced company next to the discovered `DoorDash` rows."""
+    with conn:
+        conn.execute("INSERT INTO jobs (url, company, title, status, company_slug) VALUES (?,?,?,?,?)",
+                     ("https://job-boards.greenhouse.io/doordashusa/jobs/1", "DoorDash", "Backend", "queued", "doordash"))
+        conn.execute("INSERT INTO jobs (url, company, title, status, company_slug) VALUES (?,?,?,?,?)",
+                     ("https://job-boards.greenhouse.io/other/jobs/1", "Other Co", "SWE", "queued", "other-co"))
+    QA.add(conn, "https://job-boards.greenhouse.io/doordashusa/jobs/8225722")
+    row = conn.execute("SELECT company, company_slug FROM jobs WHERE url LIKE '%8225722'").fetchone()
+    assert (row["company"], row["company_slug"]) == ("DoorDash", "doordash")
+    assert Q.employer_key(row["company"]) == "doordash"
+    QA.add(conn, "https://job-boards.greenhouse.io/newco/jobs/5")                                       # an unknown board falls back to the guess
+    assert conn.execute("SELECT company FROM jobs WHERE url LIKE '%newco%'").fetchone()[0] == "newco"
+    QA.add(conn, "https://job-boards.greenhouse.io/doordashusa%/jobs/9")                                 # LIKE wildcards in a link are not wildcards
+    assert conn.execute("SELECT company FROM jobs WHERE url LIKE '%9' AND source = 'dashboard'").fetchone()[0] != "DoorDash"
