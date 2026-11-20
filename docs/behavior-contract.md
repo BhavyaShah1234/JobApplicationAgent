@@ -72,6 +72,11 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
 - Keep target-company cultural-values prose out of required Experience coverage, while preserving mixed technical
   requirements. Employer names alone do not satisfy the named-technology rule. Both document strategies can repair
   the actually displayed short project description, and reject truncated replacements within the bounded model call.
+- A filled page with at least two full projects does not require repeated edits just to fit a third. The existing
+  minimum-project and blank-space acceptance checks still apply. If an opt-in incremental draft cannot pass its
+  bounded repairs, retain its evidence and try the established writer, recording the actual strategy explicitly.
+  The requested ATS panel then runs once on the final valid resume. Changed source inputs and configuration or
+  programming errors never trigger this fallback; a fallback is not an incremental performance success.
 - Retry an invalid cover-letter stage without rebuilding an unchanged valid resume. Prefer a compiled one-page
   letter, retain its exact PDF instead of recompiling it at publication, and require its header to match the final resume.
   Changed generation code, project metadata or layout measurements invalidate the corresponding workflow cache.

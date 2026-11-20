@@ -193,6 +193,22 @@ def test_explicit_current_overrides_incremental_env_and_invalid_letter_alone_is_
     assert len(resumes) == 1 and len(letters) == 2
 
 
+def test_native_cli_letter_inherits_actual_fallback_strategy_and_resume_is_reusable(cli_world, monkeypatch):
+    main, job, resumes, letters = cli_world
+    original = M.run_job
+    def fallback_resume(*args, **kwargs):
+        return {**original(*args, **kwargs), 'document_strategy': 'current',
+                'strategy_fallback': {'requested': 'incremental', 'used': 'current'}}
+    monkeypatch.setattr(M, 'run_job', fallback_resume)
+    command = ['tailor', str(job), 'acme', '--no-ats', '--document-strategy', 'incremental']
+    first = CliRunner().invoke(main.app, command)
+    assert first.exit_code == 1, first.output  # only the fake first letter is invalid
+    assert resumes[0]['document_strategy'] == 'incremental' and not letters[0].get('incremental')
+    second = CliRunner().invoke(main.app, command)
+    assert second.exit_code == 0, second.output
+    assert len(resumes) == 1 and len(letters) == 2 and not letters[1].get('incremental')
+
+
 def test_missing_measurements_invalidate_resume_reuse(cli_world):
     main, job, resumes, _ = cli_world
     # The resume schema and measurements are all cache dependencies, not only PDFs.
@@ -310,6 +326,126 @@ def test_native_project_repair_can_correct_a_short_variant_and_rejects_truncatio
     assert after['ranked'][0]['paragraph'] == before['ranked'][0]['paragraph']
     assert after['ranked'][0]['short'] == complete
     assert M.P.content_findings(after) == []
+
+
+@pytest.mark.parametrize('free_pt,needs_more_work', [(8, False), (44, True)])
+def test_filled_two_project_page_does_not_demand_an_unnecessary_third_project(tmp_path, monkeypatch, free_pt, needs_more_work):
+    from jobagent.state import JobDescription
+    f = filled()
+    f.summary = 'Engineer building Python services with reliable deployment and comprehensive automated testing.'
+    f.skills = [T.SkillLine(category=c, terms=[v]) for c, v in
+                (('Languages', 'Python'), ('Cloud', 'AWS'), ('Data', 'PostgreSQL'))]
+    role = T.Role(header='', title='Engineer', company='Acme', bullets=[], span=(0, 0))
+    template = SimpleNamespace(roles=[role], skills=[], tex='')
+    f.roles = [T.FillRole(role=0, bullets=[T.FillBullet(text=text, duties=[]) for text in (
+        'Built Python services, reducing response time by 20%.',
+        'Deployed Docker workloads, improving recovery by 30%.',
+        'Designed PostgreSQL indexes, cutting query costs by 25%.')])]
+    entries = [{'repo': f'owner/repository-{i}', 'title': f'Readable Project {i}',
+                'paragraph': 'Built Python services. Delivered reliable systems.'} for i in range(4)]
+    (tmp_path / 'projects.json').write_text(json.dumps({'ranked': entries, 'kept': 2, 'short': []}))
+    monkeypatch.setattr(M, 'render', lambda _: (f, '', [], 1, ''))
+    monkeypatch.setattr(M.layout, 'check', lambda _: M.layout.Layout(pages=1, free_pt=free_pt))
+    monkeypatch.setattr(M.layout, 'review', lambda *a, **kw: [])
+    monkeypatch.setattr(M, '_reviewed_content', lambda *a: {'content_findings': [], 'content_error': ''})
+    monkeypatch.setattr(M, 'summary_issues', lambda *a: [])
+    checked = M.check_layout({'ctx': {'r': template, 'jd': JobDescription(title='Engineer', company='Acme'),
+                            'job_dir': tmp_path, 'log': lambda _: None}, 'f': f})
+    assert bool(checked['tasks'].get('projects')) is needs_more_work
+    assert bool(checked['tasks'].get('experience')) is needs_more_work
+    assert bool(checked['hard']) is needs_more_work
+    assert M.after_layout(checked) == ('fix' if needs_more_work else 'score')
+
+
+def test_failed_incremental_draft_uses_current_and_retains_failure_and_panel(tmp_path, monkeypatch):
+    calls = []
+    panel = ('atsfriendly', 'skillsfirst')
+    def generate(job, slug, models, sites, log, **kwargs):
+        calls.append((sites, kwargs))
+        if len(calls) == 1:
+            (job / 'generation-attempts.json').write_text('["unresolved coverage"]')
+            (job / 'incremental-metrics-v1.json').write_text('{"elapsed_s":100}')
+            return {'produced': False, 'failure': 'checks failed', 'hard_issues': ['unresolved coverage']}
+        (job / 'generation-attempts.json').write_text('[]')
+        return {'produced': True, 'document_strategy': 'current', 'hard_issues': []}
+    monkeypatch.setattr(M, '_run_job', generate)
+    result = M.run_job(tmp_path, 'company', {}, sites=panel, document_strategy='incremental', ats_refine=True, log=lambda _: None)
+    assert len(calls) == 2 and all(sites == panel for sites, _ in calls)
+    assert calls[1][1] == {'document_strategy': 'current', 'ats_refine': False, '_final_only': True}
+    assert result['document_strategy'] == 'current' and result['produced']
+    provenance = json.loads((tmp_path / 'document-fallback.json').read_text())
+    assert provenance['requested'] == 'incremental' and provenance['used'] == 'current'
+    assert provenance['ats_refine_not_applied'] is True
+    archive = tmp_path / provenance['failed_attempt']
+    assert json.loads((archive / 'generation-attempts.json').read_text()) == ['unresolved coverage']
+    assert json.loads((archive / 'result.json').read_text())['hard_issues'] == ['unresolved coverage']
+
+
+@pytest.mark.parametrize('strategy,changed,produced', [('current', False, False), ('incremental', True, False),
+                                                    ('incremental', False, True)])
+def test_current_failures_changed_sources_and_successful_drafts_do_not_fallback(tmp_path, monkeypatch, strategy, changed, produced):
+    calls = []
+    def generate(*args, **kwargs):
+        calls.append(kwargs)
+        return {'produced': produced, 'source_inputs_changed': changed}
+    monkeypatch.setattr(M, '_run_job', generate)
+    M.run_job(tmp_path, 'company', {}, sites=(), document_strategy=strategy)
+    assert len(calls) == 1 and not (tmp_path / 'document-fallback.json').exists()
+
+
+@pytest.mark.parametrize('error', [RuntimeError('programming defect'), M.llm.LLMConfigError('quota', 'config')])
+def test_fallback_does_not_hide_programming_or_provider_configuration_errors(tmp_path, monkeypatch, error):
+    calls = []
+    def broken(*args, **kwargs):
+        calls.append(1)
+        raise error
+    monkeypatch.setattr(M, '_run_job', broken)
+    with pytest.raises(type(error)):
+        M.run_job(tmp_path, 'company', {}, sites=(), document_strategy='incremental')
+    assert calls == [1] and not (tmp_path / 'document-fallback.json').exists()
+
+
+def test_fallback_generation_defers_entire_requested_panel_until_the_final_resume(tmp_path, monkeypatch):
+    from jobagent.steps import tailor as single
+    from jobagent.state import JobDescription
+    data, state, job = (tmp_path / name for name in ('data', 'state', 'job'))
+    (data / 'templates').mkdir(parents=True)
+    (state / 'companies').mkdir(parents=True)
+    job.mkdir()
+    (data / 'templates/resume.tex').write_text('Template')
+    (state / 'companies/acme.md').write_text('Company research')
+    (job / 'jd.json').write_text(JobDescription(title='Engineer', company='Acme').model_dump_json())
+    (job / 'resume.pdf').write_bytes(b'Validated graph output')
+    f = filled()
+    best = {'f': f, 'scores': {}, 'hard': []}
+    monkeypatch.setattr(M, 'get_settings', lambda: SimpleNamespace(data_dir=data, state_dir=state))
+    monkeypatch.setattr(D, 'validate_template', lambda _: None)
+    monkeypatch.setattr(T, 'parse', lambda _: SimpleNamespace(tex='', roles=[], skills=[]))
+    monkeypatch.setattr(M.SG, 'for_tailor', lambda *args: {})
+    monkeypatch.setattr(M.SG, 'guard_resume', lambda *args: None)
+    monkeypatch.setattr(M.SG, 'violations', lambda *args: [])
+    contexts = []
+    def graph_output(initial, config):
+        contexts.append(initial['ctx'])
+        return {'best': best, 'history': []}
+    monkeypatch.setattr(M, 'build_graph', lambda: SimpleNamespace(invoke=graph_output))
+    monkeypatch.setattr(M, '_version_files', lambda _: {})
+    monkeypatch.setattr(M.bundle, 'publish', lambda *args: None)
+    monkeypatch.setattr(M.layout, 'page_count', lambda _: 1)
+    monkeypatch.setattr(M.layout, 'check', lambda _: M.layout.Layout(1, 8))
+    monkeypatch.setattr(single, 'report', lambda *args: 'Review')
+    scans = []
+    def evaluate(*args):
+        scans.append(args[4])
+        return {'scores': {'atsfriendly': 81.0}}
+    monkeypatch.setattr(M.A, 'evaluate', evaluate)
+    monkeypatch.setattr(M.ats_sites, 'write_summary', lambda job, scores, sites: {
+        'average': 81.0, 'scores': scores, 'sites': list(sites), 'missing': [], 'complete': True})
+    panel = ('atsfriendly', 'skillsfirst')
+    result = M._run_job(job, 'acme', {}, sites=panel, log=lambda _: None,
+                        document_strategy='current', _final_only=True)
+    assert contexts[0]['sites'] == () and scans == [panel]
+    assert result['produced'] and result['scores'] == {'atsfriendly': 81.0}
 
 
 def review_world(tmp_path, monkeypatch):

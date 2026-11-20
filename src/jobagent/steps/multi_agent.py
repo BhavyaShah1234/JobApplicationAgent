@@ -848,7 +848,9 @@ def check_layout(state: State) -> dict:
     if st and st["kept"] - len(st["short"]) < min(2, len(st["ranked"])):
         tasks["summary"].append(f"Projects are squeezed to short forms: shorten the Summary to at most {T.SUMMARY_TIGHT} characters.")
         tasks["skills"].append("Projects are squeezed to short forms: keep every category to one line.")
-    if st and st["kept"] < min(3, len(st["ranked"])):
+    if st and st["kept"] < min(3, len(st["ranked"])) and (
+            st["kept"] - len(st["short"]) < min(2, len(st["ranked"])) or
+            (lay is not None and lay.free_pt is not None and lay.free_pt > BLANK_HARD_PT)):
         tasks["projects"].append(f"Only {st['kept']} project(s) fit: make every paragraph 300-340 characters so "
                                  "another fits.")
         tasks["experience"].append("Room is needed for one more project: shorten the two longest bullets to one line.")
@@ -1307,7 +1309,54 @@ def _failed_draft(job_dir: Path, attempt: int, final: dict, findings: list[str])
     (directory / "findings.json").write_text(json.dumps({"valid": False, "findings": findings}, indent=2))
 
 
-def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, document_strategy=None, ats_refine=False) -> dict:  # noqa: C901
+def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, document_strategy=None, ats_refine=False) -> dict:
+    """Prefer a validated packet over repeated failed experimental drafts.
+
+    Args:
+        job_dir: Posting folder with the original JD and generated artifacts.
+        slug: Company profile identifier.
+        models: Section-writer and reviewer model names.
+        sites: Configured ATS panel, or empty for generation-only checks.
+        log: Progress logger.
+        document_strategy: Requested strategy; current remains the default.
+        ats_refine: Optional incremental-only refinement after a successful panel.
+
+    Returns:
+        The actual writer's result, with explicit fallback provenance when needed.
+        Changed source inputs and configuration/programming errors never trigger
+        a fallback that could obscure them.
+    """
+    strategy = document_strategy or getattr(get_settings(), 'document_strategy', 'current')
+    started = time.monotonic()
+    result = _run_job(job_dir, slug, models, sites, log, document_strategy=strategy, ats_refine=ats_refine)
+    (job_dir / 'document-fallback.json').unlink(missing_ok=True)
+    if strategy != 'incremental' or result.get('produced') or result.get('source_inputs_changed'):
+        return result
+    first_seconds = time.monotonic() - started
+    from jobagent.tools.artifact_cache import write_private
+    (job_dir / '.generation-drafts').mkdir(exist_ok=True, mode=0o700)
+    directory = Path(tempfile.mkdtemp(dir=job_dir / '.generation-drafts', prefix='incremental-fallback-'))
+    for name in ('generation-attempts.json', 'incremental-metrics-v1.json'):
+        if (job_dir / name).is_file():
+            shutil.copy2(job_dir / name, directory / name)
+    provenance = {'requested': 'incremental', 'used': 'current', 'incremental_seconds': first_seconds,
+                  'reason': result.get('failure'), 'findings': result.get('hard_issues', []),
+                  'failed_attempt': str(directory.relative_to(job_dir)), 'ats_refine_not_applied': bool(ats_refine)}
+    write_private(directory / 'result.json', result)
+    write_private(job_dir / 'document-fallback.json', provenance)
+    log('Incremental draft did not pass its checks; using the established writer. '
+        'Failed draft and metrics retained; this is not an incremental performance success.')
+    fallback_started = time.monotonic()
+    fallback = _run_job(job_dir, slug, models, sites, log, document_strategy='current', ats_refine=False,
+                        _final_only=True)
+    provenance.update(current_seconds=time.monotonic() - fallback_started,
+                      total_seconds=time.monotonic() - started, produced=bool(fallback.get('produced')))
+    write_private(job_dir / 'document-fallback.json', provenance)
+    return {**fallback, 'requested_document_strategy': 'incremental', 'strategy_fallback': provenance}
+
+
+def _run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, document_strategy=None, ats_refine=False,
+             _final_only=False) -> dict:  # noqa: C901
     """One job through the agent graph; leaves the best one-page version in job_dir."""
     started = time.monotonic()
     panel_history = []
@@ -1317,7 +1366,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, d
     strategy = document_strategy or getattr(s, 'document_strategy', 'current')
     if strategy not in ('current','incremental'): raise ValueError('document strategy must be current or incremental')
     if ats_refine and strategy != 'incremental': raise ValueError('--ats-refine requires incremental documents')
-    if strategy == 'current' and sites and not any(name not in ats_sites.BUDGET_SITES and name not in ats_sites.FEEDBACK_ONLY_SITES
+    if strategy == 'current' and not _final_only and sites and not any(name not in ats_sites.BUDGET_SITES and name not in ats_sites.FEEDBACK_ONLY_SITES
                                                  for name in sites):
         raise ValueError("The multi-agent loop needs an unlimited numeric checker alongside limited-credit sites.")
     from jobagent.tools import documents
@@ -1328,7 +1377,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, d
     ctx = {"job_dir": job_dir, "jd": jd, "company": (s.state_dir / "companies" / f"{slug}.md").read_text(),
            "r": T.parse(template_text),
            "jd_text": (job_dir / "jd.txt").read_text() if (job_dir / "jd.txt").exists() else "",
-           "models": models, "log": log, "sites": () if strategy == "incremental" else sites}
+           "models": models, "log": log, "sites": () if strategy == "incremental" or _final_only else sites}
     ctx["graph"] = SG.for_tailor(job_dir, jd, ctx["r"])               # related skills (step 4c); {} when off or empty
     SG.guard_resume(ctx["r"], job_dir)                                # every render of this resume drops skills that are not the candidate's
     if strategy == 'incremental':
@@ -1338,7 +1387,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, d
         ctx['source_snapshot'] = job_context.snapshot(job_dir,company=ctx['company'],
             candidate=applicant.load(),template=template_text,claims=T.declared_claims())
     final, attempts = {}, []
-    for draft_attempt in range(2):
+    for draft_attempt in range(1 if strategy == 'incremental' else 2):
         try:
             final = build_graph().invoke({"ctx": ctx, "history": []}, {"recursion_limit": 200})
         except llm.LLMConfigError:
@@ -1348,7 +1397,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, d
             # rather than making its first unsuccessful repair the final result.
             attempts.append({"attempt": draft_attempt + 1, "failure": str(exc)[:1200]})
             _failed_draft(job_dir, draft_attempt + 1, {}, [str(exc)[:1200]])
-            if draft_attempt:
+            if draft_attempt or strategy == 'incremental':
                 final = {"hard": [str(exc)[:1200]], "history": []}
                 break
             ctx["draft_feedback"] = str(exc)[:1200]
@@ -1364,7 +1413,7 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, d
         attempts.append({"attempt": draft_attempt + 1, "failure": feedback})
         _failed_draft(job_dir, draft_attempt + 1, final, final.get("hard", []) + final.get("layout_issues", []))
         ctx["draft_feedback"] = feedback
-        if not draft_attempt:
+        if not draft_attempt and strategy == 'current':
             log("Section repairs exhausted; making one fresh draft with the exact remaining findings")
     (job_dir / "generation-attempts.json").write_text(json.dumps(attempts, indent=2))
     best = final.get("best") or final.get("local_best")
@@ -1379,12 +1428,13 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, d
             except Exception as exc:
                 log(f"Final ATS panel unavailable ({type(exc).__name__}); keeping the validated documents")
             bundle.publish(job_dir, _version_files(best))
-        budget = tuple(name for name in sites if name in ats_sites.BUDGET_SITES) if strategy == 'current' and not final.get('ats_unavailable') else ()
+        budget = (tuple(sites) if _final_only else tuple(name for name in sites if name in ats_sites.BUDGET_SITES)) \
+            if strategy == 'current' and not final.get('ats_unavailable') else ()
         if budget:
             try:
                 final_ev = A.evaluate(job_dir, jd, ctx["jd_text"], final.get("ats_round", 0) + 1, budget, log)
             except Exception as exc:
-                log(f"Final limited-credit ATS scoring unavailable ({type(exc).__name__}); keeping the validated documents")
+                log(f"Final ATS scoring unavailable ({type(exc).__name__}); keeping the validated documents")
                 final_ev = {"scores": {}}
             best["scores"] = {**{name: value for name, value in best["scores"].items() if name not in budget},
                               **final_ev["scores"]}
@@ -1392,11 +1442,13 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, d
         (job_dir / "resume.pdf").unlink(missing_ok=True)
     lay = layout.check(job_dir / "resume.pdf").issues if best else []
     hard = best.get("hard", []) if best else final.get("hard", [])
+    source_inputs_changed = False
     if strategy == 'incremental':
         current = job_context.snapshot(job_dir,company=(s.state_dir/'companies'/f'{slug}.md').read_text(),
             candidate=applicant.load(),template=(s.data_dir/'templates'/'resume.tex').read_text(),claims=T.declared_claims())
         inputs = ('company','candidate','template','claims_policy','jd.json','jd.txt','skill_suggestions.json')
         if any(current['sources'][name]!=ctx['source_snapshot']['sources'][name] for name in inputs):
+            source_inputs_changed = True
             hard = [*hard,'Source inputs changed during generation; rerun from the current sources']
     claims = (documents.claims_from_filled(best["f"]) + SG.violations(job_dir, best["f"])) if best else []
     if best:
@@ -1414,7 +1466,8 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, d
         write_private(job_dir/'incremental-metrics-v1.json', {'version':1,'stages':ctx['cache'].events,
             'elapsed_s':elapsed,'external_ats_s':ats_wait,'generation_s':max(0,elapsed-ats_wait),
             'ats_rounds':len(panel_history)})
-    return {"document_strategy": strategy, "average": avg, "scores": summary["scores"],
+    return {"document_strategy": strategy, "source_inputs_changed": source_inputs_changed,
+            "average": avg, "scores": summary["scores"],
             "template_sha256": documents.template_fingerprint(template_text),
             "average_sites": summary["sites"], "average_missing": summary["missing"],
             "average_complete": summary["complete"],

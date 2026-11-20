@@ -537,19 +537,20 @@ def tailor_cmd(
                              else (r.get("failure") or "; ".join(r.get("hard_issues", []) + r.get("claims_issues", [])) or "no valid resume was produced"))
         log(f"resume ({how}): average {rj['average']} {rj['scores']}, {rj['pages']} page(s), hard issues {rj['hard_issues']}")
         check_sources()
+        letter_strategy = rj.get('document_strategy', strategy)
         cl = None
         if (rj["produced"] and not rj.get("hard_issues") and not rj.get("claims_issues") and rj.get("template_sha256")
                 and rj["template_sha256"] == documents.template_fingerprint()):
             # Do not spend another model call when the source changed during generation.
             progress(log, "documents", "running", "Cover letter", detail=f"resume done: average {rj['average']}")
-            cl, how = wf.run("cover_letter", lambda: cover_letter(d, company, log=log, **({"incremental":True} if strategy=="incremental" else {})),
+            cl, how = wf.run("cover_letter", lambda: cover_letter(d, company, log=log, **({"incremental":True} if letter_strategy=="incremental" else {})),
                              inputs={"resume_tex": W.sha_file(d / "resume.tex"), "profile": profile_sha, "model": model,
                                      "jd":jd_sha,"letter_template":W.sha_file(letter_template_path()),
-                                     "document_strategy":strategy,
+                                     "document_strategy":letter_strategy, "requested_document_strategy":strategy,
                                      "generation_version":job_context.model_version(),
                                      "projects":W.sha_file(d/'projects.json'),
-                                     **({'incremental_validator':s.model_planner} if strategy=='incremental' else {}),
-                                     **({'incremental_provider':{'base_url':s.openai_base_url,'method':s.llm_structured_method}} if strategy=='incremental' else {}),
+                                     **({'incremental_validator':s.model_planner} if letter_strategy=='incremental' else {}),
+                                     **({'incremental_provider':{'base_url':s.openai_base_url,'method':s.llm_structured_method}} if letter_strategy=='incremental' else {}),
                                      "candidate_credentials": 1, "pdf_startup_policy": PDF_STARTUP_POLICY},
                              outputs=["cover_letter.pdf", "cover_letter.tex"], force=force, log=log,
                              check=lambda r: ("; ".join(r.get("issues", [])) or "cover letter validation failed")
