@@ -57,7 +57,9 @@ def test_bad_inputs_are_refused_not_executed(conn):
         QA.add(conn, "")
     with pytest.raises(ValueError):
         QA.add(conn, "\n".join(f"Company {i}" for i in range(101)))
-    assert QA.add_company(conn, "https://evil.test/x")["result"] == "refused"
+    for junk in ("https://evil.test/x", "mailto:hr@acme.com", "javascript:alert(1)", "file:///etc/passwd", "hr@acme.com"):
+        assert QA.add_company(conn, junk)["result"] == "refused", junk
+    assert QA.add_company(conn, "Acme: Robotics")["result"] == "added"                                   # a colon followed by a space is part of a name
     with pytest.raises(ValueError):
         QA.add_company(conn, "Ok", max_jobs=99)
 

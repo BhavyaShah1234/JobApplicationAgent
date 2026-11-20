@@ -200,7 +200,7 @@ def add_company(conn: sqlite3.Connection, name: str, *, max_jobs: int = 5, note:
         `{"input", "result", "note", "id"}`; result is added or exists.
     """
     name = _clean(name, 120)
-    if not name or name.startswith("-") or "/" in name or "://" in name:
+    if not name or name.startswith("-") or "/" in name or "://" in name or "@" in name or re.match(r"(?i)^[a-z][a-z0-9+.-]{1,14}:\S", name):
         return {"input": name, "result": "refused", "note": "not a company name"}
     if not 1 <= int(max_jobs) <= 20:
         raise ValueError("max_jobs must be between 1 and 20")
