@@ -220,6 +220,28 @@ class ProjectSwap(BaseModel):
     entry: P.ProjectEntry = Field(description="The better CANDIDATE repo, written like the others")
 
 
+def _project_paragraph(text):
+    """Fit a repair using existing complete sentences, never fabricated punctuation.
+
+    Args:
+        text: A model-provided paragraph within the same envelope as initial selection.
+
+    Returns:
+        Unchanged text or its useful complete-sentence prefix within the display budget.
+
+    Raises:
+        ValueError: No useful complete prefix fits; the model must actually shorten it.
+    """
+    text = text.strip()
+    if len(text) <= T.PARAGRAPH_MAX:
+        return text
+    shorter = P._sentences(text, T.PARAGRAPH_MAX)
+    if len(shorter) < 200 or not text.startswith(shorter):
+        raise ValueError('Rewrite the full project description more concisely; '
+                         'no complete useful prefix fits its rendered budget')
+    return shorter
+
+
 class ProjectsOut(BaseModel):
     """The projects agent's answer: rewritten descriptions and at most two swaps."""
     projects: list[T.ProjectFix] = Field(default_factory=list, max_length=4)
@@ -229,7 +251,7 @@ class ProjectsOut(BaseModel):
 class ProjectEdit(BaseModel):
     """Target one selected project's rendered variant without replacing its repository."""
     project: int = Field(ge=1, description="1-based number under PROJECTS")
-    paragraph: str = Field('', max_length=T.PARAGRAPH_MAX, description="Full description, or empty to retain")
+    paragraph: str = Field('', max_length=700, description=f"Full description, aim for {T.PARAGRAPH_MIN}-{T.PARAGRAPH_MAX} characters; empty to retain")
     short: str = Field('', max_length=400, description="Short two-sentence description, or empty to retain")
     title: str = Field('', max_length=70, description="Readable title, or empty to retain; known template titles stay fixed")
 
@@ -295,6 +317,7 @@ to reach the character limit. The title is a real project name, never the bare r
 ask for. No dashes as punctuation; "by N%". Never invent degrees, employers or dates.""".replace("{PMIN}", str(T.PARAGRAPH_MIN)).replace("{PMAX}", str(T.PARAGRAPH_MAX))
 PROJECTS_EDIT_PROMPT += "\nEach indexed project's repo identity and its OWN source card bind its description. Never borrow " \
     "features, interfaces, supported counts or results from another project, even when editing several at once."
+PROJECTS_EDIT_PROMPT += "\n" + P.SOURCE_POLICY
 
 REVIEW_PROMPT = """You are the VALIDATOR of a resume team. Check the CURRENT RESUME for this posting the way a hiring
 manager would. Label actual correctness problems severity=error and optional refinements severity=suggestion.
@@ -306,8 +329,8 @@ necessarily printed on the page. Selected short project descriptions intentional
 full descriptions use three. Do not demand expansion of a valid short variant.
 - projects: a description that contradicts its OWN repository source is an error. A preferred alternative project,
   more posting-specific wording, or a preferred descriptive title is a suggestion. Do not confuse one repo's features
-  with another's. Estimated impact metrics allowed by the candidate's claims policy are not contradictions;
-  unsupported product features or feature counts are different. Sentence-ending and bare-slug checks also run in code;
+  with another's. Qualitative outcomes are allowed; numerical measurements and feature counts require that
+  repository's own sources. Sentence-ending and bare-slug checks also run in code;
 - experience: actual employer contradictions, substantive repeated duties or genuinely missing main duties.
   Each bullet inherits its employer/title/dates from the printed role heading; do not require their repetition;
   recruiting values of the target company are not accomplishments at another employer;
@@ -320,6 +343,7 @@ work duties, impact estimates and overall/domain tenure within the declared ceil
 proof. Locked Education establishes the listed degrees; never infer missing education because it is outside
 Experience. Employer identities, titles, dates, credentials and repository implementation features remain protected.
 Return an empty list if the resume is sound."""
+REVIEW_PROMPT += "\nFor the Projects section: " + P.SOURCE_POLICY
 
 ROUTER_PROMPT = """You are the ATS validator of a resume team. Online ATS checkers scored the resume; their MISSING
 keywords and ADVICE are below. Turn them into tasks for the agents that own each part of the resume:
@@ -475,8 +499,12 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
                     for fix in result.projects:
                         for field in ('paragraph', 'short'):
                             if text := getattr(fix, field, '').strip():
+                                if field == 'paragraph':
+                                    fix.paragraph = text = _project_paragraph(text)
                                 entries.append({'paragraph': text})
-                    entries.extend({'paragraph': swap.entry.paragraph} for swap in result.swaps)
+                    for swap in result.swaps:
+                        swap.entry.paragraph = _project_paragraph(swap.entry.paragraph)
+                        entries.append({'paragraph': swap.entry.paragraph})
                     if issues := P.content_findings({'ranked': entries, 'kept': len(entries)}):
                         raise ValueError('; '.join(issues) + '; rewrite more concisely instead of cutting text')
                 schema = _bound_schema(schema, completed_projects)

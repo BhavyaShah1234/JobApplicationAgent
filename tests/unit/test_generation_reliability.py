@@ -328,6 +328,29 @@ def test_native_project_repair_can_correct_a_short_variant_and_rejects_truncatio
     assert M.P.content_findings(after) == []
 
 
+@pytest.mark.parametrize('incremental', [False, True])
+def test_long_project_repair_keeps_complete_source_sentences_without_truncating_words(tmp_path, monkeypatch, incremental):
+    from pydantic import ValidationError
+    (tmp_path / 'projects.json').write_text('{}')
+    monkeypatch.setattr(M.llm, 'writer', lambda *args, **kwargs: object())
+    monkeypatch.setattr(M, '_context', lambda *args, **kwargs: 'The actual repository evidence')
+    prefix = ('Engineering teams needed repeatable infrastructure deployment across development and production environments. '
+              'Built a Python and Terraform platform with validated configuration, automated provisioning and reproducible updates.')
+    long = prefix + ' It also supports ' + 'source verified deployment workflows and configuration audit logs ' * 4 + 'for distributed teams.'
+    assert 420 < len(long) < 700
+    def generate(ctx, stage, model, schema, messages, **kwargs):
+        # A single overlong sentence cannot be turned into a fake complete one.
+        with pytest.raises(ValidationError, match='no complete useful prefix'):
+            schema.model_validate({'projects': [{'project': 1, 'paragraph': 'Infrastructure ' * 35 + 'deployment.'}]})
+        return schema.model_validate({'projects': [{'project': 1, 'paragraph': long}]})
+    monkeypatch.setattr(M, '_invoke', generate)
+    _, out = M._run_agent({'job_dir': tmp_path, 'models': {'projects': 'fixture'},
+                          'log': lambda _: None, 'incremental': incremental},
+                         'projects', None, ['Shorten project 1 to fit, preserving its own facts.'], '')
+    assert out is not None and out.projects[0].paragraph == prefix
+    assert len(out.projects[0].paragraph) <= T.PARAGRAPH_MAX
+
+
 @pytest.mark.parametrize('free_pt,needs_more_work', [(8, False), (44, True)])
 def test_filled_two_project_page_does_not_demand_an_unnecessary_third_project(tmp_path, monkeypatch, free_pt, needs_more_work):
     from jobagent.state import JobDescription
@@ -462,6 +485,25 @@ def review_world(tmp_path, monkeypatch):
            'company': 'Acme builds software.', 'models': {'router': 'critic'}, 'log': lambda _: None}
     monkeypatch.setattr(I, 'review_model', lambda *args, **kwargs: object())
     return ctx, value
+
+
+def test_independent_project_reader_sees_the_same_readme_evidence_as_the_writer(tmp_path, monkeypatch):
+    from jobagent.tools import document_review as R
+    ctx, value = review_world(tmp_path, monkeypatch)
+    readme = 'The Python service supports batches of 1000 events with validated configuration.'
+    ctx['cards'] = {'owner/service': {'full_name': 'owner/service', 'summary': 'A Python service.', 'readme': readme}}
+    (tmp_path / 'projects.json').write_text(json.dumps({'kept': 1, 'short': [], 'ranked': [{
+        'repo': 'owner/service', 'title': 'Event Service', 'stack': ['Python'],
+        'paragraph': 'Processed batches of 1000 events using Python.'}]}))
+    def adjudicate(model, schema, messages, **kwargs):
+        payload = json.loads(messages[-1].content)
+        assert payload['sources']['repo:0']['readme'] == readme
+        assert M.P.SOURCE_POLICY in messages[0].content
+        return schema.model_validate({'verdicts': [{'finding': 0, 'status': 'rejected',
+            'claim_id': 'project:0', 'source_id': 'repo:0', 'reason': 'The supplied README establishes the batch size.'}]})
+    monkeypatch.setattr(R.llm, 'structured_invoke', adjudicate)
+    finding = M.Finding(agent='projects', issue='Batch size is absent from the summary.', severity='error')
+    assert R.adjudicate(ctx, value, [finding]) == []
 
 
 def test_independent_review_rejects_provably_false_critic_errors_without_dropping_other_findings(tmp_path, monkeypatch):

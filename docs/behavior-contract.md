@@ -77,6 +77,11 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
   bounded repairs, retain its evidence and try the established writer, recording the actual strategy explicitly.
   The requested ATS panel then runs once on the final valid resume. Changed source inputs and configuration or
   programming errors never trigger this fallback; a fallback is not an incremental performance success.
+- Project writers and reviewers share one source policy: numerical repository results/counts need that repo's
+  evidence; use qualitative outcomes when none are supplied. Work-experience estimate permissions do not create
+  project benchmarks. The independent reader sees the same README excerpt as the project writer. Long repairs
+  may retain a useful complete-sentence prefix within the existing display budget, without cutting words or
+  inventing final punctuation; otherwise the model must shorten the text.
 - Retry an invalid cover-letter stage without rebuilding an unchanged valid resume. Prefer a compiled one-page
   letter, retain its exact PDF instead of recompiling it at publication, and require its header to match the final resume.
   Changed generation code, project metadata or layout measurements invalidate the corresponding workflow cache.

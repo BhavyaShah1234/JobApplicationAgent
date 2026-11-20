@@ -1113,9 +1113,10 @@ def test_opt_in_project_prompt_has_no_fake_achievement_example_or_contradictory_
     from jobagent.state import JobDescription
     original=P.build_prompt([],JobDescription(title='Engineer',company='Fixture'),{})[0].content
     incremental=P.build_prompt([],JobDescription(title='Engineer',company='Fixture'),{},grounded=True)[0].content
-    assert 'City traffic engineers' in original and 'invent plausible features' in original
+    assert 'City traffic engineers' in original and 'invent plausible features' not in original
     assert 'City traffic engineers' not in incremental and 'invent plausible features' not in incremental
     assert "repository's own supplied features" in incremental and 'impact estimates' in incremental
+    assert P.SOURCE_POLICY in original and P.SOURCE_POLICY in incremental
 
 
 def test_jd_metric_cannot_supply_a_candidate_achievement():

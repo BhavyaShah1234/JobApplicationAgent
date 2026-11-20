@@ -38,6 +38,11 @@ class Projects(BaseModel):
     notes: str = Field(max_length=500, description="One brief sentence explaining the selection, at most 300 characters")
 
 
+SOURCE_POLICY = ("Describe each repository's own supplied features and results. Project numerical measurements, "
+                 "benchmarks, user counts and capability counts must be present in that repository's supplied "
+                 "sources. When no measurement is supplied, use a qualitative outcome instead of inventing a number. "
+                 "Work-experience impact estimates do not establish repository measurements or product features.")
+
 PROMPT = """You choose the projects for the Projects section of a resume tailored to one job posting, from cards
 the agent wrote by reading each GitHub repository's code.
 
@@ -56,7 +61,6 @@ the agent wrote by reading each GitHub repository's code.
   3. the wow factor: the result, scale or what was new (a number where possible: accuracy, latency, users,
      throughput, cost, a hackathon placing).
   Past tense or noun phrases; no "I". Use the posting's keywords throughout.
-- You can invent plausible features or metrics that align with the job posting.
 - short: the same project in 2 sentences, 180-230 characters so it fills two full lines (problem, system and wow
   factor in brief), used only to fit one extra project into leftover space.
 
@@ -72,6 +76,7 @@ EXAMPLE of the expected depth (a made-up project; never copy its content):
 - Never use em dashes (—) or a spaced dash as punctuation, in titles or paragraphs; use commas, semicolons, colons
   or separate sentences (e.g. "COLLIDE: AI-Powered Site Selection"). A change by a percentage takes "by"
   ("cutting latency by 40%")."""
+PROMPT += "\n" + SOURCE_POLICY
 
 
 def build_prompt(cands: list[tuple[float, dict]], jd: JobDescription, known: dict[str, tuple[str, str]], *, grounded=False) -> list:
@@ -94,9 +99,6 @@ def build_prompt(cands: list[tuple[float, dict]], jd: JobDescription, known: dic
         # transferable fake achievements or contradicting the source reviewer.
         start, end = prompt.index('EXAMPLE of the expected depth'), prompt.index('- Never use em dashes')
         prompt = prompt[:start] + prompt[end:]
-        prompt = prompt.replace('You can invent plausible features or metrics that align with the job posting.',
-            'Describe each repository\'s own supplied features and results. The owner permits generated work '
-            'duties and impact estimates; that does not change a repository\'s product, interfaces or capabilities.')
     return [SystemMessage(with_today(prompt)),
             HumanMessage(f"POSTING: {job}\n\nCANDIDATES:\n\n" + "\n\n".join(blocks))]
 
