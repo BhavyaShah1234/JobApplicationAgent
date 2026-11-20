@@ -123,10 +123,11 @@ function EditRow({ x, onSave, onCancel }) {
 function RunBox({ queued, readOnly }) {
   const [through, setThrough] = useState("apply");
   const [limit, setLimit] = useState(Math.min(5, Math.max(queued, 1)));
+  const [noAts, setNoAts] = useState(false);
   const [msg, setMsg] = useState({ text: "", ok: true });
   if (readOnly) return null;
   async function run() {
-    const r = await act("/api/queue/run", { through, limit: Number(limit) }, setMsg);
+    const r = await act("/api/queue/run", { through, limit: Number(limit), no_ats: noAts }, setMsg);
     setMsg(r.ok ? { text: `Started (pid ${r.body.pid}). It takes the queue top-down and stops at each review screen.`, ok: true } : { text: r.body.error || "failed", ok: false });
   }
   return (
@@ -135,6 +136,7 @@ function RunBox({ queued, readOnly }) {
       <div className="tools" style={{ marginTop: 8 }}>
         <label>Take the first <input type="number" min="1" max="20" style={{ width: 64 }} value={limit} onChange={(e) => setLimit(e.target.value)} /> queued jobs</label>
         <label>as far as <select value={through} onChange={(e) => setThrough(e.target.value)}>{["scrape", "tailor", "apply"].map((v) => <option key={v}>{v}</option>)}</select></label>
+        <label><input type="checkbox" checked={noAts} onChange={(e) => setNoAts(e.target.checked)} /> Skip optional ATS scans</label>
         <button type="button" className="act" disabled={!queued} onClick={run}>Run queue</button>
         <span className={msg.ok ? "mut" : "bad"}>{msg.text}</span>
       </div>

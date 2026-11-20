@@ -14,7 +14,7 @@ export function kindLabel(q) {
 const INPUT_TYPE = { email: "email", tel: "tel", url: "url", number: "number" };
 
 // One question and its control. `value` is a string, an array (several choices) or a boolean (a single box); `onChange` gets the new one.
-export default function QuestionField({ q, value, onChange, disabled }) {
+export default function QuestionField({ q, value, onChange, disabled, inBatch = false }) {
   const id = useId();
   const options = q.options || [];
   const set = (v) => onChange(v);
@@ -76,9 +76,9 @@ export default function QuestionField({ q, value, onChange, disabled }) {
       </div>
       {q.help && <div className="mut qhelp">{q.help}</div>}
       {control}
-      {(q.quick || []).length > 0 && (
+      {(q.quick || []).filter((w) => !(inBatch && w === "skip")).length > 0 && (
         <div className="quick">
-          {q.quick.map((w) => <button key={w} type="button" className="act sec sm" disabled={disabled} onClick={() => set(w)}>{w[0].toUpperCase() + w.slice(1)}</button>)}
+          {q.quick.filter((w) => !(inBatch && w === "skip")).map((w) => <button key={w} type="button" className="act sec sm" disabled={disabled} onClick={() => set(w)}>{w[0].toUpperCase() + w.slice(1)}</button>)}
         </div>
       )}
     </div>

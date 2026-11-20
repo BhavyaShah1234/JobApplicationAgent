@@ -162,6 +162,30 @@ def review(settings, conn=None) -> list[dict]:
             conn.close()
 
 
+def _display_context(context: dict, settings) -> dict:
+    """The run's context with the company shown as the posting names it (`Hugging Face`, not the folder slug `hugging-face`).
+
+    Args:
+        context: The request's context (`company`, `title`, `job_dir`...).
+        settings: Settings locating the outputs folder.
+
+    Returns:
+        A copy; `company` and `title` come from the job folder's `jd.json` when it lies inside the outputs folder and can be read.
+    """
+    out = dict(context or {})
+    try:
+        folder = Path(str(out.get("job_dir") or "")).resolve()
+        root = settings.outputs_dir.resolve()
+        if out.get("job_dir") and root in folder.parents:
+            jd = json.loads((folder / "jd.json").read_text())
+            for key in ("company", "title"):
+                if isinstance(jd.get(key), str) and jd[key].strip():
+                    out[key] = jd[key].strip()[:120]
+    except (OSError, ValueError):
+        pass
+    return out
+
+
 def _legacy_questions(r) -> list[dict]:
     """A question written without structure (older code, or "do this in noVNC, then answer 'done'"): one text question, with a button for a quoted one-word reply."""
     import re
@@ -191,7 +215,7 @@ def hitl_pending(settings) -> list[dict]:
         questions = r.questions or _legacy_questions(r)
         rows.append({'questions': questions, 'reply_format': r.reply_format, 'structured': bool(r.questions),
                      'id': r.id, 'prompt': r.prompt, 'secret': bool(r.secret),
-                     'terminal_only': terminal, 'context': r.context,
+                     'terminal_only': terminal, 'context': _display_context(r.context, settings),
                      'default': None if r.secret else r.default, 'created': r.created,
                      'terminal_command': host_command(['jobagent', 'hitl', 'answer', r.id], interactive=r.secret)
                         + ('' if r.secret else " '<answer>'")})

@@ -139,7 +139,9 @@ def test_add_reorder_and_run_the_queue_over_http(env):
     assert [x["id"] for x in call(srv, "GET", "/api/queue")[1] if x["status"] == "queued"] == ids
     code, out = call(srv, "POST", "/api/queue/run", {"through": "apply", "limit": 2})
     assert code == 200 and started and started[-1][0][-8:-6] != "run" and "queue" in started[-1][0] and "--limit" in started[-1][0]
-    assert "submit" not in " ".join(started[-1][0])
+    assert "submit" not in " ".join(started[-1][0]) and "--no-ats" not in started[-1][0]
+    assert call(srv, "POST", "/api/queue/run", {"through": "scrape", "limit": 1, "no_ats": True})[0] == 200 and "--no-ats" in started[-1][0]
+    assert call(srv, "POST", "/api/queue/run", {"through": "scrape", "limit": 1, "no_ats": "yes"})[0] == 400
     assert call(srv, "POST", "/api/queue/run", {"through": "submit", "limit": 2})[0] == 400
 
 
@@ -209,3 +211,18 @@ def test_a_run_input_that_points_inside_the_network_is_refused(env):
         code, out = call(srv, "POST", "/api/run", {"inputs": [bad], "through": "scrape", "limit": 1})
         assert code == 400, bad
     assert not started
+
+
+def test_the_question_shows_the_company_as_the_posting_names_it(env):
+    s, srv, _ = env
+    job = s.outputs_dir / "hugging-face" / "707595a401"
+    job.mkdir(parents=True)
+    (job / "jd.json").write_text(json.dumps({"company": "Hugging Face", "title": "Open-Source ML Engineer"}))
+    req = {"id": "ctx00001", "prompt": "q", "secret": False, "created": "2026-11-20T00:00:00+00:00", "pid": __import__("os").getpid(),
+           "context": {"company": "hugging-face", "title": "x", "job_dir": str(job)}}
+    (s.state_dir / "hitl" / "pending" / "ctx00001.json").write_text(json.dumps(req))
+    ctx = pending(s, "ctx00001")["context"]
+    assert (ctx["company"], ctx["title"]) == ("Hugging Face", "Open-Source ML Engineer")
+    req["id"], req["context"]["job_dir"] = "ctx00002", "/etc"                              # a folder outside the outputs folder is never read
+    (s.state_dir / "hitl" / "pending" / "ctx00002.json").write_text(json.dumps(req))
+    assert pending(s, "ctx00002")["context"]["company"] == "hugging-face"

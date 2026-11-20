@@ -90,8 +90,9 @@ test("running the queue never offers submit", async () => {
   render(<Queue config={{ read_only: false }} />);
   const select = await screen.findByLabelText(/as far as/);
   expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["scrape", "tailor", "apply"]);
+  await userEvent.click(screen.getByLabelText(/Skip optional ATS/));
   await userEvent.click(screen.getByRole("button", { name: "Run queue" }));
-  expect(body(fetch, "/api/queue/run")).toMatchObject({ through: "apply" });
+  expect(body(fetch, "/api/queue/run")).toMatchObject({ through: "apply", no_ats: true });
 });
 
 test("read-only hides every control", async () => {

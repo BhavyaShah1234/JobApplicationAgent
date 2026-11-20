@@ -41,7 +41,7 @@ function Structured({ q, onDone }) {
   return (
     <div>
       {q.questions.map((x) => (
-        <QuestionField key={x.id} q={x} value={values[x.id]} disabled={busy}
+        <QuestionField key={x.id} q={x} value={values[x.id]} disabled={busy} inBatch={!single}
           onChange={(v) => { if ((x.quick || []).includes(v) && single && typeof v === "string") send({ [x.id]: v }); else setValues((s) => ({ ...s, [x.id]: v })); }} />
       ))}
       {single && !q.questions[0].options?.length && q.reply_format === "text" && (
@@ -57,7 +57,7 @@ function Structured({ q, onDone }) {
         <button type="button" className="act sec" onClick={() => send(Object.fromEntries(q.questions.map((x) => [x.id, ""])))} disabled={busy}>Skip {single ? "this question" : "all"}</button>{" "}
         <span className={msg.ok ? "mut" : "bad"}>{msg.text}</span>
       </div>
-      {missing.length > 0 && <p className="warn qhelp">Required and still empty: {missing.map((x) => x.label.slice(0, 50)).join("; ")}. Unanswered questions are left for the review screen.</p>}
+      {missing.length > 0 && <p className="warn qhelp">Required and still empty: {missing.map((x) => x.label.length > 60 ? x.label.slice(0, 57) + "…" : x.label).join("; ")}. Unanswered questions are left for the review screen.</p>}
     </div>
   );
 }

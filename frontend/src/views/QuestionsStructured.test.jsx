@@ -55,6 +55,14 @@ test("a batch of mixed kinds is answered together and sent as one object", async
   expect(sentBody(fetch).answers).toEqual({ a: ["LinkedIn", "Referral"], b: "Jan 2027", c: "" });
 });
 
+test("in a batch there is no per-question Skip button (empty means skip)", async () => {
+  mockFetch({ "/api/hitl": [req({ reply_format: "json", questions: [spec({ id: "a", quick: ["skip"] }), spec({ id: "b", label: "Other", quick: ["skip"] })] })] });
+  render(<Questions config={{ read_only: false }} />);
+  await screen.findByText("Other");
+  expect(screen.queryByRole("button", { name: "Skip" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Skip all" })).toBeInTheDocument();
+});
+
 test("skip sends empty answers, and a quick button sends its word", async () => {
   const fetch = mockFetch({ "/api/hitl": [req({ questions: [spec({ quick: ["skip"] })] })], "/api/hitl/answer": { answered: "r1" } });
   render(<Questions config={{ read_only: false }} />);

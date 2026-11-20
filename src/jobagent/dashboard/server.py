@@ -121,15 +121,17 @@ def start_run(settings, inputs, through: str, limit: int, popen=subprocess.Popen
     return _launch(settings, args, popen)
 
 
-def start_queue_run(settings, through: str, limit: int, company: str | None = None, popen=subprocess.Popen, *, browser_mode='auto') -> dict:
+def start_queue_run(settings, through: str, limit: int, company: str | None = None, popen=subprocess.Popen, *, browser_mode='auto', no_ats=False) -> dict:
     """`jobagent queue run --through ... --limit ...`: work the queued postings in the candidate's order, up to the review screen. ValueError for anything not allowed."""
     if through not in THROUGH:
         raise ValueError(f"through must be one of {', '.join(THROUGH)} (the dashboard never submits)")
     if type(limit) is not int or not 1 <= limit <= 20:
         raise ValueError("limit must be between 1 and 20")
-    if browser_mode not in ('auto', 'docker', 'desktop'):
-        raise ValueError('invalid browser mode')
+    if browser_mode not in ('auto', 'docker', 'desktop') or type(no_ats) is not bool:
+        raise ValueError('invalid browser mode or run options')
     args = ["queue", "run", "--through", through, "--limit", str(limit), "--browser-mode", browser_mode]
+    if no_ats:
+        args.append("--no-ats")
     if company:
         if not isinstance(company, str) or len(company) > 120 or company.startswith("-") or "\n" in company:
             raise ValueError("not an acceptable company name")
@@ -330,7 +332,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/queue/run":
                 with self.server.lock:
                     return start_queue_run(settings, str(body.get("through", "apply")), body.get("limit", 5), body.get("company") or None,
-                                           self.server.popen, browser_mode=body.get("browser_mode", "auto"))
+                                           self.server.popen, browser_mode=body.get("browser_mode", "auto"), no_ats=body.get("no_ats", False))
             if path == "/api/watchlist/add":
                 return QA.add_company(conn, body.get("company"), max_jobs=body.get("max_jobs", 5), note=body.get("note", ""))
             if path == "/api/watchlist/update":

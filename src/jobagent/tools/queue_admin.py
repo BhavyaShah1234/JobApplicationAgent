@@ -21,10 +21,13 @@ from jobagent.tools import jobqueue as Q
 REQUEUE_FROM = {"skipped", "needs_review", "failed", "blocked", "scraped", "queued"}   # never: running, applied, already_applied, closed
 DELETE_FROM = {"queued", "needs_review", "skipped", "failed", "blocked"}
 TEXT_LIMIT = 200
-ATS_HOSTS = ("greenhouse.io", "lever.co", "ashbyhq.com", "myworkdayjobs.com", "smartrecruiters.com", "workable.com", "icims.com")
+PATH_BOARDS = ("greenhouse.io", "lever.co", "ashbyhq.com", "smartrecruiters.com", "workable.com", "jobvite.com", "gem.com", "rippling.com", "dover.com",
+               "pinpointhq.com", "jazzhr.com")                        # company = first path segment (apply.workable.com/<company>/j/ID)
+SUBDOMAIN_BOARDS = ("myworkdayjobs.com", "recruitee.com", "breezy.hr", "bamboohr.com", "teamtailor.com", "applytojob.com", "icims.com")   # company = subdomain
+ATS_HOSTS = PATH_BOARDS + SUBDOMAIN_BOARDS
 
 
-DNS_TIMEOUT_S = 4.0
+DNS_TIMEOUT_S = 5.0
 _DNS = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="dns-check")
 
 
@@ -41,13 +44,15 @@ def _resolve(host: str, port: int) -> list[str]:
     Raises:
         ValueError: The lookup did not answer within `DNS_TIMEOUT_S` (the link is refused rather than trusted).
     """
-    future = _DNS.submit(socket.getaddrinfo, host, port, 0, socket.SOCK_STREAM)
-    try:
-        return [i[4][0].split("%")[0] for i in future.result(timeout=DNS_TIMEOUT_S)]
-    except concurrent.futures.TimeoutError as exc:
-        raise ValueError("could not check where that address points (DNS did not answer); try again in a moment") from exc
-    except OSError:
-        return []
+    for attempt in (1, 2):                                       # one stalled answer from the resolver is common; two in a row is a real problem
+        future = _DNS.submit(socket.getaddrinfo, host, port, 0, socket.SOCK_STREAM)
+        try:
+            return [i[4][0].split("%")[0] for i in future.result(timeout=DNS_TIMEOUT_S)]
+        except concurrent.futures.TimeoutError:
+            continue
+        except OSError:
+            return []
+    raise ValueError("could not check where that address points (DNS did not answer twice); try again in a moment")
 
 
 def check_public_url(url: str) -> None:
@@ -83,6 +88,31 @@ def check_public_url(url: str) -> None:
         raise ValueError("that name points at this machine or a private network")
 
 
+def board_of(url: str) -> tuple[str, str]:
+    """Which job board address a posting belongs to, and the company name that address names.
+
+    Args:
+        url: A job posting address.
+
+    Returns:
+        `(board, company)`: the board address (`https://apply.workable.com/huggingface` for a board with the company in the path, the host itself
+        for one with the company in a subdomain or an unknown host) and a readable company guess (`huggingface`).
+    """
+    p = urlsplit(url)
+    host = (p.hostname or "").lower().removeprefix("www.")
+    parts = [x for x in p.path.split("/") if x]
+    root = f"{p.scheme}://{p.netloc.lower()}"
+    if host.endswith(PATH_BOARDS) and parts:
+        seg = parts[1] if host.endswith("dover.com") and parts[0] == "apply" and len(parts) > 1 else parts[0]
+        return (root + "/" + seg if seg == parts[0] else root + "/apply/" + seg), seg
+    labels = host.split(".")
+    if host.endswith(SUBDOMAIN_BOARDS) and len(labels) >= 3:
+        return root, labels[0].removeprefix("careers-").removeprefix("jobs-")
+    if len(labels) >= 2:
+        return root, labels[-3] if len(labels) >= 3 and labels[-2] in {"co", "com", "org"} else labels[-2]
+    return root, "unknown"
+
+
 def guess_company(url: str) -> str:
     """A readable company name from a job link, until the scrape finds the real one (`boards.greenhouse.io/acme/jobs/1` -> `acme`).
 
@@ -90,19 +120,9 @@ def guess_company(url: str) -> str:
         url: A job posting address.
 
     Returns:
-        The first path segment of a known job board, else the host's main label; `unknown` when neither exists.
+        The company named by the job board address, else the host's main label; `unknown` when neither exists.
     """
-    p = urlsplit(url)
-    host = (p.hostname or "").lower().removeprefix("www.")
-    parts = [x for x in p.path.split("/") if x]
-    if host.endswith(ATS_HOSTS) and not host.endswith("myworkdayjobs.com") and parts:
-        return parts[0]
-    labels = host.split(".")
-    if host.endswith("myworkdayjobs.com"):
-        return labels[0]
-    if len(labels) >= 2:
-        return labels[-3] if len(labels) >= 3 and labels[-2] in {"co", "com", "org"} else labels[-2]
-    return "unknown"
+    return board_of(url)[1]
 
 
 def known_company(conn: sqlite3.Connection, url: str) -> str:
@@ -113,13 +133,10 @@ def known_company(conn: sqlite3.Connection, url: str) -> str:
         url: A job posting address.
 
     Returns:
-        The company of the first earlier posting under the same board address (`host/first-path-segment` on a known job board, else the host),
+        The company of the first earlier posting under the same board address (the job board address: `host/company` or the host),
         or an empty string when there is none.
     """
-    p = urlsplit(url)
-    host = (p.hostname or "").lower()
-    parts = [x for x in p.path.split("/") if x]
-    board = f"{p.scheme}://{p.netloc.lower()}" + (f"/{parts[0]}" if host.endswith(ATS_HOSTS) and not host.endswith("myworkdayjobs.com") and parts else "")
+    board = board_of(url)[0]
     like = board.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%"
     row = conn.execute("SELECT company FROM jobs WHERE url LIKE ? ESCAPE '\\' AND COALESCE(company, '') != '' AND source IS NOT 'dashboard' ORDER BY id LIMIT 1", (like,)).fetchone()
     return row["company"] if row else ""
@@ -230,7 +247,8 @@ def add(conn: sqlite3.Connection, text: str, *, where: str = "normal") -> list[d
     lines = [x.strip() for x in str(text or "").splitlines() if x.strip()]
     if not lines or len(lines) > 100:
         raise ValueError("give between 1 and 100 lines")
-    out = []
+    out: list = []
+    pending: list[tuple[int, object]] = []                    # (position in `out`, job link item): added after the loop, so "top" keeps the typed order
     for line in lines:
         if len(line) > 1000 or line.startswith("-"):
             out.append({"input": line[:60], "result": "refused", "note": "not an acceptable input"})
@@ -241,7 +259,13 @@ def add(conn: sqlite3.Connection, text: str, *, where: str = "normal") -> list[d
             out.append({"input": line[:80], "result": "refused", "note": "a file: use Start a run to give a CSV or XLSX file"})
             continue
         for item in routed.items:
-            out.append(add_url(conn, item.value, company=item.company, where=where) if item.kind == "url" else add_company(conn, item.value))
+            if item.kind == "url":
+                pending.append((len(out), item))
+                out.append(None)
+            else:
+                out.append(add_company(conn, item.value))
+    for index, item in (reversed(pending) if where == "top" else pending):   # each "top" insert goes above the last, so go from the last typed to the first
+        out[index] = add_url(conn, item.value, company=item.company, where=where)
     return out
 
 

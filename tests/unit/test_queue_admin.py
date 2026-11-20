@@ -88,6 +88,15 @@ def test_reorder_ignores_unknown_and_non_queued_ids_and_keeps_the_rest_in_place(
             QA.reorder(conn, bad)
 
 
+def test_several_links_added_at_the_top_keep_the_order_they_were_typed(conn):
+    job(conn, 1)
+    out = QA.add(conn, "https://jobs.example.test/a\nhttps://jobs.example.test/b\nhttps://jobs.example.test/c", where="top")
+    assert [r["input"][-1] for r in out] == ["a", "b", "c"] and all(r["result"] == "added" for r in out)      # results come back in typed order too
+    assert order(conn) == ["a", "b", "c", "1"]
+    QA.add(conn, "https://jobs.example.test/x\nhttps://jobs.example.test/y", where="bottom")
+    assert order(conn)[-2:] == ["x", "y"]
+
+
 def test_adding_at_the_top_or_bottom(conn):
     job(conn, 1, score=0.9)
     job(conn, 2, score=0.1)
@@ -178,6 +187,10 @@ def test_guess_company_from_links():
     assert g("https://boards.greenhouse.io/acme/jobs/1") == "acme" and g("https://jobs.lever.co/zoox/abc") == "zoox"
     assert g("https://intel.wd1.myworkdayjobs.com/en-US/External/job/x") == "intel" and g("https://careers.example.com/jobs/1") == "example"
     assert g("https://www.bbc.co.uk/jobs/1") == "bbc" and g("not a url") == "unknown"
+    assert g("https://apply.workable.com/huggingface/j/19A136F8E2/") == "huggingface" and g("https://jobs.gem.com/retool/4003629005") == "retool"
+    assert g("https://ats.rippling.com/acme-inc/jobs/abc") == "acme-inc" and g("https://acme.bamboohr.com/careers/12") == "acme"
+    assert g("https://netflix.recruitee.com/o/eng") == "netflix" and g("https://app.dover.com/apply/zeta/123") == "zeta"
+    assert g("https://jobs.jobvite.com/jobvite/job/oXYZ") == "jobvite" and g("https://careers-acme.icims.com/jobs/1") == "acme"
 
 
 def test_an_old_database_without_the_new_columns_is_upgraded_in_place(tmp_path):
@@ -227,6 +240,21 @@ def test_a_name_that_resolves_to_a_private_address_is_refused_and_a_public_one_i
     assert QA.add(conn, "https://gone.example.test/jobs/2")[0]["result"] == "added"                      # unresolvable: nothing internal is reached
 
 
+def test_one_stalled_dns_answer_is_retried_once(conn, monkeypatch):
+    calls = []
+
+    def flaky(*a, **k):
+        import time
+        calls.append(1)
+        if len(calls) == 1:
+            time.sleep(1)                                                                                   # first answer arrives after the limit
+        return [(2, 1, 6, "", ("93.184.216.34", 443))]
+    monkeypatch.setattr(QA, "_resolve", QA_REAL_RESOLVE)
+    monkeypatch.setattr(QA, "DNS_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(QA.socket, "getaddrinfo", flaky)
+    assert QA.add(conn, "https://jobs.example.test/jobs/7")[0]["result"] == "added" and len(calls) == 2
+
+
 def test_a_stuck_resolver_refuses_quickly_instead_of_hanging(conn, monkeypatch):
     import time
     monkeypatch.setattr(QA, "_resolve", QA_REAL_RESOLVE)
@@ -234,4 +262,4 @@ def test_a_stuck_resolver_refuses_quickly_instead_of_hanging(conn, monkeypatch):
     monkeypatch.setattr(QA.socket, "getaddrinfo", lambda *a, **k: time.sleep(3))
     started = time.monotonic()
     out = QA.add(conn, "https://slow.example.test/jobs/1")
-    assert out[0]["result"] == "refused" and "DNS" in out[0]["note"] and time.monotonic() - started < 2
+    assert out[0]["result"] == "refused" and "DNS" in out[0]["note"] and time.monotonic() - started < 3

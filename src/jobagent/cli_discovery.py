@@ -108,6 +108,7 @@ def register(app: typer.Typer, console) -> None:
         company: str = typer.Option(None, "--company", "-c"),
         browser_mode: str = typer.Option("docker", help="Browser for the apply step: docker, desktop or auto. The queue never "
                                                         "submits, whatever the mode."),
+        no_ats: bool = typer.Option(False, "--no-ats", help="Skip the optional ATS scans while generating documents (as `jobagent run --no-ats`)."),
     ) -> None:
         """Take queued roles one at a time through the existing steps. A job closed or blocked is recorded and the
         next one starts; a run killed midway resumes (its `running` job goes back to the queue)."""
@@ -127,4 +128,4 @@ def register(app: typer.Typer, console) -> None:
 
         conn = db.connect()
         run_queue(conn, through=through, limit=limit, company=company, outputs_dir=get_settings().outputs_dir,
-                  slug_of=_slug, log=runlog("queue-run"), browser_mode=browser_mode)
+                  slug_of=_slug, log=runlog("queue-run"), browser_mode=browser_mode, pipeline_options={"no_ats": no_ats} if no_ats else None)
