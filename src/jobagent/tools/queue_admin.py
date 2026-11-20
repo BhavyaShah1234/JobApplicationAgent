@@ -142,6 +142,19 @@ def known_company(conn: sqlite3.Connection, url: str) -> str:
     return row["company"] if row else ""
 
 
+def sync_company_slug(conn: sqlite3.Connection, url: str, company: str) -> None:
+    """After a scrape names the real company, move a dashboard-added posting into that company's pacing bucket (its slug was a guess from the link).
+
+    Args:
+        conn: Open job database.
+        url: The posting address as stored.
+        company: The company the posting names.
+    """
+    if company and company.strip():
+        with conn:
+            conn.execute("UPDATE jobs SET company_slug = ? WHERE url IN (?, ?) AND source = 'dashboard'", (Q.slug(company), url, Q.canonical_url(url)))
+
+
 def _clean(value, limit: int = TEXT_LIMIT) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
 

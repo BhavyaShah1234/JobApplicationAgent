@@ -373,6 +373,8 @@ def save(jd: JobDescription, url: str, jd_text: str = "") -> tuple[str, Path]:
             "jd_json=excluded.jd_json, jd_text=excluded.jd_text, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
             (url, job_id, jd.company, jd.title, "; ".join(jd.locations), jd.portal, jd.model_dump_json(), jd_text),
         )
+    from jobagent.tools.queue_admin import sync_company_slug
+    sync_company_slug(conn, url, jd.company)             # a link added in the dashboard had its company guessed from the address
     return job_id, out
 
 

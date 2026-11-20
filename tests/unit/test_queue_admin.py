@@ -263,3 +263,15 @@ def test_a_stuck_resolver_refuses_quickly_instead_of_hanging(conn, monkeypatch):
     started = time.monotonic()
     out = QA.add(conn, "https://slow.example.test/jobs/1")
     assert out[0]["result"] == "refused" and "DNS" in out[0]["note"] and time.monotonic() - started < 3
+
+
+def test_after_the_scrape_a_dashboard_row_joins_the_real_companys_pacing_bucket(conn):
+    QA.add(conn, "https://apply.workable.com/huggingface/j/19A136F8E2/")
+    other = job(conn, 9, company="Hugging Face")                       # a discovered posting of the same company
+    url = conn.execute("SELECT url FROM jobs WHERE source = 'dashboard'").fetchone()[0]
+    assert Q.employer_key(conn.execute("SELECT company_slug FROM jobs WHERE url = ?", (url,)).fetchone()[0]) == "huggingface"
+    QA.sync_company_slug(conn, url, "Hugging Face")
+    assert conn.execute("SELECT company_slug FROM jobs WHERE url = ?", (url,)).fetchone()[0] == "hugging-face"
+    assert Q.employer_key("hugging-face") == Q.employer_key(conn.execute("SELECT company_slug FROM jobs WHERE id = ?", (other,)).fetchone()[0])
+    QA.sync_company_slug(conn, f"https://jobs.example.test/9", "Renamed")                          # a discovered row is never re-slugged
+    assert conn.execute("SELECT company_slug FROM jobs WHERE id = ?", (other,)).fetchone()[0] == "hugging-face"

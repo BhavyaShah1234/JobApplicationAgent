@@ -75,6 +75,9 @@ export default function QuestionField({ q, value, onChange, disabled, inBatch = 
         {q.section && <span className="mut">{q.section}</span>}
       </div>
       {q.help && <div className="mut qhelp">{q.help}</div>}
+      {q.kind === "radio" && (q.options || []).length === 1 && q.options[0].trim().toLowerCase() === (q.label || "").trim().toLowerCase() && (
+        <div className="warn qhelp">The agent could not read the question this choice belongs to (the text sits outside the form control). Open the Browser tab to see the page before answering.</div>
+      )}
       {control}
       {(q.quick || []).filter((w) => !(inBatch && w === "skip")).length > 0 && (
         <div className="quick">

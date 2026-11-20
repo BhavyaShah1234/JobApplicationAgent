@@ -94,3 +94,9 @@ test("a plain prompt with a quoted one-word reply gets a button for it", async (
   await userEvent.click(await screen.findByRole("button", { name: "Done" }));
   expect(sentBody(fetch)).toEqual({ id: "p1", value: "done" });
 });
+
+test("a radio whose only option is its own label warns that the question text was not read", async () => {
+  mockFetch({ "/api/hitl": [req({ questions: [spec({ kind: "radio", label: "Yes", options: ["Yes"] })] })] });
+  render(<Questions config={{ read_only: false }} />);
+  expect(await screen.findByText(/could not read the question this choice belongs to/)).toBeInTheDocument();
+});
