@@ -14,7 +14,7 @@ DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_
                         'outside_activity','employer_personal_ties','immigration_support'})
 PURPOSE_BOUND=DECLARATIONS | {'owner_identifier','work_documentation','government_employment',
     'age_threshold','work_restrictions','citizenship_countries','citizenship_status','visa_history','veteran'}
-DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys() | {'education_summary','read_ack'}
+DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys() | {'education_summary','read_ack','residency'}
 
 GOVERNMENT_HISTORY=frozenset({'current or former government employee',
     'are you a current or former government employee',
@@ -59,7 +59,9 @@ def family(text):
       ('work_documentation',r'\b(?:can|could|will|would) you (?:provide|present|produce|supply|furnish|show)\b.*\b(?:documentation|documents?|proof|evidence)\b.*\b(?:identity|identification|right to work|eligibility to work|work eligibility|employment eligibility|work authorization)\b'),
       ('sponsorship',r'sponsor'),('work_authorization',r'legally authorized|eligible to work|authorized to work'),
       ('citizenship_status',r'\bcitizen(?:ship)?\b|\bnational\b|permanent resident|\brefugee\b|\basylee\b'),
-      ('residency',r'(?:resident|reside|live) (?:of|in) (?:the )?(?:state|california|arizona|new york|texas|united states)|resident of'),
+      ('residency',r'(?:resident|reside|live) (?:of|in) (?:the )?(?:state|california|arizona|new york|texas|united states)|resident of|'
+                   r'\b(?:located|based|reside|live)\b.*\b(?:east coast|west coast|time ?zones?)\b|'
+                   r'\b(?:east coast|west coast|time ?zones?)\b.*\b(?:located|based|reside|live)\b'),
       ('offer_deadline',r'offer.*deadline|competing.*deadline'),
       ('office_preferences',r'location preference|office.*preference|locations.*(?:work|open|placed)'),
       ('pronouns',r'\bpronouns\b'),('gender',r'gender|^sex$'),('race',r'\brace\b|ethnicity'),
@@ -502,7 +504,7 @@ def evidence_allows(field,fact,route_info):
 def binding_valid(field,bound,value,route_info):
     if any(x.id not in route_info.fact_ids for x in bound):return False
     if not all(evidence_allows(field,x,route_info) for x in bound):return False
-    protected=PURPOSE_BOUND | {'external_sharing','clearance_eligibility','clearance_held','arbitration','read_ack','privacy_consent','future_contact','sms_consent','ai_consent','sponsorship','work_authorization'}
+    protected=PURPOSE_BOUND | {'external_sharing','clearance_eligibility','clearance_held','arbitration','read_ack','privacy_consent','future_contact','sms_consent','ai_consent','sponsorship','work_authorization','residency'}
     if route_info.family in protected:
         if not bound or any(fact_family(x)!=route_info.family for x in bound):return False
         if any(x.authority!='owner' for x in bound):return False

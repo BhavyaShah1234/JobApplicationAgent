@@ -75,6 +75,28 @@ def test_residence_predicate_compares_the_actual_state():
     assert resolve_routed(f,facts).value=='No'
 
 
+@pytest.mark.parametrize('adaptive',[False,True])
+def test_timezone_residence_cannot_borrow_work_authorization_or_selected_application_address(adaptive):
+    from jobagent.filling.adaptive import AdaptiveFiller
+    from jobagent.filling.facts import Decision
+    label='This role requires that you are located on the East Coast of the United States or in the Eastern Time Zone. Do you meet this requirement?'
+    field=forms.Field(id=0,kind='radio',label=label,required=True,options=['Yes','No'])
+    facts=[Fact('authorization',['Are you legally authorized to work in the United States?'],'Yes','applicant/work_authorization'),
+           Fact('relocation',['Are you willing to relocate?'],'Yes','applicant/preferences'),
+           Fact('owner.residence.state',['Actual residence state'],'Arizona','personal/address/state'),
+           Fact('application-address',['State'],'Massachusetts','application/address')]
+    assert route(field,facts).family=='residency'
+    assert resolve_routed(field,facts).value is None
+    assert not binding_valid(field,[facts[0]],'Yes',route(field,[facts[0]]))
+    asked=[]
+    def ask(questions):
+        asked.append(questions);return {}
+    filler=(AdaptiveFiller if adaptive else PlannedFiller)(facts,ask,
+        source_resolver=lambda fields,answers:{0:Decision('Yes','applicant/work_authorization','authorization')})
+    assert filler.plan([field])[0].value is None and len(asked)==1
+    assert resolve_routed(field,[*facts,Fact('exact',[label],'No','applicant/history')]).value=='No'
+
+
 def test_today_rule_is_authorized_date_evidence():
     facts=compile_facts({'dates':[{'question':'Signature date','seen':['Date'], 'answer':'',
         'instructions':"Today's date in the form's format (MM/DD/YYYY)."}]},'',reference_date='2026-11-15')
