@@ -14,3 +14,8 @@ def test_compact_seconds_cannot_be_established_by_milliseconds():
     seconds = NC.metric_tokens('Reduced build time by 1.5s.')
     assert seconds
     assert seconds != NC.metric_tokens('Reduced build time by 1.5ms.')
+
+
+@pytest.mark.parametrize('written,full', [('Completed builds in 40s.', 'Completed builds in 40 seconds.'), ('Reduced builds from 40s to 8s.', 'Reduced builds from 40 seconds to 8 seconds.')])
+def test_time_prepositions_do_not_turn_build_durations_into_decades(written, full):
+    assert NC.metric_tokens(written) == NC.metric_tokens(full)

@@ -36,7 +36,7 @@ _COUNTED = ("endpoints?|services?|microservices?|users?|customers?|clients?|reco
 _SIZE_OR_TIME = re.compile(r"(?i)^(?:seconds?|minutes?|hours?|days?|weeks?|GB|TB|MB|PB|s|secs?|mins?|hrs?|h)$")
 # Compact durations written without a space: "1.5s", "40s", "10min", "2hrs". "1990s"/"in the 90s" are decades, not durations. Milliseconds ("40ms") are METRIC's.
 COMPACT_TIME = re.compile(rf"(?<![\w.$])({_NUM})(s|secs?|mins?|hrs?|h)\b", re.I)
-_DECADE_BEFORE = re.compile(r"(?i)(?:\b(?:the|in|of|during|early|late|mid|since|from|until|and)\s+|['\u2019])$")
+_DECADE_BEFORE = re.compile(r"(?i)(?:\b(?:the|early|late|mid)\s+|['\u2019])$")
 _VERSIONED_BEFORE = re.compile(r"(?i)(?:version|v|python|java|node|react|angular|vue|spring|django|ios|android|ubuntu|windows|iso|iec|wcag|soc|section|rfc|top|tls|http|ipv)\s*$")
 QUANTITY = re.compile(
     rf"(?<![\w.$])({_NUM}\s?[kKmMbB]?\+?(?:\s(?:hundred|thousand|million))?|(?:{'|'.join(sorted(set(_ONES[1:] + _TENS), key=len, reverse=True))})(?:[- ](?:{'|'.join(_ONES[:9])}))?(?:\s(?:hundred|thousand|million))?)"
