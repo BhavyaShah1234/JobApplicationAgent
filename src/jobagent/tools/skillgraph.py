@@ -1029,6 +1029,97 @@ def enforce(skills: list, forbidden: set[str]) -> tuple[list, list[str]]:
     return out, dropped
 
 
+def _atoms(line) -> list[str]:
+    """The whole terms a rendered skills line prints, with the tools inside parentheses as terms of their own: `Databases (PostgreSQL, SQL)` -> Databases, PostgreSQL, SQL."""
+    out: list[str] = []
+    for raw in line.render():
+        out += [x.strip() for x in re.split(r"[(),]", raw) if x.strip()]
+    return out
+
+
+# What a line's own LABEL says it holds, per graph category. The generic `tool` category says almost nothing (the saved graph files SQL, Go, Terraform,
+# SQS and Kubernetes all under it), so it never vouches for a placement by itself.
+_LABEL_KEYS = {"database": r"database|data store|storage|\bsql\b", "language": r"language|programming", "cloud": r"cloud|devops|infrastructure|deploy|platform|ci/?cd",
+               "framework": r"framework|librar|\bweb\b|frontend|backend|\bapis?\b", "method": r"method|practice|agile|process|testing"}
+
+
+def _stem_words(text: str) -> set[str]:
+    """Words of at least four letters, plural 's' removed: `Databases & Storage` -> {database, storage}."""
+    return {re.sub(r"s$", "", w) for w in re.findall(r"[a-z]{4,}", text.lower())}
+
+
+def _line_score(line, atoms: set[str], category: str, duty: str, parents: set[str], g: "Graph", template_lines: set[str]) -> int:
+    """How strongly the evidence says this skills line is where the candidate belongs: 3 when the owner's own template groups it there, 2 for each of
+    the line's label meaning its category and its label naming the duty that suggested it; 1 when the line already holds a non-language skill from a shared duty."""
+    score = 3 if line.category.lower() in template_lines else 0
+    if category in _LABEL_KEYS and re.search(_LABEL_KEYS[category], line.category.lower()):
+        score += 2
+    if duty and _stem_words(duty) & _stem_words(line.category):
+        score += 2
+    if parents and any((sid := g.find("skill", a)) and g.nodes[sid]["category"] != "language" and parents & {d for d, _ in g.parents(sid)} for a in atoms):
+        score += 1          # broad duties ("platform design") are shared by almost everything: corroboration only, never enough alone
+    return score
+
+
+def place_skills(lines: list, owned: list[dict], g: "Graph", room: dict[str, int], source: list | None = None) -> tuple[list[tuple[str, str]], list[dict]]:
+    """Which OWNED graph candidates fit on which short skills line.
+
+    The line is chosen by evidence, strongest first: the owner's own template listing the skill under that category, the line's label meaning the
+    skill's graph category and the label naming the duty that suggested it; a shared duty with a line's skills only corroborates. The graph's `tool`
+    category alone never places anything, and a candidate with no line scoring at least 2 is omitted rather than forced (`SQL` or `Go` are not
+    padded into an arbitrary line). A skill is skipped when the resume already prints it, alone or through an alias (whole terms only: `SQL` is not
+    present because `NoSQL` is, `Go` is not in `MongoDB`). Among the lines the evidence allows, the one with room is used. Required JD terms and the
+    layout come first: only room that is left over is used.
+
+    Args:
+        lines: The writer's `SkillLine`s as they print now.
+        owned: Ranked owned suggestions, `{skill, via, score, aliases}`.
+        g: The skill graph (categories and duties of nodes).
+        room: Free characters per short line, by lower-cased label.
+        source: The owner's template skills as `(label, items)`; where it lists a candidate, that label is the strongest evidence.
+
+    Returns:
+        `(additions, omitted)`: `(line label, term)` pairs to append, and `{skill, reason}` for every candidate that was not placed.
+    """
+    present = {norm(a) for line in lines for a in _atoms(line)}
+    atoms = {line.category: [a for a in _atoms(line)] for line in lines}
+    template: dict[str, set[str]] = {}
+    for label, items in source or []:
+        for part in re.split(r"[(),]", re.sub(r"\\[a-zA-Z]+|[{}]", "", str(items))):
+            if part.strip():
+                template.setdefault(norm(part), set()).add(re.sub(r"\\[a-zA-Z]+|[{}:]", "", str(label)).strip().lower())
+    left = {k.lower(): v for k, v in room.items()}
+    added: list[tuple[str, str]] = []
+    omitted: list[dict] = []
+    seen: set[str] = set()
+    for item in owned:
+        name = item["skill"]
+        keys = {norm(name)} | {norm(a) for a in item.get("aliases", [])}
+        if keys & present or keys & seen:
+            omitted.append({"skill": name, "reason": "already on the resume (or an alias of a skill already placed)"})
+            continue
+        sid = g.find("skill", name)
+        category = g.nodes[sid]["category"] if sid else ""
+        parents = {d for d, _ in g.parents(sid)} if sid else set()
+        from_template = set().union(*(template.get(k, set()) for k in keys))
+        cost = len(name) + 2
+        scored = sorted(((_line_score(ln, set(atoms[ln.category]), category, item.get("via", ""), parents, g, from_template), left.get(ln.category.lower(), 0), ln.category)
+                         for ln in lines), key=lambda x: (-x[0], -x[1]))
+        fit = [s for s in scored if s[0] >= 2]
+        if not fit:
+            omitted.append({"skill": name, "reason": f"no resume line is reliably its category (graph category {category or 'unknown'}"
+                                                     f"{', generic tool' if category == 'tool' else ''}); not padded into an arbitrary line"})
+            continue
+        choice = next((s for s in fit if s[1] >= cost), None)
+        if not choice:
+            omitted.append({"skill": name, "reason": f"no room left on '{fit[0][2]}' ({max(0, fit[0][1])} characters)"})
+            continue
+        left[choice[2].lower()] -= cost
+        added.append((choice[2], name))
+        seen |= keys
+    return added, omitted
+
+
 def guard_resume(resume, job_dir: Path) -> None:
     """Attach this job's forbidden set to the parsed resume, from its (valid) suggestions artifact, so every render of it is checked."""
     try:

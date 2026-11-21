@@ -426,7 +426,9 @@ Experience bullets:
 - Every NEW bullet must express a complete thought and end in a period within its character budget. Rewrite the
   whole sentence more concisely if necessary; never cut off a phrase or append punctuation to an unfinished thought.
 - Every bullet is a professional, technical accomplishment: action verb + the concrete technical work (named tools,
-  techniques, systems) + the result achieved, as a metric (accuracy, throughput, latency, yield, cost, time).
+  techniques, systems) + the result achieved: a measured outcome, scope or volume where it is real and believable
+  (a count of services, endpoints, users, records or events; an absolute time such as "45 s to 8 s"; a rate; or a relative
+  change), otherwise a precise qualitative outcome. Percentages are one format among several, never the default.
 - Name a concrete, popular technology stack in every bullet: the posting's own tools first, then the ones commonly
   used for that work (e.g. LangChain, LangGraph, LlamaIndex, Hugging Face, PyTorch, FAISS, Pinecone, pgvector,
   BigQuery, Vertex AI, Airflow, dbt, MLflow, Docker, Kubernetes, Tableau, Looker), as "using X and Y". Never a
@@ -454,12 +456,16 @@ Experience bullets:
   rewording allowed). Originals never count as covering a JD item and never replace a NEW bullet. Skip ones that
   are not relevant; never pad a role to reach a count. Each role ends with 2-4 bullets.
 - Weave in tools from the qualifications and technical skills where they fit naturally.
-- Metrics: quantify results with believable, conservative numbers in units that fit the duty (e.g. downtime
-  -18%, OEE +7 pts, cycle time -12%, changeover 45 -> 20 min, first-pass yield +4%, MTTR -25%, defect escapes -30%,
-  15 technicians trained, 6 stations commissioned). Keep them modest and internally consistent; round numbers are
-  fine. Check each metric's direction: lower latency/response time/error rate/downtime/cost and higher throughput/
+- Metrics: quantify results with believable, conservative numbers in the unit that fits the duty, and MIX the kinds
+  across the resume instead of putting a percentage in every bullet. The examples below are FORMATS, not evidence:
+  scope or count ("owned 12 REST endpoints across 4 services", "trained 15 technicians"), volume ("handling about 2M
+  events per day"), absolute time ("changeover 45 -> 20 min", "builds from 40 s to 8 s"), a relative change ("downtime
+  -18%", "MTTR -25%") or, when no meaningful number exists, a precise qualitative result ("so releases no longer needed
+  a manual regression pass"). Use a percentage only where a before/after comparison is the natural measure. Keep every
+  number modest and internally consistent; round numbers are fine. Check each metric's direction: lower latency/response time/error rate/downtime/cost and higher throughput/
   uptime/reliability/accuracy are the benefits ("cutting response time by 28%", never "increasing response time by 28%"). List every number you estimated in the bullet's `estimated` field (the candidate confirms them). Numbers
-  copied from an original bullet are not estimates. Every bullet carries one metric (two at most).
+  copied from an original bullet are not estimates. Every bullet states a result; a number is optional (two at most), and a
+  qualitative result is better than an invented figure that does not fit the duty. A count, volume or duration you estimated goes in `estimated` exactly like a percentage.
 - Never repeat yourself across roles: no two bullets may share an opening phrase or say the same thing. If a
   duty appears under two roles, the second bullet must use different wording, a different angle and a different
   tool/result (e.g. one role builds the pipelines, another optimizes or monitors them).
@@ -921,7 +927,18 @@ ACADEMIC = re.compile(r"(?i)\b(faculty|professor|lab|labs|coursework|class|class
 RESULT = re.compile(r"\d|(?i:\b(cut|cutting|reduc\w*|improv\w*|enhanc\w*|increas\w*|rais\w*|boost\w*|lift\w*|enabl\w*|"
                     r"making|so that|achiev\w*|faster|eliminat\w*|prevent\w*|replac\w*|lower\w*|sav\w*|"
                     r"accelerat\w*|traceable|automat\w*|on-demand|real-time|unattended|doubl\w*|tripl\w*|reach\w*|fix\w*|"
-                    r"speed\w*|sped|trusted|scal\w*|shorten\w*|halv\w*)\b)")
+                    r"speed\w*|sped|trusted|scal\w*|shorten\w*|halv\w*|streamlin\w*|simplif\w*|stabili[sz]\w*|standardi[sz]\w*|consolidat\w*|"
+                    r"unblock\w*|resolv\w*|shipp\w*|launch\w*)\b)")
+# Numbers that name a version or standard are not an accomplishment: "Python 3.11", "WCAG 2.1 AA", "ISO 27001", "HTTP/2", "SOC 2". A dotted number followed by a unit
+# ("3.5%", "1.5 TB") is a figure and is kept.
+VERSION_NUMBER = re.compile(r"(?i)\b(?:version\s*|v)\d[\d.]*|\b(?:python|java|node(?:\.js)?|react|angular|vue|spring|django|ios|android|ubuntu|windows|iso(?:/iec)?|iec|wcag|soc|"
+                            r"section|rfc|tls|http|ipv|cuda|c\+\+|pci|nist|gdpr|hipaa|k8s|s3|ec2)[ /-]?\d[\d.]*(?:\s?(?:aaa|aa|a)\b)?|"
+                            r"\b\d+(?:\.\d+)+\b(?!\s?(?:%|x\b|ms\b|percent|tb|gb|mb|pb|k\b|m\b|b\b))")
+
+
+def has_result(text: str) -> bool:
+    """A bullet states a result: a measured quantity or relative change (versions and standards do not count) or a precise outcome verb."""
+    return bool(RESULT.search(VERSION_NUMBER.sub(" ", text)))
 COMPLETE_BULLET = re.compile(r'''[.!?]["'\u201d\u2019)\]]*\s*$''')
 TOOLISH = re.compile(r"\b(?:[A-Z][a-z]*[A-Z][A-Za-z0-9]*|[A-Z]{2,}[A-Za-z0-9]*)\b")  # ACT, CLIP, LoRA, PySpark, MuJoCo
 
@@ -1009,7 +1026,7 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
                                         for t in tech if t and t not in GENERIC_NAMES and not GENERIC_TOOLS.fullmatch(t))
             if not has_tool:
                 out.append(f"{where} names no technology/tool (AI / ML / LLM alone don't count): name the stack")
-            if not RESULT.search(b.text):
+            if not has_result(b.text):
                 no_result.append(f"{where} states no result")
             if (m := GENERIC_TOOLS.search(b.text)) and not has_tool:
                 out.append(f"{where} says \"{m.group(0)}\": name the actual tools (e.g. LangChain, PyTorch, BigQuery)")
@@ -1035,8 +1052,8 @@ class Repair(BaseModel):
 
 
 _REPAIR_TEMPLATE = f"""You fix specific bullets of a tailored resume. {{coverage_rule}} Each rewritten bullet must
-name concrete technologies, state a result (a believable estimated metric is fine;
-list it in `estimated`), stay within the length budget (about {BULLET_TARGET} characters, at most {BULLET_MAX}), not repeat any other bullet, use no academic wording and no
+name concrete technologies, state a result (a count, volume, absolute time, relative change or a precise qualitative outcome; a believable estimated figure is fine and goes
+in `estimated`, but never default to a percentage), stay within the length budget (about {BULLET_TARGET} characters, at most {BULLET_MAX}), not repeat any other bullet, use no academic wording and no
 dashes as punctuation, make every metric move the beneficial way (cut latency, response time, error rate, downtime or
 cost; raise throughput, uptime, reliability or accuracy; never present a worse metric as the achievement), and describe work done at THAT role's employer (never another employer's work). A change by
 a percentage takes "by". Finish each rewritten bullet as a complete sentence with a period INSIDE the budget.

@@ -1,8 +1,9 @@
 """Metric figures ("30%", "10x", "80 ms", "$40k", "2M", "tenfold", "tripled") in generated text, and where the owner wrote them.
 
 A bare digit string says little: "5" is also in "5+ years" and "10" in "10% travel". A generated result such as "cut latency by 5%" is the
-candidate's own figure only when the owner's own text carries that figure. Technology versions ("Python 3.11", "CUDA 12", "ISO 26262") and plain
-counts are not metrics and stay as they were: they are matched by their digits.
+candidate's own figure only when the owner's own text carries that figure. Counted quantities ("12 API endpoints", "40 engineers", "6 weeks") are figures
+of the same kind (`quantity_spans`). Technology versions ("Python 3.11", "CUDA 12", "ISO 26262") and other bare numbers are not metrics and stay as
+they were: they are matched by their digits.
 """
 import re
 
@@ -24,6 +25,38 @@ _ONES = "one two three four five six seven eight nine ten eleven twelve thirteen
 _TENS = "twenty thirty forty fifty sixty seventy eighty ninety".split()
 _WORD_NUMBER = {w: i for i, w in enumerate(_ONES, 1)} | {w: 10 * i for i, w in enumerate(_TENS, 2)} | {"hundred": 100}
 WORD_PERCENT = re.compile(rf"(?i)\b((?:{'|'.join(_TENS)})(?:[- ](?:{'|'.join(_ONES[:9])}))?|{'|'.join(_ONES)}|(?:one )?hundred)\s+percent\b")
+
+
+# A counted quantity: "12 API endpoints", "3 services", "40 engineers", "2 TB", "five million events". Versions and standards ("Python 3.11", "WCAG 2.1",
+# "ISO 27001") and "one of the services" are not accomplishments and never match; "years" is handled by `claimed_years`.
+_COUNTED = ("endpoints?|services?|microservices?|users?|customers?|clients?|records?|events?|requests?|queries|transactions?|tests?|test cases?|pipelines?|dashboards?|"
+            "models?|engineers?|developers?|technicians?|teams?|repositories|repos?|jobs?|tickets?|datasets?|stations?|systems?|applications?|apps?|integrations?|workflows?|"
+            "APIs?|sensors?|devices?|machines?|documents?|images?|files?|rows|messages|alerts?|incidents?|releases?|features?|modules?|components?|environments?|clusters?|"
+            "nodes?|containers?|seconds?|minutes?|hours?|days?|weeks?|GB|TB|MB|PB")
+_SIZE_OR_TIME = re.compile(r"(?i)^(?:seconds?|minutes?|hours?|days?|weeks?|GB|TB|MB|PB)$")
+_VERSIONED_BEFORE = re.compile(r"(?i)(?:version|v|python|java|node|react|angular|vue|spring|django|ios|android|ubuntu|windows|iso|iec|wcag|soc|section|rfc|top|tls|http|ipv)\s*$")
+QUANTITY = re.compile(
+    rf"(?<![\w.$])({_NUM}\s?[kKmMbB]?\+?(?:\s(?:hundred|thousand|million))?|(?:{'|'.join(sorted(set(_ONES[1:] + _TENS), key=len, reverse=True))})(?:[- ](?:{'|'.join(_ONES[:9])}))?(?:\s(?:hundred|thousand|million))?)"
+    rf"\s+(?:(?!(?:{_COUNTED})\b)[A-Za-z][\w/-]*\s+){{0,2}}((?:{_COUNTED})\b(?:\s+(?:{_COUNTED})\b)*)", re.I)
+
+
+def quantity_spans(text: str) -> dict[str, str]:
+    """Counted quantities in `text` as `{normalised token: wording as written}`: `12 API endpoints` -> `{'12endpoint': '12 API endpoints'}`."""
+    found: dict[str, str] = {}
+    for m in QUANTITY.finditer(text or ""):
+        number, noun = m.group(1).strip(), m.group(2).lower().split()[-1]            # "API endpoints" counts endpoints
+        if number.lower() == "one" or _VERSIONED_BEFORE.search(text[max(0, m.start() - 14):m.start()]):
+            continue
+        if "." in number and not _SIZE_OR_TIME.match(noun):
+            continue                                                           # 3.11 services is a version, 1.5 TB a size
+        scale = {"hundred": 100, "thousand": 1000, "million": 10**6}.get(number.lower().split()[-1], 1)
+        base = number.rsplit(" ", 1)[0] if scale > 1 else number
+        digits_ = (re.sub(r"[,+\s]", "", base.lower()) if scale == 1 else str(int(float(base.replace(",", ""))) * scale)) if number[:1].isdigit() \
+            else str(_word_number(base) * scale)
+        stem = re.sub(r"ies$", "y", noun)
+        stem = stem if stem.upper() in {"GB", "TB", "MB", "PB"} else re.sub(r"s$", "", stem)
+        found.setdefault(digits_ + re.sub(r"\s", "", stem), m.group(0).strip())
+    return found
 
 
 def _word_number(words: str) -> int:
@@ -55,6 +88,8 @@ def metric_spans(text: str) -> dict[str, str]:
     found: dict[str, str] = {}
     for m in METRIC.finditer(text or ""):
         found.setdefault(_norm(m.group(0)), m.group(0).strip())
+    for token, written in quantity_spans(text).items():
+        found.setdefault(token, written)                                       # counts and volumes are accomplishment figures too
     for m in WORD_PERCENT.finditer(text or ""):
         found.setdefault(f"{_word_number(m.group(1))}%", m.group(0).strip())      # "twenty percent" is the figure 20%
     for m in WORDS.finditer(text or ""):

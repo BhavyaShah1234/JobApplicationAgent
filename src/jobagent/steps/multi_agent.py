@@ -369,6 +369,7 @@ class State(TypedDict, total=False):
     content_error: str
     semantic_hard: list[str]
     skills_padding_attempted: bool
+    skills_allocations: int
     hard: list
     budget_feedback: dict            # initial limited-site feedback retained during unlimited-site refinements
     history: Annotated[list, operator.add]
@@ -879,6 +880,10 @@ def check_layout(state: State) -> dict:
         tasks["skills"].append("Supply at least three coherent, nonempty categories using only permitted skills. "
                                "Do not restore a skill removed by the ownership gate.")
     lay = layout.check(job_dir / "resume.pdf") if pages == 1 and not err else None
+    allocations = state.get("skills_allocations", 0)
+    if lay and lay.short_skills and (ctx.get("graph") or {}).get("owned") and allocations < 2 and not tasks["experience"] + tasks["skills"]:
+        allocations += 1
+        f, tex, problems, pages, err, lay = _allocate_graph_skills(state, f, tex, problems, pages, err, lay, allocations)
     proj_path = job_dir / "projects.json"
     st = json.loads(proj_path.read_text()) if proj_path.exists() else None
     if st:
@@ -975,7 +980,86 @@ def check_layout(state: State) -> dict:
     return {"f": f, "tasks": tasks, "layout_issues": [x for t in tasks.values() for x in t],
             "hard": hard, **kept,
             "layout_pass": state.get("layout_pass", 0) + 1, "history": [f"validator {n}"],
-            "reviewed": reviewed, "skills_padding_attempted": padding_attempted, **reviewed_content}
+            "reviewed": reviewed, "skills_padding_attempted": padding_attempted, "skills_allocations": allocations, **reviewed_content}
+
+
+def _allocate_graph_skills(state: State, f, tex, problems, pages, err, lay, attempt: int):
+    """Use leftover room on short skills lines for OWNED skill-graph candidates (no model call).
+
+    Required JD terms and the one-page layout come first: this runs only when nothing else is pending, places each candidate on the line of its own
+    category, renders the result and keeps it only when the page is still one page with no new layout finding and no lost free space; otherwise
+    the writer's own version is rendered again. Offered, added and omitted candidates (with reasons) go to `skill_allocation.json`, a separate
+    output so the input fingerprint of `skill_suggestions.json` is untouched.
+
+    Returns:
+        The (possibly new) content, LaTeX, problems, page count, compile error and layout report.
+    """
+    ctx = state["ctx"]
+    job_dir, log = ctx["job_dir"], ctx["log"]
+    owned = list((ctx.get("graph") or {}).get("owned") or [])
+    record = {"attempt": attempt, "offered": [x["skill"] for x in owned], "added": [], "omitted": [], "kept": False}
+    try:
+        room = {k: max(0, round((1 - v) * 115)) for k, v in lay.skill_fill.items() if v < 0.85}
+        added, omitted = SG.place_skills(f.skills, owned, SG.load(), room, getattr(ctx["r"], "skills", None))
+        record["omitted"] = omitted
+
+        def with_lines(chosen: list[tuple[str, str]]):
+            """The writer's content with these (line, term) pairs appended."""
+            lines = [ln.model_copy(update={"terms": ln.terms + [n for c, n in chosen if c == ln.category]}) for ln in f.skills]
+            return f.model_copy(update={"skills": lines})
+
+        def fits(result) -> tuple[bool, object]:
+            """Whether a render is still one page with no new finding, no new problem and no lost space (and its layout report)."""
+            _, _, problems2, pages2, err2 = result
+            lay2 = layout.check(job_dir / "resume.pdf") if pages2 == 1 and not err2 else None
+            ok = (lay2 is not None and set(lay2.issues) <= set(lay.issues) and not (set(problems2) - set(problems))
+                  and (lay.free_pt is None or lay2.free_pt is None or lay2.free_pt >= lay.free_pt - 1))
+            return ok, lay2
+
+        keep: list[tuple[str, str]] = []
+        final = None
+        if added:
+            result = render({**state, "f": with_lines(added)})              # all at once first
+            ok, lay2 = fits(result)
+            if ok:
+                keep, final = list(added), (result, lay2)
+            else:                                                           # then one line at a time (bounded by the number of lines), keeping what fits
+                for line in dict.fromkeys(c for c, _ in added):
+                    trial = keep + [x for x in added if x[0] == line]
+                    result = render({**state, "f": with_lines(trial)})
+                    ok, lay2 = fits(result)
+                    if ok:
+                        keep, final = trial, (result, lay2)
+                    else:
+                        record["omitted"] += [{"skill": n, "reason": f"rendering with it on '{line}' left the page worse (a new finding, a wrapped line or lost space)"}
+                                              for c, n in added if c == line]
+        if keep:
+            result, lay2 = final
+            if keep != added or final is None:                              # the last render on disk must be the kept state
+                result = render({**state, "f": with_lines(keep)})
+                lay2 = layout.check(job_dir / "resume.pdf")
+            record["added"] = [{"skill": n, "line": c} for c, n in keep]
+            record["kept"] = True
+            log(f"skill graph: added {[n for _, n in keep]} to short skills lines")
+            _write_json(job_dir / "skill_allocation.json", record)
+            f2, tex2, problems2, pages2, err2 = result
+            return f2, tex2, problems2, pages2, err2, lay2
+        if added:
+            f, tex, problems, pages, err = render(state)                    # restore the writer's own files on disk
+            lay = layout.check(job_dir / "resume.pdf") if pages == 1 and not err else lay
+    except Exception as exc:                                                # the graph never stops a run
+        record["omitted"].append({"skill": "*", "reason": f"allocation skipped: {type(exc).__name__}"})
+        f, tex, problems, pages, err = render(state)
+        lay = layout.check(job_dir / "resume.pdf") if pages == 1 and not err else lay
+    _write_json(job_dir / "skill_allocation.json", record)
+    return f, tex, problems, pages, err, lay
+
+
+def _write_json(path: Path, data: dict) -> None:
+    """Write a small diagnostic file atomically."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=1))
+    tmp.replace(path)
 
 
 SUMMARY_MAX = T.SUMMARY_MAX          # one definition (tools/tailor.py) for the schema, the prompts and this check (F18)
@@ -1449,7 +1533,7 @@ def route(state: State) -> dict:
         agent = "projects" if "project" in h or "blank" in h else "skills" if "skills" in h else "experience"
         tasks.setdefault(agent, []).append(f"Page problem to fix: {h}")
     ctx["log"]("routed: " + ", ".join(f"{a} {len(t)}" for a, t in tasks.items()))
-    return {"tasks": tasks, "layout_pass": 0, "reviewed": False, "skills_padding_attempted": False}
+    return {"tasks": tasks, "layout_pass": 0, "reviewed": False, "skills_padding_attempted": False, "skills_allocations": 0}
 
 
 def build_graph(start="write"):

@@ -282,3 +282,116 @@ def test_prune_removes_place_names_older_builds_stored():
     nid = g.add("skill", "WA", "tool", "old")
     g.link(g.find("duty", "cloud infrastructure"), nid, "old")
     assert g.prune_noise() == ["WA"] and g.find("skill", "WA") is None and g.find("skill", "Kubernetes")
+
+
+def _lines(*pairs):
+    from jobagent.tools.tailor import SkillLine
+    return [SkillLine(category=c, terms=list(ts)) for c, ts in pairs]
+
+
+def _typed_graph():
+    g = SG.Graph()
+    for name, cat in [("PostgreSQL", "database"), ("MongoDB", "database"), ("SQL", "database"), ("Redis", "database"), ("Go", "language"), ("Python", "language"),
+                      ("Kubernetes", "cloud"), ("Terraform", "tool"), ("SQS", "cloud"), ("NoSQL", "database")]:
+        sid = g.node_id("skill", name)
+        g.nodes[sid] = {"id": sid, "kind": "skill", "name": name, "aliases": [], "category": cat, "sources": []}
+    return g
+
+
+def item(name, aliases=(), via="platform design"):
+    return {"skill": name, "via": via, "score": 1.0, "aliases": list(aliases)}
+
+
+def test_sql_is_not_present_because_nosql_is_and_go_is_not_in_mongodb():
+    lines = _lines(("Databases", ["PostgreSQL", "NoSQL (MongoDB)"]), ("Languages", ["Python"]))
+    added, omitted = SG.place_skills(lines, [item("SQL"), item("Go")], _typed_graph(), {"databases": 40, "languages": 40})
+    assert ("Databases", "SQL") in added and ("Languages", "Go") in added, (added, omitted)
+
+
+def test_a_true_alias_or_an_exact_term_is_not_added_twice():
+    lines = _lines(("Databases", ["PostgreSQL", "Redis"]))
+    added, omitted = SG.place_skills(lines, [item("Postgres", ["PostgreSQL"]), item("Redis")], _typed_graph(), {"databases": 60})
+    assert not added and len(omitted) == 2 and all("already" in o["reason"] for o in omitted)
+
+
+def test_a_candidate_goes_to_the_line_its_label_says_and_a_generic_tool_is_never_forced():
+    lines = _lines(("Cloud & DevOps", ["Kubernetes", "SQS"]), ("Databases", ["Relational databases", "ORMs"]))
+    added, omitted = SG.place_skills(lines, [item("Redis"), item("Terraform")], _typed_graph(), {"cloud & devops": 60, "databases": 60})
+    assert added == [("Databases", "Redis")]                                      # Terraform is a generic tool: no line is reliably its category
+    assert "arbitrary" in omitted[0]["reason"]
+
+
+def test_the_real_cvs_shape_descriptive_database_terms_take_redis_and_sql_but_not_go_or_terraform():
+    g = _typed_graph()
+    for n in ("SQL", "Go", "Terraform"):
+        g.nodes[g.find("skill", n)]["category"] = "tool"                          # the saved graph files them all under `tool`
+    duty = "duty:databases"
+    g.nodes[duty] = {"id": duty, "kind": "duty", "name": "databases", "aliases": [], "category": "", "sources": []}
+    g.edges[f"{duty}>{g.find('skill', 'SQL')}"] = {"src": duty, "dst": g.find("skill", "SQL"), "weight": 1, "postings": []}
+    lines = _lines(("Databases", ["Relational databases", "NoSQL databases", "ORMs"]), ("Scripting and Automation", ["Python", "Shell"]),
+                   ("DevOps and Cloud", ["Docker", "AWS"]))
+    owned = [item("Redis", via="distributed systems"), item("SQL", via="databases"), item("Go"), item("Terraform")]
+    added, omitted = SG.place_skills(lines, owned, g, {"databases": 64, "scripting and automation": 67, "devops and cloud": 18})
+    assert added == [("Databases", "Redis"), ("Databases", "SQL")], (added, omitted)
+    assert {o["skill"] for o in omitted} == {"Go", "Terraform"}
+
+
+def test_the_owners_own_template_grouping_is_the_strongest_evidence():
+    g = _typed_graph()
+    lines = _lines(("Infrastructure", ["Docker"]), ("Backend", ["FastAPI"]))
+    added, _ = SG.place_skills(lines, [item("Terraform")], g, {"infrastructure": 40, "backend": 40}, [("Infrastructure", r"\\textbf{x} Docker, Terraform")])
+    assert added == [("Infrastructure", "Terraform")]
+
+
+def test_a_full_best_line_does_not_block_a_compatible_second_line():
+    lines = _lines(("Databases", ["PostgreSQL"]), ("Data Storage", ["S3"]))
+    added, _ = SG.place_skills(lines, [item("Redis")], _typed_graph(), {"databases": 3, "data storage": 40})
+    assert added == [("Data Storage", "Redis")]
+
+
+def test_a_candidate_without_a_category_line_or_room_is_omitted_with_a_reason():
+    lines = _lines(("Databases", ["PostgreSQL"]))
+    added, omitted = SG.place_skills(lines, [item("Terraform"), item("Redis"), item("MongoDB")], _typed_graph(), {"databases": 6})
+    assert not added
+    reasons = {o["skill"]: o["reason"] for o in omitted}
+    assert "category" in reasons["Terraform"] and "no room" in reasons["Redis"] and "no room" in reasons["MongoDB"]
+
+
+def test_room_is_shared_between_candidates_on_one_line():
+    lines = _lines(("Databases", ["PostgreSQL"]))
+    added, omitted = SG.place_skills(lines, [item("Redis"), item("MongoDB"), item("SQL")], _typed_graph(), {"databases": 17})
+    assert [n for _, n in added] == ["Redis", "MongoDB"][:len(added)] and len(added) == 2 and omitted and omitted[0]["skill"] == "SQL"
+
+
+def test_the_allocation_step_keeps_the_lines_that_fit_and_drops_only_the_one_that_does_not(tmp_path, monkeypatch):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools.tailor import Filled, SkillLine
+    f = Filled.model_construct(summary="s", roles=[], skills=[SkillLine(category="Databases", terms=["Relational databases"]),
+                                                              SkillLine(category="DevOps and Cloud", terms=["Docker"])], notes="")
+    lay = SimpleNamespace(skill_fill={"Databases": 0.2, "DevOps and Cloud": 0.2}, short_skills=["Databases", "DevOps and Cloud"], issues=[], free_pt=0.0)
+    monkeypatch.setattr(M.SG, "load", lambda *a, **k: _typed_graph())
+    monkeypatch.setattr(M.SG, "place_skills", lambda lines, owned, g, room, source=None: ([("Databases", "Redis"), ("DevOps and Cloud", "Terraform")], []))
+
+    def render(state):
+        return state["f"], "tex", [], 1, ""
+    monkeypatch.setattr(M, "render", render)
+    monkeypatch.setattr(M.layout, "check", lambda path: SimpleNamespace(
+        issues=[] if all(len(ln.terms) < 3 and "Terraform" not in ln.terms for ln in monkeypatch_state["f"].skills) else ["Technical Skills wrap"], free_pt=0.0,
+        skill_fill=lay.skill_fill, short_skills=lay.short_skills))
+    monkeypatch_state = {}
+    seen = []
+
+    def render2(state):
+        monkeypatch_state["f"] = state["f"]
+        seen.append([t for ln in state["f"].skills for t in ln.terms])
+        return state["f"], "tex", [], 1, ""
+    monkeypatch.setattr(M, "render", render2)
+    (tmp_path / "resume.pdf").write_bytes(b"x")
+    state = {"ctx": {"job_dir": tmp_path, "log": lambda *a, **k: None, "graph": {"owned": [item("Redis"), item("Terraform")]}, "r": SimpleNamespace(skills=[])}, "f": f}
+    f2, tex, problems, pages, err, lay2 = M._allocate_graph_skills(state, f, "tex", [], 1, "", lay, 1)
+    terms = {ln.category: ln.terms for ln in f2.skills}
+    assert terms["Databases"] == ["Relational databases", "Redis"] and terms["DevOps and Cloud"] == ["Docker"]
+    record = json.loads((tmp_path / "skill_allocation.json").read_text())
+    assert record["kept"] and record["added"] == [{"skill": "Redis", "line": "Databases"}] and any(o["skill"] == "Terraform" for o in record["omitted"])
+    assert len(seen) <= 4                                                           # bounded: one all-at-once render, one per line, one to restore the kept state
+    assert not (tmp_path / "skill_suggestions.json").exists()                       # the input fingerprint file is untouched
