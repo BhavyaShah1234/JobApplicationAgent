@@ -65,5 +65,5 @@ def model_version(stage=None):
         names=('tools/incremental_documents.py','steps/multi_agent.py','tools/tailor.py')
     # Shared metric/tenure policy affects both generated content and its
     # acceptance. A helper-only correction must invalidate older artifacts.
-    names=(*names,'tools/number_claims.py')
+    names=(*names,'tools/number_claims.py','tools/metric_direction.py')
     return digest({n: (root / n).read_text() for n in names if (root / n).exists()})

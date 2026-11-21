@@ -164,10 +164,10 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
         for sentence in re.split(r"(?<=[.!?])\s+", p.text):          # a figure needs its own spelling in a source, not just the same digits
             # A first-person RESULT ("I cut latency by 30%", "my team tripled...") is the candidate's claim and needs the resume; a figure about the
             # company or posting ("Acme grew 30%", "I admire that") may cite the posting or the company profile.
-            mine = bool(re.search(r"(?i)\b(?:I|we)\s+(?:(?:have|has|had|am|are|was|were|been)\s+)*(?:\w+ly\s+)?"
+            past_result = bool(re.search(r"(?i)\b(?:I|we)\s+(?:(?:have|has|had|am|are|was|were|been)\s+)*(?:\w+ly\s+)?"
                                   r"(?!(?:admired|appreciated|noticed|impressed|excited|interested|attracted)\b)"
-                                  r"(?:[a-z]+ed|cut|built|led|ran|wrote|drove|grew|saved|sped|won|made|did|began|took|got|responsible)\b"
-                                  r"|\bmy\s+(?:\w+\s+){0,2}(?:work|team|role|project|contribution)s?\b", sentence))
+                                  r"(?:[a-z]+ed|cut|built|led|ran|wrote|drove|grew|saved|sped|won|made|did|began|took|got|responsible)\b", sentence))
+            mine = past_result or bool(re.search(r"(?i)\bmy\s+(?:\w+\s+){0,2}(?:work|team|role|project|contribution)s?\b", sentence))
             for token, written in NC.metric_spans(sentence).items():
                 if token[0].isdigit() or token[0] == "$":
                     if NC.digits(token) not in known_numbers:
@@ -176,11 +176,16 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
                     issues.append(f"paragraph {k}: the figure {written!r} is not in "
                                   + ("your resume (the posting and company profile do not establish your results)" if mine
                                      else "the resume, posting or company profile"))
+            # This is a candidate-achievement check, not a ban on faithfully sourced company facts or future aims.
+            # Retain an explicit first-person past result even when the sentence also contains a future goal.
+            future_intent = bool(re.search(r"(?i)\b(?:look(?:ing)?\s+forward|(?:am|are)\s+(?:eager|excited|keen)|"
+                                           r"(?:hope|aim|plan|intend|seek|want)\s+to|will|would|could)\b", sentence))
+            if mine and (past_result or not future_intent):
+                for why in MD.contradictions(sentence) + MD.inversions(sentence, to_plain(resume)):
+                    issues.append(f"paragraph {k}: metric-direction contradiction: {why}")
         for name in sorted((set(TOOLISH.findall(p.text)) | proper_nouns(p.text)) - _NOT_TOOLS):
             if name.lower() not in low:
                 issues.append(f"paragraph {k}: {name!r} is not in the resume, posting or company profile")
-        for why in MD.contradictions(p.text) + MD.inversions(p.text, to_plain(resume)):
-            issues.append(f"paragraph {k}: metric-direction contradiction: {why}")
         if dashes := len(DASH.findall(p.text)):
             issues.append(f"paragraph {k}: {dashes} dash(es) used as punctuation; rewrite with commas, semicolons, "
                           "colons or separate sentences")

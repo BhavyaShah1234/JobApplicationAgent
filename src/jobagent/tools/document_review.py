@@ -135,7 +135,8 @@ def adjudicate(ctx, filled, findings):
     inventories = [figure_inventory(f.issue, section_text[f.agent]) for f in errors]
     facts = {'summary_title_prefix_matches': M._title_prefix(filled.summary, ctx['jd'].title),
              'expected_title': ctx['jd'].title,
-             'metric_direction': [why for role in filled.roles for b in role.bullets for why in MD.contradictions(b.text)],
+             'metric_direction': [why for role in filled.roles for b in role.bullets
+                                  if not T.is_verbatim(ctx['r'], role.role, b) for why in MD.contradictions(b.text)],
              'nonempty_skills': claims['skills'],
              'immutable_role_headers': {name: 'role:' + name.split(':')[1]
                                         for name in claims if name.startswith('role-header:')},
