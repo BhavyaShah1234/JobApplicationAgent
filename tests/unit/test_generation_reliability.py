@@ -305,14 +305,17 @@ def test_employer_name_is_not_a_technology_but_an_explicit_product_still_is():
 def test_native_project_repair_can_correct_a_short_variant_and_rejects_truncation(tmp_path, monkeypatch, incremental):
     from jobagent.steps import ats as A
     from pydantic import ValidationError
-    before = {'kept': 1, 'short': ['owner/source'], 'ranked': [{
-        'repo': 'owner/source', 'title': 'Source Project', 'paragraph': 'Retain this full description.',
+    complete = ('Teams needed reliable cloud deployment. Built a Python and Terraform deployment system '
+                'with validated configuration and repeatable infrastructure updates.')
+    # fixture contract (source-sentence binding): the project carries the saved card its sentences come from
+    source = {'full_name': 'owner/source', 'title': 'Source Project', 'summary': complete + ' It ensures consistent, validated AWS environments for every team.'}
+    full = 'Retain this full description of the platform. ' * 5
+    before = {'kept': 1, 'short': ['owner/source'], 'evidence': {'owner/source': source}, 'ranked': [{
+        'repo': 'owner/source', 'title': 'Source Project', 'paragraph': full.strip(),
         'short': 'Built cloud automation. It ensures consistent, validated AWS'}]}
     (tmp_path / 'projects.json').write_text(json.dumps(before))
     monkeypatch.setattr(M.llm, 'writer', lambda *a, **kw: object())
     monkeypatch.setattr(M, '_context', lambda *a, **kw: 'Actual project sources')
-    complete = ('Teams needed reliable cloud deployment. Built a Python and Terraform deployment system '
-                'with validated configuration and repeatable infrastructure updates.')
     def generate(ctx, stage, model, schema, messages, **kwargs):
         with pytest.raises(ValidationError, match='complete sentence'):
             schema.model_validate({'projects': [{'project': 1, 'short': before['ranked'][0]['short']}]})
@@ -326,29 +329,38 @@ def test_native_project_repair_can_correct_a_short_variant_and_rejects_truncatio
     assert after['ranked'][0]['paragraph'] == before['ranked'][0]['paragraph']
     assert after['ranked'][0]['short'] == complete
     assert M.P.content_findings(after) == []
+    assert 'short' not in ' '.join(M.P.binding_findings({**after, 'ranked': [{**after['ranked'][0], 'paragraph': complete}]}))
 
 
 @pytest.mark.parametrize('incremental', [False, True])
 def test_long_project_repair_keeps_complete_source_sentences_without_truncating_words(tmp_path, monkeypatch, incremental):
     from pydantic import ValidationError
-    (tmp_path / 'projects.json').write_text('{}')
-    monkeypatch.setattr(M.llm, 'writer', lambda *args, **kwargs: object())
-    monkeypatch.setattr(M, '_context', lambda *args, **kwargs: 'The actual repository evidence')
     prefix = ('Engineering teams needed repeatable infrastructure deployment across development and production environments. '
               'Built a Python and Terraform platform with validated configuration, automated provisioning and reproducible updates.')
-    long = prefix + ' It also supports ' + 'source verified deployment workflows and configuration audit logs ' * 4 + 'for distributed teams.'
-    assert 420 < len(long) < 700
+    overlong = 'Infrastructure ' * 35 + 'deployment.'
+    tail = 'It also supports ' + 'source verified deployment workflows and configuration audit logs ' * 4 + 'for distributed teams.'
+    # fixture contract (source-sentence binding): the repair chooses among the saved card's numbered sentences
+    card = {'full_name': 'owner/source', 'title': 'Source Project', 'summary': f'{prefix} {tail} {overlong}'}
+    state = {'kept': 1, 'short': [], 'evidence': {'owner/source': card},
+             'ranked': [{'repo': 'owner/source', 'title': 'Source Project', 'paragraph': prefix, 'short': ''}]}
+    (tmp_path / 'projects.json').write_text(json.dumps(state))
+    monkeypatch.setattr(M.llm, 'writer', lambda *args, **kwargs: object())
+    monkeypatch.setattr(M, '_context', lambda *args, **kwargs: 'The actual repository evidence')
+    assert 420 < len(prefix + ' ' + tail) < 700 and len(overlong) > 470
     def generate(ctx, stage, model, schema, messages, **kwargs):
         # A single overlong sentence cannot be turned into a fake complete one.
         with pytest.raises(ValidationError, match='no complete useful prefix'):
-            schema.model_validate({'projects': [{'project': 1, 'paragraph': 'Infrastructure ' * 35 + 'deployment.'}]})
-        return schema.model_validate({'projects': [{'project': 1, 'paragraph': long}]})
+            schema.model_validate({'projects': [{'project': 1, 'paragraph_sentences': [4]}]})
+        # arbitrary prose, even prose that looks like the sources, is not a selection
+        with pytest.raises(ValidationError, match='complete sentence'):
+            schema.model_validate({'projects': [{'project': 1, 'paragraph': prefix + ' It also supports source verified deployment workflows.'}]})
+        return schema.model_validate({'projects': [{'project': 1, 'paragraph_sentences': [1, 2, 3]}]})
     monkeypatch.setattr(M, '_invoke', generate)
     _, out = M._run_agent({'job_dir': tmp_path, 'models': {'projects': 'fixture'},
                           'log': lambda _: None, 'incremental': incremental},
                          'projects', None, ['Shorten project 1 to fit, preserving its own facts.'], '')
-    assert out is not None and out.projects[0].paragraph == prefix
-    assert len(out.projects[0].paragraph) <= T.PARAGRAPH_MAX
+    assert out is not None and out.projects[0].paragraph == prefix          # the over-limit third sentence is left out whole, never cut
+    assert len(out.projects[0].paragraph) <= M.P.FULL_LIMIT
 
 
 @pytest.mark.parametrize('free_pt,needs_more_work', [(8, False), (44, True)])
@@ -364,11 +376,12 @@ def test_filled_two_project_page_does_not_demand_an_unnecessary_third_project(tm
         'Built Python services, reducing response time by 20%.',
         'Deployed Docker workloads, improving recovery by 30%.',
         'Designed PostgreSQL indexes, cutting query costs by 25%.')])]
-    entries = [{'repo': f'owner/repository-{i}', 'title': f'Readable Project {i}',
-                'paragraph': 'Built Python services. Delivered reliable systems.'} for i in range(4)]
+    # fixture contract (source-sentence binding): the descriptions are whole sentences of each project's own saved card
+    prose = 'Built Python services for the platform team. Delivered reliable systems with automated tests.'
+    entries = [{'repo': f'owner/repository-{i}', 'title': f'Readable Project {i}', 'paragraph': prose} for i in range(4)]
     (tmp_path / 'projects.json').write_text(json.dumps({
         'ranked': entries, 'kept': 2, 'short': [],
-        'evidence': {e['repo']: {'full_name': e['repo'], 'summary': 'Built Python services. Delivered reliable systems.'} for e in entries}}))
+        'evidence': {e['repo']: {'full_name': e['repo'], 'title': e['title'], 'summary': prose} for e in entries}}))
     monkeypatch.setattr(M, 'render', lambda _: (f, '', [], 1, ''))
     monkeypatch.setattr(M.layout, 'check', lambda _: M.layout.Layout(pages=1, free_pt=free_pt))
     monkeypatch.setattr(M.layout, 'review', lambda *a, **kw: [])

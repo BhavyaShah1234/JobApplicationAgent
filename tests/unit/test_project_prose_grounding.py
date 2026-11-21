@@ -14,6 +14,7 @@ from jobagent.config import get_settings
 from jobagent.steps import multi_agent as M
 from jobagent.tools import documents as D, projects as P, tailor as T
 
+SHORT_MIN = P.SHORT_FLOOR
 PACKET = json.loads((Path(__file__).parent.parent / "fixtures" / "samsara_3b818f3_projects.json").read_text())
 FILLED = T.Filled.model_construct(summary="Engineer with Python experience.", roles=[], skills=[], notes="")
 CLOUD, COLLIDE = "ak-asu/cloudforge", "ak-asu/energyhackathon"
@@ -40,6 +41,17 @@ def entry(st, repo):
 def cards(st):
     """The packet's own saved evidence."""
     return P.saved_evidence(st)
+
+
+def bound(st, keep=()):
+    """Fixture contract (source-sentence binding): the captured packet's model-written prose predates it, so every entry not in `keep` carries whole
+    sentences of its own saved card (`faithful_variants`) and a card-supported title; `keep` entries stay exactly as captured (the defects under test)."""
+    st, skip = copy.deepcopy(st), {k.casefold() for k in keep}
+    for e in st["ranked"]:
+        if e["repo"].casefold() not in skip:
+            full, short = P.faithful_variants(cards(st)[e["repo"].casefold()])
+            e.update(paragraph=full, short=short or "", title=P.card_title(cards(st)[e["repo"].casefold()]))
+    return st
 
 
 # --- 1. adjectival outcomes ------------------------------------------------------------------------------------------------------------
@@ -225,17 +237,18 @@ def normal_job(tmp_path, monkeypatch, state):
 
 
 def test_normal_resume_findings_rejects_the_actual_packet_for_both_defects_and_not_for_the_clean_ones(tmp_path, monkeypatch):
-    found = D.resume_findings(normal_job(tmp_path, monkeypatch, packet()))
+    found = D.resume_findings(normal_job(tmp_path, monkeypatch, bound(packet(), keep=(CLOUD, COLLIDE))))
     assert found["evidence"]
     text = "\n".join(found["hard"])
     assert "compliant cloud setups" in text and "'React'" in text
-    assert [h for h in found["hard"] if h.startswith("project ")].__len__() == 2
+    source = [h for h in found["hard"] if h.startswith("project ") and "source card" not in h and "template title" not in h]
+    assert len(source) == 2                                                      # the two source defects; the bound clean projects add nothing
+    unbound = {h.split(" ")[1] for h in found["hard"] if "source card" in h}
+    assert unbound == {"1", "2"}                                                 # and the two captured (freeform) projects are also not source-bound
 
 
 def test_normal_resume_findings_accepts_the_faithful_variants(tmp_path, monkeypatch):
-    st = packet()
-    st["ranked"][0] = {**entry(st, CLOUD), "paragraph": entry(st, CLOUD)["paragraph"].replace("ensuring deterministic and compliant cloud setups", "mapping architectures to compliance controls")}
-    st["ranked"][1] = {**entry(st, COLLIDE), "paragraph": entry(st, COLLIDE)["paragraph"].replace("React for a dynamic frontend", "streaming scorecards")}
+    st = bound(packet())          # fixture contract: faithful variants are whole sentences of their own card (the freeform wording this test patched is no longer a valid source)
     assert D.resume_findings(normal_job(tmp_path, monkeypatch, st))["hard"] == []
 
 
@@ -278,15 +291,15 @@ def round_(ctx, tasks, d):
 @pytest.mark.parametrize("incremental", [True, False])
 @pytest.mark.parametrize("kind", ["none", "unchanged"])
 def test_none_or_unchanged_repair_reaches_faithful_recovery_for_both_source_findings(tmp_path, monkeypatch, incremental, kind):
-    original = packet()
+    original = bound(packet(), keep=(CLOUD, COLLIDE))
     if kind == "none":
         repair = lambda: None
     else:
         repair = lambda: M.IncrementalProjectsOut(projects=[M.ProjectEdit(project=1, paragraph=entry(original, CLOUD)["paragraph"]),
                                                               M.ProjectEdit(project=2, paragraph=entry(original, COLLIDE)["paragraph"])])
-    ctx, tasks, d = loop(tmp_path, monkeypatch, incremental, repair)
+    ctx, tasks, d = loop(tmp_path, monkeypatch, incremental, repair, original)
     st, out = round_(ctx, tasks, d)
-    assert not P.content_findings(st, cards(st))
+    assert not P.content_findings(st, cards(st)) and not P.binding_findings(st)
     assert "compliant" not in entry(st, CLOUD)["paragraph"] and "React" not in entry(st, COLLIDE)["paragraph"]
     for repo in (CLOUD, COLLIDE):                                                   # the replacement is the card's own complete sentences, nothing new
         for part in entry(st, repo)["paragraph"].split(". "):
@@ -297,14 +310,19 @@ def test_none_or_unchanged_repair_reaches_faithful_recovery_for_both_source_find
 
 
 def test_a_changed_but_still_unsupported_repair_gets_one_more_try_before_recovery(tmp_path, monkeypatch):
-    original = packet()
-    bad = entry(original, COLLIDE)["paragraph"].replace("dynamic frontend", "responsive frontend")
-    repair = lambda: M.IncrementalProjectsOut(projects=[M.ProjectEdit(project=2, paragraph=bad)])
-    ctx, tasks, d = loop(tmp_path, monkeypatch, False, repair)
+    # The writer can no longer change a description with prose (a rewrite is refused), so "changed but still wrong" is a repair that re-selects
+    # another variant by source sentence number while the defective full description stays.
+    original = bound(packet(), keep=(CLOUD, COLLIDE))
+    sentences = P.source_sentences(cards(original)[COLLIDE])
+    other = next(i for i, s in enumerate(sentences, 1) if SHORT_MIN <= len(s) <= 240 and s != entry(original, COLLIDE)["short"])
+    attempts = iter([M.ProjectEdit(project=2, short_sentences=[other]), M.ProjectEdit(project=2, short_sentences=[other])])
+    repair = lambda: M.IncrementalProjectsOut(projects=[next(attempts)])
+    ctx, tasks, d = loop(tmp_path, monkeypatch, False, repair, original)
     st, _ = round_(ctx, tasks, d)
-    assert "responsive frontend" in entry(st, COLLIDE)["paragraph"]                 # first failed repair: the model gets another try
+    assert "React" in entry(st, COLLIDE)["paragraph"]                               # first failed repair: it changed something, the model gets another try
+    assert entry(st, COLLIDE)["short"] == sentences[other - 1] != entry(original, COLLIDE)["short"]
     tasks = {"projects": P.content_findings(st, cards(st))}
-    st, _ = round_(ctx, tasks, d)
+    st, _ = round_(ctx, tasks, d)                                                   # the second repair changes nothing: recovery from the card's own sentences
     assert "React" not in entry(st, COLLIDE)["paragraph"] and not [f for f in P.content_findings(st, cards(st)) if "describes technologies" in f]
 
 
@@ -328,12 +346,15 @@ def test_fatal_configuration_errors_are_not_swallowed_by_recovery(tmp_path, monk
 
 
 def test_ordinary_benefits_and_supported_text_survive_a_recovery_round(tmp_path, monkeypatch):
-    original = packet()
-    ctx, tasks, d = loop(tmp_path, monkeypatch, True, lambda: None)
+    # Contract change, reported: an unsourced qualitative clause ("reducing manual intervention", absent from the card) is exactly the freeform
+    # prose the source-sentence contract removes, so it no longer survives; what survives is every source-bound variant and whole source sentences.
+    original = bound(packet(), keep=(CLOUD, COLLIDE))
+    ctx, tasks, d = loop(tmp_path, monkeypatch, True, lambda: None, original)
     st, _ = round_(ctx, tasks, d)
     agentic = "BhavyaShah1234/AgenticReportGeneration"
-    assert entry(st, agentic) == entry(original, agentic) and entry(st, COLLIDE)["short"] == entry(original, COLLIDE)["short"]
-    assert "reducing manual intervention" in entry(st, CLOUD)["short"]               # the unselected short form's ordinary benefit was not waived away
+    assert entry(st, agentic) == entry(original, agentic)
+    assert "reducing manual intervention" not in entry(st, CLOUD)["short"] and P.bound_text(entry(st, CLOUD)["short"], cards(st)[CLOUD])
+    assert not P.binding_findings({**st, "ranked": [entry(st, CLOUD), entry(st, COLLIDE)], "kept": 2})
 
 
 def test_stack_terms_a_card_does_not_show_are_dropped_by_recovery():

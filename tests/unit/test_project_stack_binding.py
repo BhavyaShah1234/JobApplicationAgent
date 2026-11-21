@@ -51,7 +51,10 @@ def test_nothing_grounded_falls_back_to_the_cards_own_terms_never_an_empty_headi
 def test_card_terms_split_grouped_lines_and_drop_parentheticals():
     terms = P.card_terms(ENERGY)
     assert terms[:5] == ["Python", "FastAPI", "SSE", "WebSockets", "APScheduler"] and "SSE (sse-starlette)" not in terms
-    assert P.from_card({"full_name": "o/e", "title": "COLLIDE: siting", "summary": "Siting.", "tech_stack": ENERGY["tech_stack"], "url": "u"}).stack[:2] == ["Python", "FastAPI"]
+    # fixture contract: a fallback entry is described by whole sentences of its own card, so the card needs real ones (the assertion is about the stack)
+    sited = ("Optimal data-center siting with agents and ML models that rank grid-connected parcels for planners. "
+             "It scores candidate sites against live market data and returns an explained shortlist of ranked sites to the user.")
+    assert P.from_card({"full_name": "o/e", "title": "COLLIDE: siting", "summary": sited, "tech_stack": ENERGY["tech_stack"], "url": "u"}).stack[:2] == ["Python", "FastAPI"]
 
 
 def test_a_stale_state_with_an_ungrounded_stack_is_reported_not_rendered_silently():
@@ -86,9 +89,11 @@ def test_a_swapped_in_entry_is_grounded_before_it_is_saved(tmp_path):
     state = {"ranked": [{"repo": "o/old", "title": "Old", "stack": ["Python"], "paragraph": "Old project text that is long enough to be a paragraph." * 3, "short": "s"}],
              "kept": 1, "short": [], "years": {}, "cards": {}, "macro": False}
     (tmp_path / "projects.json").write_text(json.dumps(state))
-    entry = P.ProjectEntry(repo="ak-asu/EnergyHackathon", title="COLLIDE", stack=["Python", "FastAPI", "AWS"], paragraph="Siting data centres with agents. " * 8,
-                           short="Siting data centres with agents and ML models for planners.")
-    ctx = {"job_dir": tmp_path, "r": SimpleNamespace(tex=""), "cards": {"ak-asu/energyhackathon": {**ENERGY, "url": "https://github.com/ak-asu/EnergyHackathon"}},
+    # fixture contract: the swapped-in entry selects whole source sentences of its own card (the assertion is about the stack)
+    sited = ("Optimal data-center siting with agents and ML models that rank grid-connected parcels for planners. "
+             "It scores candidate sites against live market data and returns an explained shortlist of ranked sites to the user.")
+    entry = P.ProjectPick(repo="ak-asu/EnergyHackathon", title="COLLIDE", stack=["Python", "FastAPI", "AWS"], paragraph_sentences=[1, 2], short_sentences=[2])
+    ctx = {"job_dir": tmp_path, "r": SimpleNamespace(tex=""), "cards": {"ak-asu/energyhackathon": {**ENERGY, "summary": sited, "url": "https://github.com/ak-asu/EnergyHackathon"}},
            "log": lambda _: None}
     f = T.Filled.model_construct(summary="s", roles=[], skills=[], notes="")
     M._merge(ctx, f, {"projects": SimpleNamespace(projects=[], swaps=[SimpleNamespace(project=1, entry=entry)])})

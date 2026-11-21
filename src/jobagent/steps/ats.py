@@ -146,24 +146,26 @@ def project_paragraphs(state: str | None) -> list[str]:
     return [f"{e['title']}: {e['paragraph']}" for e in st["ranked"][:st["kept"]]]
 
 
-def apply_project_fixes(state: str | None, fixes: list) -> str | None:
-    """Apply bound visible-project edits; blank fields and undersized variants retain their old text."""
+def apply_project_fixes(state: str | None, fixes: list, known: dict | None = None) -> str | None:
+    """Apply visible-project edits to a saved projects.json text, keeping only what is bound to each project's own saved source.
+
+    A description counts only when it is made of that project's whole source sentences (`P.apply_edits`): a rewrite, an added clause or another
+    project's sentence leaves the old text in place. Blank fields retain their old text; a title counts only when it is the owner's or the card's.
+
+    Args:
+        state: The projects.json text, or None.
+        fixes: Edits with `project` and optional `paragraph`, `short`, `title`, `paragraph_sentences`, `short_sentences`.
+        known: The owner template's `known_entries`.
+
+    Returns:
+        The new text, or the unchanged `state` when no edit was applicable.
+    """
     if not state or not fixes:
         return state
     st = json.loads(state)
-    for fx in fixes:
-        if not 1 <= fx.project <= st["kept"]:
-            continue
-        entry = st["ranked"][fx.project - 1]
-        if len(paragraph := getattr(fx,'paragraph','').strip()) >= 200:
-            entry["paragraph"] = T.no_dashes(paragraph)
-        # The original advice schema has no short/title fields. Opt-in edits
-        # can repair the actual short variant without changing the full one.
-        if len(short := getattr(fx, 'short', '').strip()) >= 100:
-            entry['short'] = T.no_dashes(short)
-        if title := getattr(fx, 'title', '').strip():
-            entry['title'] = title
-    return json.dumps(st, indent=1)
+    before = json.dumps(st, sort_keys=True)
+    P.apply_edits(st, fixes, known or {})
+    return state if json.dumps(st, sort_keys=True) == before else json.dumps(st, indent=1)
 
 
 def resume_text(f: T.Filled) -> str:
@@ -237,7 +239,7 @@ def run(job_dir: str | Path, company_slug: str, target: float = TARGET, rounds: 
             break
         g = T.apply_keyword_pass(f, kp, jd_text)
         proposed = [t for a in kp.skills for t in a.terms]
-        proj_after = apply_project_fixes(proj_before, kp.projects)
+        proj_after = apply_project_fixes(proj_before, kp.projects, P.known_entries(r.tex))
         if resume_text(g) == resume_text(f) and proj_after == proj_before:  # nothing new: don't spend a scoring round
             last = (f"your answer changed nothing ({', '.join(proposed) or 'no new text'} already on the resume); "
                     "put the MISSING items into bullets and the Summary instead")

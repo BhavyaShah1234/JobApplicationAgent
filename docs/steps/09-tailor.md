@@ -117,7 +117,7 @@ Notes on the diagrams:
 | Preamble, header, section names, role subheadings, Education | Copied byte-for-byte from your template |
 | Summary | Written fresh per job and company: the posting's title wording, the requirements you meet, one clause about the company; years of experience up to your declared total (`claims.years_experience` in `data/master_profile.yaml`, 5), degrees only as on the resume |
 | Experience | New bullets from every one of the posting's responsibilities and preferred qualifications (and its technical basic ones), each with a named stack and a metric, spread over all roles; your `% backfill` bullets added where a role has room; 3-4 bullets per role |
-| Projects | 2-4 GitHub projects: heading (linked name, stack, month and year) + one unbulleted paragraph of 3 sentences, 300-420 characters (problem, system, wow factor); your template's titles kept when a repo is already there, and your template's projects are always candidates |
+| Projects | 2-4 GitHub projects: heading (linked name, stack, month and year) + one unbulleted paragraph of whole sentences of that repo's own saved card (summary and results, picked by number, about 300-420 characters, 200-470 allowed; the model never writes the prose); your template's titles kept when a repo is already there, and your template's projects are always candidates |
 | Technical Skills | Rebuilt from the posting's tech stack and qualifications; abstract terms carry concrete tools ("Machine Vision (OpenCV, YOLOv8)"), your own tools preferred |
 
 ## Rules enforced in code
@@ -152,8 +152,19 @@ Each rule is checked after the model writes; a broken rule goes back to the mode
   SHA is checked (git smart-HTTP refs, no API cost) only when the repo's `pushed_at` moved. First build: 104 repos in
   about 16 minutes; a no-change refresh takes about 25 seconds.
 - **Choice**: cards with substance 1, configs and personal-site repos are skipped; the rest are ranked by embedding
-  similarity to the posting; the model ranks 4 and writes each as a full paragraph and a short version. Shared repos
-  are described as whole projects.
+  similarity to the posting; the model ranks 4 and selects, by number, the card's own complete sentences for each full
+  and short description. Shared repos are described as whole projects.
+- **Source-sentence contract** (`projects.source_sentences`, `bound_text`, `binding_findings`): a displayed description is only
+  whole sentences of the same repository's saved card (summary, then results), joined by single spaces, with their qualifiers
+  (prototype, simulated, planned, not measured, README claims) intact. No clause is added, cut, reworded or borrowed from another
+  repo, and no terminator is invented; a variant the card cannot fill is skipped (a short one is left empty, a project without
+  a full one is replaced by the next ranked candidate; fewer than 2 usable projects stops the build). Titles are the owner's
+  template title or words of the card's own title in order; stacks come from the card; dates are the owner's or the repo's.
+  Every writer path (first choice, repairs and swaps, the ATS keyword pass, the faithful fallback) goes through it, and every
+  `documents` refresh re-derives it from the job's own saved evidence (`projects.json` `evidence`), never from a flag or the
+  shared card cache. **Compatibility:** a packet saved before this contract holds free-written prose, so its refresh reports
+  "not made of complete sentences of its own source card" and it must be regenerated (or repaired in the loop); submitted
+  application records are history and are not rechecked.
 
 ## Cover letter
 
@@ -208,6 +219,7 @@ certifications do not provide candidate evidence.
 | 2026-10-31 | Project paragraphs 250-480 characters (too long: trimmed to whole sentences; too short: sent back); duplicate projects rejected | devstral wrote 700-character paragraphs; olmo3-7b listed SolBot twice |
 | 2026-11-01 | Template's own projects always candidates; empty skills lines dropped | SolBot lost to InternshipChatbot; an empty "Databases:" line |
 | 2026-11-02 | Short project form is 2 sentences, 180-230 characters (two full lines) | 130-200 characters printed as one line |
+| 2026-11-21 | Project prose = whole sentences of the project's own card, selected by number and re-verified on every refresh | A native Coram resume said a robotics web platform enabled "real-time monitoring and control"; the card describes monitoring only and the control page is simulated. Feature-word rules could not close freeform invention |
 | 2026-11-02 | `jobagent tailor` runs the multi-agent team (devstral2-123b); `--single` for this pipeline | User's choice after the multi-agent runs |
 | 2026-11-07 | Every responsibility and preferred qualification becomes an Experience bullet (none left to the Summary), each naming a popular stack (the posting's tools first, then e.g. LangChain, LangGraph, FAISS, BigQuery, Vertex AI, MLflow) and ending with a metric; 3-4 bullets per role (up to 16) | General Mills: 4 of 12 Key Responsibilities were treated as "soft" and dropped, preferred qualifications were optional, 8 bullets with "machine learning tools"; now 12-13 bullets covering all of them |
 | 2026-11-07 | Template spacing (`data/templates/resume.tex`): `\textheight` +1.6in, `\titlespacing*{\section}{0pt}{7pt}{10pt}`, `\vspace{6pt}` after Education | About 0.4in unused at the page bottom and wide gaps around section headings; ~2 more lines per page |

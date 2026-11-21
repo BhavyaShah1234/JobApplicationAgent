@@ -18,13 +18,15 @@ def isolate_settings_cache():
 
 
 SOLBOT = json.loads((Path(__file__).parent.parent / "fixtures" / "solbot_scope_card.json").read_text())
-FAILED = {"repo": "BhavyaShah1234/SolBot", "title": "SolBot, Multi-Agent Chatbot", "stack": ["Python", "Ollama", "Chroma", "LangChain", "SQLite"],
+FAILED = {"repo": "BhavyaShah1234/SolBot", "title": "SolBot", "stack": ["Python", "Ollama", "Chroma", "LangChain", "SQLite"],
           "paragraph": "SolBot is a fully local, self-auditing RAG chatbot designed to answer questions about ASU Research Computing using only official documentation. "
                        "The system decomposes compound questions into sub-questions, researches each independently, and audits findings for groundedness before "
                        "streaming cited replies. It ensures robustness through input sanitization, adversarial fuzz testing, and a self-auditing answer loop.",
-          "short": "SolBot is a local RAG chatbot for ASU Research Computing, decomposing questions and auditing findings for accuracy. "
-                   "It ensures robustness through input sanitization and adversarial fuzz testing."}
-CLEAN = {**FAILED, "paragraph": FAILED["paragraph"].replace(" using only official documentation", " from its documentation")}
+          # fixture contract (source-sentence binding): the title is the card's own ("Multi-Agent" is not in it) and the short variant is the card's results[1]
+          "short": SOLBOT["results"][1]}
+SENTENCES = P.source_sentences(SOLBOT)
+# a faithful packet: whole sentences of the card (its summary's first sentence and its results[0]), nothing else
+CLEAN = {**FAILED, "paragraph": f"{SENTENCES[0]} {SENTENCES[4]}"}
 SENTINEL = "Built the platform, a fully local RAG chatbot."
 
 
@@ -163,14 +165,17 @@ def test_unchanged_project_repair_reaches_faithful_recovery_in_the_real_loop(tmp
 
 
 def test_a_changed_but_still_wrong_repair_gets_one_more_try_then_recovers(tmp_path, monkeypatch):
-    attempts = iter([FAILED["paragraph"].replace("RAG chatbot", "RAG assistant"), FAILED["paragraph"].replace("RAG chatbot", "RAG helper")])
-    repair = lambda: M.IncrementalProjectsOut(projects=[M.ProjectEdit(project=1, paragraph=next(attempts))])
+    # The writer cannot change a description with prose any more (refused), so a "changed" repair re-selects the short variant by source sentence
+    # number while the defective full description stays; an identical second repair changes nothing and goes to recovery.
+    other = next(i for i, s in enumerate(SENTENCES, 1) if 100 <= len(s) <= 240 and s != FAILED["short"])
+    attempts = iter([other, other])
+    repair = lambda: M.IncrementalProjectsOut(projects=[M.ProjectEdit(project=1, short_sentences=[next(attempts)])])
     ctx, f, tasks, d = loop(tmp_path, monkeypatch, False, repair)
     entry, _ = run_round(ctx, f, tasks, d)
-    assert "RAG assistant" in entry["paragraph"] and "only official" in entry["paragraph"]       # first failed repair: another model try
+    assert "only official" in entry["paragraph"] and entry["short"] == SENTENCES[other - 1]       # first failed repair: another model try
     tasks = {"projects": P.content_findings(json.loads((d / "projects.json").read_text()), {"bhavyashah1234/solbot": SOLBOT})}
     entry, _ = run_round(ctx, f, tasks, d)
-    assert " only " not in entry["paragraph"] and "RAG helper" not in entry["paragraph"]
+    assert " only " not in entry["paragraph"] and P.bound_text(entry["paragraph"], SOLBOT)
 
 
 def test_no_faithful_card_text_keeps_the_blocker_and_invents_nothing(tmp_path, monkeypatch):

@@ -13,8 +13,8 @@ FAILED = {"repo": "BhavyaShah1234/SolBot", "title": "SolBot, Multi-Agent Chatbot
           "paragraph": "SolBot is a fully local, self-auditing RAG chatbot designed to answer questions about ASU Research Computing using only official documentation. "
                        "The system decomposes compound questions into sub-questions, researches each independently, and audits findings for groundedness before "
                        "streaming cited replies. It ensures robustness through input sanitization, adversarial fuzz testing, and a self-auditing answer loop.",
-          "short": "SolBot is a local RAG chatbot for ASU Research Computing, decomposing questions and auditing findings for accuracy. "
-                   "It ensures robustness through input sanitization and adversarial fuzz testing."}
+          # fixture contract: a displayed variant is whole source sentences of its own card (this one is the card's results[1], unchanged)
+          "short": SOLBOT["results"][1]}
 CARDS = {"bhavyashah1234/solbot": SOLBOT}
 
 

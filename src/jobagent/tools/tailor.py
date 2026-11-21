@@ -1120,8 +1120,8 @@ EVERY piece of advice, within the CANDIDATE FACTS:
 - LAST ROUND (if given) says what your previous answer did to the scores: build on what was kept, try something
   different from what was undone, and never resend changes that were already in place.
 - A MISSING word that is not a skill (finance, compliance, product, safety) goes into a natural sentence of the
-  Summary, a bullet or a project description (`projects`: rewrite a PROJECTS paragraph, keeping its problem,
-  system and result, 3 sentences, {PARAGRAPH_MIN}-{PARAGRAPH_MAX} characters). Never write words that refer to applicants.
+  Summary or a bullet. Project descriptions are whole sentences of each repository's own source and cannot be
+  reworded here: leave `projects` empty. Never write words that refer to applicants.
 - Soft skills and qualities ("collaboration", "comfort with ambiguity") never go in Technical Skills: show them in
   the Summary or in what a bullet's work involved ("partnered with security and product teams to ...").
 - Follow the ADVICE (vary repeated words, add a result to a line without one, name the teams the work involved,

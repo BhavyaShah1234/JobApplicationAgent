@@ -115,11 +115,16 @@ def test_applicant_words_are_never_worked_in():
 
 def test_project_fixes_only_touch_projects_on_the_page():
     import json
-    st = {"kept": 1, "ranked": [{"title": "A", "paragraph": "old a"}, {"title": "B", "paragraph": "old b"}]}
-    long = "Fraud teams lacked live signals — so " + "x" * 220 + "."
-    fixes = [T.ProjectFix(project=1, paragraph=long), T.ProjectFix(project=2, paragraph=long),
-             T.ProjectFix(project=1, paragraph="too short")]
+    # fixture contract (source-sentence binding): a description changes only to whole sentences of that project's own saved card; a dash can
+    # never be printed because a dashed sentence is not a usable source sentence
+    good = "Fraud teams lacked live signals, so analysts reviewed card transactions by hand for hours. " + "Built a streaming scorer that ranks risky payments within seconds and routes them to a prioritised review queue for analysts."
+    evidence = {n: {"full_name": n, "title": n, "summary": good} for n in ("o/a", "o/b")}
+    st = {"kept": 1, "ranked": [{"repo": "o/a", "title": "A", "paragraph": "old a"}, {"repo": "o/b", "title": "B", "paragraph": "old b"}], "evidence": evidence}
+    dashed = good.replace(", so", " \u2014 so")
+    fixes = [T.ProjectFix(project=1, paragraph=good), T.ProjectFix(project=2, paragraph=good), T.ProjectFix(project=1, paragraph="too short")]
     out = json.loads(ats.apply_project_fixes(json.dumps(st), fixes))
-    assert out["ranked"][0]["paragraph"].startswith("Fraud teams lacked live signals, so")  # no dash
-    assert out["ranked"][1]["paragraph"] == "old b"
+    assert out["ranked"][0]["paragraph"] == good                                   # the card's own sentences
+    assert out["ranked"][1]["paragraph"] == "old b"                                # not on the page
+    assert json.loads(ats.apply_project_fixes(json.dumps(st), [T.ProjectFix(project=1, paragraph=dashed)]))["ranked"][0]["paragraph"] == "old a"
+    assert json.loads(ats.apply_project_fixes(json.dumps(st), [T.ProjectFix(project=1, paragraph=good.replace("scorer", "engine"))]))["ranked"][0]["paragraph"] == "old a"
     assert ats.project_paragraphs(json.dumps(st)) == ["A: old a"]

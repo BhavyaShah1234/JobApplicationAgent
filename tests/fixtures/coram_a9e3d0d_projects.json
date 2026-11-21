@@ -1,0 +1,292 @@
+{
+ "ranked": [
+  {
+   "repo": "ak-asu/cloudforge",
+   "title": "CloudForge",
+   "stack": [
+    "Python",
+    "FastAPI",
+    "LangGraph",
+    "Terraform",
+    "AWS"
+   ],
+   "paragraph": "CloudForge addresses the challenge of translating plain-English product requirements into deployed cloud infrastructure by leveraging a knowledge graph of validated cloud patterns. The system uses a multi-stage pipeline with LangGraph agents to refine requirements, plan architecture, generate Terraform code, and deploy resources on AWS, with compliance checks via TFLint and Checkov.",
+   "short": "CloudForge automates cloud infrastructure deployment from plain-English PRDs using a knowledge graph and multi-agent pipeline. It achieved end-to-end automation, reducing manual intervention and accelerating deployment cycles."
+  },
+  {
+   "repo": "BhavyaShah1234/DevilsInventHackathon",
+   "title": "Devil's Invent Hackathon \u2014 Autonomous Robotics Platform",
+   "stack": [
+    "TypeScript",
+    "React",
+    "ROS 2",
+    "Express",
+    "SQLite"
+   ],
+   "paragraph": "The Devil's Invent Hackathon project tackled the challenge of integrating autonomous robotics with a web-based management platform, enabling real-time monitoring and control of robotic systems. The solution combined a ROS 2-based robotic system with a React frontend and Express backend, providing a unified interface for managing robot-collected data and automated alerting.",
+   "short": "This project integrated autonomous robotics with a web platform, enabling real-time monitoring and control. It combined ROS 2, React, and Express to create a unified management system."
+  },
+  {
+   "repo": "2026-ASU-WiCS-Opportunity-Hack/24-sync-solve",
+   "title": "Multi-Chapter Organization Platform with AI Content Tools",
+   "stack": [
+    "Next.js",
+    "React",
+    "TypeScript",
+    "Supabase",
+    "OpenAI"
+   ],
+   "paragraph": "This project addressed the need for a scalable, multi-tenant platform for a global organization, enabling chapter-specific management and AI-driven content tools. Built with Next.js, React, and Supabase, the platform provided chapter-scoped routing, event management, and AI-powered content generation, enhancing organizational efficiency. The solution demonstrated robust scalability and AI integration, supporting diverse organizational needs.",
+   "short": "A multi-tenant platform for global organizations, built with Next.js and Supabase, featuring AI-driven content tools. It enhanced scalability and efficiency for chapter-specific management."
+  },
+  {
+   "repo": "ForgeOpus/visionforge",
+   "title": "VisionForge, Claude Builder Club Hackathon Winner",
+   "stack": [
+    "TypeScript",
+    "React",
+    "Django",
+    "PyTorch",
+    "TensorFlow"
+   ],
+   "paragraph": "VisionForge simplifies the creation of neural networks by allowing users to visually design models and export production-ready code for PyTorch or TensorFlow. The platform features a React-based drag-and-drop interface and a Django backend that handles topological validation and code generation, making deep learning accessible to non-experts. The system achieved a seamless integration of visual design and code generation, reducing development time and complexity.",
+   "short": "VisionForge enables visual design of neural networks and exports production-ready PyTorch/TensorFlow code. It simplifies deep learning development with a drag-and-drop interface."
+  }
+ ],
+ "kept": 3,
+ "short": [],
+ "years": {
+  "ak-asu/cloudforge": "March 2026",
+  "BhavyaShah1234/DevilsInventHackathon": "April 2025",
+  "2026-ASU-WiCS-Opportunity-Hack/24-sync-solve": "March 2026",
+  "ForgeOpus/visionforge": "November 2025"
+ },
+ "macro": true,
+ "cards": {
+  "ak-asu/cloudforge": {
+   "url": "https://github.com/ak-asu/cloudforge",
+   "full_name": "ak-asu/cloudforge"
+  },
+  "bhavyashah1234/devilsinventhackathon": {
+   "url": "https://github.com/BhavyaShah1234/DevilsInventHackathon",
+   "full_name": "BhavyaShah1234/DevilsInventHackathon"
+  },
+  "devgunnu/cloudforge": {
+   "url": "https://github.com/devgunnu/cloudforge",
+   "full_name": "devgunnu/cloudforge"
+  },
+  "2026-asu-wics-opportunity-hack/24-sync-solve": {
+   "url": "https://github.com/2026-ASU-WiCS-Opportunity-Hack/24-sync-solve",
+   "full_name": "2026-ASU-WiCS-Opportunity-Hack/24-sync-solve"
+  },
+  "forgeopus/visionforge": {
+   "url": "https://github.com/ForgeOpus/visionforge",
+   "full_name": "ForgeOpus/visionforge"
+  },
+  "zhengjie9510/docker-sandbox-mcp": {
+   "url": "https://github.com/zhengjie9510/docker-sandbox-mcp",
+   "full_name": "zhengjie9510/docker-sandbox-mcp"
+  },
+  "ak-asu/energyhackathon": {
+   "url": "https://github.com/ak-asu/EnergyHackathon",
+   "full_name": "ak-asu/EnergyHackathon"
+  },
+  "bhavyashah1234/honeywellhackathon": {
+   "url": "https://github.com/BhavyaShah1234/HoneywellHackathon",
+   "full_name": "BhavyaShah1234/HoneywellHackathon"
+  },
+  "bhavyashah1234/solbot": {
+   "url": "https://github.com/BhavyaShah1234/SolBot",
+   "full_name": "BhavyaShah1234/SolBot"
+  },
+  "bhavyashah1234/agenticreportgeneration": {
+   "url": "https://github.com/BhavyaShah1234/AgenticReportGeneration",
+   "full_name": "BhavyaShah1234/AgenticReportGeneration"
+  }
+ },
+ "evidence": {
+  "ak-asu/cloudforge": {
+   "full_name": "ak-asu/cloudforge",
+   "url": "https://github.com/ak-asu/cloudforge",
+   "owned": false,
+   "pushed_at": "2026-07-19T15:21:01Z",
+   "analyzed_at": "2026-10-26T22:07:45+00:00",
+   "files": 263,
+   "source_files": 203,
+   "archive_truncated": false,
+   "had_readme": true,
+   "title": "CloudForge \u2014 PRD-to-Production Cloud Infrastructure Generator",
+   "summary": "CloudForge is a full-stack platform that turns a plain-English PRD into deployed AWS infrastructure. Rather than letting an LLM invent an architecture, it grounds every decision in a knowledge graph of validated cloud patterns and uses the LLM only to explain what the graph derived. The pipeline runs in four streamed stages: (1) PRD refinement \u2014 a LangGraph agent (agent1) extracts non-functional requirements, optionally researches via web search, and asks up to 6 rounds of multi-choice clarifying questions (2\u20134 options + freeform, GitHub-Copilot-planning-mode style) before emitting structured requirements JSON; (2) architecture planning \u2014 a second LangGraph graph (architecture_planner) chains seven specialised sub-agents (service discovery, load simulation, resilience/blast-radius simulation, compliance mapping for SOC 2/HIPAA/ISO 27001, deterministic architecture tests) with a human-in-the-loop accept/reject gate via LangGraph interrupts, auto-retrying up to 3 times on CRITICAL violations; (3) code & Terraform generation \u2014 a multi-subgraph LangGraph pipeline (agent3) with an orchestrator, TF generator, TF validation loop (TFLint + Checkov + terraform validate with auto-fix retries), per-service code/test generation, and an assembler, producing main.tf/variables.tf/outputs.tf plus application code; (4) deploy \u2014 CloudFormation provisioning via temporary STS AssumeRole credentials, with generated code committed to the user's GitHub repo via GitHub App OAuth. The backend is FastAPI (Python 3.12) with Motor/MongoDB persistence, Fernet-encrypted (AES-128-CBC) credential storage, JWT auth, and full-pipeline Server-Sent Events streaming across routers (prd, architecture_sse, build, deploy, files, history, workflows, auth). A provider factory (providers/factory.py) renders an intermediate topology graph into provider-specific IaC \u2014 AWS is live, with GCP and Azure cost fetchers already implemented in a registry pattern. The frontend is Next.js 15 with a React Flow cloud canvas (drag-and-drop AWS nodes, topology export), Zustand stores, and a shared TypeScript topology schema package (@cloudforge/types) that serves as the contract between the canvas and the backend Terraform generator. Prompt engineering is templated via Jinja2 across all agents, and the repo includes integration tests for the full agent3 pipeline, knowledge-graph/RAG retrieval, and the Terraform MCP adapter.",
+   "readme": "CloudForge \u2014 From product requirements to live AWS infrastructure \u2014 graph-validated, Terraform-provisioned, GitHub-committed. Hackathon project by Aakash Khepar, Bhavya Nimesh Shah, Aditya Jindal, and Gunbhir.",
+   "tech_stack": [
+    "Python 3.12",
+    "FastAPI",
+    "LangGraph",
+    "LangChain",
+    "MongoDB (Motor)",
+    "Terraform",
+    "TFLint",
+    "Checkov",
+    "CloudFormation",
+    "AWS STS/IAM",
+    "Fernet (cryptography)",
+    "Jinja2",
+    "Pydantic",
+    "Next.js 15",
+    "React Flow (xyflow)"
+   ],
+   "fields": [
+    "Problem",
+    "Approach",
+    "System",
+    "Stack",
+    "Notable engineering details"
+   ],
+   "results": [],
+   "evidence_notes": "All claims below are grounded in the repository's README, file tree, and source code (backend/app/agents/*, backend/app/main.py, backend/app/agents/architecture_planner/graph.py, backend/app/agents/agent3/graph.py, backend/app/agents/agent1/graph.py, frontend/packages/types/index.ts, backend/tests/*).",
+   "kind": "project",
+   "substance": 5,
+   "created_at": "2026-03-21T21:29:06Z",
+   "head_sha": "a38aa33223773b0a3b73b7a0805ebe58eaa8dedb"
+  },
+  "bhavyashah1234/devilsinventhackathon": {
+   "full_name": "BhavyaShah1234/DevilsInventHackathon",
+   "url": "https://github.com/BhavyaShah1234/DevilsInventHackathon",
+   "owned": true,
+   "pushed_at": "2025-04-06T18:19:10Z",
+   "analyzed_at": "2026-10-26T22:04:01+00:00",
+   "files": 71,
+   "source_files": 33,
+   "archive_truncated": true,
+   "had_readme": true,
+   "title": "Devil's Invent Hackathon \u2014 Autonomous Robotics + Web Management Platform",
+   "summary": "Built for the Devil's Invent Hackathon: a full-stack robotic inventory/quality-inspection management system that connects an autonomous TurtleBot (ROS 2) to a web dashboard, so that robot-collected vision data, robot paths, inventory levels, and quality checks flow into a single authenticated web application with automated alerting.",
+   "readme": "This is a shared repository to store code files for Devil's Invent Hackathon.",
+   "tech_stack": [
+    "TypeScript",
+    "React 18",
+    "Vite",
+    "Tailwind CSS",
+    "Radix UI",
+    "TanStack React Query",
+    "Express",
+    "SQLite (sqlite3)",
+    "JWT + bcryptjs",
+    "roslib (rosbridge WebSocket protocol)",
+    "ws (WebSocket server)",
+    "Node/Bun",
+    "ROS 2 (rclpy, ament packages)",
+    "Docker",
+    "Python (Express microservice in JS, ROS nodes in Python)"
+   ],
+   "fields": [
+    "Problem",
+    "Approach",
+    "System",
+    "Stack",
+    "Evidence caveats"
+   ],
+   "results": [],
+   "evidence_notes": "All claims below are drawn directly from the repository's file tree, manifests, and source files. The README contains no feature claims beyond the repo description, so everything here is code-verified. The vision_detector package ships a `weight/best.pt` file (a PyTorch/YOLO-style checkpoint by convention), but no training code or metrics exist in the repo, so no model performance is claimed.",
+   "kind": "project",
+   "substance": 3,
+   "created_at": "2025-04-05T00:39:36Z",
+   "head_sha": "d4196ce9fc7f5f50c1f3b20b7def628a81addf3c"
+  },
+  "2026-asu-wics-opportunity-hack/24-sync-solve": {
+   "full_name": "2026-ASU-WiCS-Opportunity-Hack/24-sync-solve",
+   "url": "https://github.com/2026-ASU-WiCS-Opportunity-Hack/24-sync-solve",
+   "owned": false,
+   "pushed_at": "2026-03-29T22:29:18Z",
+   "analyzed_at": "2026-10-26T22:04:57+00:00",
+   "files": 338,
+   "source_files": 307,
+   "archive_truncated": false,
+   "had_readme": true,
+   "title": "Multi-Chapter Organization Platform with AI Content Tools (WIAL Platform \u2014 Sync&Solve, ASU WiCS Opportunity Hack 2026)",
+   "summary": "Built a full-stack, multi-tenant web platform for a global Action Learning organization (WIAL) in ~2 weeks for the 2026 ASU WiCS Opportunity Hack. The platform serves a parent organization plus per-chapter microsites (e.g., USA, Nigeria, Brazil, UK, Australia) with chapter-scoped routing ([chapter]/*), each with its own coaches, events, resources, and CMS-managed pages.",
+   "readme": "The README is the hackathon-provided template with the checklist unfilled; it lists team members (Debaleena Chakraborty, Shrey Bishnoi, Aakash Khepar, Bhavya Shah) and hackathon links but no project description. All substantive detail below is evidenced by the codebase itself.",
+   "tech_stack": [
+    "Next.js 16 (App Router, Server Actions, Turbopack)",
+    "React 19 + TypeScript",
+    "Supabase (Postgres, cookie-based SSR auth, Storage, typed DB schema via supabase gen types)",
+    "HeroUI + Tailwind CSS 4",
+    "Stripe Checkout + webhooks",
+    "Resend + React Email",
+    "OpenAI (AI SDK) + Anthropic SDK",
+    "@xenova/transformers for local embeddings",
+    "ElevenLabs (transcription + sound generation)",
+    "Tiptap rich text editor",
+    "next-intl (en/es/fr/pt)",
+    "Zod validation",
+    "Playwright + @axe-core/playwright (E2E + WCAG 2.1 AA audits)",
+    "Vitest + Testing Library",
+    "Husky + lint-staged + commitlint + ESLint + Prettier"
+   ],
+   "fields": [
+    "problem",
+    "approach",
+    "system",
+    "stack",
+    "testing_and_quality",
+    "role"
+   ],
+   "results": [],
+   "evidence_notes": "Repo is a hackathon project (2026 ASU WiCS Opportunity Hack, Team Sync&Solve). README is an unfilled template, so all claims below come from code, configs, and seed scripts. The seed script self-identifies the product as the 'WIAL Platform' (World Institute for Action Learning) \u2014 a multi-chapter organization site with Action Learning coaches, certification levels (CALC/PALC/SALC/MALC), events, and a knowledge base.",
+   "kind": "project",
+   "substance": 5,
+   "created_at": "2026-03-28T18:03:16Z",
+   "head_sha": "a431e3328afb9c63ffda267fbea8676fa67ea137"
+  },
+  "forgeopus/visionforge": {
+   "full_name": "ForgeOpus/visionforge",
+   "url": "https://github.com/ForgeOpus/visionforge",
+   "owned": false,
+   "pushed_at": "2026-04-28T22:31:24Z",
+   "analyzed_at": "2026-10-26T22:06:04+00:00",
+   "files": 360,
+   "source_files": 288,
+   "archive_truncated": false,
+   "had_readme": true,
+   "title": "VisionForge \u2014 Visual Neural Network Builder with Multi-Framework Code Export",
+   "summary": "VisionForge is a full-stack visual neural network builder that turns drag-and-drop layer graphs into production-ready PyTorch/TensorFlow training code. A React 19 + TypeScript canvas (ReactFlow, Zustand, shadcn/ui) lets users wire ~25 layer types into a dataflow graph; a Django REST backend runs a Kahn's-algorithm topological shape-inference engine that propagates tensor shapes through the graph, validates the architecture (config, connection, and acyclicity rules), and generates multi-file training projects (model/train/dataset/config) from framework-specific Jinja2 templates via PyTorch and TensorFlow codegen orchestrators. An AI assistant layer (Gemini + Claude behind a service factory) accepts natural-language requests with the live workflow state to answer questions or modify the model. Supporting systems include Firebase auth with guest mode, project persistence and sharing, group blocks for reusable sub-modules, and CI with CodeQL scanning and Claude-powered code review.",
+   "readme": "VisionForge is a visual neural network builder: users drag-and-drop layer blocks on a canvas, connect them into a dataflow graph, configure parameters, validate the architecture, and export production-ready PyTorch or TensorFlow training code. It targets researchers, students, and ML engineers who want to prototype architectures without hand-writing boilerplate.",
+   "tech_stack": [
+    "TypeScript",
+    "React 19",
+    "Vite",
+    "ReactFlow",
+    "Zustand",
+    "Tailwind CSS",
+    "shadcn/ui (Radix)",
+    "Python",
+    "Django / Django REST Framework",
+    "Jinja2",
+    "PyTorch (code generation target)",
+    "TensorFlow/Keras (code generation target)",
+    "Google Gemini API",
+    "Anthropic Claude API",
+    "Firebase Auth"
+   ],
+   "fields": [
+    "Problem",
+    "Approach",
+    "System built",
+    "Notable engineering details",
+    "Stack"
+   ],
+   "results": [
+    "Built a full-stack no-code deep-learning tool: a React 19 + TypeScript canvas (ReactFlow, Zustand, Tailwind, shadcn/ui, Framer Motion) where users assemble ~25 layer types (Conv1D/2D/3D, Linear, LSTM, GRU, Embedding, Attention, BatchNorm, pooling, Add/Concat merge ops, Loss, Metrics, custom layers) into model graphs, with undo/redo, group blocks, project dashboards, and shareable read-only canvases.",
+    "Implemented an automatic tensor-shape inference engine on the backend: builds an adjacency list from the node/edge graph, topologically sorts it with Kahn's algorithm (rejecting cyclic graphs), and propagates input/output shapes node-by-node so users never track dimensions manually; per-layer shape rules (conv, pool, linear, flatten, concat, add, batchnorm) live in a dedicated rules module.",
+    "Designed a dual-framework code-generation pipeline: framework-specific node specs (PyTorch NCHW vs TensorFlow NHWC, e.g. nn.Linear vs layers.Dense) feed Jinja2 templates that render multi-file training projects (model.py, train.py, dataset.py, config.py) via PyTorch and TensorFlow orchestrators, including group-block generators for composite/residual sub-modules.",
+    "Integrated AI assistance with a pluggable provider architecture: an AI service factory dispatches to Google Gemini and Anthropic Claude backends, and a chat endpoint accepts natural-language messages plus the current workflow state (nodes/edges) and optional file uploads, returning model modifications; users supply their own API keys via headers (X-Gemini-Api-Key / X-Anthropic-Api-Key).",
+    "Built real-time architecture validation (config, connection, acyclicity, single-input, and multi-input checks) surfaced in a frontend ValidationErrorsPanel, plus Firebase authentication with middleware, guest mode, idle-timeout handling, and encrypted API-key storage on the frontend."
+   ],
+   "evidence_notes": "All claims below are grounded in the repository's file tree, manifests, and source files. The README claims React 19, Vite, Tailwind, ReactFlow, Zustand, Django/SQLite, and Gemini AI; the code confirms the architecture (React/TypeScript frontend with ReactFlow-style canvas components, Django backend with Gemini and Claude service classes, Jinja2 codegen templates). No metrics, user counts, or performance results were found in the repo, so none are stated.",
+   "kind": "project",
+   "substance": 4,
+   "created_at": "2025-11-08T23:22:28Z",
+   "head_sha": "324f41fab01ea927bfe473660d7986cc7910131e"
+  }
+ }
+}

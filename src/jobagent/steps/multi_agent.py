@@ -219,55 +219,36 @@ def validate_incremental_repair(f, jd, repair, *, template, require_coverage=Fal
 class ProjectSwap(BaseModel):
     """Replace one Projects entry with a better candidate repository."""
     project: int = Field(description="1-based number under PROJECTS to replace")
-    entry: P.ProjectEntry = Field(description="The better CANDIDATE repo, written like the others")
-
-
-def _project_paragraph(text):
-    """Fit a repair using existing complete sentences, never fabricated punctuation.
-
-    Args:
-        text: A model-provided paragraph within the same envelope as initial selection.
-
-    Returns:
-        Unchanged text or its useful complete-sentence prefix within the display budget.
-
-    Raises:
-        ValueError: No useful complete prefix fits; the model must actually shorten it.
-    """
-    text = text.strip()
-    if len(text) <= T.PARAGRAPH_MAX:
-        return text
-    shorter = P._sentences(text, T.PARAGRAPH_MAX)
-    if len(shorter) < 200 or not text.startswith(shorter):
-        raise ValueError('Rewrite the full project description more concisely; '
-                         'no complete useful prefix fits its rendered budget')
-    return shorter
-
-
-class ProjectsOut(BaseModel):
-    """The projects agent's answer: rewritten descriptions and at most two swaps."""
-    projects: list[T.ProjectFix] = Field(default_factory=list, max_length=4)
-    swaps: list[ProjectSwap] = Field(default_factory=list, max_length=2)
+    entry: P.ProjectPick = Field(description="The better CANDIDATE repo and the numbers of its own SOURCE SENTENCES")
 
 
 class ProjectEdit(BaseModel):
-    """Target one selected project's rendered variant without replacing its repository."""
+    """Target one selected project's rendered variant without replacing its repository. Descriptions are chosen by SOURCE SENTENCE number."""
     project: int = Field(ge=1, description="1-based number under PROJECTS")
-    paragraph: str = Field('', max_length=700, description=f"Full description, aim for {T.PARAGRAPH_MIN}-{T.PARAGRAPH_MAX} characters; empty to retain")
-    short: str = Field('', max_length=400, description="Short two-sentence description, or empty to retain")
-    title: str = Field('', max_length=70, description="Readable title, or empty to retain; known template titles stay fixed")
+    paragraph_sentences: list[int] = Field(default_factory=list, max_length=P.MAX_SENTENCES,
+                                           description="Numbers of this project's SOURCE SENTENCES for the full description (300-420 characters together, 200-470 allowed); empty to retain")
+    short_sentences: list[int] = Field(default_factory=list, max_length=4,
+                                       description="Numbers of SOURCE SENTENCES for the short description (120-240 characters together); empty to retain")
+    paragraph: str = Field('', max_length=700, description="Only a source sentence copied exactly, never prose; prefer paragraph_sentences; empty to retain")
+    short: str = Field('', max_length=400, description="Only a source sentence copied exactly, never prose; prefer short_sentences; empty to retain")
+    title: str = Field('', max_length=70, description="A title made of words of the project's own card title, or empty to retain; known template titles stay fixed")
+
+
+class ProjectsOut(BaseModel):
+    """The projects agent's answer: re-selected descriptions and at most two swaps."""
+    projects: list[ProjectEdit] = Field(default_factory=list, max_length=4)
+    swaps: list[ProjectSwap] = Field(default_factory=list, max_length=2)
 
 
 class IncrementalProjectsOut(ProjectsOut):
-    """Repairs can edit the displayed short form and generated title too."""
-    projects: list[ProjectEdit] = Field(default_factory=list, max_length=4)
+    """Repairs can edit the displayed short form and generated title too (the shared schema now does both)."""
 
 
 def project_title_schema(targets):
     """A title-only repair cannot rewrite descriptions or a different project."""
     targets=tuple(sorted(set(targets)))
     fix=create_model('ProjectTitleFix',project=(Literal[targets],Field(description='Requested project index')),
-                     title=(str,Field(min_length=1,max_length=70,description='Readable project name; not the repo slug')))
+                     title=(str,Field(min_length=1,max_length=70,description='Readable project name made of words of its own card title; not the repo slug')))
     return create_model('ProjectTitlesOut',
         projects=(list[fix],Field(min_length=len(targets),max_length=len(targets))),
         swaps=(list[ProjectSwap],Field(default_factory=list,max_length=0)))
@@ -309,16 +290,19 @@ ROLE_PROMPTS = {
                "on the CURRENT RESUME's bullets, skills and projects so it never claims what they don't show.",
 }
 
-PROJECTS_EDIT_PROMPT = """You are the PROJECTS agent of a resume team. Do what TASKS ask for the Projects section:
-- rewrite a paragraph in place (`projects`: 1-based number under PROJECTS and the new paragraph), or
-- replace a weaker project with a better CANDIDATE repo (`swaps`: the number to replace and a full entry for the
-  candidate: repo full_name exactly as listed, title, stack, paragraph, short).
-Each paragraph: exactly 3 COMPLETE sentences, aiming for 330-370 characters (hard bounds {PMIN}-{PMAX}): the problem,
-the system built (stack named), the wow factor (a result or scale). Finish the final sentence; never cut a sentence
-to reach the character limit. The title is a real project name, never the bare repo slug. Use the posting's keywords the TASKS
-ask for. No dashes as punctuation; "by N%". Never invent degrees, employers or dates.""".replace("{PMIN}", str(T.PARAGRAPH_MIN)).replace("{PMAX}", str(T.PARAGRAPH_MAX))
+PROJECTS_EDIT_PROMPT = """You are the PROJECTS agent of a resume team. Do what TASKS ask for the Projects section.
+You never write project prose. Each project's description is built only from complete SOURCE SENTENCES of its OWN repository, which are
+listed and numbered under PROJECTS and CANDIDATE REPOS; a description is chosen by number and printed exactly as the source wrote it,
+with its qualifiers (prototype, simulated, planned, not measured, README claims) intact:
+- re-select a description in place (`projects`: 1-based project number and `paragraph_sentences`, the numbers of that repo's SOURCE SENTENCES
+  aiming for {PMIN}-{PMAX} characters (hard bounds 200-470), in reading order; `short_sentences` for the two-line variant totalling 120-240 characters), or
+- replace a weaker project with a better CANDIDATE repo (`swaps`: the number to replace and an entry for the candidate: repo full_name exactly
+  as listed, title, stack, `paragraph_sentences`, `short_sentences` of that candidate's own sentences).
+Choose the sentences that best match the posting words the TASKS ask for; if no sentence states a requested keyword, leave it out rather
+than add it. Sentence numbers belong to one repository only. The title is a real project name made of words of that card's own title,
+never the bare repo slug. Never invent degrees, employers or dates.""".replace("{PMIN}", str(T.PARAGRAPH_MIN)).replace("{PMAX}", str(T.PARAGRAPH_MAX))
 PROJECTS_EDIT_PROMPT += "\nEach indexed project's repo identity and its OWN source card bind its description. Never borrow " \
-    "features, interfaces, supported counts or results from another project, even when editing several at once."
+    "sentences, features, interfaces, supported counts or results from another project, even when editing several at once."
 PROJECTS_EDIT_PROMPT += "\n" + P.SOURCE_POLICY
 
 REVIEW_PROMPT = """You are the VALIDATOR of a resume team. Check the CURRENT RESUME for this posting the way a hiring
@@ -416,6 +400,7 @@ def _context(ctx: dict, f: T.Filled | None, project_state: str | None, *, visibl
         st = json.loads(project_state)
         cards = dict(ctx.get('cards') or {})
         cards.update({c['full_name'].casefold(): c for _, c in ctx.get('candidates', [])})
+        saved = P.saved_evidence(st)
         sources = {e.get('repo', '').casefold(): cards.get(e.get('repo', '').casefold(), {}).get('summary', '')[:1400]
                    for e in st.get('ranked', [])[:st.get('kept', 0)]}
         if visible_only:
@@ -435,6 +420,21 @@ def _context(ctx: dict, f: T.Filled | None, project_state: str | None, *, visibl
             f"{c['title']}; {c['summary'][:220]}; stack {', '.join(c['tech_stack'][:6])}"
             for sc, c in ctx["candidates"]))
     return "\n\n".join(parts)
+
+
+def _numbered_sources(ctx: dict, state_text: str) -> str:
+    """The numbered SOURCE SENTENCES the projects agent chooses from, per displayed project (the job's saved evidence, else this run's card) and per
+    candidate repo (its first six); the same numbering the validators use (`P.source_sentences`)."""
+    st = json.loads(state_text) if state_text else {}
+    saved, cards = P.saved_evidence(st), _cards_for(ctx, st)
+    lines = []
+    for i, e in enumerate(st.get("ranked", [])[:st.get("kept", 0)], 1):
+        card = saved.get(str(e.get("repo") or "").casefold()) or cards.get(str(e.get("repo") or "").casefold()) or {}
+        lines.append(f"PROJECT {i} ({e.get('repo')}) SOURCE SENTENCES (this repo only; choose by number):\n{P.source_lines(card)}")
+    shown = {str(e.get("repo") or "").casefold() for e in st.get("ranked", [])[:st.get("kept", 0)]}
+    lines += [f"CANDIDATE {c['full_name']} SOURCE SENTENCES (this repo only):\n{P.source_lines(c, 6)}"
+              for _, c in ctx.get("candidates", []) if c.get("full_name") and c["full_name"].casefold() not in shown]
+    return "\n\n".join(lines)
 
 
 def _section_messages(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last: str) -> list:
@@ -481,44 +481,22 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
         if agent == "projects":
             proj = ctx["job_dir"] / "projects.json"
             edit_prompt = PROJECTS_EDIT_PROMPT
-            edit_prompt += ('\nIn projects edits, use short to repair a displayed short description, '
-                'title to repair a generated name, and paragraph for the full description. '
+            edit_prompt += ('\nIn projects edits, use short_sentences to repair a displayed short description, '
+                'title to repair a generated name, and paragraph_sentences for the full description. '
                 'Leave untargeted fields empty. Never change a known template title.')
             title_matches=[re.match(r'Project (\d+) is titled with its bare repo name',task) for task in tasks]
             title_only=bool(tasks and all(title_matches))
             if title_only:
                 edit_prompt += '\nThis is a TITLE-ONLY repair: return the requested project numbers and new names. Do not rewrite descriptions or swap repositories.'
             msgs = [SystemMessage(with_today(edit_prompt)),
-                    HumanMessage(_context(ctx, f, proj.read_text()) + "\n\nTASKS:\n" + "\n".join(f"- {t}" for t in tasks)
+                    HumanMessage(_context(ctx, f, proj.read_text()) + "\n\n" + _numbered_sources(ctx, proj.read_text()) + "\n\nTASKS:\n" + "\n".join(f"- {t}" for t in tasks)
                                  + (f"\n\nLAST ROUND: {last}" if last else ""))]
             # A short paragraph repair must not spend ten minutes in a fallback
-            # mode after length validation fails. Preserve the previous version
+            # mode after validation fails. Preserve the previous version
             # on failure; its hard findings still prevent publication.
             schema = project_title_schema([int(match[1]) for match in title_matches]) if title_only else IncrementalProjectsOut
-            if not title_only:
-                from jobagent.tools.incremental_documents import _bound_schema
-                def completed_projects(result):
-                    """Correct truncated descriptions inside the bounded model call.
-
-                    Args:
-                        result: Project edits proposed for the current displayed version.
-
-                    Raises:
-                        ValueError: An edited description stops before its final sentence.
-                    """
-                    entries = []
-                    for fix in result.projects:
-                        for field in ('paragraph', 'short'):
-                            if text := getattr(fix, field, '').strip():
-                                if field == 'paragraph':
-                                    fix.paragraph = text = _project_paragraph(text)
-                                entries.append({'paragraph': text})
-                    for swap in result.swaps:
-                        swap.entry.paragraph = _project_paragraph(swap.entry.paragraph)
-                        entries.append({'paragraph': swap.entry.paragraph})
-                    if issues := P.content_findings({'ranked': entries, 'kept': len(entries)}):
-                        raise ValueError('; '.join(issues) + '; rewrite more concisely instead of cutting text')
-                schema = _bound_schema(schema, completed_projects)
+            from jobagent.tools.incremental_documents import _bound_schema
+            schema = _bound_schema(schema, lambda result: _check_project_edits(ctx, json.loads(proj.read_text()), result))
             out = _invoke(ctx, agent, model, schema, msgs, log=log, deadline_s=180)
         elif targeted:
             # targeted edit: only the bullets the validators named (a full rewrite moves every orphan word)
@@ -586,6 +564,57 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
         return agent, None
 
 
+def _check_project_edits(ctx: dict, st: dict, result) -> None:
+    """Reject, inside the bounded model-correction loop, project edits that are not bound to their own saved source.
+
+    Args:
+        ctx: Document context (candidate cards for swaps, the owner template for known titles).
+        st: The job's `projects.json` before the edit.
+        result: The projects agent's parsed answer.
+
+    Raises:
+        ValueError: A source sentence number is missing, repeated, out of range or too short, text is not a copied source sentence, a title uses words
+            its card does not, or a swapped repository is not a candidate; the message tells the writer what to correct.
+    """
+    evidence, cards = P.saved_evidence(st), _cards_for(ctx, st)
+    known = P.known_entries(getattr(ctx.get("r"), "tex", "") or "")
+    ranked, problems = st.get("ranked", []), []
+    for fix in result.projects:
+        if not 1 <= fix.project <= min(st.get("kept", 0), len(ranked)):
+            problems.append(f"project {fix.project} is not one of the displayed projects")
+            continue
+        entry = ranked[fix.project - 1]
+        card = evidence.get(str(entry.get("repo") or "").casefold())
+        if card is None:
+            problems.append(f"project {fix.project} has no saved source sentences to choose from")
+            continue
+        for ids_name, field, limit, floor in (("paragraph_sentences", "paragraph", P.FULL_LIMIT, P.FULL_FLOOR), ("short_sentences", "short", P.SHORT_LIMIT, P.SHORT_FLOOR)):
+            ids, text = list(getattr(fix, ids_name, None) or []), (getattr(fix, field, "") or "").strip()
+            try:
+                if ids:
+                    setattr(fix, field, P.compose(card, ids, limit, floor))      # the validated output carries the text it will print
+                elif text and P.bound_text(text, card) is None:
+                    raise ValueError("text is not made of complete sentences copied exactly from its source; return source sentence numbers instead")
+            except ValueError as exc:
+                problems.append(f"project {fix.project} {field}: {exc}")
+        title = (getattr(fix, "title", "") or "").strip()
+        if title and str(entry.get("repo") or "").casefold() not in known and not P.title_supported(title, card):
+            problems.append(f"project {fix.project} title {title!r} uses words its own card title does not; use words of {card.get('title')!r}")
+    for swap in getattr(result, "swaps", []):
+        pick, card = swap.entry, cards.get(swap.entry.repo.casefold())
+        if card is None or swap.entry.repo.casefold() in {str(e.get("repo") or "").casefold() for e in ranked}:
+            problems.append(f"swap repo {pick.repo!r} is not an unused CANDIDATE")
+            continue
+        try:
+            P.compose(card, pick.paragraph_sentences, P.FULL_LIMIT, P.FULL_FLOOR)
+            if pick.short_sentences:
+                P.compose(card, pick.short_sentences, P.SHORT_LIMIT, P.SHORT_FLOOR)
+        except ValueError as exc:
+            problems.append(f"swap {pick.repo}: {exc}")
+    if problems:
+        raise ValueError("; ".join(problems[:4]) + "; choose existing numbered SOURCE SENTENCES of that same repository")
+
+
 def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
     """The current resume with each agent's new section (an agent that failed keeps its old section)."""
     g = f.model_copy(deep=True)
@@ -607,33 +636,33 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
         g.summary = outs["summary"].summary
     if outs.get("projects") is not None:
         proj = ctx["job_dir"] / "projects.json"
-        new = A.apply_project_fixes(proj.read_text(), outs["projects"].projects)
-        if new and outs["projects"].swaps:
-            st = json.loads(new)
-            cands = ctx.get("cards", {})
-            for sw in outs["projects"].swaps:
-                repo = sw.entry.repo.lower()
-                if 1 <= sw.project <= st["kept"] and repo in cands and \
-                        repo not in {e["repo"].lower() for e in st["ranked"]}:
-                    entry = sw.entry.model_dump()
-                    entry["stack"], dropped = P.ground_stack(entry["stack"], cands[repo])      # a swapped-in entry gets the same stack grounding as a chosen one
-                    if dropped:
-                        ctx["log"](f"  projects: {sw.entry.repo}: dropped from the stack, not shown by its own card: {dropped}")
-                    st["ranked"][sw.project - 1] = entry
-                    st["cards"][repo] = {"url": cands[repo]["url"], "full_name": cands[repo]["full_name"]}
-                    st.setdefault("evidence", {})[repo] = P.evidence_snapshot(cands[repo])
-                    st["years"][sw.entry.repo] = P.month_year(cands[repo].get("pushed_at", ""))
-                    ctx["log"](f"  projects: swapped in {sw.entry.repo}")
-            new = json.dumps(st, indent=1)
-        if new:
-            st = json.loads(new)
-            known = P.known_entries(r.tex)
-            for e in st["ranked"]:  # an over-long rewrite takes 5 lines: keep whole sentences up to the limit
-                if (e.get('repo') or '').lower() in known:
-                    e['title'] = known[e['repo'].lower()][0]
-                if len(e["paragraph"]) > P.MAX_PARAGRAPH:
-                    e["paragraph"] = P._sentences(e["paragraph"], P.MAX_PARAGRAPH - 10)
-            proj.write_text(json.dumps(st, indent=1))
+        st = json.loads(proj.read_text())
+        known, cands = P.known_entries(r.tex), _cards_for(ctx, st)
+        vocab = P.tech_vocabulary(cands, st["ranked"])
+        # Whatever the writer returned, only text bound to the project's own saved sentences, and titles the card supports, can be applied.
+        for note in P.apply_edits(st, outs["projects"].projects, known, vocab):
+            ctx["log"](f"  projects: edit not applied, {note}")
+        terms = P.job_terms(ctx.get("jd"))
+        for sw in outs["projects"].swaps:
+            repo = sw.entry.repo.lower()
+            if 1 <= sw.project <= st["kept"] and repo in cands and repo not in {e["repo"].lower() for e in st["ranked"]}:
+                entry = P.entry_from_pick(sw.entry, cands[repo], vocab, terms, log=ctx["log"])
+                if entry is None:
+                    ctx["log"](f"  projects: {sw.entry.repo} not swapped in: its card has no complete sentences that fill a description")
+                    continue
+                entry = entry.model_dump()
+                entry["stack"], dropped = P.ground_stack(entry["stack"], cands[repo])      # a swapped-in entry gets the same stack grounding as a chosen one
+                if dropped:
+                    ctx["log"](f"  projects: {sw.entry.repo}: dropped from the stack, not shown by its own card: {dropped}")
+                st["ranked"][sw.project - 1] = entry
+                st["cards"][repo] = {"url": cands[repo]["url"], "full_name": cands[repo]["full_name"]}
+                st.setdefault("evidence", {})[repo] = P.evidence_snapshot(cands[repo])
+                st["years"][entry["repo"]] = P.month_year(cands[repo].get("created_at") or cands[repo].get("pushed_at") or "")
+                ctx["log"](f"  projects: swapped in {sw.entry.repo}")
+        for e in st["ranked"]:
+            if (e.get('repo') or '').lower() in known:
+                e['title'] = known[e['repo'].lower()][0]
+        proj.write_text(json.dumps(st, indent=1))
     return g
 
 
@@ -846,6 +875,7 @@ def check_layout(state: State) -> dict:
     st = json.loads(proj_path.read_text()) if proj_path.exists() else None
     if st:
         tasks["projects"] += P.content_findings(st, _cards_for(ctx, st))
+        tasks["projects"] += P.binding_findings(st, P.known_entries(getattr(r, "tex", "") or ""))
     if lay:
         for issue in lay.issues:
             if issue.startswith("Technical Skills") and "fills only" in issue:
@@ -895,8 +925,8 @@ def check_layout(state: State) -> dict:
     if st and st["kept"] < min(3, len(st["ranked"])) and (
             st["kept"] - len(st["short"]) < min(2, len(st["ranked"])) or
             (lay is not None and lay.free_pt is not None and lay.free_pt > BLANK_HARD_PT)):
-        tasks["projects"].append(f"Only {st['kept']} project(s) fit: make every paragraph 300-340 characters so "
-                                 "another fits.")
+        tasks["projects"].append(f"Only {st['kept']} project(s) fit: re-select shorter descriptions (fewer or shorter SOURCE SENTENCES "
+                                 "of the same repo) so another fits.")
         tasks["experience"].append("Room is needed for one more project: shorten the two longest bullets to one line.")
     if st:
         known_titles = {t.lower() for t, _ in P.known_entries(r.tex).values()}  # the user's own titles stay as they are
@@ -978,31 +1008,39 @@ SCOPE_REPAIRS = 2          # model repairs of one unsupported restriction before
 
 # the wording of the source findings `P.content_findings` gives the project writer; each is fixed by the same bounded, faithful recovery
 _SCOPE_TASKS = ("claims a restriction that its own card does not state", "claims an achieved standard or compliance that its own card does not show",
-                "describes technologies its own card does not show", "prints technologies its own card does not show")
+                "describes technologies its own card does not show", "prints technologies its own card does not show",
+                "of its own source card", "is not the owner's template title or words of its own card title",
+                "is neither the owner's template date nor from its own repository")
 
 
 def _recover_scope(ctx: dict, st: dict, stalled: frozenset = frozenset()) -> None:
-    """After a project repair round left a description still claiming something its card does not state (restriction, standard, technology), count the failed attempt;
-    after SCOPE_REPAIRS of them (at once for a repo whose repair returned nothing usable or changed nothing) replace that description with the
-    card's own complete sentences (`P.recover_scope`).
+    """After a project repair round left a description still claiming something its card does not state (restriction, standard, technology) or not made of
+    its card's whole sentences, count the failed attempt; after SCOPE_REPAIRS of them (at once for a repo whose repair returned nothing usable or changed
+    nothing) replace that description with the card's own complete sentences (`P.recover_scope`).
 
     Args:
         ctx: Document context (holds the per-repo failure counts).
         st: The projects.json state after the repair; entries are changed in place.
         stalled: Repos (lower case) whose repair this round was unavailable, malformed or unchanged: another attempt would not differ.
     """
-    cards, failed = _cards_for(ctx, st), ctx.setdefault("scope_failures", {})
-    vocab = P.tech_vocabulary(cards, st["ranked"])
-    for e in st["ranked"][:st["kept"]]:
+    failed = ctx.setdefault("scope_failures", {})
+    cards = {**_cards_for(ctx, st), **P.saved_evidence(st)}       # the job's own saved evidence decides what is bound
+    vocab, known = P.tech_vocabulary(cards, st["ranked"]), P.known_entries(getattr(ctx.get("r"), "tex", "") or "")
+    terms = P.job_terms(ctx.get("jd"))
+    for e in st["ranked"]:
         card = cards.get((e.get("repo") or "").casefold())
         if not card or not (P.unsupported_claims(e.get("paragraph", ""), card, vocab) or P.unsupported_claims(e.get("short", ""), card, vocab)
-                            or P.ground_stack(list(e.get("stack") or []), card)[1]):
+                            or P.ground_stack(list(e.get("stack") or []), card)[1]
+                            or P.entry_binding_issues(e, card, known.get((e.get("repo") or "").casefold()))):
             continue
         failed[e["repo"]] = failed.get(e["repo"], 0) + 1
         if failed[e["repo"]] >= SCOPE_REPAIRS or e["repo"].casefold() in stalled:
-            fixed = P.recover_scope(e, card, vocab) + (['stack'] if P.recover_stack(e, card) else [])
+            fixed = (P.recover_scope(e, card, vocab, terms) + (['stack'] if P.recover_stack(e, card) else [])
+                     + (['title'] if P.recover_title(e, card, known.get(e["repo"].casefold())) else []))
             ctx["log"](f"  projects: {e['repo']}: unsupported source claim persisted after {failed[e['repo']]} repair(s); "
                        + (f"{fixed} replaced by the card's own sentences" if fixed else "no faithful card sentences fit; finding stays"))
+    if changed := P.recover_years(st, known):
+        ctx["log"](f"  projects: date reset to the owner's or the repository's own for {changed}")
 
 
 def _scope_round(ctx: dict, tasks: dict, before: str | None) -> None:
@@ -1049,6 +1087,9 @@ def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
         st = json.loads(proj.read_text())
         cards = _cards_for(ctx, st)
         out += P.content_findings(st, cards) + P.missing_evidence(st, cards)       # a project without its own card is a blocker, never an unchecked pass
+        # Production acceptance: independently re-derive, from the job's saved own cards and the owner template, that every description is whole source
+        # sentences, never a flag or a cache; prose written before this contract does not pass.
+        out += P.binding_findings(st, P.known_entries(getattr(ctx.get("r"), "tex", "") or ""))
         full, want = st["kept"] - len(st["short"]), min(2, len(st["ranked"]))
         if full < want:
             out.append(f"only {full} project(s) in full (short forms: {st['short']}); shorten the Summary or skills "

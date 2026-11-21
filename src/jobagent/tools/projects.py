@@ -4,6 +4,12 @@ Every repo of the resume's GitHub account (own + contributed) has a card written
 cards are ranked by embedding similarity to the JD, and the model picks 2-4 projects and writes each as one
 unbulleted paragraph: the problem, the solution, the system built — about the whole project, also for shared repos.
 Entries already in the template keep the template's title and year (the user's wording, e.g. a hackathon win).
+
+SOURCE-SENTENCE CONTRACT: the displayed description (full AND short) is never written by the model. It is a sequence of COMPLETE
+sentences of that same project's own saved card (its summary and results), picked by number, joined with single spaces and nothing else.
+The model ranks and selects; it cannot add a verb, clause or feature, and a qualifier in the source ("prototype", "simulated", "README
+claims", "not measured", "planned") travels with its sentence. `bound_text` re-derives that property from the job's saved card, so it holds
+for every writer, repair and refresh without trusting a flag. A project whose card cannot fill a variant from whole sentences is skipped.
 """
 
 import functools
@@ -19,23 +25,38 @@ from jobagent import llm
 from jobagent.clock import with_today
 from jobagent.state import JobDescription
 from jobagent.tools import repo_cards
-from jobagent.tools.tailor import Resume, _braced, to_latex
+from jobagent.tools.tailor import DASH, Resume, _braced, to_latex
 
 MIN_PROJECTS, MAX_PROJECTS = 2, 4
 MIN_PARAGRAPH = 250  # characters: shorter descriptions render as one line and waste the section
 MAX_PARAGRAPH = 480  # longer ones take 4-5 lines and push other projects off the page
+FULL_LIMIT, FULL_FLOOR = MAX_PARAGRAPH - 10, 200      # the full description, in characters: wanted MIN_PARAGRAPH, accepted from FULL_FLOOR
+SHORT_LIMIT, SHORT_FLOOR, SHORT_WANTED = 240, 100, 120   # the short description (two lines, used to fit one extra project)
+MAX_SENTENCES = 6    # source sentences in one description
 
 
 class ProjectEntry(BaseModel):
+    """A project as it is stored and rendered. Its texts are built by `entry_from_pick` / `faithful_description` from source sentences."""
     repo: str = Field(description="full_name of one CANDIDATE repo, exactly as given")
     title: str = Field(max_length=70, description="Short project name (<= 45 characters)")
     stack: list[str] = Field(min_length=1, max_length=5, description="From the card's tech stack, posting spelling")
-    paragraph: str = Field(max_length=700, description="3 sentences, 300-420 characters: problem, system, wow factor")
-    short: str = Field(max_length=400, description="The same project in 2 sentences, 180-230 characters (2 lines)")
+    paragraph: str = Field(max_length=700, description="The full description: whole source sentences of this repo's own card")
+    short: str = Field(max_length=400, description="The short description: whole source sentences, or empty when the card cannot fill it")
+
+
+class ProjectPick(BaseModel):
+    """What the writer returns for one project: a selection of that repository's numbered SOURCE SENTENCES, never prose."""
+    repo: str = Field(description="full_name of one CANDIDATE repo, exactly as given")
+    title: str = Field(max_length=70, description="The project's name as its own title shows it (<= 45 characters)")
+    stack: list[str] = Field(min_length=1, max_length=5, description="From the card's tech stack, posting spelling")
+    paragraph_sentences: list[int] = Field(min_length=1, max_length=MAX_SENTENCES,
+                                           description="Numbers of this repo's SOURCE SENTENCES that make the full description (300-420 characters together, never over 470), in reading order")
+    short_sentences: list[int] = Field(default_factory=list, max_length=4,
+                                       description="Numbers of SOURCE SENTENCES for the short description (120-240 characters together); empty when none fits")
 
 
 class Projects(BaseModel):
-    projects: list[ProjectEntry] = Field(min_length=MIN_PROJECTS, max_length=MAX_PROJECTS)
+    projects: list[ProjectPick] = Field(min_length=MIN_PROJECTS, max_length=MAX_PROJECTS + 2)
     notes: str = Field(max_length=500, description="One brief sentence explaining the selection, at most 300 characters")
 
 
@@ -57,32 +78,33 @@ the agent wrote by reading each GitHub repository's code.
   first ones that fit on the page, so order matters. Prefer projects that show skills the posting wants beyond
   what the Experience section already shows. A shared repo (someone else owns it) counts as the candidate's project:
   describe the whole project, not only the candidate's part.
-- title: short project name (<= 45 characters). If a KNOWN TITLE is given, use it exactly.
+- title: short project name (<= 45 characters), as that card's own title shows it. If a KNOWN TITLE is given, use it exactly.
 - stack: up to 5 technologies from the card's tech stack, most relevant to the posting first. Write "Python", never
   a version ("Python 3.12" -> "Python").
-- paragraph: ONE unbulleted paragraph of exactly 3 sentences, 300-420 characters (it fills 3 lines on the page;
-  a one-line description wastes the space):
-  1. the problem: who had it and why it mattered;
-  2. the system built: its components and how they connect, naming the stack;
-  3. the wow factor: the result, scale or what was new (a number where possible: accuracy, latency, users,
-     throughput, cost, a hackathon placing).
-  Past tense or noun phrases; no "I". Use the posting's keywords throughout.
-- short: the same project in 2 sentences, 180-230 characters so it fills two full lines (problem, system and wow
-  factor in brief), used only to fit one extra project into leftover space.
-
-EXAMPLE of the expected depth (a made-up project; never copy its content):
+- paragraph_sentences: you do NOT write the description. Each candidate lists its SOURCE SENTENCES, numbered, each a complete
+  sentence of that repository's own card with its length. Return the numbers of the sentences that together are the most relevant
+  to the posting and total 300-420 characters (usually 2-3; never over 470), in reading order. They are printed exactly as written, so a
+  qualifier in a sentence (prototype, simulated, planned, not measured, README claims) stays with it: pick a sentence only when
+  you accept it as written. Numbers belong to that candidate only; never mix repositories.
+- short_sentences: numbers of one or two other (or the same) SOURCE SENTENCES of the SAME repo that total 120-240 characters, used
+  only to fit one extra project into leftover space. Leave it empty when no sentence of that size fits.
+  Never write, shorten, join or reword a sentence; there is no field for prose."""
+EXAMPLE_BLOCK = """
+EXAMPLE of the expected selection (a made-up project; never copy its content):
+  TrafficLens SOURCE SENTENCES: [1] (118 chars) City traffic engineers retimed signals from week-old manual counts. [2] (131 chars)
+  An edge pipeline runs YOLOv8 on Jetson Orin and streams events through Kafka into TimescaleDB. [3] (96 chars) Sustained 30 FPS on
+  four streams in a lab test; the signal-wait effect was not measured.
   title: TrafficLens: Real-Time Intersection Analytics
   stack: Python, YOLOv8, Kafka, TimescaleDB, FastAPI
-  paragraph: City traffic engineers retimed signals from week-old manual counts, so congestion fixes lagged
-  behind real demand. Built an edge pipeline where YOLOv8 on Jetson Orin tracks vehicles per lane, streams events
-  through Kafka into TimescaleDB, and serves live counts on a FastAPI dashboard. Sustained 30 FPS on four 1080p
-  streams per device at 96% count accuracy, and the retimed signals cut average wait by 18%.
-  short: Traffic engineers retimed signals from week-old manual counts. An edge YOLOv8 and Kafka pipeline gave them
-  live lane counts at 30 FPS with 96% accuracy, cutting average signal wait by 18%.
-- Never use em dashes (—) or a spaced dash as punctuation, in titles or paragraphs; use commas, semicolons, colons
-  or separate sentences (e.g. "COLLIDE: AI-Powered Site Selection"). A change by a percentage takes "by"
-  ("cutting latency by 40%")."""
+  paragraph_sentences: [1, 2, 3]   short_sentences: [2]"""
+PROMPT += """
+- Never use em dashes (—) or a spaced dash as punctuation in a title."""
 PROMPT += "\n" + SOURCE_POLICY
+
+
+def source_lines(card: dict, limit: int = 40) -> str:
+    """The card's numbered SOURCE SENTENCES as the writer sees them: `[n] (length chars) sentence`, the same numbering `compose` uses."""
+    return "\n".join(f"[{i}] ({len(s)} chars) {s}" for i, s in enumerate(source_sentences(card)[:limit], 1)) or "none usable"
 
 
 def build_prompt(cands: list[tuple[float, dict]], jd: JobDescription, known: dict[str, tuple[str, str]], *, grounded=False) -> list:
@@ -90,21 +112,18 @@ def build_prompt(cands: list[tuple[float, dict]], jd: JobDescription, known: dic
     for score, c in cands:
         lines = [f"## {c['full_name']} ({'own' if c['owned'] else 'shared, owned by someone else'}; relevance "
                  f"{score:.2f}; {c['kind']}, substance {c['substance']}/5)",
-                 f"title: {c['title']}", f"summary: {c['summary']}", f"tech stack: {', '.join(c['tech_stack'])}",
-                 f"fields: {', '.join(c['fields'])}", f"results: {'; '.join(c['results']) or 'none stated'}"]
+                 f"title: {c['title']}", f"tech stack: {', '.join(c['tech_stack'])}", f"fields: {', '.join(c['fields'])}"]
         if c["full_name"].lower() in known:
             lines.append(f"KNOWN TITLE: {known[c['full_name'].lower()][0]}")
-        lines.append("README (written by the agent from the code):\n" + c["readme"][:2500])
+        lines.append("SOURCE SENTENCES (this repo only; pick by number):\n" + source_lines(c))
         blocks.append("\n".join(lines))
     job = {"title": jd.title, "responsibilities": jd.responsibilities, "basic": jd.basic_qualifications,
            "preferred": jd.preferred_qualifications, "technical_skills": jd.technical_skills}
     prompt = PROMPT.format(n_min=MIN_PROJECTS, n_max=MAX_PROJECTS)
-    if grounded:
-        # A concrete invented example was copied verbatim into a different
-        # repository during live validation. State the shape without supplying
-        # transferable fake achievements or contradicting the source reviewer.
-        start, end = prompt.index('EXAMPLE of the expected depth'), prompt.index('- Never use em dashes')
-        prompt = prompt[:start] + prompt[end:]
+    if not grounded:
+        # The invented example is kept for the original strategy only: a concrete made-up achievement was copied into a
+        # different repository during live validation, so the grounded strategy states the shape without it.
+        prompt += "\n" + EXAMPLE_BLOCK
     return [SystemMessage(with_today(prompt)),
             HumanMessage(f"POSTING: {job}\n\nCANDIDATES:\n\n" + "\n\n".join(blocks))]
 
@@ -200,13 +219,244 @@ class Chosen:
                       self.short)
 
 
-def _sentences(text: str, limit: int) -> str:
-    out = ""
-    for sentence in re.split(r"(?<=[.!?])\s+", text.strip()):
-        if len(out) + len(sentence) + 1 > limit:
+# --- the source-sentence contract ---------------------------------------------------------------------------------------------------------
+# A displayed description is composed of whole sentences of the project's OWN card. The splitter errs towards MERGING (an abbreviation or
+# initialism never ends a sentence), so a piece it returns is always a contiguous, complete stretch of source text, never half of one.
+_TERMINAL = re.compile(r"[.!?][\"'\u201d\u2019)\]]*(?=\s)")
+_SENTENCE_START = re.compile(r"[A-Z0-9]")
+_ABBREVIATION_END = re.compile(r"(?i)\b(?:e\.g|i\.e|etc|vs|approx|inc|ltd|dr|mr|mrs|fig|cf)\.[\"')\]]*$|(?<![A-Za-z0-9])(?:[A-Za-z]\.){2,}[\"')\]]*$")
+
+
+def split_sentences(text: str) -> list[str]:
+    """The text as sentences: a boundary is a terminal . ! or ? (with closing quotes/brackets) followed by space and a capital or digit, and is
+    never taken after an abbreviation or initialism (`e.g.`, `U.S.`). Whitespace is normalised. The pieces joined with single spaces give the text back."""
+    text = " ".join(str(text or "").split())
+    out, start = [], 0
+    for match in _TERMINAL.finditer(text):
+        rest = text[match.end():].lstrip()
+        if not rest or not _SENTENCE_START.match(rest) or _ABBREVIATION_END.search(text[start:match.end()]):
+            continue
+        out.append(text[start:match.end()].strip())
+        start = match.end()
+    if tail := text[start:].strip():
+        out.append(tail)
+    return out
+
+
+def _single_quotes_balanced(sentence: str) -> bool:
+    """Every opening single quote has a closing one. An apostrophe inside a word ("company's", "don't") or ending a plural possessive
+    ("customers' data") is not a quote, so a normal possessive no longer makes a complete sentence look unfinished."""
+    text = re.sub(r"(?<=\w)'(?=\w)", "", sentence)
+    opens = len(re.findall(r"(?:^|[\s(\[\u201c\"])'(?=\w)", text))
+    closes = len(re.findall(r"(?<=[\w.,!?)])'(?!\w)", text))
+    return closes >= opens
+
+
+def _complete(sentence: str) -> bool:
+    """A usable whole sentence: starts like a sentence, ends in terminal punctuation (never a synthetic one), is long enough to say something,
+    has balanced brackets and quotes, does not end in an abbreviation and holds no dash used as punctuation."""
+    return (len(sentence) >= 30 and bool(_SENTENCE_START.match(sentence)) and bool(re.search(r'[.!?]["\')\]\u201d\u2019]*$', sentence))
+            and not _ABBREVIATION_END.search(sentence) and sentence.count("(") == sentence.count(")") and sentence.count('"') % 2 == 0
+            and _single_quotes_balanced(sentence) and not DASH.search(sentence))
+
+
+def source_sentences(card: dict) -> list[str]:
+    """The numbered pool a description may be built from: the complete sentences of the card's summary, then its results, each once, in card order.
+
+    Numbers (1-based) are positions in this list. It depends on the card's text only, so the writer, the validators and a later refresh agree on it.
+    """
+    out: list[str] = []
+    for value in [(card or {}).get("summary")] + list((card or {}).get("results") or []):
+        if isinstance(value, str):
+            out += [s for s in split_sentences(value) if _complete(s) and s not in out]
+    return out
+
+
+def bound_text(text: str, card: dict) -> str | None:
+    """The text when it is made only of whole, distinct source sentences of THIS card (its pieces joined by single spaces), else None.
+
+    A half sentence, an added clause, a changed verb, a dropped negation or another repository's sentence all fail, because each piece must be
+    one of the card's own sentences exactly. A text with no sentence at all is not bound.
+    """
+    pieces = split_sentences(text)
+    pool = set(source_sentences(card))
+    if not pieces or len(pieces) > MAX_SENTENCES or len(set(pieces)) != len(pieces) or not all(p in pool for p in pieces):
+        return None
+    return " ".join(pieces)
+
+
+def unbound_excerpt(text: str, card: dict) -> str:
+    """The first piece of the text that is not a source sentence of the card, around its first word the card does not use (for the finding shown to the
+    writer: the added clause, not the harmless start of the sentence)."""
+    pool = set(source_sentences(card))
+    pieces = split_sentences(text)
+    piece = next((p for p in pieces if p not in pool), pieces[0] if pieces else "")
+    known = set(re.findall(r"[a-z0-9]+", " ".join(_card_strings(card)).lower()))
+    novel = next((m.start() for m in re.finditer(r"[A-Za-z0-9]+", piece) if m.group(0).lower() not in known), 0)
+    start = piece.rfind(" ", 0, max(0, novel - 30)) + 1 if novel > 30 else 0
+    return ("\u2026" if start else "") + piece[start:start + 220] + ("\u2026" if start + 220 < len(piece) else "")
+
+
+def compose(card: dict, ids, limit: int, floor: int = 0) -> str:
+    """The description for a selection of source sentence numbers: those sentences, in the order given, joined by single spaces.
+
+    Sentences that no longer fit under `limit` are left out whole from the end (the description is never cut inside a sentence).
+
+    Args:
+        card: The project's saved card.
+        ids: 1-based source sentence numbers, distinct, in reading order.
+        limit: Longest allowed description.
+        floor: Shortest acceptable description.
+
+    Raises:
+        ValueError: A number is missing, repeated, out of range or not a number, or the fitting sentences are shorter than `floor`.
+    """
+    pool = source_sentences(card)
+    ids = list(ids or [])
+    if not ids:
+        raise ValueError(f"no source sentence numbers given; choose from 1-{len(pool)}")
+    if len(ids) > MAX_SENTENCES or len(set(ids)) != len(ids):
+        raise ValueError(f"source sentence numbers must be distinct and at most {MAX_SENTENCES}: {ids}")
+    if bad := [i for i in ids if isinstance(i, bool) or not isinstance(i, int) or not 1 <= i <= len(pool)]:
+        raise ValueError(f"source sentence number(s) {bad} do not exist for this project; its sentences are 1-{len(pool)}")
+    chosen: list[str] = []
+    for i in ids:
+        if len(" ".join(chosen + [pool[i - 1]])) > limit:
             break
-        out = f"{out} {sentence}".strip()
-    return out or text[:limit].rsplit(" ", 1)[0] + "."
+        chosen.append(pool[i - 1])
+    text = " ".join(chosen)
+    if not chosen:
+        raise ValueError(f"no complete useful prefix of the selected source sentences fits {limit} characters; choose shorter whole sentences totalling {floor}-{limit}")
+    if len(text) < floor:
+        raise ValueError(f"the selected source sentences give {len(text)} characters (limit {limit}); choose whole sentences totalling {floor}-{limit}")
+    return text
+
+
+_JOB_STOP = frozenset("a an the of to from in on at by for with within via using use uses used its their his her our is are was were be been "
+                                    "being and or as that which while but so than this these those it they when if into over across through about "
+                                    "experience ability strong work working team teams years year role position company skills knowledge".split())
+
+
+def job_terms(jd) -> frozenset[str]:
+    """The content words of a posting (title, duties, qualifications, skills), lower case, used only to rank source sentences."""
+    text = " ".join([getattr(jd, "title", "") or ""] + list(getattr(jd, "responsibilities", []) or []) + list(getattr(jd, "basic_qualifications", []) or [])
+                    + list(getattr(jd, "preferred_qualifications", []) or []) + list(getattr(jd, "technical_skills", []) or []))
+    return frozenset(w for w in re.findall(r"[a-z][a-z0-9+#.-]{2,}", text.lower()) if w not in _JOB_STOP)
+
+
+def _relevance(sentence: str, terms: frozenset[str]) -> int:
+    """How many distinct posting words a source sentence uses (ranking only)."""
+    return len(terms & {w.strip(".-") for w in re.findall(r"[a-z][a-z0-9+#.-]{2,}", sentence.lower())})
+
+
+# --- the title ---------------------------------------------------------------------------------------------------------------------------------
+def _title_words(text: str) -> list[str]:
+    return [w.rstrip(".") for w in re.findall(r"[a-z0-9][a-z0-9.+#]*", (text or "").casefold())]
+
+
+def card_title(card: dict) -> str:
+    """A title built only from the card's own: its first segment ("SolBot — Agentic RAG..." -> "SolBot"), cut at a word boundary to 45 characters,
+    else the repository name."""
+    first = re.split(r"\s+[—–:|-]\s+", str(card.get("title") or ""))[0].strip()
+    words, out = first.split(), ""
+    for w in words:
+        if len(f"{out} {w}".strip()) > 45:
+            break
+        out = f"{out} {w}".strip()
+    return out or str(card.get("full_name") or "").split("/")[-1] or "Project"
+
+
+def title_supported(title: str, card: dict, owner_title: str | None = None) -> bool:
+    """The title is the owner's template title for this repository, or uses only words of the card's own title / the repository name, in their order.
+
+    A generated title may drop words of the source title but never add one, so it cannot name a feature, outcome or award the card does not.
+    """
+    if owner_title and " ".join(_title_words(title)) == " ".join(_title_words(owner_title)):
+        return True
+    words = _title_words(title)
+    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", str(card.get("full_name") or "").split("/")[-1]).replace("-", " ").replace("_", " ")
+    reference = iter(_title_words(name) + _title_words(card.get("title") or ""))
+    return bool(words) and all(w in reference for w in words)      # `in` on an iterator consumes it: an ordered subsequence
+
+
+def entry_binding_issues(entry: dict, card: dict, owner: tuple[str, str] | None = None) -> list[str]:
+    """Why this stored project is not bound to its own card: each of its descriptions must be whole source sentences, its title the owner's or the card's.
+
+    Args:
+        entry: One `projects.json` ranked entry.
+        card: That repository's saved evidence card.
+        owner: The template's (title, year) for this repository, when it has one.
+
+    Returns:
+        Problems, empty when bound. An absent short description is allowed (the project then renders its full one).
+    """
+    out = []
+    for field, label in (("paragraph", "full"), ("short", "short")):
+        text = entry.get(field) or ""
+        if not text and field == "short":
+            continue
+        if bound_text(text, card) is None:
+            out.append(f"{label} description is not made of complete sentences of its own source card (not a source sentence: "
+                       f"{unbound_excerpt(text, card)!r})")
+    if not title_supported(entry.get("title") or "", card, owner[0] if owner else None):
+        out.append(f"title {entry.get('title')!r} is not the owner's template title or words of its own card title")
+    return out
+
+
+def recover_years(state: dict, known: dict | None = None) -> list[str]:
+    """Give every project whose saved date is neither the owner's nor from its own repository the date `choose` would have set (the card's creation
+    month, else its last push, else the owner's template date).
+
+    Args:
+        state: `projects.json`; its `years` are changed in place.
+        known: `known_entries` of the owner template.
+
+    Returns:
+        The repositories whose date changed.
+    """
+    known, evidence, fixed = known or {}, saved_evidence(state), []
+    years = state.setdefault("years", {})
+    for entry in state.get("ranked", []):
+        repo = str(entry.get("repo") or "")
+        card, owner = evidence.get(repo.casefold()), known.get(repo.casefold())
+        if card is None or repo not in years:
+            continue
+        allowed = {d for d in (month_year(card.get("created_at") or ""), month_year(card.get("pushed_at") or ""), owner[1] if owner else "") if d}
+        if allowed and years[repo] not in allowed:
+            years[repo] = month_year(card.get("created_at") or card.get("pushed_at") or "") or (owner[1] if owner else "")
+            fixed.append(repo)
+    return fixed
+
+
+def binding_findings(state: dict, known: dict | None = None) -> list[str]:
+    """The source-sentence contract checked against the job's OWN saved evidence, independently of anything the writer or a cache claims.
+
+    Every ranked project (not only the displayed ones: a layout change can show a hidden one) with saved evidence must have a full and a short
+    description made of whole sentences of that evidence card, a title that is the owner's or the card's, and a date that is the owner's or the
+    card's. A project with no saved evidence is reported by `missing_evidence`. Prose saved before this contract (free text, another
+    repository's sentences, an edited sentence) is reported here and needs regeneration or `recover_scope`.
+
+    Args:
+        state: `projects.json`.
+        known: `known_entries` of the owner template (repo lower case -> (title, year)).
+
+    Returns:
+        One instruction per problem, in the wording the project writer receives.
+    """
+    known, evidence, out = known or {}, saved_evidence(state), []
+    years = state.get("years") if isinstance(state.get("years"), dict) else {}
+    for i, entry in enumerate(state.get("ranked", []), 1):
+        repo = str(entry.get("repo") or "")
+        card = evidence.get(repo.casefold())
+        if card is None:
+            continue
+        owner = known.get(repo.casefold())
+        out += [f"project {i} ({repo}) {issue}; use only numbered source sentences of this repository, exactly as written"
+                for issue in entry_binding_issues(entry, card, owner)]
+        allowed = {d for d in (month_year(card.get("created_at") or ""), month_year(card.get("pushed_at") or ""), owner[1] if owner else "") if d}
+        if allowed and repo in years and years[repo] not in allowed:
+            out.append(f"project {i} ({repo}) date {years[repo]!r} is neither the owner's template date nor from its own repository")
+    return out
 
 
 # --- capability is not achievement -------------------------------------------------------------------------------------------------------
@@ -495,66 +745,88 @@ def scope_claims(text: str, card: dict) -> list[str]:
     return claims
 
 
-def _single_quotes_balanced(sentence: str) -> bool:
-    """Every opening single quote has a closing one. An apostrophe inside a word ("company's", "don't") or ending a plural possessive
-    ("customers' data") is not a quote, so a normal possessive no longer makes a complete sentence look unfinished."""
-    text = re.sub(r"(?<=\w)'(?=\w)", "", sentence)
-    opens = len(re.findall(r"(?:^|[\s(\[\u201c\"])'(?=\w)", text))
-    closes = len(re.findall(r"(?<=[\w.,!?)])'(?!\w)", text))
-    return closes >= opens
-
-
-def faithful_description(card: dict, limit: int, floor: int, vocabulary: list[str] | None = None) -> str | None:
+def faithful_description(card: dict, limit: int, floor: int, vocabulary: list[str] | None = None, terms: frozenset[str] | None = None,
+                         minimum: int | None = None) -> str | None:
     """A description made only of complete sentences of the card's own summary and results (never cut, never rejoined with new punctuation).
 
-    Candidate sentences must end in terminal punctuation, have balanced brackets and quotes, not end in an abbreviation, hold no punctuation dash, and
-    pass the same achieved-standard and exclusivity checks as generated text. They are taken in card order until `floor` characters are reached.
+    Candidate sentences are the card's `source_sentences` that also pass the achieved-standard, exclusivity and technology checks as generated
+    text would. With `terms` (the posting's words) the most relevant sentences are taken first, otherwise they are taken in card order; either
+    way they are printed in card order, until `floor` characters are reached or nothing more fits under `limit`.
 
     Args:
         card: The project's saved card.
         limit: Longest allowed description.
-        floor: Length at which the description is long enough.
+        floor: Length at which the description is long enough (selection stops).
         vocabulary: Technology names that the description must not name unless the card establishes them (`tech_vocabulary`).
+        terms: The posting's content words (`job_terms`), to prefer relevant sentences.
+        minimum: Shortest acceptable result; default half of `floor`, at least 60.
 
     Returns:
-        The description, or None when no qualifying complete sentence fits (the caller keeps the finding rather than printing a false text).
+        The description, or None when the card's whole sentences cannot reach `minimum` (the caller skips the variant or project, or keeps the finding).
     """
-    from jobagent.tools.tailor import DASH
-    pool = [card.get("summary") or ""] + [x for x in card.get("results") or [] if isinstance(x, str)]
-    chosen: list[str] = []
-    for sentence in (x.strip() for block in pool for x in re.split(r"(?<=[.!?])\s+", block)):
-        text = " ".join(chosen + [sentence])
-        if (len(sentence) < 30 or len(text) > limit or DASH.search(sentence) or not re.search(r'[.!?]["\')\]]*$', sentence)
-                or re.search(r"(?i)\b(?:e\.g|i\.e|etc|vs|approx)\.$", sentence)
-                or sentence.count("(") != sentence.count(")") or sentence.count('"') % 2 or not _single_quotes_balanced(sentence)
-                or sentence.lower().startswith("the readme")
-                or unsupported_claims(sentence, card, vocabulary)):
+    pool = [s for s in source_sentences(card) if not unsupported_claims(s, card, vocabulary)]
+    order = sorted(range(len(pool)), key=lambda i: (-_relevance(pool[i], terms or frozenset()), i))
+    chosen: list[int] = []
+    for i in order:
+        text = " ".join(pool[j] for j in sorted(chosen + [i]))
+        if len(text) > limit or len(chosen) >= MAX_SENTENCES:
             continue
-        chosen.append(sentence)
+        chosen.append(i)
         if len(text) >= floor:
             break
-    text = " ".join(chosen)
-    return text if len(text) >= max(60, floor // 2) else None
+    text = " ".join(pool[j] for j in sorted(chosen))
+    return text if text and len(text) >= (minimum if minimum is not None else max(60, floor // 2)) else None
 
 
-def recover_scope(entry: dict, card: dict, vocabulary: list[str] | None = None) -> list[str]:
+def faithful_variants(card: dict, vocabulary: list[str] | None = None, terms: frozenset[str] | None = None) -> tuple[str | None, str | None]:
+    """(full, short) descriptions of whole source sentences within the display bounds; None for a variant the card cannot fill."""
+    return (faithful_description(card, FULL_LIMIT, MIN_PARAGRAPH, vocabulary, terms, minimum=FULL_FLOOR),
+            faithful_description(card, SHORT_LIMIT, SHORT_WANTED, vocabulary, terms, minimum=SHORT_FLOOR))
+
+
+def recover_scope(entry: dict, card: dict, vocabulary: list[str] | None = None, terms: frozenset[str] | None = None) -> list[str]:
     """Replace any displayed variant (full or short) of a saved project entry that has a source finding (an unsupported restriction, achieved
-    standard or technology) with the card's own sentences, (`recover_stack` handles the printed stack).
+    standard or technology) or is not made of its card's whole sentences, with the card's own sentences (`recover_stack` handles the printed stack,
+    `recover_title` the title).
 
     Args:
         entry: One `projects.json` ranked entry; changed in place.
         card: The project's saved card.
         vocabulary: Technology names to look for in prose (`tech_vocabulary`).
+        terms: The posting's words (`job_terms`), to prefer relevant sentences.
 
     Returns:
-        The fields changed (empty when nothing was unsupported or no faithful text exists).
+        The fields changed (empty when nothing was wrong or no faithful text exists).
     """
     fixed = []
-    for field, limit, floor in (("paragraph", MAX_PARAGRAPH - 10, MIN_PARAGRAPH), ("short", 230, 120)):
-        if unsupported_claims(entry.get(field) or "", card, vocabulary) and (text := faithful_description(card, limit, floor, vocabulary)):
-            entry[field] = text
-            fixed.append(field)
+    for field, limit, floor, minimum in (("paragraph", FULL_LIMIT, MIN_PARAGRAPH, FULL_FLOOR), ("short", SHORT_LIMIT, SHORT_WANTED, SHORT_FLOOR)):
+        text = entry.get(field) or ""
+        if field == "short" and not text:
+            continue
+        if unsupported_claims(text, card, vocabulary) or bound_text(text, card) is None:
+            new = faithful_description(card, limit, floor, vocabulary, terms, minimum=minimum)
+            if new:
+                entry[field], _ = new, fixed.append(field)
+            elif field == "short":
+                entry[field], _ = "", fixed.append(field)         # the card cannot fill a short variant: the project is shown with its full one, not with prose
     return fixed
+
+
+def recover_title(entry: dict, card: dict, owner: tuple[str, str] | None = None) -> bool:
+    """Give an entry whose title is neither the owner's nor made of its own card title's words the card's own title.
+
+    Args:
+        entry: One `projects.json` ranked entry; changed in place.
+        card: That repository's saved card.
+        owner: The template's (title, year) for this repository, when it has one.
+
+    Returns:
+        Whether the title changed.
+    """
+    if title_supported(entry.get("title") or "", card, owner[0] if owner else None):
+        return False
+    entry["title"] = owner[0] if owner else card_title(card)
+    return True
 
 
 def recover_stack(entry: dict, card: dict) -> bool:
@@ -839,16 +1111,113 @@ def unsupported_claims(text: str, card: dict, vocabulary: list[str] | None = Non
             + (prose_tech_claims(text, card, vocabulary) if vocabulary else []))
 
 
-def from_card(c: dict) -> ProjectEntry:
-    """A project entry straight from a repo card (fallback when the model can't choose)."""
-    title = re.split(r"\s+[—:|-]\s+", c["title"])[0][:45]
-    return ProjectEntry(repo=c["full_name"], title=title, stack=card_terms(c)[:5] or c["tech_stack"][:5] or ["GitHub"],
-                        paragraph=_sentences(c["summary"], 320), short=_sentences(c["summary"], 170))
+def from_card(c: dict, terms: frozenset[str] | None = None, vocabulary: list[str] | None = None) -> ProjectEntry | None:
+    """A project entry straight from a repo card (fallback when the model can't choose): its own title and stack, and descriptions made only of the
+    card's whole sentences (`faithful_variants`).
+
+    Returns:
+        The entry, or None when the card's complete sentences cannot fill a full description (the caller tries another candidate). A short
+        description the card cannot fill is left empty.
+    """
+    full, short = faithful_variants(c, vocabulary, terms)
+    if not full:
+        return None
+    return ProjectEntry(repo=c["full_name"], title=card_title(c), stack=card_terms(c)[:5] or c["tech_stack"][:5] or ["GitHub"],
+                        paragraph=full, short=short or "")
+
+
+def entry_from_pick(pick: "ProjectPick", card: dict, vocabulary: list[str] | None = None, terms: frozenset[str] | None = None,
+                    log=print) -> ProjectEntry | None:
+    """The stored entry for a writer's selection of source sentence numbers.
+
+    Each description is composed from the numbers (`compose`) and must also pass the source checks. A selection that is invalid (missing,
+    repeated or out of range numbers, too short, or flagged) is replaced for that variant by the faithful ranked selection of the same card, never by
+    other text. The title is the writer's only when the card's own title supports it.
+
+    Returns:
+        The entry, or None when the card cannot fill a full description at all.
+    """
+    full_fallback, short_fallback = faithful_variants(card, vocabulary, terms)
+
+    def build(ids, limit, floor, minimum, fallback, label):
+        """The composed text for a selection, or the faithful fallback for it."""
+        try:
+            text = compose(card, ids, limit, minimum) if ids else ""
+            if text and (flagged := unsupported_claims(text, card, vocabulary)):
+                raise ValueError(f"{flagged}")
+            if text:
+                return text
+        except ValueError as exc:
+            log(f"projects: {card['full_name']}: {label} selection unusable ({str(exc)[:100]}); using its own whole sentences")
+        return fallback or ""
+    full = build(pick.paragraph_sentences, FULL_LIMIT, MIN_PARAGRAPH, FULL_FLOOR, full_fallback, "full")
+    if not full:
+        return None
+    short = build(pick.short_sentences, SHORT_LIMIT, SHORT_WANTED, SHORT_FLOOR, short_fallback, "short") if (pick.short_sentences or short_fallback) else ""
+    title = pick.title if title_supported(pick.title, card) else card_title(card)
+    return ProjectEntry(repo=card["full_name"], title=title, stack=list(pick.stack), paragraph=full, short=short)
+
+
+def apply_edits(state: dict, edits: list, known: dict | None = None, vocabulary: list[str] | None = None) -> list[str]:
+    """Apply writer edits to a saved `projects.json` state in place, keeping only edits that are bound to the project's OWN saved evidence.
+
+    An edit carries source sentence numbers (`paragraph_sentences`, `short_sentences`), or text. Numbers are composed with `compose`; text counts
+    only when `bound_text` finds it made of that card's whole sentences (a copied source sentence is fine, a rewrite is not). A variant that is
+    blank, unbound, out of bounds or without saved evidence keeps its old text. A title counts only when it is the owner's or card-supported.
+
+    Args:
+        state: Parsed `projects.json`; changed in place.
+        edits: Objects with `project` (1-based, within the displayed projects) and optional `paragraph`, `short`, `title`,
+            `paragraph_sentences`, `short_sentences`.
+        known: `known_entries` of the owner template.
+        vocabulary: Technology names to look for in prose.
+
+    Returns:
+        A note for each edit part that was refused, for the log.
+    """
+    refused, evidence, known = [], saved_evidence(state), known or {}
+    if vocabulary is None:
+        vocabulary = tech_vocabulary(evidence, state.get("ranked", []))
+    for edit in edits:
+        if not 1 <= edit.project <= state.get("kept", 0) or edit.project > len(state["ranked"]):
+            continue
+        entry = state["ranked"][edit.project - 1]
+        card = evidence.get(str(entry.get("repo") or "").casefold())
+        for field, ids_name, limit, minimum in (("paragraph", "paragraph_sentences", FULL_LIMIT, FULL_FLOOR), ("short", "short_sentences", SHORT_LIMIT, SHORT_FLOOR)):
+            ids, text = list(getattr(edit, ids_name, None) or []), (getattr(edit, field, "") or "").strip()
+            if not (ids or text):
+                continue
+            try:
+                if card is None:
+                    raise ValueError("no saved source evidence for this project")
+                new = compose(card, ids, limit, minimum) if ids else bound_text(text, card)
+                if not new or len(new) < minimum or len(new) > limit:
+                    raise ValueError("not whole source sentences within the length bounds")
+                if unsupported_claims(new, card, vocabulary):
+                    raise ValueError("a source finding remains")
+            except ValueError as exc:
+                refused.append(f"project {edit.project} {field}: {exc}")
+                continue
+            entry[field] = new
+        if title := (getattr(edit, "title", "") or "").strip():
+            owner = known.get(str(entry.get("repo") or "").casefold())
+            if owner:
+                entry["title"] = owner[0]
+            elif card is not None and title_supported(title, card):
+                entry["title"] = title
+            else:
+                refused.append(f"project {edit.project} title: not words of its own card title")
+    return refused
 
 
 def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = None, rediscover: bool = True,
            log=print, *, cache=None, model_name="", feedback="") -> Chosen:
-    """Refresh the repo cards (new/changed repos only), rank them for this job, pick and write 2-4 projects."""
+    """Refresh the repo cards (new/changed repos only), rank them for this job, pick and describe 2-4 projects.
+
+    The model selects projects and numbered source sentences; the descriptions are composed from those sentences (`entry_from_pick`). A project whose
+    selection is unusable is described by the faithful ranked selection of the same card; one whose card cannot fill a full description from whole
+    sentences is skipped and another ranked candidate is tried. Fewer than MIN_PROJECTS usable projects raises RuntimeError.
+    """
     try:
         cards = repo_cards.refresh(user, token, rediscover=rediscover, log=log)
     except Exception as exc:
@@ -883,13 +1252,13 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
     log("projects: top candidates: " + ", ".join(f"{c['full_name']} {s:.2f}" for s, c in cands))
     known = known_entries(r.tex)
     by_name = {c["full_name"].lower(): c for _, c in cands}
-    # Ground repository features in BOTH strategies. The ungrounded instruction
-    # to invent features contradicts the source validator and wastes repairs.
+    terms, vocab = job_terms(jd), tech_vocabulary([c for _, c in cands])
+    # Ground repository features in BOTH strategies: descriptions are the card's own sentences, selected by number.
     messages = build_prompt(cands, jd, known, grounded=True)
     if feedback:
         messages.append(HumanMessage("The previous document draft failed these checks. Correct any project-related "
                                      "findings using each repository's own evidence:\n" + feedback))
-    out, chosen = None, []
+    out, chosen, skipped = None, [], set()
     for _ in range(3):
         try:
             if cache is not None:
@@ -902,36 +1271,50 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
         except Exception as e:  # timeout / token limit: one more try
             log(f"projects: model error {type(e).__name__}; retrying")
             continue
-        chosen = list({e.repo.lower(): e for e in out.projects if e.repo.lower() in by_name}.values())
-        for e in chosen:  # too long: keep whole sentences up to the limit (models rarely shorten when asked)
-            if len(e.paragraph) > MAX_PARAGRAPH:
-                e.paragraph = _sentences(e.paragraph, MAX_PARAGRAPH - 10)
-        thin = [e.title for e in chosen if len(e.paragraph) < MIN_PARAGRAPH]
+        picks = list({p.repo.lower(): p for p in out.projects if p.repo.lower() in by_name}.values())
+        chosen, bad = [], []
+        for pick in picks:
+            card = by_name[pick.repo.lower()]
+            try:
+                compose(card, pick.paragraph_sentences, FULL_LIMIT, FULL_FLOOR)
+            except ValueError as exc:
+                bad.append(f"{pick.repo}: {exc}")
+            if entry := entry_from_pick(pick, card, vocab, terms, log=log):
+                chosen.append(entry)
+            else:
+                skipped.add(pick.repo.lower())
         heads = [re.split(r"[:,]", e.title)[0].strip().lower() for e in chosen]
         if len(set(heads)) < len(heads):  # one project under two titles (e.g. "SolBot: ..." and "SolBot, ...")
             dup = sorted({h for h in heads if heads.count(h) > 1})
             log(f"projects: the same project twice ({dup}); asking again")
             messages = messages + [HumanMessage(f"{dup} appears twice: every entry must be a DIFFERENT repo, and each "
-                                                "paragraph must describe its own repo's card.")]
+                                                "selection must use its own repo's SOURCE SENTENCES.")]
             continue
-        if MIN_PROJECTS <= len(chosen) <= MAX_PROJECTS and not thin:
+        # too short only when the card's own sentences could reach the wanted length (asking again cannot add facts a card lacks)
+        thin = [e.title for e in chosen if len(e.paragraph) < MIN_PARAGRAPH
+                and faithful_description(by_name[e.repo.lower()], FULL_LIMIT, MIN_PARAGRAPH, vocab, terms, minimum=MIN_PARAGRAPH)]
+        if MIN_PROJECTS <= len(chosen) <= MAX_PROJECTS and not bad and not thin:
             break
-        if thin and MIN_PROJECTS <= len(chosen) <= MAX_PROJECTS:
-            log(f"projects: description too short for {thin}; asking again")
+        if (bad or thin) and MIN_PROJECTS <= len(chosen) <= MAX_PROJECTS:
+            log(f"projects: unusable source sentence selection {bad or thin}; asking again")
             messages = messages + [HumanMessage(
-                f"These paragraphs are too short: {thin}. Every paragraph must be 3 sentences, 300-420 characters: "
-                "the problem, the system built, and the wow factor (a result or scale), like the EXAMPLE.")]
+                "These selections do not give a usable description: " + "; ".join(bad or [f"{t} is too short" for t in thin])
+                + ". Return only existing SOURCE SENTENCE numbers of that same repo, distinct, totalling 300-420 characters (200 at least, 470 at most).")]
             continue
         messages = messages + [HumanMessage(f"Use {MIN_PROJECTS}-{MAX_PROJECTS} DIFFERENT repos, each exactly one "
                                             "of the CANDIDATE full_names.")]
-    if len(chosen) < MIN_PROJECTS:  # the model failed or picked too few: top-ranked cards, in their own words
+    chosen = chosen[:MAX_PROJECTS]
+    if len(chosen) < MIN_PROJECTS:  # the model failed or picked too few: top-ranked cards, in their own sentences
         log(f"projects: model gave {len(chosen)} usable project(s); filling from the top-ranked repo cards")
         have = {e.repo.lower() for e in chosen}
         for _, c in cands:
             if len(chosen) >= MAX_PROJECTS:
                 break
-            if c["full_name"].lower() not in have:
-                chosen.append(from_card(c))
+            if c["full_name"].lower() not in have and (entry := from_card(c, terms, vocab)):
+                chosen.append(entry)
+    if len(chosen) < MIN_PROJECTS:
+        raise RuntimeError(f"only {len(chosen)} candidate project(s) have complete source sentences to describe them "
+                           f"(at least {MIN_PROJECTS} needed); no description was written without a source")
     years = {}
     for e in chosen:
         c = by_name[e.repo.lower()]

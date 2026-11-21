@@ -264,7 +264,11 @@ def test_failed_review_cancels_queued_reasoner_calls_and_reports_the_actual_fail
 def test_title_only_repairs_cannot_generate_paragraphs_or_edit_other_projects(tmp_path,monkeypatch):
     from jobagent.steps import multi_agent as M,ats as A
     from pydantic import ValidationError
-    (tmp_path/'projects.json').write_text('{}')
+    # fixture contract (source-sentence binding): the displayed projects carry the saved cards their names and sentences come from
+    st={'kept':2,'ranked':[{'repo':'owner/project','title':'One','paragraph':'Keep one.'},{'repo':'owner/project-two','title':'project-two','paragraph':'Keep two.'}],
+        'evidence':{'owner/project':{'full_name':'owner/project','title':'One'},
+                    'owner/project-two':{'full_name':'owner/project-two','title':'Readable Project: a robot maze solver'}}}
+    (tmp_path/'projects.json').write_text(json.dumps(st))
     monkeypatch.setattr(M.llm,'writer',lambda *a,**kw:object())
     monkeypatch.setattr(M,'_context',lambda *a,**kw:'Sources')
     captured=[]
@@ -276,9 +280,11 @@ def test_title_only_repairs_cannot_generate_paragraphs_or_edit_other_projects(tm
         'projects',None,["Project 2 is titled with its bare repo name 'project': give it a readable name."],'')
     assert out is not None and out.projects[0].model_dump()=={'project':2,'title':'Readable Project'}
     with pytest.raises(ValidationError):captured[0].model_validate({'projects':[{'project':1,'title':'Unrequested'}]})
-    st={'kept':2,'ranked':[{'title':'One','paragraph':'Keep one.'},{'title':'Two','paragraph':'Keep two.'}]}
     result=json.loads(A.apply_project_fixes(json.dumps(st),out.projects))
-    assert result['ranked']==[st['ranked'][0],{'title':'Readable Project','paragraph':'Keep two.'}]
+    assert result['ranked']==[st['ranked'][0],{'repo':'owner/project-two','title':'Readable Project','paragraph':'Keep two.'}]
+    # a title with a word the card's own title does not have is refused (it could name a feature or award)
+    invented=M.IncrementalProjectsOut(projects=[M.ProjectEdit(project=2,title='Readable Project: Winner')])
+    assert json.loads(A.apply_project_fixes(json.dumps(st),invented.projects))['ranked'][1]['title']=='project-two'
 
 
 def test_semantically_unbound_outputs_do_not_enter_the_cache(tmp_path,monkeypatch):
@@ -722,13 +728,17 @@ def test_posting_without_numbered_duties_never_requests_an_invented_index():
 def test_targeted_project_edit_changes_only_the_bound_visible_variant_and_title(tmp_path,monkeypatch):
     from jobagent.steps import multi_agent as M
     from jobagent.steps import ats as A
+    # fixture contract (source-sentence binding): the repaired short variant is a whole sentence of the project's own saved card
+    repaired='A robotic maze solver that maps unknown corridors and plans the shortest verified route to the exit with onboard sensors.'
     st={'kept':1,'short':['owner/one'],'ranked':[
         {'repo':'owner/one','title':'one','paragraph':'Full variant retained.','short':'Old short.'},
-        {'repo':'owner/two','title':'two','paragraph':'Not on the page.','short':'Hidden.'}]}
-    fixes=[M.ProjectEdit(project=1,title='Robotic Maze Solver',short='Repaired short. '*12),
+        {'repo':'owner/two','title':'two','paragraph':'Not on the page.','short':'Hidden.'}],
+        'evidence':{'owner/one':{'full_name':'owner/one','title':'Robotic Maze Solver','summary':repaired},
+                    'owner/two':{'full_name':'owner/two','title':'two','summary':'z'*250+'.'}}}
+    fixes=[M.ProjectEdit(project=1,title='Robotic Maze Solver',short=repaired),
            M.ProjectEdit(project=2,title='Should not change',paragraph='z'*250)]
     changed=json.loads(A.apply_project_fixes(json.dumps(st),fixes))
-    assert changed['ranked'][0]['short'].startswith('Repaired short.')
+    assert changed['ranked'][0]['short']==repaired
     assert changed['ranked'][0]['title']=='Robotic Maze Solver'
     assert changed['ranked'][0]['paragraph']==st['ranked'][0]['paragraph']
     assert changed['ranked'][1]==st['ranked'][1]
