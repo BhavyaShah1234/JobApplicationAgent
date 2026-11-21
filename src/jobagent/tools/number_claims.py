@@ -20,6 +20,18 @@ WORDS = re.compile(
     r"((?:an? )?order of magnitude))\b")
 
 
+_ONES = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
+_TENS = "twenty thirty forty fifty sixty seventy eighty ninety".split()
+_WORD_NUMBER = {w: i for i, w in enumerate(_ONES, 1)} | {w: 10 * i for i, w in enumerate(_TENS, 2)} | {"hundred": 100}
+WORD_PERCENT = re.compile(rf"(?i)\b((?:{'|'.join(_TENS)})(?:[- ](?:{'|'.join(_ONES[:9])}))?|{'|'.join(_ONES)}|(?:one )?hundred)\s+percent\b")
+
+
+def _word_number(words: str) -> int:
+    """`twenty-five` -> 25, `one hundred` -> 100."""
+    low = words.lower().strip()
+    return 100 if low.endswith("hundred") else sum(_WORD_NUMBER.get(w, 0) for w in re.split(r"[-\s]+", low))
+
+
 def _norm(token: str) -> str:
     token = token.lower().replace("×", "x").replace("percent", "%")
     token = re.sub(r"[\s,]", "", token)
@@ -43,6 +55,8 @@ def metric_spans(text: str) -> dict[str, str]:
     found: dict[str, str] = {}
     for m in METRIC.finditer(text or ""):
         found.setdefault(_norm(m.group(0)), m.group(0).strip())
+    for m in WORD_PERCENT.finditer(text or ""):
+        found.setdefault(f"{_word_number(m.group(1))}%", m.group(0).strip())      # "twenty percent" is the figure 20%
     for m in WORDS.finditer(text or ""):
         stem = (m.group(1) or m.group(2) or m.group(3) or m.group(4) or "").lower()
         found.setdefault(re.sub(r"[\s-]", "", stem), m.group(0).strip())

@@ -139,3 +139,8 @@ def test_an_unreadable_profile_stops_generation_instead_of_dropping_the_claims_p
         T.declared_claims()
     (tmp_path / "master_profile.yaml").unlink()
     assert T.declared_claims() == {}                                                       # no profile at all keeps the old behaviour
+
+
+def test_word_percentages_become_the_figure():
+    from jobagent.tools import number_claims as NC
+    assert set(NC.metric_spans("Cut errors by twenty percent and costs by twenty-one percent, one hundred percent uptime, five percent.")) == {"20%", "21%", "100%", "5%"}
