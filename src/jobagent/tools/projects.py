@@ -287,6 +287,10 @@ def content_findings(state: dict, cards: dict | None = None) -> list[str]:
             out.append(f"project {i} description ends without a complete sentence: {text[-100:]!r}; "
                        "rewrite the whole description within its length budget, ending the final sentence")
         card = (cards or {}).get((entry.get("repo") or "").casefold())
+        if card and entry.get("stack"):
+            _, ungrounded = ground_stack(list(entry["stack"]), card)
+            if ungrounded:
+                out.append(f"project {i} prints technologies its own card does not show: {ungrounded}; remove them (a stack comes only from that repository's own card)")
         for claim in (standard_outcome_claims(text, card) if card else []):
             out.append(f"project {i} claims an achieved standard or compliance that its own card does not show ({claim!r}): the card lists tooling or capability "
                        "only. Say what the project uses, tests or audits against (for example 'tested with <tool> against <standard>'); never that the standard "
@@ -294,10 +298,65 @@ def content_findings(state: dict, cards: dict | None = None) -> list[str]:
     return out
 
 
+# --- the printed stack must be this repository's own ------------------------------------------------------------------------------------
+_VERSION = re.compile(r"(?i)^v?\d+(?:\.\d+)*[+x]?$")
+_CANON = ((r"\bamazon web services\b", "aws"), (r"\bgoogle cloud platform\b", "gcp"), (r"\bpostgres\b", "postgresql"), (r"\bnodejs\b", "node.js"),
+          (r"\bsklearn\b", "scikit-learn"))
+
+
+def _tokens(text: str) -> list[str]:
+    """Whole words of a technology text, lower case, with common spellings unified and bare versions dropped ("Python 3.12" -> python)."""
+    low = (text or "").lower()
+    for pattern, canonical in _CANON:
+        low = re.sub(pattern, canonical, low)
+    return [t.rstrip(".") for t in re.findall(r"[a-z0-9][a-z0-9.+#_-]*", low) if not _VERSION.match(t.rstrip("."))]
+
+
+def card_terms(card: dict) -> list[str]:
+    """The technologies a card lists, one short term each (its grouped `tech_stack` lines are split on commas, `+` and semicolons)."""
+    out: list[str] = []
+    for line in card.get("tech_stack") or []:
+        for part in re.split(r"[,;]|\s\+\s", re.sub(r"\([^)]*\)", " ", str(line))):
+            term = re.sub(r"\s+", " ", part).strip(" .")
+            if 1 < len(term) <= 28 and term.lower() not in {t.lower() for t in out}:
+                out.append(term)
+    return out
+
+
+def ground_stack(stack: list[str], card: dict) -> tuple[list[str], list[str]]:
+    """Keep only the technologies this repository's own card establishes, as whole words.
+
+    A term is established when every word of it (versions ignored) is a whole word of the card's tech stack, title, summary, notes or README excerpt.
+    `AWS` in CloudForge's card does not make `AWS` true of another repository, `Go` is not found inside `Django`, `Python 3.12` is `Python`,
+    `AWS STS/IAM` establishes `AWS`.
+
+    Args:
+        stack: The technologies the writer chose, in its order.
+        card: That repository's saved card.
+
+    Returns:
+        `(kept, dropped)`; when nothing is established, the card's own first technologies replace the list (never an empty heading).
+    """
+    evidence: set[str] = set()
+    for key in ("tech_stack", "title", "summary", "evidence_notes", "readme"):
+        value = card.get(key)
+        for s in (value if isinstance(value, list) else [value]):
+            evidence.update(_tokens(str(s or "")[:6000]))
+    kept, dropped = [], []
+    for term in stack:
+        words = _tokens(term)
+        if words and all(w in evidence for w in words):
+            if term not in kept:
+                kept.append(term)
+        else:
+            dropped.append(term)
+    return (kept or card_terms(card)[:5] or ["GitHub"]), dropped
+
+
 def from_card(c: dict) -> ProjectEntry:
     """A project entry straight from a repo card (fallback when the model can't choose)."""
     title = re.split(r"\s+[—:|-]\s+", c["title"])[0][:45]
-    return ProjectEntry(repo=c["full_name"], title=title, stack=c["tech_stack"][:5] or ["GitHub"],
+    return ProjectEntry(repo=c["full_name"], title=title, stack=card_terms(c)[:5] or c["tech_stack"][:5] or ["GitHub"],
                         paragraph=_sentences(c["summary"], 320), short=_sentences(c["summary"], 170))
 
 
@@ -391,6 +450,9 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
     for e in chosen:
         c = by_name[e.repo.lower()]
         e.repo = c["full_name"]
+        e.stack, dropped = ground_stack(e.stack, c)       # the heading prints only technologies this repository's own card establishes
+        if dropped:
+            log(f"projects: {e.repo}: dropped from the stack, not shown by its own card: {dropped}")
         if e.repo.lower() in known:  # the user's own title (e.g. hackathon wins)
             e.title = known[e.repo.lower()][0]
         years[e.repo] = month_year(c.get("created_at") or c.get("pushed_at") or "") or \
