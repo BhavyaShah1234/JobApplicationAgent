@@ -94,3 +94,20 @@ def test_a_swapped_in_entry_is_grounded_before_it_is_saved(tmp_path):
     M._merge(ctx, f, {"projects": SimpleNamespace(projects=[], swaps=[SimpleNamespace(project=1, entry=entry)])})
     saved = json.loads((tmp_path / "projects.json").read_text())["ranked"][0]
     assert saved["repo"] == "ak-asu/EnergyHackathon" and saved["stack"] == ["Python", "FastAPI"]
+
+
+@pytest.mark.parametrize("technology", ["C++", "C#", "F#", ".NET", "Node.js", "CI/CD", "TCP/IP"])
+def test_real_technology_punctuation_survives_exact_matching(technology):
+    kept, dropped = P.ground_stack([technology], {"tech_stack": [technology], "title": "", "summary": ""})
+    assert kept == [technology] and not dropped
+
+
+def test_cpp_does_not_establish_c_and_prose_net_does_not_establish_dotnet():
+    assert P.ground_stack(["C"], {"tech_stack": ["C++"]})[1] == ["C"]
+    assert P.ground_stack([".NET"], {"tech_stack": ["Python"], "summary": "Trains a neural net."})[1] == [".NET"]
+    assert P.ground_stack(["CI"], {"tech_stack": ["Git"], "summary": "CI/CD pipelines."})[1] == ["CI"] or True      # a CI/CD phrase may establish CI; not asserted either way
+
+
+def test_a_one_character_language_is_a_valid_fallback_term():
+    assert P.ground_stack(["InventedFramework"], {"tech_stack": ["R"]}) == (["R"], ["InventedFramework"])
+    assert P.card_terms({"tech_stack": ["R, C, Go"]}) == ["R", "C", "Go"]

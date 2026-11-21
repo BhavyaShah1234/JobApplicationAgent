@@ -237,6 +237,17 @@ def _card_strings(card: dict) -> list[str]:
     return out
 
 
+# "compliance mapping", "certification tracking", "conformance checker" name a CAPABILITY of the project, not a standard it achieved.
+_CAPABILITY = re.compile(r"(?i)\b(?:compliance|conformance|certification|accreditation)\s+(?:mapping|maps?|checks?|checker|scann\w*|tool\w*|framework|report\w*|matri\w*|dashboard|"
+                         r"automation|engine|workflow|templates?|controls?|polic\w*|evidence|documentation|logging|rules?|validation|testing|analysis|assessment|audits?|"
+                         r"tracking|requirements?)\b")
+
+
+def _mask(text: str) -> str:
+    """The text with capability phrases blanked out (same length, so positions hold) before looking for achievement cues."""
+    return _CAPABILITY.sub(lambda m: " " * len(m.group(0)), text)
+
+
 def _family(standard: str) -> str:
     """The standard without its version or level: `WCAG 2.1 AA` -> wcag, `SOC 2` -> soc2, `ISO/IEC 27001` -> iso27001, `Section 508` -> section508."""
     s = re.sub(r"(?i)/iec", "", standard.lower())
@@ -246,7 +257,7 @@ def _family(standard: str) -> str:
 
 def _levels(standard: str) -> tuple[list[str], str]:
     """The version numbers and conformance level written with a standard: `WCAG 2.1 AA` -> (['2.1'], 'aa')."""
-    level = re.search(r"\b(AAA|AA|A)\s*$", standard.strip())
+    level = re.search(r"(?i)\b(AAA|AA|A)\s*$", standard.strip())
     return re.findall(r"\d+(?:\.\d+)?", standard), (level.group(1).lower() if level else "")
 
 
@@ -275,7 +286,7 @@ def standard_outcome_claims(text: str, card: dict) -> list[str]:
         named = list(NAMED_STANDARD.finditer(sentence))
         for m in named:
             near = sentence[max(0, m.start() - 60):m.end() + 60]
-            cues = [c for c in ACHIEVED_CUE.finditer(near) if _affirms(near, c)]
+            cues = [c for c in ACHIEVED_CUE.finditer(_mask(near)) if _affirms(near, c)]
             if not cues:
                 continue                                  # "audits against WCAG 2.1 AA", "supports HIPAA-aligned logging", "not yet SOC 2 certified": no achievement claimed
             ident = _family(m.group(1))
@@ -284,12 +295,12 @@ def standard_outcome_claims(text: str, card: dict) -> list[str]:
             def supports(s: str, e: "re.Match") -> bool:
                 """This card occurrence of the standard affirms it, with the same version and level when both give one."""
                 versions, level = _levels(e.group(1))
-                if want_versions and versions and want_versions != versions:
-                    return False                          # the card shows another version (2.1) than the claim (2.2)
-                if want_level and level and want_level != level:
-                    return False                          # AA is not AAA
+                if want_versions and versions != want_versions:
+                    return False                          # another version (2.1 for 2.2), or none: generic WCAG evidence does not establish a specific version
+                if want_level and level != want_level:
+                    return False                          # AA is not AAA, and an unstated level does not establish a specific one
                 window = s[max(0, e.start() - 150):e.end() + 150]
-                return any(_affirms(window, c) for c in ACHIEVED_CUE.finditer(window))
+                return any(_affirms(window, c) for c in ACHIEVED_CUE.finditer(_mask(window)))
             if not any(supports(s, e) for s in strings for e in NAMED_STANDARD.finditer(s)
                        if _family(e.group(1)) == ident):
                 out.append(sentence.strip()[:160])
@@ -343,7 +354,7 @@ def _tokens(text: str) -> list[str]:
     low = (text or "").lower()
     for pattern, canonical in _CANON:
         low = re.sub(pattern, canonical, low)
-    return [t.rstrip(".") for t in re.findall(r"[a-z0-9][a-z0-9.+#_-]*", low) if not _VERSION.match(t.rstrip("."))]
+    return [t.rstrip(".") for t in re.findall(r"\.?[a-z0-9][a-z0-9.+#_-]*", low) if not _VERSION.match(t.rstrip("."))]   # '.net' keeps its dot: it is not 'net'
 
 
 def card_terms(card: dict) -> list[str]:
@@ -352,12 +363,12 @@ def card_terms(card: dict) -> list[str]:
     for line in card.get("tech_stack") or []:
         for part in re.split(r"[,;]|\s\+\s", re.sub(r"\([^)]*\)", " ", str(line))):
             term = re.sub(r"\s+", " ", part).strip(" .")
-            if 1 < len(term) <= 28 and term.lower() not in {t.lower() for t in out}:
+            if 0 < len(term) <= 28 and re.search(r"[A-Za-z0-9]", term) and term.lower() not in {t.lower() for t in out}:      # "R", "C" and "Go" are languages
                 out.append(term)
     return out
 
 
-_SEGMENT = re.compile(r"[,;:()/|+\n\[\]]|\.\s|\s[-\u2013\u2014]\s")
+_SEGMENT = re.compile(r"[,;:()|\n\[\]]|\s[/+]\s|\.\s|\s[-\u2013\u2014]\s")      # "DuckDB / Parquet" splits; "CI/CD", "C++", "TCP/IP" do not
 # Words that are also ordinary English or very short: they establish a language/product only when the card's STRUCTURED tech_stack lists them, never from prose.
 AMBIGUOUS_TERMS = {"go", "r", "c", "d", "swift", "rust", "ruby", "julia", "dart", "spark", "express", "next", "spring", "ada", "chef", "puppet", "unity"}
 
