@@ -58,10 +58,46 @@ def normalize(text):
     return re.sub(r'\s+', ' ', T.DASH.sub(', ', T.to_plain(text))).strip().casefold()
 
 
+CORPORATE = {'llc', 'inc', 'incorporated', 'corp', 'corporation', 'ltd', 'limited', 'pvt', 'private', 'co', 'company', 'plc', 'gmbh', 'lp', 'llp', 'pllc'}
+GENERIC_TAIL = {'lab', 'labs', 'laboratory', 'institute'}
+
+
+def _tokens(text):
+    """Words of the visible text, lower case, without punctuation: the unit names are compared in."""
+    return ' '.join(re.findall(r'[a-z0-9]+', normalize(text)))
+
+
+def aliases(entity):
+    """The ways a letter naturally writes an employer or project name: the full name, without its corporate suffix
+    (`Anton Intelligence LLC` -> `Anton Intelligence`, `... Pvt Ltd`), and without a trailing `Lab`/`Institute` when two or more
+    words remain. Each is a whole-word token string; one-word results of 3 characters or fewer are dropped as too generic.
+
+    Args:
+        entity: The entity name as the resume writes it.
+
+    Returns:
+        A set of token strings.
+    """
+    words = _tokens(entity).split()
+    names = {' '.join(words)} if words else set()
+    while len(words) > 1 and words[-1] in CORPORATE:
+        words = words[:-1]
+        names.add(' '.join(words))
+    if len(words) >= 3 and words[-1] in GENERIC_TAIL:
+        names.add(' '.join(words[:-1]))
+    return {n for n in names if n and not (' ' not in n and len(n) <= 3) and n not in CORPORATE | GENERIC_TAIL}
+
+
+def _names_in(text, entities):
+    """Identities of the entities whose name (any alias) appears in `text` as whole words."""
+    padded = f' {_tokens(text)} '
+    return {ident for ident, names in entities.items() if any(f' {n} ' in padded for n in names)}
+
+
 def binding_issues(letter, bank):
     """Check sentence coverage, entity identity and exact numeric/quote provenance."""
     issues = []
-    entities = {ident: normalize(source['entity']) for ident, source in bank.items()
+    entities = {ident: aliases(source['entity']) for ident, source in bank.items()
                 if source.get('kind') not in ('company','posting','summary','skills','education')}
     for number, paragraph in enumerate(letter.paragraphs, 1):
         bindings = getattr(paragraph, 'bindings', [])
@@ -75,13 +111,15 @@ def binding_issues(letter, bank):
             for value in re.findall(r'\d+(?:\.\d+)?', binding.claim):
                 if value not in re.findall(r'\d+(?:\.\d+)?', binding.quote):
                     issues.append(f'paragraph {number}: achievement number {value} is absent from its bound quote')
-            mentioned = {ident for ident, name in entities.items() if name and name in normalize(binding.claim)}
+            mentioned = _names_in(binding.claim, entities)
             if source.get('kind') not in ('company','posting') and mentioned and binding.source_id not in mentioned:
                 issues.append(f'paragraph {number}: achievement is assigned to a different employer/project')
+            elif source.get('kind') not in ('company','posting') and mentioned - {binding.source_id} and re.search(r'\d', binding.claim):
+                issues.append(f'paragraph {number}: a quantified achievement names another employer/project besides its source; split it into one sentence per employer')
         for sentence in re.split(r'(?<=[.!?])\s+(?=[A-Z])', paragraph.text):
             # Deterministically cover quantified claims and named-entity claims;
             # the semantic pass also covers unquantified candidate achievements.
-            if (re.search(r'\d', sentence) or any(n and n in normalize(sentence) for n in entities.values())) and not any(
+            if (re.search(r'\d', sentence) or _names_in(sentence, entities)) and not any(
                     normalize(sentence) in normalize(b.claim) for b in bindings):
                 issues.append(f'paragraph {number}: achievement sentence lacks an entity-bound quote')
     return list(dict.fromkeys(issues))
