@@ -1163,7 +1163,7 @@ def identity_cues(card: dict | None, repo: str = "", title: str = "") -> set[str
 
     Cues: the repository itself; an explicit fork/source repository the card names; the same commit (`head_sha`, a 40-hex id); or the same
     repository leaf together with the same canonical project name of its own card (`card_title`). A shared generic leaf (`service`) or a shared
-    generic title alone is NOT a cue, so unrelated projects are never merged.
+    generic title alone is NOT a cue. The combined name/leaf cue is conservative matching, not a universal proof of identity.
 
     Args:
         card: The saved repository card (None when unavailable: the entry's repo and title are used).
@@ -1436,9 +1436,17 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
     chosen = chosen[:MAX_PROJECTS]
     if len(chosen) < MIN_PROJECTS:  # the model failed or picked too few: top-ranked cards, in their own sentences
         log(f"projects: model gave {len(chosen)} usable project(s); filling from the top-ranked repo cards")
+        fallback_cards, aliases = distinct_projects([c for _, c in cands], identity_cues,
+                                               lambda c: c["full_name"].lower() in known)
+        # A partially usable model draft may retain a collaborator copy. Prefer the owner's representative here too, using ITS own facts.
+        for i, e in enumerate(chosen):
+            cues = identity_cues(by_name.get(e.repo.lower()), e.repo, e.title)
+            owner = next((c for c in fallback_cards if c["full_name"].lower() in known and cues & identity_cues(c)), None)
+            if owner is not None and e.repo.lower() not in known and (entry := from_card(owner, terms, vocab)):
+                chosen[i] = entry
         have = {e.repo.lower() for e in chosen}
         shown = [identity_cues(by_name.get(e.repo.lower()), e.repo, e.title) for e in chosen]
-        for _, c in cands:
+        for c in fallback_cards + aliases:  # an unusable preferred card must not hide a usable collaborator source
             if len(chosen) >= MAX_PROJECTS:
                 break
             cues = identity_cues(c)
