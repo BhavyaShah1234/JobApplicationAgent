@@ -357,8 +357,7 @@ def test_every_scoped_reviewer_receives_the_existing_owner_claims_policy(tmp_pat
     ctx={'job_dir':tmp_path,'r':SimpleNamespace(roles=[],skills=[]),'jd':SimpleNamespace(model_dump=lambda **kw:{}),
          'models':{'router':'m'},'cache':ArtifactCache(tmp_path/'cache'),'log':lambda _:None}
     review(ctx,M.T.Filled.model_construct(summary='A summary.',roles=[],skills=[]))
-    assert len(seen)==4 and all(v.startswith(policy) for v in seen)
-    assert all('standing confirmation' in v for v in seen)
+    assert len(seen)==4 and all(v==policy for v in seen)  # one canonical policy, no hidden permission override
 
 
 def test_summary_review_receives_current_date_and_target_company_context(tmp_path,monkeypatch):

@@ -89,6 +89,10 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
   duplicated work. Other academic wording and genuinely repeated duties still fail the same checks. Concerns
   about unchanged template role headers (including concurrent dates) are source-input advisories, bound to that
   exact role; newly generated duration/date claims remain subject to blocking source checks.
+- Writers and reviewers receive the same Experience drafting policy and per-bullet estimate metadata. Tagged
+  work-impact estimates may await candidate confirmation; missing original measurements alone do not contradict
+  that drafting permission. Protected identities/dates/credentials, cross-employer attribution and project-source
+  requirements remain enforced. A generic domain phrase such as "for SaaS products" does not assert an employer.
 
 **Learning is advisory.** Recommendations appear only at declared looks (100, 200, 400, 800, 1600 resolved applications); behavior switches are off by default; the site-mix switch is unsupported.
 

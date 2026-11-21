@@ -406,6 +406,16 @@ def to_filled(r: "Resume", out: BaseModel) -> Filled:
     return normalize_originals(r, Filled(summary=out.summary, roles=roles, skills=out.skills, notes=out.notes))
 
 
+WORK_DRAFT_POLICY = (
+    "For resume Experience drafting, the candidate declares doing the posting's duties and knowing its skills. "
+    "Draft work-impact estimates are permitted when listed in the bullet's estimated metadata for candidate "
+    "confirmation; they need not occur in the original bullets. This is drafting permission, not independent "
+    "historical verification or submission approval. It does not permit inventing employers, job titles, dates "
+    "or credentials, or moving another employer's accomplishments. This permission does not establish numerical "
+    "repository results: Projects still require their own repository sources. Cover letters must reuse the "
+    "final resume's claims and metrics rather than invent new ones.")
+
+
 FILL_PROMPT = """You write the Experience bullets and the Technical Skills of a resume for one job posting.
 The candidate has told us they have done all of the posting's duties and know all of its skills.
 
@@ -614,6 +624,7 @@ def facts_block() -> str:
     """What the writer may claim about the candidate, from the user's declared facts."""
     years = declared_claims().get("years_experience")
     lines = ["CANDIDATE FACTS (declared by the candidate):",
+             "- " + WORK_DRAFT_POLICY,
              f"- Up to {years}+ years of professional experience may be stated, overall or in any domain the posting "
              "asks for (e.g. 'fraud and abuse analysis')." if years else
              "- Years of experience: only what the current resume states.",
@@ -834,7 +845,7 @@ def duplicates(r: Resume, f: Filled, *, substantive: bool = False) -> list[str]:
 
 ACADEMIC = re.compile(r"(?i)\b(faculty|professor|lab|labs|coursework|class|classes|student|students|thesis|volunteer\w*|"
                       r"unpaid|academic|research codebases?|research goals?|course project)\b")
-RESULT = re.compile(r"\d|(?i:\b(cut|cutting|reduc\w*|improv\w*|increas\w*|rais\w*|boost\w*|lift\w*|enabl\w*|"
+RESULT = re.compile(r"\d|(?i:\b(cut|cutting|reduc\w*|improv\w*|enhanc\w*|increas\w*|rais\w*|boost\w*|lift\w*|enabl\w*|"
                     r"making|so that|achiev\w*|faster|eliminat\w*|prevent\w*|replac\w*|lower\w*|sav\w*|"
                     r"accelerat\w*|traceable|automat\w*|on-demand|real-time|unattended|doubl\w*|tripl\w*|reach\w*|fix\w*|"
                     r"speed\w*|sped|trusted|scal\w*|shorten\w*|halv\w*)\b)")
@@ -968,14 +979,15 @@ def build_repair_prompt(r: Resume, jd: JobDescription, f: Filled, issues: list[s
         lines.append(f"role_{e.role}: {role.title} at {role.company} ({role.dates})")
         for k, b in enumerate(e.bullets, 1):
             covers = "; ".join(items[d][1][:80] for d in b.duties if 0 <= d < len(items))
-            lines.append(f"  {k}. {b.text}" + (f"   [covers: {covers}]" if covers and b.original is None else ""))
+            lines.append(f"  {k}. {b.text}" + (f"   [covers: {covers}]" if covers and b.original is None else "") +
+                         (f"   [estimated impact awaiting confirmation: {b.estimated}]" if b.estimated else ""))
     system=(_REPAIR_TEMPLATE.format(coverage_rule=(
         'Repair the named problems in place. For missing coverage, you may also edit suitable existing bullets. '
         'Preserve previously covered JD indices ACROSS THE WHOLE EXPERIENCE SECTION, not separately in each '
         'bullet. To resolve a repeated duty, keep one occurrence and replace the other with distinct relevant '
         'work, preferably an uncovered JD item. Do not just substitute synonyms. Do not add or remove bullets. '
         'Leave unrelated bullets unchanged.')) if section_coverage else REPAIR_PROMPT)
-    return [SystemMessage(with_today(system)),
+    return [SystemMessage(with_today(system + "\n\n" + facts_block())),
             HumanMessage("RESUME BULLETS:\n" + "\n".join(lines) + "\n\nPROBLEMS:\n" + "\n".join(issues))]
 
 

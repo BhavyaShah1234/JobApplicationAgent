@@ -633,3 +633,98 @@ def test_independent_review_cannot_borrow_another_projects_source(tmp_path, monk
     monkeypatch.setattr(R.llm, 'structured_invoke', adjudicate)
     with pytest.raises(ValueError, match='own repository'):
         R.adjudicate(ctx, value, [finding])
+
+
+def test_late_policy_writer_and_review_facts_share_estimate_permission(monkeypatch):
+    monkeypatch.setattr(T, 'declared_claims', lambda: {'years_experience': 5})
+    facts = T.facts_block()
+    assert 'estimated' in facts and 'confirmation' in facts
+    role = SimpleNamespace(pool=[], bullets=[], title='Engineer', company='Acme', dates='2026')
+    resume = SimpleNamespace(roles=[role], skills=[], summary='Prior summary')
+    messages = T.build_fill_prompt(resume, M.JobDescription(title='Engineer', company='Acme'), '', 4)
+    assert sum(message.content.count(T.WORK_DRAFT_POLICY) for message in messages) == 1
+    assert T.WORK_DRAFT_POLICY in facts
+    assert 'employers' in facts and 'credentials' in facts and 'repository sources' in facts
+
+
+def test_late_policy_review_receives_role_bound_estimate_metadata(tmp_path, monkeypatch):
+    from jobagent.tools import document_review as R
+    ctx, value = review_world(tmp_path, monkeypatch)
+    value.roles[0].bullets[0].estimated = ['20%']
+    def adjudicate(model, schema, messages, **kwargs):
+        data = json.loads(messages[-1].content)
+        assert data['sources']['role:0']['draft_impact_estimates'] == [{'bullet': 1, 'values': ['20%']}]
+        assert T.WORK_DRAFT_POLICY in data['sources']['owner_policy']
+        return schema.model_validate({'verdicts': [{'finding': 0, 'status': 'rejected',
+            'claim_id': 'experience', 'source_id': 'owner_policy',
+            'reason': 'This tagged draft estimate follows the supplied policy; it still needs candidate confirmation.'}]})
+    monkeypatch.setattr(R.llm, 'structured_invoke', adjudicate)
+    finding = M.Finding(agent='experience', issue='The source original lacks the 20% measurement.', severity='error')
+    assert R.adjudicate(ctx, value, [finding]) == []
+    context = M._context(ctx, value, None, visible_only=True)
+    assert 'ESTIMATE METADATA (not displayed; requires candidate confirmation)' in context
+    assert '"estimated": ["20%"]' in context
+    repair = T.build_repair_prompt(ctx['r'], ctx['jd'], value, ['A proposed measurement issue'])
+    assert T.WORK_DRAFT_POLICY in repair[0].content
+    assert "estimated impact awaiting confirmation: ['20%']" in repair[1].content
+
+
+def _late_policy_summary_case(tmp_path, monkeypatch, claim, extra_roles=()):
+    from jobagent.tools import incremental_documents as I
+    from jobagent.tools.artifact_cache import ArtifactCache
+    payload = {'summary': claim + '.', 'roles': [
+        {'employer': 'Acme', 'bullets': ['Built SaaS products and SQL services using Python.']}, *extra_roles],
+        'projects': [], 'skills': [], 'education': '', 'company_context': '', 'owner_claims_policy': T.facts_block()}
+    finding = I.SummaryFinding(kind='employment', claim_quote=claim, issue='A proposed employment contradiction.', severity='error')
+    verdict = I.SummaryVerdict(finding=0, status='rejected', claim_quote=claim, source_id='role:0',
+        source_quote='Built SaaS products and SQL services using Python.', reason='Checked the actual source and owner policy.')
+    monkeypatch.setattr(I, 'review_model', lambda *args, **kwargs: object())
+    monkeypatch.setattr(I, 'invoke', lambda *args, **kwargs: I.SummaryVerdicts(verdicts=[verdict]))
+    ctx = {'models': {'router': 'judge'}, 'cache': ArtifactCache(tmp_path), 'log': lambda _: None}
+    return I, ctx, payload, finding
+
+
+@pytest.mark.parametrize('claim', [
+    'Candidate with experience in functional and automation testing for SaaS products',
+    'Built Python tooling for SQL databases'])
+def test_late_policy_domain_subject_is_not_a_named_employer(tmp_path, monkeypatch, claim):
+    I, ctx, payload, finding = _late_policy_summary_case(tmp_path, monkeypatch, claim)
+    assert I.adjudicate_summary(ctx, payload, [finding]) == []
+
+
+@pytest.mark.parametrize('claim', ['Worked at Google', 'Working for Google', 'Engineer at Google', 'Employed by Google'])
+def test_late_policy_unknown_employer_cannot_borrow_a_role(tmp_path, monkeypatch, claim):
+    I, ctx, payload, finding = _late_policy_summary_case(tmp_path, monkeypatch, claim)
+    with pytest.raises(ValueError, match='another employer'):
+        I.adjudicate_summary(ctx, payload, [finding])
+
+
+def test_late_policy_named_other_employer_cannot_borrow_a_role(tmp_path, monkeypatch):
+    I, ctx, payload, finding = _late_policy_summary_case(tmp_path, monkeypatch, 'Delivered software for Beta',
+        [{'employer': 'Beta', 'bullets': ['Built another service.']}])
+    with pytest.raises(ValueError, match='another employer'):
+        I.adjudicate_summary(ctx, payload, [finding])
+
+
+def test_late_policy_own_employer_affiliation_keeps_its_source(tmp_path, monkeypatch):
+    I, ctx, payload, finding = _late_policy_summary_case(tmp_path, monkeypatch, 'Worked at Acme')
+    assert I.adjudicate_summary(ctx, payload, [finding]) == []
+
+
+def test_late_policy_company_name_is_not_a_substring_of_metadata(tmp_path, monkeypatch):
+    I, ctx, payload, finding = _late_policy_summary_case(tmp_path, monkeypatch, 'Built metadata pipelines using Python',
+        [{'employer': 'Meta', 'bullets': ['Built a different service.']}])
+    assert I.adjudicate_summary(ctx, payload, [finding]) == []
+
+
+@pytest.mark.parametrize('verb', ['Enhanced', 'Enhancing', 'Enhances'])
+def test_late_policy_enhancement_is_a_stated_qualitative_result(tmp_path, monkeypatch, verb):
+    ctx, value = review_world(tmp_path, monkeypatch)
+    value.roles[0].bullets[0].text = f'{verb} service uptime using Python.'
+    assert not any('states no result' in issue for issue in T.quality(ctx['r'], ctx['jd'], value))
+
+
+def test_late_policy_an_activity_without_an_outcome_still_fails(tmp_path, monkeypatch):
+    ctx, value = review_world(tmp_path, monkeypatch)
+    value.roles[0].bullets[0].text = 'Worked on Python services.'
+    assert any('states no result' in issue for issue in T.quality(ctx['r'], ctx['jd'], value))

@@ -57,7 +57,9 @@ def adjudicate(ctx, filled, findings):
         sections[header_id] = 'experience'
         sources[f'role:{role.role}'] = {'employer': original.company, 'title': original.title,
             'dates': original.dates, 'original_bullets': [T.to_plain(b) for b in original.bullets],
-            'current_bullets': [b.text for b in role.bullets]}
+            'current_bullets': [b.text for b in role.bullets],
+            'draft_impact_estimates': [{'bullet': k, 'values': b.estimated}
+                                       for k, b in enumerate(role.bullets, 1) if b.estimated]}
     sources['skills'] = claims['skills']
     cards = dict(ctx.get('cards') or {})
     cards.update({c['full_name'].casefold(): c for _, c in ctx.get('candidates', [])})

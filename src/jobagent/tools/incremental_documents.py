@@ -387,7 +387,20 @@ def adjudicate_summary(ctx, payload, findings):
                     raise ValueError('A credential cannot borrow another institution')
             if finding.kind=='employment' and verdict.status=='rejected':
                 role=payload['roles'][int(verdict.source_id.split(':')[1])]
-                if re.search(r'\b(?:at|for|by)\s+[A-Z]',verdict.claim_quote) and _words(role['employer']) not in _words(verdict.claim_quote):
+                # A capitalized technical subject ("for SaaS products") is not
+                # an employer assertion. Bind actual affiliations in the same
+                # sentence, including when the critic quoted only part of it.
+                sentences=[sentence for prose in summary_claims(payload)
+                           for sentence in re.split(r'(?<=[.!?])\s+',prose)
+                           if _words(verdict.claim_quote) in _words(sentence)]
+                context=' '.join(sentences) or verdict.claim_quote
+                words=' '+_words(context)+' '
+                employers=[r['employer'] for r in payload.get('roles',[])]
+                employers.append((payload.get('target_job_identity') or {}).get('company',''))
+                named=any(name and ' '+_words(name)+' ' in words for name in employers)
+                explicit=re.search(r'(?i:\b(?:worked|working|works|employed|employment|engineer|researcher|'
+                    r'developer|analyst|scientist|manager|employee|role|position|job)\s+(?:at|for|by|with))\s+[A-Z]',context)
+                if (named or explicit) and ' '+_words(role['employer'])+' ' not in words:
                     raise ValueError('An employment claim cannot borrow another employer')
     result=invoke(ctx['cache'],'adjudicate:summary',model_name,review_model(model_name,4000),
         schema,messages,log=ctx['log'],deadline_s=180,validator=bind,
@@ -692,8 +705,7 @@ def review(ctx, filled):
     payloads['summary']['education']=(re.sub(r'(?m)(?<!\\)%.*$','',education.group(1))
                                       if education and credential_claim else '')
     payloads['summary']['company_context']=ctx.get('company','')
-    policy=(M.T.facts_block()+'\nThe owner\'s standing confirmation covers generated work duties and impact '
-        'metrics. It does not authorize changing identities, dates or credentials, or inventing repo features.')
+    policy=M.T.facts_block()
     for payload in payloads.values():payload['owner_claims_policy']=policy
     instructions={
         'experience':'Check bullet attribution and substantive duplication. Owner-provided titles and dates are '

@@ -405,6 +405,10 @@ def _context(ctx: dict, f: T.Filled | None, project_state: str | None, *, visibl
             lines += [f"  {k}. {b.text}" for k, b in enumerate(e.bullets, 1)]
         parts.append("CURRENT RESUME\nSummary: " + f.summary + "\nExperience:\n" + "\n".join(lines) +
                      "\nTechnical Skills:\n" + "\n".join(f"- {s.category}: {', '.join(s.render())}" for s in f.skills if s.render()))
+        estimates = [{'role': e.role, 'bullet': k, 'estimated': b.estimated}
+                     for e in f.roles for k, b in enumerate(e.bullets, 1) if b.estimated]
+        parts.append("DRAFT EXPERIENCE ESTIMATE METADATA (not displayed; requires candidate confirmation):\n" +
+                     json.dumps(estimates))
     if project_state:
         st = json.loads(project_state)
         cards = dict(ctx.get('cards') or {})
