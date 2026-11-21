@@ -113,3 +113,17 @@ def test_a_card_line_that_denies_the_standard_does_not_support_the_claim():
 def test_version_level_and_name_variants_are_compared(claim, card_text, ok):
     card = {"full_name": "owner/platform", "summary": card_text, "tech_stack": [], "results": []}
     assert bool(found(claim, card)) is (not ok), (claim, card_text)
+
+
+def test_a_capability_phrase_is_not_an_achievement_in_a_card_or_in_a_claim():
+    card = {"full_name": "owner/platform", "summary": "Compliance mapping for SOC 2/HIPAA/ISO 27001.", "results": []}
+    assert found("The project achieved HIPAA compliance.", card)                              # mapping controls to HIPAA is not being HIPAA compliant
+    card2 = {"full_name": "owner/platform", "summary": "Maps controls to HIPAA.", "results": []}
+    assert not found("The system provides HIPAA compliance mapping.", card2)                  # the claim itself is a capability
+    assert not found("Includes a HIPAA compliance checker and SOC 2 certification tracking.", card2)
+
+
+def test_generic_or_differently_leveled_evidence_cannot_establish_a_specific_version_or_level():
+    assert found("The project conforms to WCAG 2.2 AAA.", {"full_name": "owner/platform", "results": ["The project conforms to WCAG."]})
+    assert found("The project conforms to WCAG 2.1 AAA.", {"full_name": "owner/platform", "results": ["The project conforms to wcag 2.1 aa."]})
+    assert not found("The project conforms to WCAG 2.1 AA.", {"full_name": "owner/platform", "results": ["The project conforms to wcag 2.1 aa."]})
