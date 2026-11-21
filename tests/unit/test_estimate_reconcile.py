@@ -72,3 +72,15 @@ def test_a_word_figure_tag_is_not_listed_twice():
     assert tags("Tripled labelling throughput.", ["Tripled"]) == ["Tripled"]
     assert tags("Tripled labelling throughput and cut cost 20%.", ["tripled"]) == ["tripled", "20%"]
     assert tags("Tripled labelling throughput.", []) == ["Tripled"]
+
+
+def test_a_percent_tag_cannot_cover_a_single_new_multiplier():
+    got = tags("Improved throughput 25x.", ["25%"])
+    assert "25%" not in got and any("25x" in x.lower() for x in got), got
+
+
+def test_a_word_percentage_keeps_its_confirmation_provenance():
+    assert tags("Reduced errors by twenty percent.", ["20%"]) == ["20%"]
+    assert tags("Reduced errors by twenty-five percent.", ["25%"]) == ["25%"]
+    got = tags("Reduced errors by twenty percent.", [])
+    assert got and "twenty" in got[0].lower(), got                                         # an unlisted word percentage is listed for review

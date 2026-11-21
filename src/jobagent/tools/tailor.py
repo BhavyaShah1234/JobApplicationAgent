@@ -779,14 +779,24 @@ def fill_checks(r: Resume, jd: JobDescription, f: Filled, slots: int | None = No
             # A tag must name a figure that is IN this bullet. Writers leave stale ones (a figure of the bullet's earlier wording or of a neighbouring
             # bullet); the incremental reviewer then blocks the draft for "estimates that do not match the bullet" although nothing on the page is wrong.
             present = {x.replace(",", "") for x in re.findall(NUM, plain)}
-            kept = [x for x in b.estimated if NC.digits(NC._norm(x)) in present or set(NC.metric_spans(x)) & set(spans)]
+            bare, kept = set(), []                                         # bare: digits a plain-number tag ('22', '40 s') vouches for, never a '%' or 'x' tag
+            for x in b.estimated:
+                if set(NC.metric_spans(x)) & set(spans):                   # '30%', 'Tripled', '20%' for "twenty percent": the same figure
+                    kept.append(x)
+                    continue
+                m = re.fullmatch(rf"\s*({NUM})\s*(.*?)\s*", x)
+                if not m or NC.metric_spans(x):
+                    continue                                               # a metric figure that is not in this bullet ('25%' for '25x'), or no number: stale
+                num, unit = m.group(1).replace(",", ""), m.group(2)
+                if (num in present and not unit) or (unit and re.search(rf"(?<![\d.]){re.escape(num)}\s*{re.escape(unit)}", plain.replace(",", ""))):
+                    kept.append(x)
+                    bare.add(num)
             if len(kept) != len(b.estimated):
                 b.estimated = kept
             tagged = {NC._norm(x) for x in b.estimated} | {tok for x in b.estimated for tok in NC.metric_spans(x)}   # word figures: 'Tripled' is the figure 'tripl'
-            tagged |= {NC.digits(x) for x in tagged if x[:1].isdigit() or x[:1] == "$"}                              # '40 s' (normalised '40s') also covers the digits 40
             in_metric = {NC.digits(t) for t in spans}
             for n in (x.replace(",", "") for x in re.findall(NUM, plain)):
-                if n in known or n in tagged or n in in_metric:           # a figure with a unit is judged below, by its own spelling
+                if n in known or n in tagged or n in in_metric or n in bare:   # a figure with a unit is judged below, by its own spelling
                     continue
                 b.estimated = b.estimated + [n]                          # an estimate the model didn't list: list it for review
                 tagged.add(n)
@@ -794,7 +804,7 @@ def fill_checks(r: Resume, jd: JobDescription, f: Filled, slots: int | None = No
                 if token in mine or token in tagged:
                     continue
                 d = NC.digits(token)
-                if d in tagged and sum(NC.digits(t) == d for t in spans) == 1:
+                if d in bare and sum(NC.digits(t) == d for t in spans) == 1:
                     continue                                              # a legacy bare-digit tag covers the one figure with those digits
                 b.estimated = b.estimated + [written]
                 tagged.add(token)
