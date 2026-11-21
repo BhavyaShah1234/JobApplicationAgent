@@ -33,7 +33,10 @@ _COUNTED = ("endpoints?|services?|microservices?|users?|customers?|clients?|reco
             "models?|engineers?|developers?|technicians?|teams?|repositories|repos?|jobs?|tickets?|datasets?|stations?|systems?|applications?|apps?|integrations?|workflows?|"
             "APIs?|sensors?|devices?|machines?|documents?|images?|files?|rows|messages|alerts?|incidents?|releases?|features?|modules?|components?|environments?|clusters?|"
             "nodes?|containers?|seconds?|minutes?|hours?|days?|weeks?|GB|TB|MB|PB|secs?|mins?|hrs?|s|h")
-_SIZE_OR_TIME = re.compile(r"(?i)^(?:seconds?|minutes?|hours?|days?|weeks?|GB|TB|MB|PB)$")
+_SIZE_OR_TIME = re.compile(r"(?i)^(?:seconds?|minutes?|hours?|days?|weeks?|GB|TB|MB|PB|s|secs?|mins?|hrs?|h)$")
+# Compact durations written without a space: "1.5s", "40s", "10min", "2hrs". "1990s"/"in the 90s" are decades, not durations. Milliseconds ("40ms") are METRIC's.
+COMPACT_TIME = re.compile(rf"(?<![\w.$])({_NUM})(s|secs?|mins?|hrs?|h)\b", re.I)
+_DECADE_BEFORE = re.compile(r"(?i)(?:\b(?:the|in|of|during|early|late|mid|since|from|until|and)\s+|['\u2019])$")
 _VERSIONED_BEFORE = re.compile(r"(?i)(?:version|v|python|java|node|react|angular|vue|spring|django|ios|android|ubuntu|windows|iso|iec|wcag|soc|section|rfc|top|tls|http|ipv)\s*$")
 QUANTITY = re.compile(
     rf"(?<![\w.$])({_NUM}\s?[kKmMbB]?\+?(?:\s(?:hundred|thousand|million))?|(?:{'|'.join(sorted(set(_ONES[1:] + _TENS), key=len, reverse=True))})(?:[- ](?:{'|'.join(_ONES[:9])}))?(?:\s(?:hundred|thousand|million))?)"
@@ -68,6 +71,12 @@ def quantity_spans(text: str) -> dict[str, str]:
             else str(_word_number(base) * scale)
         basis = f"/{_stem(m.group(3))}" if m.group(3) else ""                    # "12 events per day" and "12 events per hour" are different figures
         found.setdefault(digits_ + _stem(noun) + basis, m.group(0).strip())
+    for m in COMPACT_TIME.finditer(text or ""):
+        number, unit = m.group(1), m.group(2)
+        before = (text or "")[max(0, m.start() - 12):m.start()]
+        if _VERSIONED_BEFORE.search(before) or (unit.lower() == "s" and "." not in number and (len(number.replace(",", "")) >= 4 or _DECADE_BEFORE.search(before))):
+            continue
+        found.setdefault(re.sub(r"[,]", "", number) + _stem(unit), m.group(0).strip())
     return found
 
 

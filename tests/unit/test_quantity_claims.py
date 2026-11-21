@@ -85,3 +85,20 @@ def test_the_spelled_count_fallback_keeps_versions_and_standards_negative(text):
 def test_a_spelled_count_is_a_result_but_a_bare_counted_noun_is_not():
     assert T.has_result("Owned twelve REST endpoints using FastAPI.") and T.has_result("Served five million events per day using Kafka.")
     assert T.has_result("Wrote the endpoints using FastAPI.") is False
+
+
+@pytest.mark.parametrize("compact,full", [("10min", "10 minutes"), ("2hrs", "2 hours"), ("45s", "45 seconds")])
+def test_compact_time_units_are_the_same_figure_as_their_full_spelling(compact, full):
+    assert NC.metric_tokens(f"Cut it by {compact}.") == NC.metric_tokens(f"Cut it by {full}.") and NC.metric_tokens(f"Cut it by {full}.")
+
+
+@pytest.mark.parametrize("text", ["Popular in the 90s.", "Since the 1990s the team grew.", "Used Python 3.11s.", "The '80s era.", "Built v2.5s tooling."])
+def test_decades_and_version_labels_are_not_compact_durations(text):
+    assert not NC.quantity_spans(text), text
+
+
+def test_a_compact_fractional_duration_is_a_result_and_counts_in_the_report_mix():
+    assert T.has_result("Reduced page load time by 1.5s using Redis caching.") is True
+    f = T.Filled.model_construct(summary="s", skills=[], notes="", roles=[T.FillRole.model_construct(role=0, bullets=[
+        T.FillBullet.model_construct(text="Reduced page load time by 1.5s using Redis caching.", duties=[], original=None, estimated=[])])])
+    assert T.metric_mix(f)["quantity"] == 1 and T.metric_mix(f)["qualitative"] == 0
