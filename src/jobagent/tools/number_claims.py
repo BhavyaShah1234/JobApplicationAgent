@@ -61,8 +61,29 @@ YEARS = re.compile(
     r"(?i)(?<![\w.])(?:(?P<a>an?)\s+(?P<au>decade)|(?P<n>\d+(?:\.\d+)?|" + "|".join(_WORDS) + r")\s*(?:\+|[-\s]?plus)?[\s-]*(?P<u>years?|yrs?|decades?))\b")
 
 
+HORIZON_NOUNS = {"npv", "forecast", "forecasts", "forecasting", "projection", "projections", "projected", "model", "models", "modeling", "modelling", "simulation",
+                 "simulations", "horizon", "lease", "leases", "loan", "loans", "bond", "bonds", "mortgage", "mortgages", "contract", "contracts", "warranty",
+                 "warranties", "plan", "plans", "roadmap", "roadmaps", "return", "returns", "cycle", "cycles", "term", "period", "lifecycle", "retention", "archive",
+                 "archives", "dataset", "datasets", "rolling", "window", "windows", "trend", "trends", "depreciation", "amortization", "payback", "discount", "moving"}
+_AHEAD = re.compile(r"(?i)^\s*(?:ahead|forward|out|hence|from now|into the future|horizons?|projections?|forecasts?)\b")
+_DATA = re.compile(r"(?i)^\s*of\s+(?:\w+\s+){0,2}(?:data|prices|records|logs|history|returns|observations|measurements|time series)\b")
+
+
+def _is_technical_horizon(text: str, m: "re.Match") -> bool:
+    """A duration that belongs to a model, contract or data span ("20-year NPV forecasting models", "10 years ahead", "25 years of market data"),
+    not to the candidate's own career."""
+    rest = text[m.end():]
+    if text[max(0, m.start("u") - 1):m.start("u")] in "-\u2011\u2013":              # "20-year X": the duration describes X
+        nxt = re.findall(r"[A-Za-z]+", rest)[:2]
+        return any(w.lower() in HORIZON_NOUNS for w in nxt)
+    return bool(_AHEAD.match(rest) or _DATA.match(rest))
+
+
 def claimed_years(text: str) -> list[float]:
     """Years of experience a text claims: `5 years`, `10+ yrs`, `a 10-year record`, `ten years`, `ten-plus years`, `a decade`, `two decades`.
+
+    A duration that describes a technical horizon ("a 20-year NPV forecasting model", "10 years ahead", "25 years of market data") is not
+    the candidate's tenure and is ignored.
 
     Args:
         text: A summary or other prose.
@@ -72,6 +93,8 @@ def claimed_years(text: str) -> list[float]:
     """
     out = []
     for m in YEARS.finditer(text or ""):
+        if _is_technical_horizon(text, m):
+            continue
         if m.group("a"):
             out.append(10.0)
             continue

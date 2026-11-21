@@ -610,18 +610,39 @@ def learning_hint(jd) -> str:
 
 
 def declared_claims() -> dict:
-    """The `claims` block of data/master_profile.yaml ({} without one)."""
+    """The `claims` block of data/master_profile.yaml ({} when there is no profile or no claims).
+
+    Raises:
+        ValueError: The profile exists but cannot be used (not a file, not YAML, `claims` not a mapping, `years_experience` not a finite
+            non-negative number). A broken profile must stop generation: returning {} would silently drop the years cap and the claims policy.
+    """
+    import math
+
     import yaml
 
     from jobagent.config import get_settings
     path = get_settings().data_dir / "master_profile.yaml"
-    if not path.is_file():
+    if not path.exists():
         return {}
+    if not path.is_file():
+        raise ValueError(f"{path.name} is not a file; fix it before generating documents")
     try:
-        return (yaml.safe_load(path.read_text()) or {}).get("claims") or {}
-    except (yaml.YAMLError, AttributeError, OSError) as exc:
-        # An unreadable profile used to mean "no declared facts": the years cap and the claims policy silently vanished.
+        data = yaml.safe_load(path.read_text())
+    except (yaml.YAMLError, OSError, UnicodeError) as exc:
         raise ValueError(f"{path.name} cannot be read ({type(exc).__name__}); fix it before generating documents") from exc
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{path.name} must be a mapping with a `claims` block, not {type(data).__name__}")
+    claims = data.get("claims")
+    if claims is None:
+        return {}
+    if not isinstance(claims, dict):
+        raise ValueError(f"`claims` in {path.name} must be a mapping, not {type(claims).__name__}")
+    years = claims.get("years_experience")
+    if years is not None and (isinstance(years, bool) or not isinstance(years, (int, float)) or not math.isfinite(years) or years < 0):
+        raise ValueError(f"`claims.years_experience` in {path.name} must be a finite number of years, 0 or more (got {years!r})")
+    return claims
 
 
 def facts_block() -> str:

@@ -436,10 +436,19 @@ def adjudicate_summary(ctx, payload, findings):
                 from .letter_attribution import aliases
                 # A summary writes "Anton Intelligence", not the registered "Anton Intelligence LLC": every natural spelling counts, as whole words.
                 has=lambda name:any(' '+_words(alias)+' ' in words for alias in aliases(name))
-                named=any(name and has(name) for name in employers)
+                # An employer counts only when the sentence ties the candidate to it ("at/for/with/by/from/joined X"), and "eager to bring Python to X",
+                # "looking for a role at X" or "excited to join X" is interest in a future job, not employment, unless it also states a past or present one.
+                tied=lambda name:any(re.search(r'(?:^| )(?:at|for|with|by|from|within|joined|left)(?: the)? '+re.escape(_words(alias))+r'(?: |$)',words)
+                                     for alias in aliases(name))
+                interest=re.search(r"(?i)\b(?:eager|excited|keen|seeking|looking|aspir\w*|hop\w*|want\w*|interested|motivated|passionate|ready|join|apply\w*|bring\w*|"
+                                   r"contribut\w*|opportunit\w*|aim\w*|goal|would\s+love|enthusias\w*)\b",context)
+                past=re.search(r"(?i)\b(?:worked|working|works|employed|served|spent|previously|formerly|currently|was\s+(?:an?|the)|engineer\s+(?:at|for)|"
+                               r"(?:developer|analyst|scientist|manager|researcher)\s+(?:at|for))\b",context)
+                future_only=bool(interest and not past)
+                named=any(name and tied(name) for name in employers) and not future_only
                 explicit=re.search(r'(?i:\b(?:worked|working|works|employed|employment|engineer|researcher|'
                     r'developer|analyst|scientist|manager|employee|role|position|job)\s+(?:at|for|by|with))\s+[A-Z]',context)
-                if (named or explicit) and not has(role['employer']):
+                if (named or (explicit and not future_only)) and not has(role['employer']):
                     raise ValueError('An employment claim cannot borrow another employer')
     result=invoke(ctx['cache'],'adjudicate:summary',model_name,review_model(model_name,4000),
         schema,messages,log=ctx['log'],deadline_s=180,validator=bind,

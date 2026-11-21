@@ -886,3 +886,21 @@ def test_a_different_degree_level_cannot_support_the_credential(tmp_path, monkey
     I, ctx, payload, finding = _credential_case(tmp_path, monkeypatch, claim, education)
     with pytest.raises(ValueError, match='different degree'):
         I.adjudicate_summary(ctx, payload, [finding])
+
+
+# --- future interest is not employment ------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize('claim', ['Eager to bring Python experience to Beta', 'Looking for a role at Beta', 'Excited to join Beta and build data tools',
+                                    'Motivated to contribute to Beta as an engineer', 'Ready to apply Python and SQL at Beta'])
+def test_genuine_future_interest_in_the_target_company_is_not_an_employment_claim(tmp_path, monkeypatch, claim):
+    I, ctx, payload, finding = _late_policy_summary_case(tmp_path, monkeypatch, claim)
+    payload['target_job_identity'] = {'company': 'Beta'}
+    assert I.adjudicate_summary(ctx, payload, [finding]) == []
+
+
+@pytest.mark.parametrize('claim', ['Worked at Beta building data tools', 'Eager to join Beta after working at Google', 'Engineer for Beta with Python and SQL'])
+def test_a_past_or_present_affiliation_with_the_target_or_another_company_still_cannot_borrow_a_role(tmp_path, monkeypatch, claim):
+    I, ctx, payload, finding = _late_policy_summary_case(tmp_path, monkeypatch, claim)
+    payload['target_job_identity'] = {'company': 'Beta'}
+    with pytest.raises(ValueError, match='another employer'):
+        I.adjudicate_summary(ctx, payload, [finding])
