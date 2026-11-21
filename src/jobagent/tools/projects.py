@@ -323,12 +323,36 @@ def card_terms(card: dict) -> list[str]:
     return out
 
 
-def ground_stack(stack: list[str], card: dict) -> tuple[list[str], list[str]]:
-    """Keep only the technologies this repository's own card establishes, as whole words.
+_SEGMENT = re.compile(r"[,;:()/|+\n\[\]]|\.\s|\s[-\u2013\u2014]\s")
+# Words that are also ordinary English or very short: they establish a language/product only when the card's STRUCTURED tech_stack lists them, never from prose.
+AMBIGUOUS_TERMS = {"go", "r", "c", "d", "swift", "rust", "ruby", "julia", "dart", "spark", "express", "next", "spring", "ada", "chef", "puppet", "unity"}
 
-    A term is established when every word of it (versions ignored) is a whole word of the card's tech stack, title, summary, notes or README excerpt.
-    `AWS` in CloudForge's card does not make `AWS` true of another repository, `Go` is not found inside `Django`, `Python 3.12` is `Python`,
-    `AWS STS/IAM` establishes `AWS`.
+
+def _segments(card: dict) -> list[tuple[bool, list[str]]]:
+    """The card's text as short phrases: `(is_structured_stack, tokens)`. A technology must appear as ONE contiguous phrase inside one of them,
+    so words scattered over different fields or separated by commas never assemble into a product (`React` + `native browser inputs` is not React Native)."""
+    out = []
+    for key in ("tech_stack", "title", "summary", "evidence_notes", "readme"):
+        value = card.get(key)
+        for s in (value if isinstance(value, list) else [value]):
+            for part in _SEGMENT.split(str(s or "")[:6000]):
+                tokens = _tokens(part)
+                if tokens:
+                    out.append((key == "tech_stack", tokens))
+    return out
+
+
+def _contains(tokens: list[str], phrase: list[str]) -> bool:
+    return any(tokens[i:i + len(phrase)] == phrase for i in range(len(tokens) - len(phrase) + 1))
+
+
+def ground_stack(stack: list[str], card: dict) -> tuple[list[str], list[str]]:
+    """Keep only the technologies this repository's own card establishes.
+
+    A term is established when its words (versions ignored, common spellings unified) form ONE contiguous phrase inside one segment of the card's
+    tech stack, title, summary, notes or README excerpt; a one-word term that is also an ordinary word or very short (`Go`, `R`, `Rust`, `Spark`) must
+    come from the structured `tech_stack`. `AWS` in CloudForge's card does not make `AWS` true of another repository; `React` plus "native browser inputs"
+    does not establish `React Native`; `Go` is not found inside `Django`; `Python 3.12` is `Python`; `AWS STS/IAM` establishes `AWS`.
 
     Args:
         stack: The technologies the writer chose, in its order.
@@ -337,15 +361,13 @@ def ground_stack(stack: list[str], card: dict) -> tuple[list[str], list[str]]:
     Returns:
         `(kept, dropped)`; when nothing is established, the card's own first technologies replace the list (never an empty heading).
     """
-    evidence: set[str] = set()
-    for key in ("tech_stack", "title", "summary", "evidence_notes", "readme"):
-        value = card.get(key)
-        for s in (value if isinstance(value, list) else [value]):
-            evidence.update(_tokens(str(s or "")[:6000]))
+    segments = _segments(card)
     kept, dropped = [], []
     for term in stack:
-        words = _tokens(term)
-        if words and all(w in evidence for w in words):
+        phrase = _tokens(term)
+        ok = bool(phrase) and any(_contains(tokens, phrase) for structured, tokens in segments
+                                  if structured or not (len(phrase) == 1 and phrase[0] in AMBIGUOUS_TERMS))
+        if ok:
             if term not in kept:
                 kept.append(term)
         else:

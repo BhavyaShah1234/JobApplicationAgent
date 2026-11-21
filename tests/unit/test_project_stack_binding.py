@@ -60,3 +60,37 @@ def test_a_stale_state_with_an_ungrounded_stack_is_reported_not_rendered_silentl
     assert any("project 1 prints technologies its own card does not show: ['AWS']" in f for f in got), got
     state["ranked"][0]["stack"] = ["Python", "FastAPI"]
     assert not any("prints technologies" in f for f in P.content_findings(state, {"ak-asu/energyhackathon": ENERGY}))
+
+
+def test_words_scattered_over_different_fields_do_not_assemble_a_product():
+    card = {"full_name": "o/web", "title": "Web app", "summary": "Renders native browser inputs", "tech_stack": ["React", "TypeScript"]}
+    assert P.ground_stack(["React Native"], card) == (["React", "TypeScript"], ["React Native"])                      # fell back to the card's own terms
+    assert P.ground_stack(["React", "React Native"], card) == (["React"], ["React Native"])
+    assert P.ground_stack(["React Native"], {**card, "tech_stack": ["React, Native"]})[1] == ["React Native"]       # a comma separates two items
+    assert P.ground_stack(["React Native"], {**card, "tech_stack": ["React Native", "TypeScript"]}) == (["React Native"], [])
+
+
+def test_an_ambiguous_word_is_a_language_only_when_the_structured_stack_lists_it():
+    prose = {"full_name": "o/p", "title": "Release tool", "summary": "Ready to go live; a Go service would also work.", "tech_stack": ["Rust", "Axum"]}
+    assert P.ground_stack(["Rust", "Go"], prose) == (["Rust"], ["Go"])
+    assert P.ground_stack(["Go"], {**prose, "tech_stack": ["Go", "gRPC"]}) == (["Go"], [])
+    assert P.ground_stack(["Spark"], {**prose, "summary": "Spark jobs for ETL", "tech_stack": ["Python"]})[1] == ["Spark"]
+    assert P.ground_stack(["PySpark"], {**prose, "tech_stack": ["PySpark"]}) == (["PySpark"], [])
+
+
+def test_a_swapped_in_entry_is_grounded_before_it_is_saved(tmp_path):
+    import json
+    from types import SimpleNamespace
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools import tailor as T
+    state = {"ranked": [{"repo": "o/old", "title": "Old", "stack": ["Python"], "paragraph": "Old project text that is long enough to be a paragraph." * 3, "short": "s"}],
+             "kept": 1, "short": [], "years": {}, "cards": {}, "macro": False}
+    (tmp_path / "projects.json").write_text(json.dumps(state))
+    entry = P.ProjectEntry(repo="ak-asu/EnergyHackathon", title="COLLIDE", stack=["Python", "FastAPI", "AWS"], paragraph="Siting data centres with agents. " * 8,
+                           short="Siting data centres with agents and ML models for planners.")
+    ctx = {"job_dir": tmp_path, "r": SimpleNamespace(tex=""), "cards": {"ak-asu/energyhackathon": {**ENERGY, "url": "https://github.com/ak-asu/EnergyHackathon"}},
+           "log": lambda _: None}
+    f = T.Filled.model_construct(summary="s", roles=[], skills=[], notes="")
+    M._merge(ctx, f, {"projects": SimpleNamespace(projects=[], swaps=[SimpleNamespace(project=1, entry=entry)])})
+    saved = json.loads((tmp_path / "projects.json").read_text())["ranked"][0]
+    assert saved["repo"] == "ak-asu/EnergyHackathon" and saved["stack"] == ["Python", "FastAPI"]

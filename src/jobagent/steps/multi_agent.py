@@ -612,7 +612,11 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
                 repo = sw.entry.repo.lower()
                 if 1 <= sw.project <= st["kept"] and repo in cands and \
                         repo not in {e["repo"].lower() for e in st["ranked"]}:
-                    st["ranked"][sw.project - 1] = sw.entry.model_dump()
+                    entry = sw.entry.model_dump()
+                    entry["stack"], dropped = P.ground_stack(entry["stack"], cands[repo])      # a swapped-in entry gets the same stack grounding as a chosen one
+                    if dropped:
+                        ctx["log"](f"  projects: {sw.entry.repo}: dropped from the stack, not shown by its own card: {dropped}")
+                    st["ranked"][sw.project - 1] = entry
                     st["cards"][repo] = {"url": cands[repo]["url"], "full_name": cands[repo]["full_name"]}
                     st["years"][sw.entry.repo] = P.month_year(cands[repo].get("pushed_at", ""))
                     ctx["log"](f"  projects: swapped in {sw.entry.repo}")
