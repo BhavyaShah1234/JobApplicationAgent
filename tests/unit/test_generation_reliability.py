@@ -126,7 +126,7 @@ def test_letter_best_selection_prefers_a_compiled_one_page_candidate(tmp_path, m
         (directory/'cover_letter.pdf').write_bytes(tex.encode())
         return (2 if tex == 'Two pages' else 1), ''
     letter_world(tmp_path, monkeypatch, [letter('Two pages'), letter('One page')],
-        lambda draft, *args: [] if draft.salutation == 'Two pages' else ['repair one', 'repair two'], compile_pdf)
+        lambda draft, *args, **kwargs: [] if draft.salutation == 'Two pages' else ['repair one', 'repair two'], compile_pdf)
     result = C.write(tmp_path, SimpleNamespace(), '', object(), rounds=2, log=lambda _: None)
     assert result['pages'] == 1 and result['letter'].salutation == 'One page'
     assert result['valid'] is False and result['issues'] == ['repair one', 'repair two']
@@ -140,7 +140,7 @@ def test_successful_letter_is_not_recompiled_and_header_mismatch_is_blocking(tmp
         assert len(calls) == 1
         (directory/'cover_letter.pdf').write_bytes(b'compiled')
         return 1, ''
-    letter_world(tmp_path, monkeypatch, [letter('Dear Team')], lambda *args: [], compile_pdf, header=False)
+    letter_world(tmp_path, monkeypatch, [letter('Dear Team')], lambda *args, **kwargs: [], compile_pdf, header=False)
     result = C.write(tmp_path, SimpleNamespace(), '', object(), rounds=1, log=lambda _: None)
     assert len(calls) == 1 and result['valid'] is False
     assert any('header' in issue for issue in result['issues'])
