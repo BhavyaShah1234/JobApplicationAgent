@@ -203,11 +203,106 @@ def _sentences(text: str, limit: int) -> str:
     return out or text[:limit].rsplit(" ", 1)[0] + "."
 
 
-def content_findings(state: dict) -> list[str]:
+# --- capability is not achievement -------------------------------------------------------------------------------------------------------
+# A card that lists a tool or an audit ("Playwright + axe-core (WCAG 2.1 AA audits)") shows what the project USES or TESTS AGAINST. Saying the project
+# "achieved high accessibility standards", "is HIPAA compliant" or "earned SOC 2 certification" claims a result the repository has to show itself.
+NAMED_STANDARD = re.compile(r"(?i)\b(WCAG(?:\s*\d(?:\.\d)?)?(?:\s*(?:AAA|AA|A)\b)?|HIPAA|SOC\s*2|GDPR|CCPA|FERPA|PCI(?:[-\s]?DSS)?|FedRAMP|ISO(?:/IEC)?[-\s]?\d{4,5}|"
+                            r"Section\s*508|OWASP(?:\s*Top\s*10)?|NIST(?:\s*\d[\w.-]*)?)\b")
+ACHIEVED_CUE = re.compile(r"(?i)\b(?:compl(?:y|ies|ied|iant|iance)|conform\w*|certif\w*|accredit\w*|passed|passes|passing|achiev\w*|attain\w*|meets?|met|adher\w*|"
+                          r"satisf\w*|fulfil\w*|zero\s+violations|no\s+violations|0\s+violations)\b")
+# A claim or a card line that denies or postpones the standard is not an achievement ("not HIPAA compliant", "working toward SOC 2", "designed to meet WCAG").
+NEGATED = re.compile(r"(?i)\b(?:not|no|never|without|lack(?:s|ing)?|isn't|aren't|wasn't|doesn't|don't|non|yet\s+to|working\s+toward\w*|pursuing|preparing\s+for|planned|"
+                     r"aims?\s+to|aiming\s+to|ready\s+for|designed\s+to|intended\s+to|goal\s+of|toward)\b[^.;]{0,30}$")
+GENERIC_STANDARD_CLAIM = re.compile(r"(?i)\b(?:achiev\w*|attain\w*|reach\w*|meets?|met|exceed\w*|pass\w*|satisf\w*)\b[^.!?]{0,40}?"
+                                    r"\b(?:standards?|compliance|conformance|certifications?|accreditations?)\b")
+
+
+def _card_strings(card: dict) -> list[str]:
+    """Every text value of a card (embeddings excluded), one string each: evidence is judged inside a single value, never across neighbouring fields."""
+    out: list[str] = []
+
+    def walk(value, key=""):
+        if key in ("embedding", "vector", "embeddings"):
+            return
+        if isinstance(value, str):
+            out.append(value)
+        elif isinstance(value, dict):
+            for k, v in value.items():
+                walk(v, k)
+        elif isinstance(value, list):
+            for v in value:
+                walk(v, key)
+    walk(card or {})
+    return out
+
+
+def _levels(standard: str) -> tuple[list[str], str]:
+    """The version numbers and conformance level written with a standard: `WCAG 2.1 AA` -> (['2.1'], 'aa')."""
+    level = re.search(r"\b(AAA|AA|A)\s*$", standard.strip())
+    return re.findall(r"\d+(?:\.\d+)?", standard), (level.group(1).lower() if level else "")
+
+
+def _affirms(window: str, cue: "re.Match") -> bool:
+    """The cue in this window is an affirmation, not a denial or a plan."""
+    return not NEGATED.search(window[max(0, cue.start() - 45):cue.start()])
+
+
+def standard_outcome_claims(text: str, card: dict) -> list[str]:
+    """Achieved-standard claims in a project paragraph that the project's OWN card does not support.
+
+    "Tested accessibility with Playwright and axe-core WCAG 2.1 AA audits" (capability) is fine. "Achieved high accessibility standards" or "HIPAA-compliant"
+    is an outcome and needs the card to say so too: the named standard next to an achievement cue within 150 characters, or the same generic phrase.
+    Ordinary qualitative benefits and numbers the repository supplies are not touched.
+
+    Args:
+        text: The displayed paragraph (the variant that is actually rendered).
+        card: The project's saved card.
+
+    Returns:
+        The unsupported claim phrases, in reading order.
+    """
+    strings = _card_strings(card)
+    out = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        for m in NAMED_STANDARD.finditer(sentence):
+            near = sentence[max(0, m.start() - 60):m.end() + 60]
+            cues = [c for c in ACHIEVED_CUE.finditer(near) if _affirms(near, c)]
+            if not cues:
+                continue                                  # "audits against WCAG 2.1 AA", "supports HIPAA-aligned logging", "not yet SOC 2 certified": no achievement claimed
+            ident = re.sub(r"\W", "", m.group(1).lower())[:4]
+            want_versions, want_level = _levels(m.group(1))
+
+            def supports(s: str, e: "re.Match") -> bool:
+                versions, level = _levels(e.group(1))
+                if want_versions and versions and want_versions != versions:
+                    return False                          # the card shows another version (2.1) than the claim (2.2)
+                if want_level and level and want_level != level:
+                    return False                          # AA is not AAA
+                window = s[max(0, e.start() - 150):e.end() + 150]
+                return any(_affirms(window, c) for c in ACHIEVED_CUE.finditer(window))
+            if not any(supports(s, e) for s in strings for e in NAMED_STANDARD.finditer(s)
+                       if re.sub(r"\W", "", e.group(1).lower())[:4] == ident):
+                out.append(sentence.strip()[:160])
+                break
+        else:
+            if GENERIC_STANDARD_CLAIM.search(sentence) and not any(GENERIC_STANDARD_CLAIM.search(s) for s in strings):
+                out.append(sentence.strip()[:160])
+    return out
+
+
+def content_findings(state: dict, cards: dict | None = None) -> list[str]:
     """Check the actual project variants selected for rendering, including short forms.
 
     A model can satisfy max_length by stopping mid-sentence. Page count and text
     bounds do not detect that, so these drafts must be rewritten before use.
+
+    Args:
+        state: `projects.json` (ranked entries, how many are kept, which use their short form).
+        cards: Saved repository cards by lower-case full name. When given, an achieved-standard claim the card does not support is also reported
+            (`standard_outcome_claims`); without cards only completeness is checked.
+
+    Returns:
+        One instruction per problem, in the wording the project writer receives.
     """
     short = set(state.get("short", []))
     out = []
@@ -216,13 +311,99 @@ def content_findings(state: dict) -> list[str]:
         if not re.search(r'''[.!?]["'\u201d\u2019)\]]*\s*$''', text):
             out.append(f"project {i} description ends without a complete sentence: {text[-100:]!r}; "
                        "rewrite the whole description within its length budget, ending the final sentence")
+        card = (cards or {}).get((entry.get("repo") or "").casefold())
+        if card and entry.get("stack"):
+            _, ungrounded = ground_stack(list(entry["stack"]), card)
+            if ungrounded:
+                out.append(f"project {i} prints technologies its own card does not show: {ungrounded}; remove them (a stack comes only from that repository's own card)")
+        for claim in (standard_outcome_claims(text, card) if card else []):
+            out.append(f"project {i} claims an achieved standard or compliance that its own card does not show ({claim!r}): the card lists tooling or capability "
+                       "only. Say what the project uses, tests or audits against (for example 'tested with <tool> against <standard>'); never that the standard "
+                       "was achieved, met, passed or certified")
     return out
+
+
+# --- the printed stack must be this repository's own ------------------------------------------------------------------------------------
+_VERSION = re.compile(r"(?i)^v?\d+(?:\.\d+)*[+x]?$")
+_CANON = ((r"\bamazon web services\b", "aws"), (r"\bgoogle cloud platform\b", "gcp"), (r"\bpostgres\b", "postgresql"), (r"\bnodejs\b", "node.js"),
+          (r"\bsklearn\b", "scikit-learn"))
+
+
+def _tokens(text: str) -> list[str]:
+    """Whole words of a technology text, lower case, with common spellings unified and bare versions dropped ("Python 3.12" -> python)."""
+    low = (text or "").lower()
+    for pattern, canonical in _CANON:
+        low = re.sub(pattern, canonical, low)
+    return [t.rstrip(".") for t in re.findall(r"[a-z0-9][a-z0-9.+#_-]*", low) if not _VERSION.match(t.rstrip("."))]
+
+
+def card_terms(card: dict) -> list[str]:
+    """The technologies a card lists, one short term each (its grouped `tech_stack` lines are split on commas, `+` and semicolons)."""
+    out: list[str] = []
+    for line in card.get("tech_stack") or []:
+        for part in re.split(r"[,;]|\s\+\s", re.sub(r"\([^)]*\)", " ", str(line))):
+            term = re.sub(r"\s+", " ", part).strip(" .")
+            if 1 < len(term) <= 28 and term.lower() not in {t.lower() for t in out}:
+                out.append(term)
+    return out
+
+
+_SEGMENT = re.compile(r"[,;:()/|+\n\[\]]|\.\s|\s[-\u2013\u2014]\s")
+# Words that are also ordinary English or very short: they establish a language/product only when the card's STRUCTURED tech_stack lists them, never from prose.
+AMBIGUOUS_TERMS = {"go", "r", "c", "d", "swift", "rust", "ruby", "julia", "dart", "spark", "express", "next", "spring", "ada", "chef", "puppet", "unity"}
+
+
+def _segments(card: dict) -> list[tuple[bool, list[str]]]:
+    """The card's text as short phrases: `(is_structured_stack, tokens)`. A technology must appear as ONE contiguous phrase inside one of them,
+    so words scattered over different fields or separated by commas never assemble into a product (`React` + `native browser inputs` is not React Native)."""
+    out = []
+    for key in ("tech_stack", "title", "summary", "evidence_notes", "readme"):
+        value = card.get(key)
+        for s in (value if isinstance(value, list) else [value]):
+            for part in _SEGMENT.split(str(s or "")[:6000]):
+                tokens = _tokens(part)
+                if tokens:
+                    out.append((key == "tech_stack", tokens))
+    return out
+
+
+def _contains(tokens: list[str], phrase: list[str]) -> bool:
+    return any(tokens[i:i + len(phrase)] == phrase for i in range(len(tokens) - len(phrase) + 1))
+
+
+def ground_stack(stack: list[str], card: dict) -> tuple[list[str], list[str]]:
+    """Keep only the technologies this repository's own card establishes.
+
+    A term is established when its words (versions ignored, common spellings unified) form ONE contiguous phrase inside one segment of the card's
+    tech stack, title, summary, notes or README excerpt; a one-word term that is also an ordinary word or very short (`Go`, `R`, `Rust`, `Spark`) must
+    come from the structured `tech_stack`. `AWS` in CloudForge's card does not make `AWS` true of another repository; `React` plus "native browser inputs"
+    does not establish `React Native`; `Go` is not found inside `Django`; `Python 3.12` is `Python`; `AWS STS/IAM` establishes `AWS`.
+
+    Args:
+        stack: The technologies the writer chose, in its order.
+        card: That repository's saved card.
+
+    Returns:
+        `(kept, dropped)`; when nothing is established, the card's own first technologies replace the list (never an empty heading).
+    """
+    segments = _segments(card)
+    kept, dropped = [], []
+    for term in stack:
+        phrase = _tokens(term)
+        ok = bool(phrase) and any(_contains(tokens, phrase) for structured, tokens in segments
+                                  if structured or not (len(phrase) == 1 and phrase[0] in AMBIGUOUS_TERMS))
+        if ok:
+            if term not in kept:
+                kept.append(term)
+        else:
+            dropped.append(term)
+    return (kept or card_terms(card)[:5] or ["GitHub"]), dropped
 
 
 def from_card(c: dict) -> ProjectEntry:
     """A project entry straight from a repo card (fallback when the model can't choose)."""
     title = re.split(r"\s+[—:|-]\s+", c["title"])[0][:45]
-    return ProjectEntry(repo=c["full_name"], title=title, stack=c["tech_stack"][:5] or ["GitHub"],
+    return ProjectEntry(repo=c["full_name"], title=title, stack=card_terms(c)[:5] or c["tech_stack"][:5] or ["GitHub"],
                         paragraph=_sentences(c["summary"], 320), short=_sentences(c["summary"], 170))
 
 
@@ -316,6 +497,9 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
     for e in chosen:
         c = by_name[e.repo.lower()]
         e.repo = c["full_name"]
+        e.stack, dropped = ground_stack(e.stack, c)       # the heading prints only technologies this repository's own card establishes
+        if dropped:
+            log(f"projects: {e.repo}: dropped from the stack, not shown by its own card: {dropped}")
         if e.repo.lower() in known:  # the user's own title (e.g. hackathon wins)
             e.title = known[e.repo.lower()][0]
         years[e.repo] = month_year(c.get("created_at") or c.get("pushed_at") or "") or \

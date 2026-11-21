@@ -612,7 +612,11 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
                 repo = sw.entry.repo.lower()
                 if 1 <= sw.project <= st["kept"] and repo in cands and \
                         repo not in {e["repo"].lower() for e in st["ranked"]}:
-                    st["ranked"][sw.project - 1] = sw.entry.model_dump()
+                    entry = sw.entry.model_dump()
+                    entry["stack"], dropped = P.ground_stack(entry["stack"], cands[repo])      # a swapped-in entry gets the same stack grounding as a chosen one
+                    if dropped:
+                        ctx["log"](f"  projects: {sw.entry.repo}: dropped from the stack, not shown by its own card: {dropped}")
+                    st["ranked"][sw.project - 1] = entry
                     st["cards"][repo] = {"url": cands[repo]["url"], "full_name": cands[repo]["full_name"]}
                     st["years"][sw.entry.repo] = P.month_year(cands[repo].get("pushed_at", ""))
                     ctx["log"](f"  projects: swapped in {sw.entry.repo}")
@@ -837,7 +841,7 @@ def check_layout(state: State) -> dict:
     proj_path = job_dir / "projects.json"
     st = json.loads(proj_path.read_text()) if proj_path.exists() else None
     if st:
-        tasks["projects"] += P.content_findings(st)
+        tasks["projects"] += P.content_findings(st, _cards_for(ctx))
     if lay:
         for issue in lay.issues:
             if issue.startswith("Technical Skills") and "fills only" in issue:
@@ -965,6 +969,13 @@ def _title_prefix(summary: str, title: str) -> bool:
     return bool(expected) and actual[:len(expected)]==expected
 
 
+def _cards_for(ctx: dict) -> dict:
+    """Saved repository cards by lower-case full name: the chosen ones plus every candidate the project writer saw."""
+    cards = dict(ctx.get("cards") or {})
+    cards.update({c["full_name"].casefold(): c for _, c in ctx.get("candidates", []) if c.get("full_name")})
+    return cards
+
+
 def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
     """What disqualifies a version whatever its ATS score (the user's review list): not one page, a one-line project
     description, a blank band at the bottom, an empty skills line. Reads the resume.pdf on disk."""
@@ -974,7 +985,7 @@ def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
     proj = ctx["job_dir"] / "projects.json"
     if proj.exists():  # a short form only adds an extra project: at least 2 (or all available) must be in full
         st = json.loads(proj.read_text())
-        out += P.content_findings(st)
+        out += P.content_findings(st, _cards_for(ctx))
         full, want = st["kept"] - len(st["short"]), min(2, len(st["ranked"]))
         if full < want:
             out.append(f"only {full} project(s) in full (short forms: {st['short']}); shorten the Summary or skills "
