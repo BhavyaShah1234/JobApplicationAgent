@@ -206,10 +206,13 @@ def _sentences(text: str, limit: int) -> str:
 # --- capability is not achievement -------------------------------------------------------------------------------------------------------
 # A card that lists a tool or an audit ("Playwright + axe-core (WCAG 2.1 AA audits)") shows what the project USES or TESTS AGAINST. Saying the project
 # "achieved high accessibility standards", "is HIPAA compliant" or "earned SOC 2 certification" claims a result the repository has to show itself.
-NAMED_STANDARD = re.compile(r"(?i)\b(WCAG(?:\s*\d(?:\.\d)?)?(?:\s*(?:AAA|AA|A)\b)?|HIPAA|SOC\s*2|GDPR|CCPA|FERPA|PCI(?:[-\s]?DSS)?|FedRAMP|ISO[-\s]?\d{4,5}|"
+NAMED_STANDARD = re.compile(r"(?i)\b(WCAG(?:\s*\d(?:\.\d)?)?(?:\s*(?:AAA|AA|A)\b)?|HIPAA|SOC\s*2|GDPR|CCPA|FERPA|PCI(?:[-\s]?DSS)?|FedRAMP|ISO(?:/IEC)?[-\s]?\d{4,5}|"
                             r"Section\s*508|OWASP(?:\s*Top\s*10)?|NIST(?:\s*\d[\w.-]*)?)\b")
 ACHIEVED_CUE = re.compile(r"(?i)\b(?:compl(?:y|ies|ied|iant|iance)|conform\w*|certif\w*|accredit\w*|passed|passes|passing|achiev\w*|attain\w*|meets?|met|adher\w*|"
                           r"satisf\w*|fulfil\w*|zero\s+violations|no\s+violations|0\s+violations)\b")
+# A claim or a card line that denies or postpones the standard is not an achievement ("not HIPAA compliant", "working toward SOC 2", "designed to meet WCAG").
+NEGATED = re.compile(r"(?i)\b(?:not|no|never|without|lack(?:s|ing)?|isn't|aren't|wasn't|doesn't|don't|non|yet\s+to|working\s+toward\w*|pursuing|preparing\s+for|planned|"
+                     r"aims?\s+to|aiming\s+to|ready\s+for|designed\s+to|intended\s+to|goal\s+of|toward)\b[^.;]{0,30}$")
 GENERIC_STANDARD_CLAIM = re.compile(r"(?i)\b(?:achiev\w*|attain\w*|reach\w*|meets?|met|exceed\w*|pass\w*|satisf\w*)\b[^.!?]{0,40}?"
                                     r"\b(?:standards?|compliance|conformance|certifications?|accreditations?)\b")
 
@@ -233,6 +236,17 @@ def _card_strings(card: dict) -> list[str]:
     return out
 
 
+def _levels(standard: str) -> tuple[list[str], str]:
+    """The version numbers and conformance level written with a standard: `WCAG 2.1 AA` -> (['2.1'], 'aa')."""
+    level = re.search(r"\b(AAA|AA|A)\s*$", standard.strip())
+    return re.findall(r"\d+(?:\.\d+)?", standard), (level.group(1).lower() if level else "")
+
+
+def _affirms(window: str, cue: "re.Match") -> bool:
+    """The cue in this window is an affirmation, not a denial or a plan."""
+    return not NEGATED.search(window[max(0, cue.start() - 45):cue.start()])
+
+
 def standard_outcome_claims(text: str, card: dict) -> list[str]:
     """Achieved-standard claims in a project paragraph that the project's OWN card does not support.
 
@@ -252,10 +266,21 @@ def standard_outcome_claims(text: str, card: dict) -> list[str]:
     for sentence in re.split(r"(?<=[.!?])\s+", text):
         for m in NAMED_STANDARD.finditer(sentence):
             near = sentence[max(0, m.start() - 60):m.end() + 60]
-            if not ACHIEVED_CUE.search(near):
-                continue                                                        # "audits against WCAG 2.1 AA", "supports HIPAA-aligned logging": capability
+            cues = [c for c in ACHIEVED_CUE.finditer(near) if _affirms(near, c)]
+            if not cues:
+                continue                                  # "audits against WCAG 2.1 AA", "supports HIPAA-aligned logging", "not yet SOC 2 certified": no achievement claimed
             ident = re.sub(r"\W", "", m.group(1).lower())[:4]
-            if not any(ACHIEVED_CUE.search(s[max(0, e.start() - 150):e.end() + 150]) for s in strings for e in NAMED_STANDARD.finditer(s)
+            want_versions, want_level = _levels(m.group(1))
+
+            def supports(s: str, e: "re.Match") -> bool:
+                versions, level = _levels(e.group(1))
+                if want_versions and versions and want_versions != versions:
+                    return False                          # the card shows another version (2.1) than the claim (2.2)
+                if want_level and level and want_level != level:
+                    return False                          # AA is not AAA
+                window = s[max(0, e.start() - 150):e.end() + 150]
+                return any(_affirms(window, c) for c in ACHIEVED_CUE.finditer(window))
+            if not any(supports(s, e) for s in strings for e in NAMED_STANDARD.finditer(s)
                        if re.sub(r"\W", "", e.group(1).lower())[:4] == ident):
                 out.append(sentence.strip()[:160])
                 break

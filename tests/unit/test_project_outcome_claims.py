@@ -86,3 +86,30 @@ def test_without_cards_or_without_the_projects_card_nothing_new_is_reported_and_
 def test_the_instruction_tells_the_writer_what_to_say_instead():
     msg = P.content_findings(state("The platform achieved high accessibility standards with WCAG 2.1 AA audits."), {"owner/platform": WCAG_CARD})[0]
     assert "uses, tests or audits against" in msg and "project 1" in msg
+
+
+@pytest.mark.parametrize("claim", ["Not yet HIPAA compliant; logs access to PHI.", "The platform is not WCAG 2.1 AA compliant and was audited with axe-core.",
+                                    "Working toward SOC 2 certification with documented controls.", "Designed to meet GDPR requirements for consent.",
+                                    "Lacks HIPAA certification but encrypts data at rest."])
+def test_a_denied_or_planned_standard_is_not_an_achievement_claim(claim):
+    assert not found(claim, {"full_name": "owner/platform", "summary": "A service.", "tech_stack": []}), claim
+
+
+def test_a_card_line_that_denies_the_standard_does_not_support_the_claim():
+    card = {"full_name": "owner/platform", "summary": "The service is not HIPAA compliant yet.", "tech_stack": [], "results": []}
+    assert found("A HIPAA-compliant data pipeline.", card)
+    card2 = {**card, "summary": "The service is HIPAA compliant."}
+    assert not found("A HIPAA-compliant data pipeline.", card2)
+
+
+@pytest.mark.parametrize("claim,card_text,ok", [
+    ("The platform achieved WCAG 2.2 AA conformance.", "CI reports zero WCAG 2.1 AA violations; conforms to WCAG 2.1 AA.", False),
+    ("The platform achieved WCAG 2.1 AA conformance.", "CI reports zero WCAG 2.1 AA violations; conforms to WCAG 2.1 AA.", True),
+    ("The platform achieved WCAG 2.1 AAA conformance.", "Conforms to WCAG 2.1 AA.", False),
+    ("The platform achieved WCAG conformance.", "Conforms to WCAG 2.1 AA.", True),
+    ("Achieved ISO 27001 certification.", "The company is ISO/IEC 27001 certified.", True),
+    ("Achieved ISO 9001 certification.", "The company is ISO/IEC 27001 certified.", False),
+    ("SOC2 compliant hosting.", "Hosting is SOC 2 compliant.", True)])
+def test_version_level_and_name_variants_are_compared(claim, card_text, ok):
+    card = {"full_name": "owner/platform", "summary": card_text, "tech_stack": [], "results": []}
+    assert bool(found(claim, card)) is (not ok), (claim, card_text)
