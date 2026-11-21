@@ -53,6 +53,29 @@ def sources(resume_tex, job_dir):
     return result
 
 
+def employment_sources(resume_tex):
+    """Read employer-owned sections without requiring a full generation template.
+
+    The standalone cover-letter command also accepts existing resumes that lack
+    the generator's Education/Skills sections. It still checks named employers.
+    """
+    section = re.search(r'\\section\{Experience\}(.*?)(?=\\section\{|\\end\{document\}|\Z)', resume_tex, re.S)
+    if not section:
+        return {}
+    body = section.group(1)
+    headings = list(re.finditer(r'\\resumeSubheading\b', body))
+    bank = {}
+    for i, heading in enumerate(headings):
+        pos, args = heading.end(), []
+        for _ in range(4):
+            arg, pos = T._braced(body, body.index('{', pos))
+            args.append(arg)
+        end = headings[i+1].start() if i+1 < len(headings) else len(body)
+        bank[f'employment:{i}'] = {'entity': T.to_plain(args[2]).strip(), 'kind': 'employment',
+                                  'text': T.to_plain(body[pos:end])}
+    return bank
+
+
 def normalize(text):
     """Compare visible prose without LaTeX escaping or layout whitespace."""
     return re.sub(r'\s+', ' ', T.DASH.sub(', ', T.to_plain(text))).strip().casefold()
@@ -97,9 +120,43 @@ def _names_in(text, entities):
     return {ident for ident, names in entities.items() if any(f' {n} ' in padded for n in names)}
 
 
+def paragraph_metric_issues(letter, bank):
+    """Keep a first-person result with the employer named earlier in its paragraph.
+
+    Sentence-level source bindings alone do not prevent an unnamed result from
+    reading as another employer's achievement. Do not carry context across
+    paragraphs or treat company facts/future goals as candidate results.
+    """
+    from .number_claims import metric_spans, metric_tokens
+    entities = {ident: aliases(source['entity']) for ident, source in bank.items()
+                if source.get('kind') in ('employment', 'project')}
+    for_number = {ident: metric_tokens(source['text']) for ident, source in bank.items() if ident in entities}
+    issues = []
+    for number, paragraph in enumerate(letter.paragraphs, 1):
+        active = set()
+        for sentence in re.split(r'(?<=[.!?])\s+(?=[A-Z])', paragraph.text):
+            mentioned = _names_in(sentence, entities)
+            if mentioned:
+                active = mentioned
+            candidate_result = re.search(
+                r'(?i)\b(?:I|we)\s+(?:(?:have|had|also|previously|successfully|personally)\s+)*'
+                r'(?!(?:admired|appreciated|noticed|impressed|excited|interested|attracted)\b)'
+                r'(?:[a-z]+ed|cut|built|led|ran|wrote|drove|grew|saved|sped|won|made|did|began|took|got)\b', sentence)
+            if not candidate_result or not active:
+                continue
+            supported = set().union(*(for_number[ident] for ident in active))
+            for token, written in metric_spans(sentence).items():
+                if token not in supported:
+                    names = ', '.join(bank[ident]['entity'] for ident in sorted(active))
+                    issues.append(f'paragraph {number}: figure {written!r} is not supported by the '
+                                  f'employer/project context ({names}); name the actual source employer '
+                                  'in this sentence or put its achievement in a separately attributed paragraph')
+    return issues
+
+
 def binding_issues(letter, bank):
     """Check sentence coverage, entity identity and exact numeric/quote provenance."""
-    issues = []
+    issues = paragraph_metric_issues(letter, bank)
     entities = {ident: aliases(source['entity']) for ident, source in bank.items()
                 if source.get('kind') not in ('company','posting','summary','skills','education')}
     for number, paragraph in enumerate(letter.paragraphs, 1):

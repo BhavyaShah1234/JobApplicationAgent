@@ -128,6 +128,9 @@ The letter must match the resume exactly in substance:
   way; always write it with "by").
 - Never reverse a metric's direction from the resume: if the resume cuts latency, the letter never raises it, and a
   worse metric (higher latency, response time, error rate, downtime; lower throughput, uptime) is never a benefit.
+- A named employer remains the context for later achievements in that paragraph. If a result comes from another
+  employer, name that employer in the result sentence or start a separately attributed paragraph. A number appearing
+  somewhere else in the resume is insufficient; do not mix unnamed results from different employers.
 - `evidence`: for each paragraph, the short resume lines / company facts it relies on."""
 
 
@@ -142,7 +145,7 @@ def build_prompt(resume: str, jd: JobDescription, company_md: str, feedback: str
     return [SystemMessage(with_today(PROMPT)), HumanMessage(text)]
 
 
-def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str) -> list[str]:
+def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str, *, source_bank=None) -> list[str]:
     """Numbers and technologies in the letter that appear nowhere in the resume, the JD or the company profile."""
     sources = "\n".join([resume, company_md, jd.model_dump_json()])
     low = sources.lower()
@@ -150,7 +153,8 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
     from jobagent.tools import number_claims as NC, metric_direction as MD
     resume_figures = NC.metric_tokens(to_plain(resume))                       # what the candidate did
     context_figures = resume_figures | NC.metric_tokens(to_plain("\n".join([company_md, jd.model_dump_json()])))   # what the company and posting say
-    issues = []
+    from .letter_attribution import paragraph_metric_issues
+    issues = paragraph_metric_issues(letter, source_bank) if source_bank is not None else []
     for k, p in enumerate(letter.paragraphs, 1):
         if not re.search(r"(?i)\b(?:certifications?|certificates?|certified)\b", resume) and re.search(
                 r"(?i)\bmy\s+(?:(?:background|skills|qualifications|experience|knowledge|expertise|education|training)"
@@ -250,8 +254,9 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
     old_contact = re.search(r"\\begin\{center\}.*?\\end\{center\}", template, re.S)
     if contact and old_contact:
         template = template[:old_contact.start()] + contact.group(0) + template[old_contact.end():]
+    from . import letter_attribution as attribution
+    bank = attribution.employment_sources(resume_tex)
     if incremental:
-        from . import letter_attribution as attribution
         from .incremental_documents import cache_for, invoke
         cache = cache_for(job_dir)
         bank = attribution.sources(resume_tex, job_dir)
@@ -303,7 +308,7 @@ def write(job_dir: Path, jd: JobDescription, company_md: str, model, rounds: int
             "closing": DASH.sub(", ", letter.closing),
             "paragraphs": [p.model_copy(update={"text": DASH.sub(", ", p.text)}) for p in letter.paragraphs],
         })
-        issues = consistency(letter, resume, jd, company_md)
+        issues = consistency(letter, resume, jd, company_md, source_bank=bank)
         if not header_matches(template, resume_tex):
             issues.append("the cover letter header differs from the resume")
         if incremental:
