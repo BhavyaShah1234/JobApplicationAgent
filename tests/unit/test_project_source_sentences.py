@@ -313,14 +313,16 @@ def test_an_invented_title_and_a_foreign_date_are_findings_but_owner_values_are_
     assert not P.binding_findings(st, P.known_entries(TEMPLATE))
 
 
-def test_a_bare_year_of_the_repositorys_own_date_is_the_same_fact_but_another_year_is_not():
+def test_a_date_must_be_the_owners_or_the_repositorys_own_to_the_month():
     st = bound(packet())
-    year = P.month_year(card()["created_at"]).split()[-1]
-    st["years"][entry(st)["repo"]] = year
+    own = P.month_year(card()["created_at"])
+    st["years"][entry(st)["repo"]] = own
     assert not [f for f in P.binding_findings(st, P.known_entries(TEMPLATE)) if "date" in f]
-    st["years"][entry(st)["repo"]] = "March 2031"
-    assert [f for f in P.binding_findings(st, P.known_entries(TEMPLATE)) if "date" in f]
+    for wrong in ("March 2031", "2025", own.split()[-1], "December " + own.split()[-1]):       # another year, a bare year, or another month of the same year
+        st["years"][entry(st)["repo"]] = wrong
+        assert [f for f in P.binding_findings(st, P.known_entries(TEMPLATE)) if "date" in f], wrong
     assert P.recover_years(st, P.known_entries(TEMPLATE)) == [entry(st)["repo"]] and not [f for f in P.binding_findings(st, {}) if "date" in f]
+    assert st["years"][entry(st)["repo"]] == own
 
 
 def test_recover_title_gives_the_cards_own_title_or_the_owners():

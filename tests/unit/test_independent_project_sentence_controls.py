@@ -62,9 +62,9 @@ def fresh_normal_job(tmp_path, monkeypatch):
     state = {"ranked": [entry.model_dump()], "kept": 1, "short": [],
              "evidence": {own["full_name"]: P.evidence_snapshot(own)}}
     job = normal_job(tmp_path, monkeypatch, state)
-    chosen = P.Chosen(entries=[entry], candidates=[(1.0, own)], years={own["full_name"]: "2026"},
+    chosen = P.Chosen(entries=[entry], candidates=[(1.0, own)], years={own["full_name"]: "January 2026"},
                       notes="Independent same-source fixture.")
-    P.save_state(job, chosen, [entry])  # real production serializer supplies any new source-binding metadata
+    P.save_state(job, [entry], chosen)  # real production serializer supplies any new source-binding metadata
     return job, own
 
 
