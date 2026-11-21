@@ -66,3 +66,9 @@ def test_a_tag_for_a_figure_that_is_not_in_the_bullet_is_dropped_even_when_the_b
 def test_missing_figures_are_still_added_after_stale_ones_are_removed():
     got = tags("Cut cost 15% and sped up builds 3x.", ["99%"])
     assert got and all(x in ("15%", "3x") or x.lower() == "3x" for x in got) and len(got) == 2, got
+
+
+def test_a_word_figure_tag_is_not_listed_twice():
+    assert tags("Tripled labelling throughput.", ["Tripled"]) == ["Tripled"]
+    assert tags("Tripled labelling throughput and cut cost 20%.", ["tripled"]) == ["tripled", "20%"]
+    assert tags("Tripled labelling throughput.", []) == ["Tripled"]
