@@ -775,6 +775,12 @@ def fill_checks(r: Resume, jd: JobDescription, f: Filled, slots: int | None = No
         for b in e.bullets:
             plain = PLACEHOLDER.sub("", b.text)
             spans = NC.metric_spans(plain)
+            # A tag must name a figure that is IN this bullet. Writers leave stale ones (a figure of the bullet's earlier wording or of a neighbouring
+            # bullet); the incremental reviewer then blocks the draft for "estimates that do not match the bullet" although nothing on the page is wrong.
+            present = set(re.findall(r"\d+(?:\.\d+)?", plain)) | set(re.findall(r"\d+(?:\.\d+)?", plain.replace(",", "")))
+            kept = [x for x in b.estimated if NC.digits(NC._norm(x)) in present or set(NC.metric_spans(x)) & set(spans)]
+            if len(kept) != len(b.estimated):
+                b.estimated = kept
             tagged = {NC._norm(x) for x in b.estimated}
             in_metric = {NC.digits(t) for t in spans}
             for n in re.findall(r"\d+(?:\.\d+)?", plain):
