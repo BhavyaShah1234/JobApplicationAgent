@@ -159,7 +159,9 @@ Each rule is checked after the model writes; a broken rule goes back to the mode
   (prototype, simulated, planned, not measured, README claims) intact. No clause is added, cut, reworded or borrowed from another
   repo, and no terminator is invented; a variant the card cannot fill is skipped (a short one is left empty, a project without
   a full one is replaced by the next ranked candidate; fewer than 2 usable projects stops the build). Titles are the owner's
-  template title or words of the card's own title in order; stacks come from the card; dates are the owner's or the repo's.
+  template title or an actual card/repository identity, never a generated word subsequence; stacks come from the card.
+  An explicit owner-template date takes priority over repository timestamps. Short dependent caveats stay with their facts,
+  and validation accounts for the entire candidate description, including any orphan text.
   Every writer path (first choice, repairs and swaps, the ATS keyword pass, the faithful fallback) goes through it, and every
   `documents` refresh re-derives it from the job's own saved evidence (`projects.json` `evidence`), never from a flag or the
   shared card cache. **Compatibility:** a packet saved before this contract holds free-written prose, so its refresh reports

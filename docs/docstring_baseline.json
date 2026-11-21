@@ -83,7 +83,7 @@
   "src/jobagent/tools/places.py": 1,
   "src/jobagent/tools/portal_agent.py": 2,
   "src/jobagent/tools/portal_auth.py": 5,
-  "src/jobagent/tools/projects.py": 8,
+  "src/jobagent/tools/projects.py": 7,
   "src/jobagent/tools/psl.py": 1,
   "src/jobagent/tools/referrals.py": 2,
   "src/jobagent/tools/repo_cards.py": 10,
@@ -96,8 +96,8 @@
   "src/jobagent/tools/wizard.py": 3,
   "src/jobagent/tools/workflow.py": 8
  },
- "public_items": 1558,
- "without_docstring": 507,
- "covered_percent": 67.5,
- "long_functions_without_args_section": 335
+ "public_items": 1578,
+ "without_docstring": 506,
+ "covered_percent": 67.9,
+ "long_functions_without_args_section": 339
 }

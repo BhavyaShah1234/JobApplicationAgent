@@ -1,8 +1,8 @@
 """Step 9: the resume's Projects section from the saved repo cards (tools/repo_cards).
 
 Every repo of the resume's GitHub account (own + contributed) has a card written from its code. For a job, the
-cards are ranked by embedding similarity to the JD, and the model picks 2-4 projects and writes each as one
-unbulleted paragraph: the problem, the solution, the system built — about the whole project, also for shared repos.
+cards are ranked by embedding similarity to the JD, and the model picks 2-4 projects and numbered source units.
+The descriptions compose those whole source units about each project, including shared repositories.
 Entries already in the template keep the template's title and year (the user's wording, e.g. a hackathon win).
 
 SOURCE-SENTENCE CONTRACT: the displayed description (full AND short) is never written by the model. It is a sequence of COMPLETE
@@ -260,15 +260,37 @@ def _complete(sentence: str) -> bool:
             and _single_quotes_balanced(sentence) and not DASH.search(sentence))
 
 
+MIN_SENTENCE = 30   # characters: a shorter piece ("It is only simulated.") is a dependent remark, not a fact of its own
+
+
+def source_units(text: str) -> list[str]:
+    """The text as whole units: sentences, where a short piece (under `MIN_SENTENCE`) belongs to the sentence before it and stays with it, so a
+    caveat ("It is only simulated.") is never separated from the fact it qualifies. A short piece with no sentence before it cannot be kept with
+    its fact, so the sentence after it is left out of the units (its qualifier would be lost); a text of short pieces only gives no unit."""
+    out: list[str] = []
+    orphan = False
+    for piece in split_sentences(text):
+        if len(piece) >= MIN_SENTENCE:
+            if orphan:
+                orphan = False
+                continue
+            out.append(piece)
+        elif out:
+            out[-1] = f"{out[-1]} {piece}"
+        else:
+            orphan = True
+    return out
+
+
 def source_sentences(card: dict) -> list[str]:
-    """The numbered pool a description may be built from: the complete sentences of the card's summary, then its results, each once, in card order.
+    """The numbered pool a description may be built from: the complete units (`source_units`) of the card's summary, then its results, each once, in card order.
 
     Numbers (1-based) are positions in this list. It depends on the card's text only, so the writer, the validators and a later refresh agree on it.
     """
     out: list[str] = []
     for value in [(card or {}).get("summary")] + list((card or {}).get("results") or []):
         if isinstance(value, str):
-            out += [s for s in split_sentences(value) if _complete(s) and s not in out]
+            out += [s for s in source_units(value) if _complete(s) and s not in out]
     return out
 
 
@@ -278,8 +300,11 @@ def bound_text(text: str, card: dict) -> str | None:
     A half sentence, an added clause, a changed verb, a dropped negation or another repository's sentence all fail, because each piece must be
     one of the card's own sentences exactly. A text with no sentence at all is not bound.
     """
-    pieces = split_sentences(text)
+    original = " ".join(str(text or "").split())
+    pieces = source_units(original)
     pool = set(source_sentences(card))
+    if " ".join(pieces) != original:
+        return None  # source extraction may discard orphan remarks; validation must account for EVERY input character
     if not pieces or len(pieces) > MAX_SENTENCES or len(set(pieces)) != len(pieces) or not all(p in pool for p in pieces):
         return None
     return " ".join(pieces)
@@ -289,7 +314,7 @@ def unbound_excerpt(text: str, card: dict) -> str:
     """The first piece of the text that is not a source sentence of the card, around its first word the card does not use (for the finding shown to the
     writer: the added clause, not the harmless start of the sentence)."""
     pool = set(source_sentences(card))
-    pieces = split_sentences(text)
+    pieces = source_units(text)
     piece = next((p for p in pieces if p not in pool), pieces[0] if pieces else "")
     known = set(re.findall(r"[a-z0-9]+", " ".join(_card_strings(card)).lower()))
     novel = next((m.start() for m in re.finditer(r"[A-Za-z0-9]+", piece) if m.group(0).lower() not in known), 0)
@@ -355,28 +380,32 @@ def _title_words(text: str) -> list[str]:
 
 
 def card_title(card: dict) -> str:
-    """A title built only from the card's own: its first segment ("SolBot — Agentic RAG..." -> "SolBot"), cut at a word boundary to 45 characters,
-    else the repository name."""
-    first = re.split(r"\s+[—–:|-]\s+", str(card.get("title") or ""))[0].strip()
-    words, out = first.split(), ""
-    for w in words:
-        if len(f"{out} {w}".strip()) > 45:
-            break
-        out = f"{out} {w}".strip()
-    return out or str(card.get("full_name") or "").split("/")[-1] or "Project"
+    """The card's named project identity, else its repository name; never an arbitrary subsequence or clipped factual description."""
+    title = " ".join(str(card.get("title") or "").split())
+    first = re.split(r"\s*[—–:|]\s+|\s+-\s+", title, maxsplit=1)[0].strip()
+    if first and len(first) <= 70 and first.count("(") == first.count(")"):
+        return first
+    name = str(card.get("full_name") or "").split("/")[-1]
+    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name).replace("_", " ").replace("-", " ")
+    if name and len(name) <= 70:
+        return name
+    return "Project"
 
 
 def title_supported(title: str, card: dict, owner_title: str | None = None) -> bool:
-    """The title is the owner's template title for this repository, or uses only words of the card's own title / the repository name, in their order.
+    """A title must be an actual source identity: the owner's exact title, the card's title or canonical name, or its repository name.
 
-    A generated title may drop words of the source title but never add one, so it cannot name a feature, outcome or award the card does not.
+    Deleting arbitrary words is not a proof: dropping 'not' or 'attempted' can turn the same source words into a false achievement.
     """
-    if owner_title and " ".join(_title_words(title)) == " ".join(_title_words(owner_title)):
-        return True
     words = _title_words(title)
-    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", str(card.get("full_name") or "").split("/")[-1]).replace("-", " ").replace("_", " ")
-    reference = iter(_title_words(name) + _title_words(card.get("title") or ""))
-    return bool(words) and all(w in reference for w in words)      # `in` on an iterator consumes it: an ordered subsequence
+    if not words:
+        return False
+    repo = str(card.get("full_name") or "").split("/")[-1]
+    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", repo).replace("-", " ").replace("_", " ")
+    identities = [card.get("title") or "", card_title(card), repo, name]
+    if owner_title:
+        identities.append(owner_title)
+    return any(words == _title_words(str(identity)) for identity in identities)
 
 
 def entry_binding_issues(entry: dict, card: dict, owner: tuple[str, str] | None = None) -> list[str]:
@@ -403,9 +432,22 @@ def entry_binding_issues(entry: dict, card: dict, owner: tuple[str, str] | None 
     return out
 
 
+def project_date(card: dict, owner: tuple[str, str] | None = None) -> str:
+    """The date a project shows: the owner's template date when there is one (a repository can be created after the project began), else the
+    card's creation month, else its last push month."""
+    return (owner[1] if owner and owner[1] else "") or month_year(card.get("created_at") or "") or month_year(card.get("pushed_at") or "")
+
+
+def allowed_dates(card: dict, owner: tuple[str, str] | None = None) -> set[str]:
+    """The only dates a project may show: the owner's when given, else its own repository's creation or push month."""
+    if owner and owner[1]:
+        return {owner[1]}
+    return {d for d in (month_year(card.get("created_at") or ""), month_year(card.get("pushed_at") or "")) if d}
+
+
 def recover_years(state: dict, known: dict | None = None) -> list[str]:
-    """Give every project whose saved date is neither the owner's nor from its own repository the date `choose` would have set (the card's creation
-    month, else its last push, else the owner's template date).
+    """Give every project whose saved date is neither the owner's nor from its own repository the date `choose` would have set (the owner's
+    template date, else the card's creation month, else its last push).
 
     Args:
         state: `projects.json`; its `years` are changed in place.
@@ -421,9 +463,9 @@ def recover_years(state: dict, known: dict | None = None) -> list[str]:
         card, owner = evidence.get(repo.casefold()), known.get(repo.casefold())
         if card is None or repo not in years:
             continue
-        allowed = {d for d in (month_year(card.get("created_at") or ""), month_year(card.get("pushed_at") or ""), owner[1] if owner else "") if d}
+        allowed = allowed_dates(card, owner)
         if allowed and years[repo] not in allowed:
-            years[repo] = month_year(card.get("created_at") or card.get("pushed_at") or "") or (owner[1] if owner else "")
+            years[repo] = project_date(card, owner)
             fixed.append(repo)
     return fixed
 
@@ -453,7 +495,7 @@ def binding_findings(state: dict, known: dict | None = None) -> list[str]:
         owner = known.get(repo.casefold())
         out += [f"project {i} ({repo}) {issue}; use only numbered source sentences of this repository, exactly as written"
                 for issue in entry_binding_issues(entry, card, owner)]
-        allowed = {d for d in (month_year(card.get("created_at") or ""), month_year(card.get("pushed_at") or ""), owner[1] if owner else "") if d}
+        allowed = allowed_dates(card, owner)
         if allowed and repo in years and years[repo] not in allowed:
             out.append(f"project {i} ({repo}) date {years[repo]!r} is neither the owner's template date nor from its own repository")
     return out
@@ -1268,7 +1310,7 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
                 out = llm.structured_invoke(model, Projects, messages, log=log)
         except llm.LLMConfigError:
             raise
-        except Exception as e:  # timeout / token limit: one more try
+        except (llm.StructuredError, ValueError, TimeoutError) as e:  # provider / structured-content outage: one more try; programmer errors surface
             log(f"projects: model error {type(e).__name__}; retrying")
             continue
         picks = list({p.repo.lower(): p for p in out.projects if p.repo.lower() in by_name}.values())
@@ -1324,8 +1366,7 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
             log(f"projects: {e.repo}: dropped from the stack, not shown by its own card: {dropped}")
         if e.repo.lower() in known:  # the user's own title (e.g. hackathon wins)
             e.title = known[e.repo.lower()][0]
-        years[e.repo] = month_year(c.get("created_at") or c.get("pushed_at") or "") or \
-            known.get(e.repo.lower(), ("", ""))[1]
+        years[e.repo] = project_date(c, known.get(e.repo.lower()))
     return Chosen(chosen, cands, years, out.notes if out else "top-ranked repo cards (model unavailable)", "\\newcommand{\\resumeProjectText}" in r.tex)
 
 

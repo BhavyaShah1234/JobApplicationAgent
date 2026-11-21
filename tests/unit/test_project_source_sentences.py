@@ -161,7 +161,10 @@ def test_the_rejected_coram_description_is_not_bound_and_the_card_never_says_con
 def test_every_prose_variant_of_the_captured_packet_predates_the_contract_and_is_reported():
     findings = P.binding_findings(packet(), P.known_entries(TEMPLATE))
     assert {f.split(" ")[1] for f in findings if "source card" in f} == {"1", "2", "3", "4"}      # the legacy packet needs regeneration
-    assert not any("template title" in f for f in findings)                         # titles were fine (VisionForge's is the owner's)
+    # Older generated abbreviations were word subsequences, not source identities; preserve the owner's exact award title.
+    assert any(f.startswith("project 2 ") and "template title" in f for f in findings)
+    assert any(f.startswith("project 3 ") and "template title" in f for f in findings)
+    assert not any(f.startswith("project 4 ") and "template title" in f for f in findings)
 
 
 def test_the_faithful_replacement_of_the_rejected_packet_is_only_the_cards_own_sentence():
@@ -214,11 +217,7 @@ def test_normal_resume_findings_blocks_the_exact_rejected_packet_from_its_own_sa
 
 
 def test_after_faithful_replacement_the_normal_path_accepts_the_same_job(tmp_path, monkeypatch):
-    st = packet()
-    for e in st["ranked"]:
-        c = P.saved_evidence(st)[e["repo"].casefold()]
-        full, short = P.faithful_variants(c)
-        e.update(paragraph=full, short=short or "")
+    st = bound(packet())  # both prose and title must use actual source identities; owner's title is retained by bound()
     found = D.resume_findings(normal_job(tmp_path, monkeypatch, st))
     assert found["hard"] == [], found["hard"]
     assert "control" not in " ".join(e["paragraph"] for e in st["ranked"] if e["repo"].casefold() == DEVIL).lower()
@@ -295,7 +294,8 @@ def test_refresh_cannot_leave_an_old_freeform_packet_marked_usable(tmp_path, mon
 
 def test_a_generated_title_may_use_only_words_of_its_own_card_title():
     c = card()
-    assert P.title_supported("Devil's Invent Hackathon", c) and P.title_supported("Devil's Invent: Autonomous Robotics", c)
+    assert P.title_supported("Devil's Invent Hackathon", c) and P.title_supported(c["title"], c)
+    assert not P.title_supported("Devil's Invent: Autonomous Robotics", c)  # new words cannot be assembled into a generated label
     for invented in ("Real-Time Robot Control Platform", "Devil's Invent Hackathon Winner", "Autonomous Robotics Control", "Devil's Invent Robotics Award"):
         assert not P.title_supported(invented, c), invented
     assert P.title_supported("VisionForge, Claude Builder Club Hackathon Winner", card(VISION), "VisionForge, Claude Builder Club Hackathon Winner")   # the owner's own
@@ -691,3 +691,104 @@ def test_choose_selects_a_short_variant_only_from_whole_sentences_within_its_bou
     by = {e.repo.casefold(): e for e in chosen.entries}
     assert by[VISION].short == P.source_sentences(card(VISION))[short_ids[0] - 1]
     assert by[DEVIL].short == ""                                                         # its only sentence is over the short bound: skipped, not cut
+
+
+# --- final contract edges: dependent qualifiers, title qualifiers, owner dates, exception boundary ---------------------------------------------
+FACT = ("Built a Python robotics service that sends motion commands to physical warehouse robots and routes operator requests through "
+        "authenticated control endpoints while recording robot status for audit.")
+
+
+def test_a_short_qualifier_sentence_stays_with_the_fact_it_qualifies():
+    own = {"full_name": "o/p", "title": "Robotics Prototype", "summary": FACT + " It is only simulated.", "results": ["Not measured on real hardware."]}
+    pool = P.source_sentences(own)
+    assert pool == [FACT + " It is only simulated.", "Not measured on real hardware."]
+    assert P.bound_text(FACT, own) is None                      # the unqualified fact alone is not a source unit
+    assert P.bound_text(pool[0], own) == pool[0]
+
+
+def test_a_leading_short_remark_cannot_be_dropped_from_the_sentence_it_qualifies():
+    own = {"full_name": "o/p", "title": "T", "summary": "Prototype only. " + FACT + " " + "Another complete second sentence about the audit log format used."}
+    pool = P.source_sentences(own)
+    assert not any(FACT in s for s in pool)                      # excluded rather than printed without "Prototype only."
+    assert any("Another complete second sentence" in s for s in pool)
+
+
+def test_an_unrelated_short_remark_after_a_dashed_fact_never_makes_the_fact_publishable():
+    own = {"full_name": "o/p", "title": "T", "summary": "Built a robot controller — never run on hardware at all. Simulated."}
+    assert P.source_sentences(own) == []
+
+
+def test_from_card_publishes_a_qualified_fact_only_with_its_caveat():
+    own = {"full_name": "o/p", "url": "u", "title": "Robotics Prototype", "tech_stack": ["Python"], "results": [],
+           "summary": FACT + " It is only simulated. The README documents a second planned feature set for field trials."}
+    entry = P.from_card(own)
+    assert entry is not None
+    for text in (entry.paragraph, entry.short):
+        if FACT in text:
+            assert "It is only simulated." in text
+
+
+@pytest.mark.parametrize("title,ok", [
+    ("Not HIPAA Certified Sensor Service", True), ("HIPAA Certified Sensor Service", False), ("Certified Sensor Service", False),
+    ("Not HIPAA Sensor Service", False), ("HIPAA Sensor", False)])
+def test_a_title_keeps_the_actual_source_identity_and_its_qualifiers(title, ok):
+    own = {"full_name": "o/sensor-service", "title": "Not HIPAA Certified Sensor Service"}
+    assert P.title_supported(title, own) is ok
+
+
+def test_a_title_uses_actual_source_names_instead_of_arbitrary_subsequences():
+    own = {"full_name": "o/solbot", "title": "SolBot Agentic RAG Assistant for Solar Installers"}
+    assert P.title_supported("SolBot", own) and P.title_supported(own["title"], own)
+    assert not P.title_supported("SolBot Agentic RAG", own) and not P.title_supported("SolBot Certified", own)
+
+
+def test_the_owner_date_wins_over_repository_timestamps_in_choose_and_validation(monkeypatch, tmp_path):
+    cards = [{**c, "url": f"https://github.com/{c['full_name']}", "created_at": "2026-01-01T00:00:00Z"} for c in P.saved_evidence(PACKET).values()]
+    chosen, _ = choose_with(monkeypatch, [[sel(VISION, [1, 3]), sel(DEVIL, [1])]], cards=cards)
+    assert chosen.years[card(VISION)["full_name"]] == "November 2025"          # the template's date, not the repo's creation month
+    assert chosen.years[card(DEVIL)["full_name"]] == "January 2026"            # no owner date: the repository's
+    P.save_state(tmp_path, list(chosen.entries), chosen)
+    saved = json.loads((tmp_path / "projects.json").read_text())
+    known = P.known_entries(TEMPLATE)
+    assert P.binding_findings(saved, known) == []
+    saved["years"][card(VISION)["full_name"]] = "January 2026"
+    assert any("date" in f for f in P.binding_findings(saved, known))
+
+
+def test_choose_does_not_hide_programmer_errors_behind_retries(monkeypatch):
+    monkeypatch.setattr(P.repo_cards, "refresh", lambda *a, **k: [{**c, "url": "u"} for c in P.saved_evidence(PACKET).values()])
+    monkeypatch.setattr(P.repo_cards, "rank", lambda cs, text, k=None, min_substance=None, log=None: [(1.0, c) for c in cs])
+    calls = []
+
+    def broken(*a, **k):
+        calls.append(1)
+        raise AttributeError("programmer defect")
+    monkeypatch.setattr(P.llm, "structured_invoke", broken)
+    with pytest.raises(AttributeError):
+        P.choose(SimpleNamespace(tex=TEMPLATE), JD, object(), "u", log=lambda *_: None)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("error", [lambda: P.llm.StructuredError("bad json"), lambda: ValueError("parse"), lambda: TimeoutError("slow")])
+def test_choose_still_falls_back_to_source_sentences_on_expected_outages(monkeypatch, error):
+    monkeypatch.setattr(P.repo_cards, "refresh", lambda *a, **k: [{**c, "url": "u"} for c in P.saved_evidence(PACKET).values()])
+    monkeypatch.setattr(P.repo_cards, "rank", lambda cs, text, k=None, min_substance=None, log=None: [(1.0, c) for c in cs])
+    monkeypatch.setattr(P.llm, "structured_invoke", lambda *a, **k: (_ for _ in ()).throw(error()))
+    chosen = P.choose(SimpleNamespace(tex=TEMPLATE), JD, object(), "u", log=lambda *_: None)
+    assert len(chosen.entries) >= P.MIN_PROJECTS
+
+
+
+def test_candidate_prose_cannot_hide_an_invented_fact_behind_an_orphan_remark():
+    good = "Built a Python service that validates and stores timestamped observations for authenticated operators."
+    own = {"summary": good, "results": []}
+    invented = "The system controls physical robots across multiple warehouses from authenticated operator commands."
+    # Source extraction may skip a leading short remark, but validation must never discard candidate text.
+    assert P.bound_text("Note. " + invented + " " + good, own) is None
+    assert P.bound_text(good, own) == good
+
+
+def test_title_word_deletion_cannot_turn_an_attempt_into_an_award():
+    own = {"full_name": "owner/project", "title": "Attempted Hackathon Win"}
+    assert P.title_supported(own["title"], own)
+    assert not P.title_supported("Hackathon Win", own)

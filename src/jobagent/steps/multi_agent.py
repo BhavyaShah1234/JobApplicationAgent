@@ -657,7 +657,7 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
                 st["ranked"][sw.project - 1] = entry
                 st["cards"][repo] = {"url": cands[repo]["url"], "full_name": cands[repo]["full_name"]}
                 st.setdefault("evidence", {})[repo] = P.evidence_snapshot(cands[repo])
-                st["years"][entry["repo"]] = P.month_year(cands[repo].get("created_at") or cands[repo].get("pushed_at") or "")
+                st["years"][entry["repo"]] = P.project_date(cands[repo], known.get(repo))
                 ctx["log"](f"  projects: swapped in {sw.entry.repo}")
         for e in st["ranked"]:
             if (e.get('repo') or '').lower() in known:
