@@ -20,6 +20,24 @@ class ReviewVerdict(BaseModel):
     reason: str = Field(max_length=600)
 
 
+def cites_only_absent_figures(issue, section_text):
+    """True when a finding names metric figures and none of them is in the text of the section it accuses.
+
+    Such a finding is about another section or an earlier draft (a critic saw "cutting deployment time by 30%" in Experience and charged it to a
+    qualitative project paragraph), not about the claim on the page. A finding that names no figure, or at least one figure of the section, is kept.
+
+    Args:
+        issue: The critic's finding text.
+        section_text: The visible text of the section the finding is about.
+
+    Returns:
+        Whether the finding can be set aside without asking a model.
+    """
+    from .number_claims import metric_spans
+    cited = set(metric_spans(issue))
+    return bool(cited) and not cited & set(metric_spans(section_text))
+
+
 def adjudicate(ctx, filled, findings):
     """Keep actual correctness errors without trusting a critic's unsupported assertion.
 
@@ -77,6 +95,16 @@ def adjudicate(ctx, filled, findings):
         # when the independent reader checks a source-grounded project claim.
         sources[f'repo:{number}']['readme'] = str(card.get('readme', ''))[:2500]
         sources[f'repo:{number}']['owner_template_title'] = known.get(project['repo'].casefold(), ('', ''))[0]
+    section_text = {'summary': filled.summary, 'skills': ' '.join(t for line in claims['skills'] for t in line['terms']),
+                    'experience': ' '.join(b.text for role in filled.roles for b in role.bullets),
+                    'projects': ' '.join(' '.join(map(str, claim.values())) for ident, claim in claims.items() if ident.startswith('project:'))}
+    stale = [f for f in errors if cites_only_absent_figures(f.issue, section_text[f.agent])]
+    if stale:
+        ctx['log'](f'  content adjudication: {len(stale)} finding(s) cite a figure that is not in the section they accuse (stale or another section); set aside')
+        errors = [f for f in errors if f not in stale]
+        findings = [f for f in findings if f.severity != 'error' or f in errors]
+        if not errors:
+            return findings
     facts = {'summary_title_prefix_matches': M._title_prefix(filled.summary, ctx['jd'].title),
              'expected_title': ctx['jd'].title,
              'nonempty_skills': claims['skills'],

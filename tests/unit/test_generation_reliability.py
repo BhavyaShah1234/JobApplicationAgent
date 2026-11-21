@@ -775,3 +775,47 @@ def test_another_employer_is_recognised_without_its_legal_suffix(tmp_path, monke
         [{'employer': 'Beta Industries LLC', 'bullets': ['Built another service.']}])
     with pytest.raises(ValueError, match='another employer'):
         I.adjudicate_summary(ctx, payload, [finding])
+
+
+
+def _project_world(tmp_path, monkeypatch, paragraph):
+    from jobagent.tools import document_review as R
+    ctx, value = review_world(tmp_path, monkeypatch)
+    ctx['cards'] = {'ak-asu/cloudforge': {'full_name': 'ak-asu/cloudforge', 'summary': 'A platform that turns requirements into AWS infrastructure.', 'readme': 'Architecture only.'}}
+    (tmp_path / 'projects.json').write_text(json.dumps({'kept': 1, 'short': [], 'ranked': [{
+        'repo': 'ak-asu/cloudforge', 'title': 'CloudForge', 'stack': ['Python'], 'paragraph': paragraph}]}))
+    return R, ctx, value
+
+
+def test_a_project_finding_citing_a_figure_that_is_only_in_experience_is_set_aside_without_a_model(tmp_path, monkeypatch):
+    """The saved Samsara attempt: 'CloudForge mentions a 30% reduction' while the 30% sat in Experience and the project text was qualitative."""
+    R, ctx, value = _project_world(tmp_path, monkeypatch, 'Turns plain-English requirements into deployed AWS infrastructure.')
+    monkeypatch.setattr(R.llm, 'structured_invoke', lambda *a, **k: pytest.fail('a finding about an absent figure must not reach the model'))
+    finding = M.Finding(agent='projects', severity='error', issue="The description for 'CloudForge' mentions a 30% reduction in deployment time.")
+    assert R.adjudicate(ctx, value, [finding]) == []
+
+
+def test_a_finding_whose_figure_is_in_its_section_still_goes_to_the_adjudicator(tmp_path, monkeypatch):
+    R, ctx, value = _project_world(tmp_path, monkeypatch, 'Cut deployment time by 30% with generated infrastructure.')
+    seen = []
+    def verdict(model, schema, messages, **kwargs):
+        seen.append(json.loads(messages[-1].content)['findings'])
+        return schema.model_validate({'verdicts': [{'finding': 0, 'status': 'confirmed', 'claim_id': 'project:0', 'source_id': 'repo:0', 'reason': 'No such measurement.'}]})
+    monkeypatch.setattr(R.llm, 'structured_invoke', verdict)
+    finding = M.Finding(agent='projects', severity='error', issue="CloudForge claims a 30% reduction in deployment time that its repository does not give.")
+    result = R.adjudicate(ctx, value, [finding])
+    assert len(seen) == 1 and len(result) == 1 and result[0].severity == 'error'
+
+
+def test_a_figureless_finding_and_a_stale_one_together_send_only_the_real_one_to_the_adjudicator(tmp_path, monkeypatch):
+    R, ctx, value = _project_world(tmp_path, monkeypatch, 'Turns requirements into deployed AWS infrastructure.')
+    seen = []
+    def verdict(model, schema, messages, **kwargs):
+        seen.append([f['issue'] for f in json.loads(messages[-1].content)['findings']])
+        return schema.model_validate({'verdicts': [{'finding': 0, 'status': 'confirmed', 'claim_id': 'project:0', 'source_id': 'repo:0', 'reason': 'Unsupported feature.'}]})
+    monkeypatch.setattr(R.llm, 'structured_invoke', verdict)
+    stale = M.Finding(agent='projects', severity='error', issue='CloudForge shows a 30% reduction.')
+    real = M.Finding(agent='projects', severity='error', issue='CloudForge claims Kubernetes support that the repository does not show.')
+    suggestion = M.Finding(agent='summary', severity='suggestion', issue='Consider a shorter opening.')
+    result = R.adjudicate(ctx, value, [stale, real, suggestion])
+    assert seen == [[real.issue]] and [f.severity for f in result] == ['suggestion', 'error']
