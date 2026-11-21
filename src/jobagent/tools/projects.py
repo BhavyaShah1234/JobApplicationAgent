@@ -409,6 +409,25 @@ def _covers(known: list[str], wanted: list[str]) -> bool:
     return all(any(_same_word(w, c) for c in known) for w in wanted)
 
 
+_SCOPE_CONDITION = re.compile(r"(?i)\b(when|if|unless|until|before|after|while)\b((?:[^,;:.!?]|,\s*(?:and|or)\b)*)")
+
+
+def _scope_conditions(sentence: str) -> tuple[tuple[str, ...], ...]:
+    """Keep a restriction's stated conditions, including negation and and/or, rather than broadening it to an unconditional promise.
+
+    This is a conservative sentence-level check: only identical normalized conditions establish support. Pronouns and copulas may be omitted
+    ("when it is available" / "when available"); logical operators and polarity may not. Unconditional source support needs no such qualification.
+    """
+    conditions = []
+    for match in _SCOPE_CONDITION.finditer(sentence):
+        marker = "if" if match[1].lower() == "when" else match[1].lower()
+        words = re.findall(r"[a-z0-9][a-z0-9+#.-]*", match[2].lower())
+        words = [_SCOPE_ALIAS.get(w.strip(".-"), w.strip(".-")) for w in words
+                 if w not in {"it", "they", "is", "are", "was", "were", "the", "a", "an"}]
+        conditions.append((marker, *words))
+    return tuple(conditions)
+
+
 def scope_claims(text: str, card: dict) -> list[str]:
     """Generated restrictions (only/solely/exclusively) that the project's OWN card does not state.
 
@@ -425,11 +444,15 @@ def scope_claims(text: str, card: dict) -> list[str]:
     Returns:
         The unsupported phrases, in reading order.
     """
-    supported = [group for s in _card_strings(card) for _, groups in _restrictions(s) for group in groups]
+    supported = [(group, _scope_conditions(sentence)) for value in _card_strings(card)
+                 for sentence in re.split(r"(?<=[.!?])\s+", value)
+                 for _, groups in _restrictions(sentence) for group in groups]
     claims = []
     for sentence in re.split(r"(?<=[.!?])\s+", text):
         for phrase, groups in _restrictions(sentence):
-            if groups and not all(any(_covers(known, wanted) for known in supported) for wanted in groups):
+            conditions = _scope_conditions(sentence)
+            if groups and not all(any(_covers(known, wanted) and (not qualified or qualified == conditions)
+                                      for known, qualified in supported) for wanted in groups):
                 claims.append(phrase)
     return claims
 
@@ -753,8 +776,10 @@ def saved_evidence(state: dict) -> dict[str, dict]:
         The usable cards (empty for a file saved before evidence snapshots).
     """
     stored = state.get("evidence") if isinstance(state, dict) else None
-    return {name.casefold(): card for name, card in (stored or {}).items()
-            if isinstance(card, dict) and str(card.get("full_name") or "").casefold() == name.casefold()}
+    if not isinstance(stored, dict):
+        return {}
+    return {name.casefold(): card for name, card in stored.items()
+            if isinstance(name, str) and isinstance(card, dict) and str(card.get("full_name") or "").casefold() == name.casefold()}
 
 
 def missing_evidence(state: dict, cards: dict) -> list[str]:

@@ -9,6 +9,14 @@ from jobagent.config import get_settings
 from jobagent.steps import multi_agent as M
 from jobagent.tools import documents as D, projects as P, tailor as T
 
+@pytest.fixture(autouse=True)
+def isolate_settings_cache():
+    """A temporary DATA_DIR must not remain cached after monkeypatch restores the environment."""
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 SOLBOT = json.loads((Path(__file__).parent.parent / "fixtures" / "solbot_scope_card.json").read_text())
 FAILED = {"repo": "BhavyaShah1234/SolBot", "title": "SolBot, Multi-Agent Chatbot", "stack": ["Python", "Ollama", "Chroma", "LangChain", "SQLite"],
           "paragraph": "SolBot is a fully local, self-auditing RAG chatbot designed to answer questions about ASU Research Computing using only official documentation. "
@@ -201,3 +209,12 @@ def test_a_complete_source_sentence_with_a_possessive_is_preserved():
 @pytest.mark.parametrize("sentence", ["It said 'ready to ship and more.", "The tool answers (see 'setup guide.", 'It reads "the config file and loads it.'])
 def test_an_unfinished_quote_is_still_not_a_complete_sentence(sentence):
     assert P.faithful_description({"summary": sentence, "results": []}, 400, 40) is None
+
+
+@pytest.mark.parametrize("stored", [[{"full_name": "owner/a"}], "invalid", True, 42])
+def test_malformed_snapshot_is_a_normal_validation_blocker_not_a_crash(tmp_path, monkeypatch, stored):
+    state = evidence_state(CLEAN, evidence=False)
+    state["evidence"] = stored
+    assert P.saved_evidence(state) == {}
+    found = D.resume_findings(normal_job(tmp_path, monkeypatch, state))
+    assert found["evidence"] and any("no saved source evidence" in h for h in found["hard"])
