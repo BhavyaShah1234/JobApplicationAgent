@@ -1099,6 +1099,25 @@ def _affirmed_card(card: dict, term: str) -> dict:
     return out
 
 
+def _results_establish(card: dict, term: str) -> bool:
+    """Whether ONE of this card's own `results` entries affirms `term` as a contiguous phrase inside one clause.
+
+    Prose-only support (the printed stack is still grounded without results). Each entry and clause is judged alone, so words spread over entries
+    never assemble a feature; a clause that names the term while denying or postponing it (`does not support file uploads`, `planned`) is dropped;
+    ordinary-word / very short names stay structured-stack only, as in `ground_stack`.
+    """
+    pattern, phrase = _term_pattern(term), _tokens(term)
+    if pattern is None or not phrase or (len(phrase) == 1 and phrase[0] in AMBIGUOUS_TERMS):
+        return False
+    results = card.get("results") or []
+    for entry in (results if isinstance(results, list) else [results]):
+        for clause in _CLAUSE.split(str(entry or "")[:6000]):
+            if clause and not (pattern.search(clause) and _NOT_BUILT_CUE.search(clause)):
+                if any(_contains(_tokens(part), phrase) for part in _SEGMENT.split(clause)):
+                    return True
+    return False
+
+
 def prose_tech_claims(text: str, card: dict, vocabulary: list[str]) -> list[str]:
     """Technologies the displayed prose names that the project's OWN card does not establish.
 
@@ -1134,7 +1153,8 @@ def prose_tech_claims(text: str, card: dict, vocabulary: list[str]) -> list[str]
             found.append((m.start(), shown, term))
     out: list[str] = []
     for _, shown, term in sorted(found):
-        if ground_stack([term], _affirmed_card(card, term))[1] and shown not in out:
+        if (ground_stack([term], _affirmed_card(card, term))[1] and not _results_establish(card, term)
+                and shown not in out):
             out.append(shown)
     return out
 
