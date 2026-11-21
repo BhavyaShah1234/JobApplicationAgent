@@ -632,6 +632,7 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
                     e['title'] = known[e['repo'].lower()][0]
                 if len(e["paragraph"]) > P.MAX_PARAGRAPH:
                     e["paragraph"] = P._sentences(e["paragraph"], P.MAX_PARAGRAPH - 10)
+            _recover_scope(ctx, st)
             proj.write_text(json.dumps(st, indent=1))
     return g
 
@@ -970,6 +971,29 @@ def _title_prefix(summary: str, title: str) -> bool:
     tokens=lambda text:re.findall(r'\w+',T.summary_text(text).casefold())
     expected=tokens(title);actual=tokens(summary)
     return bool(expected) and actual[:len(expected)]==expected
+
+
+SCOPE_REPAIRS = 2          # model repairs of one unsupported restriction before the card's own sentences replace the text
+
+
+def _recover_scope(ctx: dict, st: dict) -> None:
+    """After a project repair came back still claiming a restriction its card does not state, count the failed attempt;
+    after SCOPE_REPAIRS of them replace that description with the card's own complete sentences (`P.recover_scope`).
+
+    Args:
+        ctx: Document context (holds the per-repo failure counts).
+        st: The projects.json state after the repair; entries are changed in place.
+    """
+    cards, failed = _cards_for(ctx), ctx.setdefault("scope_failures", {})
+    for e in st["ranked"][:st["kept"]]:
+        card = cards.get((e.get("repo") or "").casefold())
+        if not card or not (P.scope_claims(e.get("paragraph", ""), card) or P.scope_claims(e.get("short", ""), card)):
+            continue
+        failed[e["repo"]] = failed.get(e["repo"], 0) + 1
+        if failed[e["repo"]] >= SCOPE_REPAIRS:
+            fixed = P.recover_scope(e, card)
+            ctx["log"](f"  projects: {e['repo']}: unsupported restriction persisted after {failed[e['repo']]} repairs; "
+                       + (f"{fixed} replaced by the card's own sentences" if fixed else "no faithful card sentences fit; finding stays"))
 
 
 def _cards_for(ctx: dict) -> dict:

@@ -44,7 +44,9 @@ SOURCE_POLICY = ("Describe each repository's own supplied features and results. 
                  "Work-experience impact estimates do not establish repository measurements or product features. "
                  "Compliance mapping or configured tests establish checks, not guaranteed or achieved compliance. "
                  "Describe what the system maps, checks or validates unless its own source establishes the outcome. "
-                 "Preserve documented scope: checks in selected stages do not establish compliance at every stage.")
+                 "Preserve documented scope: checks in selected stages do not establish compliance at every stage. "
+                 "Never say a project works only, solely or exclusively from or with something unless its own source "
+                 "states that restriction; documented fallbacks, alternatives and user-supplied sources widen the scope.")
 
 PROMPT = """You choose the projects for the Projects section of a resume tailored to one job posting, from cards
 the agent wrote by reading each GitHub repository's code.
@@ -324,6 +326,137 @@ def standard_outcome_claims(text: str, card: dict) -> list[str]:
     return out
 
 
+# --- an exclusivity claim needs the source's own exclusivity ---------------------------------------------------------------------------
+# "answers using only official documentation" is a restriction. A card that merely names its main corpus, while also documenting a web fallback or
+# user-supplied URLs, describes a primary source, not an exclusive one. The generated restriction is supported only when one card value states a
+# restriction (only/solely/exclusively) over the same content words; "primarily", "fully local" or a corpus name do not establish it.
+_RESTRICTION = re.compile(r"(?i)\b(?:only|solely|exclusively)\b")
+_NOT_RESTRICTION_BEFORE = re.compile(r"(?i)(?:\b(?:the|one\s+and|if)\s+$|\b(?:not|never|neither|nor|no\s+longer)\b[^.;,:]{0,20}$|n't\b[^.;,:]{0,20}$)")   # "not only X but also Y", "does not rely only on", "the only X", "if only"
+_QUANTITY_AFTER = re.compile(r"(?i)^\s*(?:\d|one\b|two\b|three\b|four\b|five\b|a\b|an\b|few\b|some\b|several\b|once\b|twice\b)")
+_SCOPE_STOP = frozenset("a an the of to from in on at by for with within via using use uses used its their his her our is are was were be been being and or "
+                        "as that which while whereas but so then than this these those it they when if once after until unless where into onto over across through "
+                        "against about".split())
+_SCOPE_ALIAS = {"docs": "documentation", "doc": "documentation", "internet": "web", "online": "web"}
+
+
+def _scope_words(text: str) -> list[str]:
+    """Content words of a phrase, lower case, light plural/-ing/-ed stemming, a few common abbreviations unified."""
+    words = []
+    for w in re.findall(r"[a-z0-9][a-z0-9+#.-]*", text.lower()):
+        w = _SCOPE_ALIAS.get(w.strip(".-"), w.strip(".-"))
+        if not w or w in _SCOPE_STOP:
+            continue
+        for suffix in ("ing", "ed", "es", "s"):
+            if len(w) > len(suffix) + 3 and w.endswith(suffix):
+                w = w[:-len(suffix)]
+                break
+        words.append(w)
+    return words
+
+
+def _same_word(a: str, b: str) -> bool:
+    """Equal after stemming, or sharing a 5-letter stem (document/documentation)."""
+    return a == b or (min(len(a), len(b)) >= 5 and a[:5] == b[:5])
+
+
+def _restrictions(sentence: str) -> list[tuple[str, list[str], list[str]]]:
+    """Affirmed restrictions in a sentence: (printed phrase, words the restriction covers after the marker, words before a trailing marker).
+
+    "not only X", "the only X" and "only three X" are not restrictions. A trailing marker ("... official documentation only") covers the words just
+    before it, back to the last preposition or clause break.
+    """
+    out = []
+    for m in _RESTRICTION.finditer(sentence):
+        if _NOT_RESTRICTION_BEFORE.search(sentence[max(0, m.start() - 34):m.start()]) or _QUANTITY_AFTER.match(sentence[m.end():]):
+            continue
+        after = re.split(r"[,;:.()!?]|\b(?:that|which|while|whereas|but)\b", sentence[m.end():], maxsplit=1, flags=re.I)[0]
+        before = re.split(r"[,;:.()!?]", sentence[:m.start()])[-1]
+        before = re.split(r"(?i)\b(?:from|using|with|in|on|via|by|to|of|for|through)\b", before)[-1]
+        lo, hi = max(0, m.start() - 40), m.end() + 60
+        shown = sentence[lo:hi].strip()
+        shown = shown.split(' ', 1)[1] if lo and ' ' in shown else shown       # no half word at either end
+        out.append((shown.rsplit(' ', 1)[0] if hi < len(sentence) and ' ' in shown else shown, _scope_words(after)[:6], _scope_words(before)[-4:]))
+    return out
+
+
+def scope_claims(text: str, card: dict) -> list[str]:
+    """Generated restrictions (only/solely/exclusively) that the project's OWN card does not state.
+
+    A restriction is supported when one card value states a restriction over the same content words, in either position ("only from official
+    documentation", "official documentation only"). Documented fallbacks or alternatives, a named primary corpus and "not only X but Y" never support
+    an exclusivity claim. Faithful rewording of a card's restriction (plurals, "docs" for "documentation") still matches. Ordinary qualitative
+    benefits, numbers and sentences with no restriction word are not touched.
+
+    Args:
+        text: The displayed paragraph.
+        card: The project's saved card.
+
+    Returns:
+        The unsupported phrases, in reading order.
+    """
+    supported = []
+    for s in _card_strings(card):
+        for _, after, before in _restrictions(s):
+            supported.append(after[:10] + before)          # the card's own restricted words, either position
+    claims = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        for phrase, after, before in _restrictions(sentence):
+            wanted = after or before
+            if wanted and not any(all(any(_same_word(w, c) for c in known) for w in wanted) for known in supported):
+                claims.append(phrase)
+    return claims
+
+
+def faithful_description(card: dict, limit: int, floor: int) -> str | None:
+    """A description made only of complete sentences of the card's own summary and results (never cut, never rejoined with new punctuation).
+
+    Candidate sentences must end in terminal punctuation, have balanced brackets and quotes, not end in an abbreviation, hold no punctuation dash, and
+    pass the same achieved-standard and exclusivity checks as generated text. They are taken in card order until `floor` characters are reached.
+
+    Args:
+        card: The project's saved card.
+        limit: Longest allowed description.
+        floor: Length at which the description is long enough.
+
+    Returns:
+        The description, or None when no qualifying complete sentence fits (the caller keeps the finding rather than printing a false text).
+    """
+    from jobagent.tools.tailor import DASH
+    pool = [card.get("summary") or ""] + [x for x in card.get("results") or [] if isinstance(x, str)]
+    chosen: list[str] = []
+    for sentence in (x.strip() for block in pool for x in re.split(r"(?<=[.!?])\s+", block)):
+        text = " ".join(chosen + [sentence])
+        if (len(sentence) < 30 or len(text) > limit or DASH.search(sentence) or not re.search(r'[.!?]["\')\]]*$', sentence)
+                or re.search(r"(?i)\b(?:e\.g|i\.e|etc|vs|approx)\.$", sentence)
+                or sentence.count("(") != sentence.count(")") or sentence.count('"') % 2 or sentence.count("'") % 2
+                or sentence.lower().startswith("the readme")
+                or standard_outcome_claims(sentence, card) or scope_claims(sentence, card)):
+            continue
+        chosen.append(sentence)
+        if len(text) >= floor:
+            break
+    text = " ".join(chosen)
+    return text if len(text) >= max(60, floor // 2) else None
+
+
+def recover_scope(entry: dict, card: dict) -> list[str]:
+    """Replace any displayed variant (full or short) of a saved project entry that claims an unsupported restriction with the card's own sentences.
+
+    Args:
+        entry: One `projects.json` ranked entry; changed in place.
+        card: The project's saved card.
+
+    Returns:
+        The variants replaced (empty when none had an unsupported restriction or no faithful text exists).
+    """
+    fixed = []
+    for field, limit, floor in (("paragraph", MAX_PARAGRAPH - 10, MIN_PARAGRAPH), ("short", 230, 120)):
+        if scope_claims(entry.get(field) or "", card) and (text := faithful_description(card, limit, floor)):
+            entry[field] = text
+            fixed.append(field)
+    return fixed
+
+
 def content_findings(state: dict, cards: dict | None = None) -> list[str]:
     """Check the actual project variants selected for rendering, including short forms.
 
@@ -354,6 +487,10 @@ def content_findings(state: dict, cards: dict | None = None) -> list[str]:
             out.append(f"project {i} claims an achieved standard or compliance that its own card does not show ({claim!r}): the card lists tooling or capability "
                        "only. Say what the project uses, tests or audits against (for example 'tested with <tool> against <standard>'); never that the standard "
                        "was achieved, met, passed or certified")
+        for claim in (scope_claims(text, card) if card else []):
+            out.append(f"project {i} claims a restriction that its own card does not state ({claim!r}): the card documents a primary source, not an exclusive "
+                       "one (fallbacks, alternative or user-supplied sources are part of its scope). Remove only/solely/exclusively, or say what the project "
+                       "primarily uses without limiting it")
     return out
 
 

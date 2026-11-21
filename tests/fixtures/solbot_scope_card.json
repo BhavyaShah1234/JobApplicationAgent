@@ -1,0 +1,38 @@
+{
+ "full_name": "BhavyaShah1234/SolBot",
+ "title": "SolBot — Agentic RAG Chatbot for ASU Research Computing",
+ "summary": "Built SolBot, a fully local, self-auditing RAG chatbot for ASU Research Computing support that answers questions about the Sol and Agave HPC clusters, Slurm usage, storage, and RC policies from the RC Confluence space. Designed it as four independent packages wired by an orchestrator: db_engine (Chroma vector store built from Confluence with manifest-diffed incremental add/update/delete sync, chunking, and filelock-based write serialization), memory_engine (SQLite conversation memory with WAL mode, BEGIN IMMEDIATE transactions, per-session locks, embedding-based cross-session recall, and durable per-user facts), web_search (read-only DuckDuckGo search plus trafilatura-based page-content extraction), and agents (the LLM reasoning layer). The agent pipeline is a plain bounded Python loop — deliberately no LangGraph — running contextualize → route → plan → execute → verify → replan? → synthesize: compound questions are decomposed into a DAG of atomic sub-questions, each researched by a worker agent in a bounded ReAct loop over a tool registry (vector_search, web_search, fetch_url, current_time), executed layer-by-layer with a ThreadPoolExecutor; a verification pass audits each finding against its own cited evidence before anything is user-facing, hedging unverified claims and triggering at most one replan on real gaps. Retrieval fuses dense embedding search with sparse BM25 via Reciprocal Rank Fusion and reranks with Maximal Marginal Relevance; user-pasted URLs are fetched deterministically and treated as authoritative evidence; answers stream token-by-token to the CLI with optional debug/thinking traces. Runs entirely on local models via Ollama (langchain-ollama ChatOllama/OllamaEmbeddings), with hardened input sanitization, prompt-injection-aware evidence markers, and adversarial fuzz tests (empty/malformed/huge/gibberish/injection-shaped input) backing a top-level crash backstop.",
+ "readme": "The README describes SolBot as a RAG-based CLI chatbot for ASU Research Computing that answers questions about the Sol and Agave supercomputers, HPC clusters, Slurm, storage, and RC policies by retrieving from a local vector store built from RC's Confluence space, decomposing compound questions into a DAG of sub-questions, researching each independently, auditing findings for groundedness, and streaming a cited reply. The README also claims hybrid dense+BM25 retrieval fused via Reciprocal Rank Fusion and reranked with Maximal Marginal Relevance, an open-web fallback, user-URL fetching, manifest-diffed incremental Confluence sync, SQLite-backed cross-session memory, and fuzz-testing against 23 adversarial scenarios — all of which are corroborated by the code and manifests shown.",
+ "tech_stack": [
+  "Python",
+  "Ollama (local LLM inference via langchain-ollama: ChatOllama, OllamaEmbeddings)",
+  "LangChain (langchain-core, langchain-text-splitters, langchain-chroma)",
+  "Chroma vector store",
+  "SQLite (WAL mode, BEGIN IMMEDIATE transactions)",
+  "atlassian-python-api (Confluence ingestion)",
+  "markdownify",
+  "ddgs (DuckDuckGo web search)",
+  "trafilatura (HTML main-content extraction)",
+  "filelock (cross-process write serialization)",
+  "PyYAML, python-dotenv, numpy, requests"
+ ],
+ "results": [
+  "A working end-to-end RAG chatbot: Confluence → Chroma vector store → orchestrated multi-agent pipeline → streamed, cited CLI answers, with incremental sync, cross-session memory, and web fallback.",
+  "A self-auditing answer loop: unverified findings are hedged rather than stated as fact, and the plan is extended (replanned) once when verification finds actionable gaps.",
+  "Robustness hardening visible in code: input sanitization (control-char stripping, length caps), a top-level backstop so failures degrade to error messages, loop-guards against repeated identical tool calls, and handling of leaked chain-of-thought blocks from Ollama/qwen3 streaming.",
+  "Domain-grounding fixes documented against observed live failures (e.g. 'Sol' being confused with the Solana blockchain in web search results, and 'ASU' qualifiers degrading vector retrieval), addressed via prompt-level grounding rules."
+ ],
+ "head_sha": "6fb2f1a00b0fc5b98ae69d656c6571948d03e958",
+ "owned": true,
+ "url": "https://github.com/BhavyaShah1234/SolBot",
+ "kind": "project",
+ "substance": 4,
+ "fields": [
+  "Project",
+  "Role",
+  "Problem",
+  "Approach",
+  "System",
+  "Stack"
+ ]
+}
