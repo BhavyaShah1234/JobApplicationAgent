@@ -397,10 +397,13 @@ def adjudicate_summary(ctx, payload, findings):
                 words=' '+_words(context)+' '
                 employers=[r['employer'] for r in payload.get('roles',[])]
                 employers.append((payload.get('target_job_identity') or {}).get('company',''))
-                named=any(name and ' '+_words(name)+' ' in words for name in employers)
+                from .letter_attribution import aliases
+                # A summary writes "Anton Intelligence", not the registered "Anton Intelligence LLC": every natural spelling counts, as whole words.
+                has=lambda name:any(' '+_words(alias)+' ' in words for alias in aliases(name))
+                named=any(name and has(name) for name in employers)
                 explicit=re.search(r'(?i:\b(?:worked|working|works|employed|employment|engineer|researcher|'
                     r'developer|analyst|scientist|manager|employee|role|position|job)\s+(?:at|for|by|with))\s+[A-Z]',context)
-                if (named or explicit) and ' '+_words(role['employer'])+' ' not in words:
+                if (named or explicit) and not has(role['employer']):
                     raise ValueError('An employment claim cannot borrow another employer')
     result=invoke(ctx['cache'],'adjudicate:summary',model_name,review_model(model_name,4000),
         schema,messages,log=ctx['log'],deadline_s=180,validator=bind,

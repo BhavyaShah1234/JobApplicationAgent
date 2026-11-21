@@ -760,3 +760,18 @@ def test_late_policy_an_activity_without_an_outcome_still_fails(tmp_path, monkey
     ctx, value = review_world(tmp_path, monkeypatch)
     value.roles[0].bullets[0].text = 'Worked on Python services.'
     assert any('states no result' in issue for issue in T.quality(ctx['r'], ctx['jd'], value))
+
+
+
+def test_a_summary_names_its_own_employer_without_the_legal_suffix(tmp_path, monkeypatch):
+    """`Anton Intelligence LLC` is written `Anton Intelligence` in prose: the candidate's own employer must not be read as another one."""
+    I, ctx, payload, finding = _late_policy_summary_case(tmp_path, monkeypatch, 'Software engineer at Acme Technologies')
+    payload['roles'][0]['employer'] = 'Acme Technologies Inc'
+    assert I.adjudicate_summary(ctx, payload, [finding]) == []
+
+
+def test_another_employer_is_recognised_without_its_legal_suffix(tmp_path, monkeypatch):
+    I, ctx, payload, finding = _late_policy_summary_case(tmp_path, monkeypatch, 'Delivered software for Beta Industries',
+        [{'employer': 'Beta Industries LLC', 'bullets': ['Built another service.']}])
+    with pytest.raises(ValueError, match='another employer'):
+        I.adjudicate_summary(ctx, payload, [finding])
