@@ -761,8 +761,9 @@ def fill_checks(r: Resume, jd: JobDescription, f: Filled, slots: int | None = No
                     [x for s in f.skills for x in s.render()]).lower()
     norm = lambda s: re.sub(r"[\s\-‑/]+", " ", s.lower().replace("®", "")).strip()
     missing = [k for k in jd.technical_skills if norm(k) not in norm(text)]
-    known = set(re.findall(r"\d+(?:\.\d+)?", to_plain(r.tex) + " " + " ".join(jd.responsibilities + jd.technical_skills +
-                                                                              jd.preferred_qualifications)))
+    NUM = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"                  # 1,000 is one number
+    known = {x.replace(",", "") for x in re.findall(NUM, to_plain(r.tex) + " " + " ".join(jd.responsibilities + jd.technical_skills +
+                                                                                       jd.preferred_qualifications))}
     warn = []
     from jobagent.tools import number_claims as NC
     for e in f.roles:
@@ -777,13 +778,14 @@ def fill_checks(r: Resume, jd: JobDescription, f: Filled, slots: int | None = No
             spans = NC.metric_spans(plain)
             # A tag must name a figure that is IN this bullet. Writers leave stale ones (a figure of the bullet's earlier wording or of a neighbouring
             # bullet); the incremental reviewer then blocks the draft for "estimates that do not match the bullet" although nothing on the page is wrong.
-            present = set(re.findall(r"\d+(?:\.\d+)?", plain)) | set(re.findall(r"\d+(?:\.\d+)?", plain.replace(",", "")))
+            present = {x.replace(",", "") for x in re.findall(NUM, plain)}
             kept = [x for x in b.estimated if NC.digits(NC._norm(x)) in present or set(NC.metric_spans(x)) & set(spans)]
             if len(kept) != len(b.estimated):
                 b.estimated = kept
             tagged = {NC._norm(x) for x in b.estimated} | {tok for x in b.estimated for tok in NC.metric_spans(x)}   # word figures: 'Tripled' is the figure 'tripl'
+            tagged |= {NC.digits(x) for x in tagged if x[:1].isdigit() or x[:1] == "$"}                              # '40 s' (normalised '40s') also covers the digits 40
             in_metric = {NC.digits(t) for t in spans}
-            for n in re.findall(r"\d+(?:\.\d+)?", plain):
+            for n in (x.replace(",", "") for x in re.findall(NUM, plain)):
                 if n in known or n in tagged or n in in_metric:           # a figure with a unit is judged below, by its own spelling
                     continue
                 b.estimated = b.estimated + [n]                          # an estimate the model didn't list: list it for review

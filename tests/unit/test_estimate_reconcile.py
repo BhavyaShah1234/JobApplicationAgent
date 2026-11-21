@@ -53,7 +53,7 @@ def test_stale_tags_are_dropped_and_the_figure_of_the_bullet_stays(text, given, 
 
 
 def test_tags_that_belong_to_the_bullet_are_kept_in_any_spelling():
-    assert tags("Cut build time 40 s to 8 s.", ["40 s"]) == ["40 s", "8"] or "40 s" in tags("Cut build time 40 s to 8 s.", ["40 s"])
+    assert tags("Cut build time 40 s to 8 s.", ["40 s"]) == ["40 s", "8"]                                   # 40 s covers 40; 8 is a new plain count
     assert tags("Tripled labelling throughput.", ["Tripled"]) == ["Tripled"]
     assert tags("Reduced latency by 22%.", ["22"]) == ["22"]                                                 # legacy bare digits for a present figure
     assert tags("Processed 1,000 events per second.", ["1,000"]) == ["1,000"]
