@@ -75,7 +75,7 @@ class CompactFillBullet(T.FillBullet):
     generated drafts do not advertise the more permissive verbatim-only limit.
     """
     text: str = Field(max_length=T.BULLET_MAX,
-                      description=f'Plain text, past tense; aim for {T.BULLET_TARGET} characters including spaces, never over {T.BULLET_MAX}')
+                      description=f'Complete sentence ending in a period, past tense; aim for {T.BULLET_TARGET} characters including spaces, never over {T.BULLET_MAX}')
     duties: list[Annotated[int, Field(strict=True, ge=0)]] = Field(min_length=1,max_length=T.ITEMS_PER_BULLET)
 
 
@@ -195,7 +195,9 @@ def validate_incremental_repair(f, jd, repair, *, template, require_coverage=Fal
         raise ValueError(f'Repair removed previously covered JD indices: {sorted(lost)}')
     if require_coverage:
         slots=len(template.roles)*T.MAX_BULLETS
-        before_missing=set(T.fill_checks(template,jd,f,slots)[0])
+        # fill_checks reconciles estimate metadata; validation must not mutate
+        # the retained draft when this proposed repair is rejected.
+        before_missing=set(T.fill_checks(template,jd,f.model_copy(deep=True),slots)[0])
         missing=set(T.fill_checks(template,jd,proposed,slots)[0])
         if not missing < before_missing:
             raise ValueError(f'Coverage-only repair must clear at least one required JD index without losing coverage; '
@@ -331,7 +333,8 @@ full descriptions use three. Do not demand expansion of a valid short variant.
   more posting-specific wording, or a preferred descriptive title is a suggestion. Do not confuse one repo's features
   with another's. Qualitative outcomes are allowed; numerical measurements and feature counts require that
   repository's own sources. Sentence-ending and bare-slug checks also run in code;
-- experience: actual employer contradictions, substantive repeated duties or genuinely missing main duties.
+- experience: actual employer contradictions, substantive repeated duties, unfinished phrases or genuinely missing main duties.
+  Never infer missing words to complete a clipped bullet; require a concise whole-sentence rewrite.
   Each bullet inherits its employer/title/dates from the printed role heading; do not require their repetition;
   recruiting values of the target company are not accomplishments at another employer;
 - skills: tools placed under a category that does not describe them (for example ML frameworks under Frontend or

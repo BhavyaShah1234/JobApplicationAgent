@@ -286,7 +286,7 @@ def budget_text() -> str:
 
 class FillBullet(BaseModel):
     """One bullet the model writes: its text (plain, past tense, length-bounded), which job-description items it covers, the template bullet it reuses (if any), and any numbers it estimated and the candidate must confirm."""
-    text: str = Field(max_length=BULLET_VERBATIM_MAX, description=f"Plain text, no LaTeX, past tense, about {BULLET_TARGET} "
+    text: str = Field(max_length=BULLET_VERBATIM_MAX, description=f"Complete sentence ending in a period, no LaTeX, past tense, about {BULLET_TARGET} "
                       f"characters, at most {BULLET_MAX} unless copied verbatim from an original bullet")
     duties: list[int] = Field(default_factory=list, max_length=3,
                              description="Indices of the JD ITEMS this bullet covers; empty for a reused original")
@@ -420,6 +420,8 @@ FILL_PROMPT = """You write the Experience bullets and the Technical Skills of a 
 The candidate has told us they have done all of the posting's duties and know all of its skills.
 
 Experience bullets:
+- Every NEW bullet must express a complete thought and end in a period within its character budget. Rewrite the
+  whole sentence more concisely if necessary; never cut off a phrase or append punctuation to an unfinished thought.
 - Every bullet is a professional, technical accomplishment: action verb + the concrete technical work (named tools,
   techniques, systems) + the result achieved, as a metric (accuracy, throughput, latency, yield, cost, time).
 - Name a concrete, popular technology stack in every bullet: the posting's own tools first, then the ones commonly
@@ -916,6 +918,7 @@ RESULT = re.compile(r"\d|(?i:\b(cut|cutting|reduc\w*|improv\w*|enhanc\w*|increas
                     r"making|so that|achiev\w*|faster|eliminat\w*|prevent\w*|replac\w*|lower\w*|sav\w*|"
                     r"accelerat\w*|traceable|automat\w*|on-demand|real-time|unattended|doubl\w*|tripl\w*|reach\w*|fix\w*|"
                     r"speed\w*|sped|trusted|scal\w*|shorten\w*|halv\w*)\b)")
+COMPLETE_BULLET = re.compile(r'''[.!?]["'\u201d\u2019)\]]*\s*$''')
 TOOLISH = re.compile(r"\b(?:[A-Z][a-z]*[A-Z][A-Za-z0-9]*|[A-Z]{2,}[A-Za-z0-9]*)\b")  # ACT, CLIP, LoRA, PySpark, MuJoCo
 
 
@@ -976,6 +979,10 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
             if not is_verbatim(r, e.role, b) and len(b.text) > BULLET_MAX:      # F18: an `original` index does not exempt new text
                 out.append(f"{where} is {len(b.text)} characters; new or changed text may have at most {BULLET_MAX} "
                            f"(aim for {BULLET_TARGET}); only a bullet identical to its template original is exempt")
+            if not is_verbatim(r, e.role, b) and not COMPLETE_BULLET.search(b.text):
+                out.append(f"{where} does not end as a complete sentence; it may be cut off at {len(b.text)} characters: "
+                           f"rewrite the WHOLE bullet more concisely, about {BULLET_TARGET} characters, ending in a period. "
+                           "Preserve a complete thought; do not just trim words or append punctuation to a fragment")
             if DASH.search(b.text):
                 out.append(f"{where} uses a dash as punctuation; rewrite with a comma, semicolon or colon")
             if e.role < len(r.roles) and (other := moved_from(r, e.role, b.text)) is not None:
@@ -1006,7 +1013,7 @@ class BulletFix(BaseModel):
     """A rewrite of one bullet: which role and position, the new text, and any estimated numbers."""
     role: int = Field(description="role_N index of the bullet")
     bullet: int = Field(description="1-based position of the bullet in that role")
-    text: str = Field(max_length=BULLET_MAX, description=f"The rewritten bullet, plain text, about {BULLET_TARGET} characters, "
+    text: str = Field(max_length=BULLET_MAX, description=f"A complete rewritten sentence ending in a period, about {BULLET_TARGET} characters, "
                                                            f"at most {BULLET_MAX}")
     estimated: list[str] = Field(default_factory=list, max_length=8)
 
@@ -1020,7 +1027,8 @@ _REPAIR_TEMPLATE = f"""You fix specific bullets of a tailored resume. {{coverage
 name concrete technologies, state a result (a believable estimated metric is fine;
 list it in `estimated`), stay within the length budget (about {BULLET_TARGET} characters, at most {BULLET_MAX}), not repeat any other bullet, use no academic wording and no
 dashes as punctuation, and describe work done at THAT role's employer (never another employer's work). A change by
-a percentage takes "by"."""
+a percentage takes "by". Finish each rewritten bullet as a complete sentence with a period INSIDE the budget.
+Rewrite the whole sentence concisely rather than cutting off a phrase or adding punctuation to a fragment."""
 REPAIR_PROMPT = _REPAIR_TEMPLATE.format(coverage_rule=(
     'Rewrite ONLY the bullets listed under PROBLEMS, each in place, so that every problem is solved; '
     'leave all other bullets alone. Each rewritten bullet must keep covering the JD items it covered (shown).'))

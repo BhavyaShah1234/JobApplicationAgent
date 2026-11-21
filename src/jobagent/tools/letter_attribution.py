@@ -137,6 +137,8 @@ def check(letter, bank, cache, model_name, log):
         'supported by the same employer or project source, with unchanged numbers and no added features. '
         'A paraphrase may omit source details, tools or quantities; it need not repeat every metric. '
         'Every detail actually claimed must be supported. '
+        'Never infer missing words or achievements from a truncated or incomplete source phrase; '
+        'an interpretation that requires such a completion is uncertain, not supported. '
         'A number or technology existing under another employer is insufficient. Check unquantified claims too. '
         'Sources marked company or posting may establish company facts and position titles, never personal '
         'candidate achievements, qualifications, history or credentials. '

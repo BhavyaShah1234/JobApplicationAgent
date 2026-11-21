@@ -758,7 +758,8 @@ def review(ctx, filled):
     policy=M.T.facts_block()
     for payload in payloads.values():payload['owner_claims_policy']=policy
     instructions={
-        'experience':'Check bullet attribution and substantive duplication. Owner-provided titles and dates are '
+        'experience':'Check bullet attribution, substantive duplication and complete thoughts. Unfinished phrases '
+            'are errors: never infer missing words to complete a clipped bullet. Owner-provided titles and dates are '
             'immutable; concurrent/overlapping roles are allowed and must not be called a contradiction. '
             'Each bullet inherits its employer/title/dates from the printed role heading; never require '
             'repeating those facts inside each bullet. Missing repetition is not an attribution error. '
