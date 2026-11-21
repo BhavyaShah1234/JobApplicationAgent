@@ -976,11 +976,13 @@ def _title_prefix(summary: str, title: str) -> bool:
 SCOPE_REPAIRS = 2          # model repairs of one unsupported restriction before the card's own sentences replace the text
 
 
-_SCOPE_TASK = "claims a restriction that its own card does not state"
+# the wording of the source findings `P.content_findings` gives the project writer; each is fixed by the same bounded, faithful recovery
+_SCOPE_TASKS = ("claims a restriction that its own card does not state", "claims an achieved standard or compliance that its own card does not show",
+                "describes technologies its own card does not show", "prints technologies its own card does not show")
 
 
 def _recover_scope(ctx: dict, st: dict, stalled: frozenset = frozenset()) -> None:
-    """After a project repair round left a description still claiming a restriction its card does not state, count the failed attempt;
+    """After a project repair round left a description still claiming something its card does not state (restriction, standard, technology), count the failed attempt;
     after SCOPE_REPAIRS of them (at once for a repo whose repair returned nothing usable or changed nothing) replace that description with the
     card's own complete sentences (`P.recover_scope`).
 
@@ -990,21 +992,23 @@ def _recover_scope(ctx: dict, st: dict, stalled: frozenset = frozenset()) -> Non
         stalled: Repos (lower case) whose repair this round was unavailable, malformed or unchanged: another attempt would not differ.
     """
     cards, failed = _cards_for(ctx, st), ctx.setdefault("scope_failures", {})
+    vocab = P.tech_vocabulary(cards, st["ranked"])
     for e in st["ranked"][:st["kept"]]:
         card = cards.get((e.get("repo") or "").casefold())
-        if not card or not (P.scope_claims(e.get("paragraph", ""), card) or P.scope_claims(e.get("short", ""), card)):
+        if not card or not (P.unsupported_claims(e.get("paragraph", ""), card, vocab) or P.unsupported_claims(e.get("short", ""), card, vocab)
+                            or P.ground_stack(list(e.get("stack") or []), card)[1]):
             continue
         failed[e["repo"]] = failed.get(e["repo"], 0) + 1
         if failed[e["repo"]] >= SCOPE_REPAIRS or e["repo"].casefold() in stalled:
-            fixed = P.recover_scope(e, card)
-            ctx["log"](f"  projects: {e['repo']}: unsupported restriction persisted after {failed[e['repo']]} repair(s); "
+            fixed = P.recover_scope(e, card, vocab) + (['stack'] if P.recover_stack(e, card) else [])
+            ctx["log"](f"  projects: {e['repo']}: unsupported source claim persisted after {failed[e['repo']]} repair(s); "
                        + (f"{fixed} replaced by the card's own sentences" if fixed else "no faithful card sentences fit; finding stays"))
 
 
 def _scope_round(ctx: dict, tasks: dict, before: str | None) -> None:
     """Count one project-repair round against the saved projects.json, whatever the repair returned (a changed text, the same text, or nothing).
 
-    Runs only when this round asked the projects agent to fix an unsupported restriction. A description that is exactly what it was before the
+    Runs only when this round asked the projects agent to fix a source finding (an unsupported restriction, achieved standard or technology). A description that is exactly what it was before the
     round, or whose repair failed, goes to recovery without waiting for a second identical failure (the incremental loop stops at the first round
     that changes nothing, so waiting would never get there).
 
@@ -1013,7 +1017,7 @@ def _scope_round(ctx: dict, tasks: dict, before: str | None) -> None:
         tasks: This round's tasks by agent.
         before: projects.json text before the round.
     """
-    if not any(_SCOPE_TASK in t for t in tasks.get("projects", [])):
+    if not any(marker in t for t in tasks.get("projects", []) for marker in _SCOPE_TASKS):
         return
     path = ctx["job_dir"] / "projects.json"
     if not path.exists() or before is None:

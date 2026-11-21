@@ -6,6 +6,7 @@ unbulleted paragraph: the problem, the solution, the system built — about the 
 Entries already in the template keep the template's title and year (the user's wording, e.g. a hackathon win).
 """
 
+import functools
 import json
 import re
 from dataclasses import dataclass
@@ -222,6 +223,13 @@ GENERIC_STANDARD_CLAIM = re.compile(r"(?i)\b(?:achiev\w*|attain\w*|reach\w*|meet
                                     r"\b(standards?|compliance|conformance|certifications?|accreditations?)\b")
 
 
+# The adjective form of the same outcome: "ensuring deterministic and compliant cloud setups", "generates compliant infrastructure". A card that maps
+# controls or runs checks documents a capability; a result adjective needs the card to affirm the same outcome. Reading it as an outcome requires the
+# word to describe what the project produces, so a checked or detected property ("flags non-compliant resources", "verifies the plan is compliant",
+# "checks whether it is compliant") and a denial or plan ("not yet compliant", "designed to be compliant") are left alone.
+ADJECTIVE_OUTCOME = re.compile(r"(?i)(?<!\w)(?:compliant|conformant)\b")
+
+
 def _card_strings(card: dict) -> list[str]:
     """Every text value of a card (embeddings excluded), one string each: evidence is judged inside a single value, never across neighbouring fields."""
     out: list[str] = []
@@ -271,14 +279,43 @@ def _affirms(window: str, cue: "re.Match") -> bool:
     return not NEGATED.search(window[max(0, cue.start() - 45):cue.start()])
 
 
-def _generic_outcomes(text: str) -> set[str]:
-    """Affirmed generic standard outcomes, excluding mapping/checking capabilities, denials and plans."""
-    outcomes = set()
-    for match in GENERIC_STANDARD_CLAIM.finditer(_mask(text)):
+_OUTCOME_VERB = re.compile(r"(?i)\b(?:ensur(?:e|es|ing)|guarantee(?:s|ing)?|produc(?:e|es|ing)|generat(?:e|es|ing)|deliver(?:s|ing)?|yield(?:s|ing)?|creat(?:e|es|ing)|"
+                           r"build(?:s|ing)?|deploy(?:s|ing)?|provid(?:e|es|ing))\b")
+_CHECK_VERB = re.compile(r"(?i)\b(?:check\w*|validat\w*|verif\w*|scan\w*|detect\w*|flag\w*|audit\w*|test\w*|assess\w*|identif\w*|determine[sd]?|determining|report\w*|whether)\b")
+
+
+def _generic_outcome_matches(text: str) -> list[tuple[str, int]]:
+    """Affirmed generic standard outcomes with their position: a noun after an achievement verb, or the adjective ("compliant") as a result.
+
+    Mapping/checking capabilities, denials and plans are excluded; so is an adjective that describes something a verb of checking examines
+    ("verifies that the plan is compliant"), unless an outcome verb ("ensuring", "produces") follows that check in the same clause.
+    """
+    out = []
+    masked = _mask(text)
+    for match in GENERIC_STANDARD_CLAIM.finditer(masked):
         if _affirms(text, match):
             noun = match.group(1).lower().removesuffix('s')
-            outcomes.add('compliance' if noun == 'conformance' else noun)
-    return outcomes
+            out.append(('compliance' if noun == 'conformance' else noun, match.start()))
+    for match in ADJECTIVE_OUTCOME.finditer(masked):
+        clause = re.split(r"[.!?;,]", masked[max(0, match.start() - 60):match.start()])[-1]      # a comma ends the checking clause
+        clause = _OUTCOME_VERB.split(clause)[-1]                                                 # so does an outcome verb
+        if _affirms(text, match) and not _CHECK_VERB.search(clause):
+            out.append(('compliance', match.start()))
+    return out
+
+
+def _generic_outcomes(text: str) -> set[str]:
+    """Affirmed generic standard outcomes, excluding mapping/checking capabilities, denials and plans."""
+    return {noun for noun, _ in _generic_outcome_matches(text)}
+
+
+def _shown(sentence: str, position: int) -> str:
+    """The sentence as the writer is told about it: cut at 160 characters, but never so early that the offending phrase is lost."""
+    sentence = sentence.strip()
+    if len(sentence) <= 160:
+        return sentence
+    start = sentence.rfind(" ", 0, max(0, position - 60)) + 1 if position > 100 else 0
+    return sentence[start:start + 160]
 
 
 def standard_outcome_claims(text: str, card: dict) -> list[str]:
@@ -321,8 +358,8 @@ def standard_outcome_claims(text: str, card: dict) -> list[str]:
                        if _family(e.group(1)) == ident):
                 out.append(sentence.strip()[:160])
                 break
-        if not named and _generic_outcomes(sentence) - generic_supported:
-            out.append(sentence.strip()[:160])                       # an unnamed standard ("meets industry standards"); a named one was judged above
+        if not named and (unsupported := [pos for noun, pos in _generic_outcome_matches(sentence) if noun not in generic_supported]):
+            out.append(_shown(sentence, unsupported[0]))                       # an unnamed standard ("meets industry standards"); a named one was judged above
     return out
 
 
@@ -467,7 +504,7 @@ def _single_quotes_balanced(sentence: str) -> bool:
     return closes >= opens
 
 
-def faithful_description(card: dict, limit: int, floor: int) -> str | None:
+def faithful_description(card: dict, limit: int, floor: int, vocabulary: list[str] | None = None) -> str | None:
     """A description made only of complete sentences of the card's own summary and results (never cut, never rejoined with new punctuation).
 
     Candidate sentences must end in terminal punctuation, have balanced brackets and quotes, not end in an abbreviation, hold no punctuation dash, and
@@ -477,6 +514,7 @@ def faithful_description(card: dict, limit: int, floor: int) -> str | None:
         card: The project's saved card.
         limit: Longest allowed description.
         floor: Length at which the description is long enough.
+        vocabulary: Technology names that the description must not name unless the card establishes them (`tech_vocabulary`).
 
     Returns:
         The description, or None when no qualifying complete sentence fits (the caller keeps the finding rather than printing a false text).
@@ -490,7 +528,7 @@ def faithful_description(card: dict, limit: int, floor: int) -> str | None:
                 or re.search(r"(?i)\b(?:e\.g|i\.e|etc|vs|approx)\.$", sentence)
                 or sentence.count("(") != sentence.count(")") or sentence.count('"') % 2 or not _single_quotes_balanced(sentence)
                 or sentence.lower().startswith("the readme")
-                or standard_outcome_claims(sentence, card) or scope_claims(sentence, card)):
+                or unsupported_claims(sentence, card, vocabulary)):
             continue
         chosen.append(sentence)
         if len(text) >= floor:
@@ -499,22 +537,42 @@ def faithful_description(card: dict, limit: int, floor: int) -> str | None:
     return text if len(text) >= max(60, floor // 2) else None
 
 
-def recover_scope(entry: dict, card: dict) -> list[str]:
-    """Replace any displayed variant (full or short) of a saved project entry that claims an unsupported restriction with the card's own sentences.
+def recover_scope(entry: dict, card: dict, vocabulary: list[str] | None = None) -> list[str]:
+    """Replace any displayed variant (full or short) of a saved project entry that has a source finding (an unsupported restriction, achieved
+    standard or technology) with the card's own sentences, (`recover_stack` handles the printed stack).
+
+    Args:
+        entry: One `projects.json` ranked entry; changed in place.
+        card: The project's saved card.
+        vocabulary: Technology names to look for in prose (`tech_vocabulary`).
+
+    Returns:
+        The fields changed (empty when nothing was unsupported or no faithful text exists).
+    """
+    fixed = []
+    for field, limit, floor in (("paragraph", MAX_PARAGRAPH - 10, MIN_PARAGRAPH), ("short", 230, 120)):
+        if unsupported_claims(entry.get(field) or "", card, vocabulary) and (text := faithful_description(card, limit, floor, vocabulary)):
+            entry[field] = text
+            fixed.append(field)
+    return fixed
+
+
+def recover_stack(entry: dict, card: dict) -> bool:
+    """Drop printed technologies the entry's own card does not show (the same grounding the heading gets when a project is first chosen).
 
     Args:
         entry: One `projects.json` ranked entry; changed in place.
         card: The project's saved card.
 
     Returns:
-        The variants replaced (empty when none had an unsupported restriction or no faithful text exists).
+        Whether the stack changed.
     """
-    fixed = []
-    for field, limit, floor in (("paragraph", MAX_PARAGRAPH - 10, MIN_PARAGRAPH), ("short", 230, 120)):
-        if scope_claims(entry.get(field) or "", card) and (text := faithful_description(card, limit, floor)):
-            entry[field] = text
-            fixed.append(field)
-    return fixed
+    if not entry.get("stack"):
+        return False
+    kept, dropped = ground_stack(list(entry["stack"]), card)
+    if dropped:
+        entry["stack"] = kept
+    return bool(dropped)
 
 
 def content_findings(state: dict, cards: dict | None = None) -> list[str]:
@@ -533,6 +591,7 @@ def content_findings(state: dict, cards: dict | None = None) -> list[str]:
     """
     short = set(state.get("short", []))
     out = []
+    vocab = tech_vocabulary(cards or {}, state.get("ranked", [])) if cards else []
     for i, entry in enumerate(state.get("ranked", [])[:state.get("kept", 0)], 1):
         text = entry.get("short") if entry.get("repo") in short and entry.get("short") else entry.get("paragraph", "")
         if not re.search(r'''[.!?]["'\u201d\u2019)\]]*\s*$''', text):
@@ -547,6 +606,9 @@ def content_findings(state: dict, cards: dict | None = None) -> list[str]:
             out.append(f"project {i} claims an achieved standard or compliance that its own card does not show ({claim!r}): the card lists tooling or capability "
                        "only. Say what the project uses, tests or audits against (for example 'tested with <tool> against <standard>'); never that the standard "
                        "was achieved, met, passed or certified")
+        for claim in (prose_tech_claims(text, card, vocab) if card else []):
+            out.append(f"project {i} describes technologies its own card does not show ({claim!r}): a description names only what that repository's own card "
+                       "establishes (another repository's card is not evidence); remove it or say what the card shows instead")
         for claim in (scope_claims(text, card) if card else []):
             out.append(f"project {i} claims a restriction that its own card does not state ({claim!r}): the card documents a primary source, not an exclusive "
                        "one (fallbacks, alternative or user-supplied sources are part of its scope). Remove only/solely/exclusively, or say what the project "
@@ -629,6 +691,104 @@ def ground_stack(stack: list[str], card: dict) -> tuple[list[str], list[str]]:
         else:
             dropped.append(term)
     return (kept or card_terms(card)[:5] or ["GitHub"]), dropped
+
+
+# --- the prose may only name technologies this repository's own card establishes ----------------------------------------------------------
+# The heading's stack is grounded (`ground_stack`), but a paragraph can still say "React for a dynamic frontend" after React was dropped from the heading.
+# The vocabulary is DATA, not a list in this file: the technologies listed in the structured `tech_stack` of the job's saved cards (plus the printed
+# stacks). A vocabulary term found in the selected prose must be established by that project's OWN card, by the same rule as the heading. Limits: a
+# technology no saved card lists is not recognised, one-word names that are also ordinary words or very short (AMBIGUOUS_TERMS, `Go`, `R`) are never
+# read from prose, and a lower-case mention ("react to events") is not taken for the framework. This cannot prove every feature a paragraph describes.
+_PROSE_SKIP_AFTER = re.compile(r"(?i)^\s+(?:to|when|as|if|quickly|instantly|in\s+real)\b")
+
+
+def tech_vocabulary(cards: "list[dict] | dict", entries: list | None = None) -> list[str]:
+    """Technology names to look for in prose: every term in the structured `tech_stack` of the given cards and in the entries' printed stacks.
+
+    Args:
+        cards: Saved repository cards (a list, or a mapping of name to card).
+        entries: Optional project entries (dicts) whose `stack` lists add to the vocabulary.
+
+    Returns:
+        Distinct terms, longest first so "React Native" is read before "React".
+    """
+    pool = list(cards.values()) if isinstance(cards, dict) else list(cards or [])
+    terms: dict[str, str] = {}
+    for card in pool:
+        for term in card_terms(card) if isinstance(card, dict) else []:
+            terms.setdefault(term.casefold(), term)
+    for entry in entries or []:
+        for term in (entry.get("stack") if isinstance(entry, dict) else None) or []:
+            if isinstance(term, str) and term.strip():
+                terms.setdefault(term.strip().casefold(), term.strip())
+    usable = [t for t in terms.values() if (phrase := _tokens(t)) and not (len(phrase) == 1 and phrase[0] in AMBIGUOUS_TERMS)
+              and not (re.fullmatch(r"[A-Za-z]{1,2}", t))]
+    return sorted(usable, key=lambda t: (-len(t), t.casefold()))
+
+
+@functools.lru_cache(maxsize=4096)
+def _term_pattern(term: str) -> "re.Pattern | None":
+    """A pattern for one technology that tolerates case, spacing and `.js`-style punctuation differences and never matches inside a longer name."""
+    parts = []
+    for token in _tokens(term):
+        runs = re.findall(r"[a-z0-9]+|[+#]+", token)
+        if not runs:
+            return None
+        parts.append(("\\." if token.startswith(".") else "") + r"[.\-_]?".join(re.escape(r) for r in runs))
+    return re.compile(r"(?<![A-Za-z0-9+#])" + r"[\s\-_]?".join(parts) + r"(?![A-Za-z0-9+#]|\.(?!js\b)[A-Za-z0-9])", re.IGNORECASE)
+
+
+def prose_tech_claims(text: str, card: dict, vocabulary: list[str]) -> list[str]:
+    """Technologies the displayed prose names that the project's OWN card does not establish.
+
+    Longer names win over their prefixes ("React Native" is one claim, not React plus Native); every named technology is judged by `ground_stack`
+    against this repository's card only (another repository's card listing it is not evidence). A lower-case or sentence-initial verb use
+    ("react to", "React when") is not a technology mention.
+
+    Args:
+        text: The displayed paragraph (full or short).
+        card: That repository's saved card.
+        vocabulary: Names to look for (`tech_vocabulary`).
+
+    Returns:
+        The unsupported technology names as written in the prose, in reading order, each once.
+    """
+    taken: list[tuple[int, int]] = []
+    found: list[tuple[int, str, str]] = []
+    for term in vocabulary:
+        pattern = _term_pattern(term)
+        if pattern is None:
+            continue
+        for m in pattern.finditer(text):
+            if any(m.start() < b and a < m.end() for a, b in taken):
+                continue
+            shown = m.group(0)
+            if shown.islower() and shown.isalpha():
+                continue                                      # "react to events", "spark of interest": ordinary words, not the product
+            if _PROSE_SKIP_AFTER.match(text[m.end():]) and shown.isalpha():
+                continue
+            taken.append((m.start(), m.end()))
+            found.append((m.start(), shown, term))
+    out: list[str] = []
+    for _, shown, term in sorted(found):
+        if ground_stack([term], card)[1] and shown not in out:
+            out.append(shown)
+    return out
+
+
+def unsupported_claims(text: str, card: dict, vocabulary: list[str] | None = None) -> list[str]:
+    """Every source finding the displayed text has against its own card: achieved standards, exclusivity claims and technologies.
+
+    Args:
+        text: The displayed paragraph or short form.
+        card: That repository's saved card.
+        vocabulary: Technology names to look for in prose (`tech_vocabulary`); none when omitted.
+
+    Returns:
+        The offending phrases (empty when the text is supported).
+    """
+    return (standard_outcome_claims(text, card) + scope_claims(text, card)
+            + (prose_tech_claims(text, card, vocabulary) if vocabulary else []))
 
 
 def from_card(c: dict) -> ProjectEntry:

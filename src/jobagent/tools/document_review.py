@@ -217,6 +217,10 @@ def adjudicate(ctx, filled, findings):
             prefix = 'Source input advisory' if source_concern else decision.status
             kept.append(M.Finding(agent=finding.agent, severity='suggestion' if source_concern else 'error',
                 issue=f'{prefix}: {finding.issue} Evidence {decision.source_id}: {decision.reason}'[:400]))
+    for decision in result.verdicts:
+        if decision.status == 'rejected':      # the rejected text is what lets a later audit tell a wrong critic from a wrong adjudicator
+            ctx['log'](f'  content adjudication rejected [{errors[decision.finding].agent}] {errors[decision.finding].issue[:160]!r} '
+                       f'(evidence {decision.source_id}: {str(decision.reason)[:120]!r})')
     ctx['log'](f'  content adjudication: {len(errors)} proposed, '
                f'{sum(v.status == "rejected" for v in result.verdicts)} rejected, '
                f'{sum(v.status != "rejected" and not v.claim_id.startswith("role-header:") for v in result.verdicts)} blocking, '
