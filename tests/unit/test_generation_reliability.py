@@ -787,39 +787,56 @@ def _project_world(tmp_path, monkeypatch, paragraph):
     return R, ctx, value
 
 
-def test_a_project_finding_citing_a_figure_that_is_only_in_experience_is_set_aside_without_a_model(tmp_path, monkeypatch):
-    """The saved Samsara attempt: 'CloudForge mentions a 30% reduction' while the 30% sat in Experience and the project text was qualitative."""
+def _verdict(finding, status, reason, claim_id='project:0', source_id='repo:0'):
+    return {'verdicts': [{'finding': finding, 'status': status, 'claim_id': claim_id, 'source_id': source_id, 'reason': reason}]}
+
+
+def test_the_adjudicator_gets_a_code_verified_inventory_of_the_figures_each_finding_cites(tmp_path, monkeypatch):
     R, ctx, value = _project_world(tmp_path, monkeypatch, 'Turns plain-English requirements into deployed AWS infrastructure.')
-    monkeypatch.setattr(R.llm, 'structured_invoke', lambda *a, **k: pytest.fail('a finding about an absent figure must not reach the model'))
+    seen = []
+    def verdict(model, schema, messages, **kwargs):
+        seen.append(json.loads(messages[-1].content)['code_verified']['finding_figures'])
+        return schema.model_validate(_verdict(0, 'rejected', 'The paragraph has no such figure.'))
+    monkeypatch.setattr(R.llm, 'structured_invoke', verdict)
     finding = M.Finding(agent='projects', severity='error', issue="The description for 'CloudForge' mentions a 30% reduction in deployment time.")
     assert R.adjudicate(ctx, value, [finding]) == []
+    assert seen == [[{'finding': 0, 'cited': ['30%'], 'absent_from_section': ['30%']}]]
 
 
-def test_a_finding_whose_figure_is_in_its_section_still_goes_to_the_adjudicator(tmp_path, monkeypatch):
-    R, ctx, value = _project_world(tmp_path, monkeypatch, 'Cut deployment time by 30% with generated infrastructure.')
-    seen = []
-    def verdict(model, schema, messages, **kwargs):
-        seen.append(json.loads(messages[-1].content)['findings'])
-        return schema.model_validate({'verdicts': [{'finding': 0, 'status': 'confirmed', 'claim_id': 'project:0', 'source_id': 'repo:0', 'reason': 'No such measurement.'}]})
-    monkeypatch.setattr(R.llm, 'structured_invoke', verdict)
-    finding = M.Finding(agent='projects', severity='error', issue="CloudForge claims a 30% reduction in deployment time that its repository does not give.")
+def test_a_confirmation_that_rests_on_a_figure_absent_from_the_section_is_refused(tmp_path, monkeypatch):
+    """The saved Samsara attempt: 'CloudForge mentions a 30% reduction' was confirmed while the 30% sat in Experience and the project text was qualitative."""
+    R, ctx, value = _project_world(tmp_path, monkeypatch, 'Turns plain-English requirements into deployed AWS infrastructure.')
+    monkeypatch.setattr(R.llm, 'structured_invoke', lambda model, schema, messages, **kw: schema.model_validate(
+        _verdict(0, 'confirmed', 'The description mentions a 30% reduction in deployment time that the repository does not give.')))
+    finding = M.Finding(agent='projects', severity='error', issue="The description for 'CloudForge' mentions a 30% reduction in deployment time.")
+    with pytest.raises(ValueError, match='not in the section it accuses'):
+        R.adjudicate(ctx, value, [finding])
+
+
+def test_a_mixed_finding_keeps_its_genuine_concern_when_the_reason_does_not_rely_on_the_stray_figure(tmp_path, monkeypatch):
+    R, ctx, value = _project_world(tmp_path, monkeypatch, 'Turns requirements into deployed AWS infrastructure with Kubernetes autoscaling.')
+    monkeypatch.setattr(R.llm, 'structured_invoke', lambda model, schema, messages, **kw: schema.model_validate(
+        _verdict(0, 'confirmed', 'Kubernetes autoscaling is not shown anywhere in the repository evidence.')))
+    finding = M.Finding(agent='projects', severity='error',
+                        issue='Kubernetes autoscaling is unsupported; the repository only documents a 30% CPU benchmark.')
     result = R.adjudicate(ctx, value, [finding])
-    assert len(seen) == 1 and len(result) == 1 and result[0].severity == 'error'
+    assert len(result) == 1 and result[0].severity == 'error' and 'Kubernetes' in result[0].issue
 
 
-def test_a_figureless_finding_and_a_stale_one_together_send_only_the_real_one_to_the_adjudicator(tmp_path, monkeypatch):
+def test_a_finding_citing_a_figure_that_is_on_the_page_is_not_restricted(tmp_path, monkeypatch):
+    R, ctx, value = _project_world(tmp_path, monkeypatch, 'Cut deployment time by 30% with generated infrastructure.')
+    monkeypatch.setattr(R.llm, 'structured_invoke', lambda model, schema, messages, **kw: schema.model_validate(
+        _verdict(0, 'confirmed', 'The 30% reduction is not in the repository evidence.')))
+    finding = M.Finding(agent='projects', severity='error', issue='CloudForge claims a 30% reduction that its repository does not give.')
+    assert len(R.adjudicate(ctx, value, [finding])) == 1
+
+
+def test_a_rejection_is_never_refused_for_mentioning_a_figure(tmp_path, monkeypatch):
     R, ctx, value = _project_world(tmp_path, monkeypatch, 'Turns requirements into deployed AWS infrastructure.')
-    seen = []
-    def verdict(model, schema, messages, **kwargs):
-        seen.append([f['issue'] for f in json.loads(messages[-1].content)['findings']])
-        return schema.model_validate({'verdicts': [{'finding': 0, 'status': 'confirmed', 'claim_id': 'project:0', 'source_id': 'repo:0', 'reason': 'Unsupported feature.'}]})
-    monkeypatch.setattr(R.llm, 'structured_invoke', verdict)
-    stale = M.Finding(agent='projects', severity='error', issue='CloudForge shows a 30% reduction.')
-    real = M.Finding(agent='projects', severity='error', issue='CloudForge claims Kubernetes support that the repository does not show.')
-    suggestion = M.Finding(agent='summary', severity='suggestion', issue='Consider a shorter opening.')
-    result = R.adjudicate(ctx, value, [stale, real, suggestion])
-    assert seen == [[real.issue]] and [f.severity for f in result] == ['suggestion', 'error']
-
+    monkeypatch.setattr(R.llm, 'structured_invoke', lambda model, schema, messages, **kw: schema.model_validate(
+        _verdict(0, 'rejected', 'There is no 30% claim in this paragraph.')))
+    finding = M.Finding(agent='projects', severity='error', issue='CloudForge shows a 30% reduction.')
+    assert R.adjudicate(ctx, value, [finding]) == []
 
 
 @pytest.mark.parametrize('text', ['M.S. in Robotics from ASU with Python.', 'MS in Computer Science, building ML systems.', 'B.Tech in Electronics and 3 years of ML work.',
@@ -834,3 +851,38 @@ def test_the_summary_reviewer_gets_the_education_source_for_degree_abbreviations
 def test_ordinary_words_are_not_read_as_degrees(text):
     from jobagent.tools import incremental_documents as I
     assert not I.names_a_credential(text), text
+
+
+
+def _credential_case(tmp_path, monkeypatch, claim, education):
+    from jobagent.tools import incremental_documents as I
+    from jobagent.tools.artifact_cache import ArtifactCache
+    payload = {'summary': claim + '.', 'roles': [{'employer': 'Acme', 'bullets': ['Built Python services.']}], 'projects': [], 'skills': [],
+               'education': education, 'company_context': '', 'owner_claims_policy': T.facts_block()}
+    finding = I.SummaryFinding(kind='credential', claim_quote=claim, issue='A proposed credential contradiction.', severity='error')
+    verdict = I.SummaryVerdict(finding=0, status='rejected', claim_quote=claim, source_id='education', source_quote=education.split(',')[0],
+                               reason='The education source supports the credential.')
+    monkeypatch.setattr(I, 'review_model', lambda *args, **kwargs: object())
+    monkeypatch.setattr(I, 'invoke', lambda *args, **kwargs: I.SummaryVerdicts(verdicts=[verdict]))
+    return I, {'models': {'router': 'judge'}, 'cache': ArtifactCache(tmp_path), 'log': lambda _: None}, payload, finding
+
+
+@pytest.mark.parametrize('claim,education', [
+    ('Master\'s degree in Robotics', 'M.S. in Robotics, Arizona State University'),
+    ('MS in Robotics', 'Master of Science in Robotics, Arizona State University'),
+    ('B.Tech in Electronics', 'Bachelor of Technology in Electronics, Example University'),
+    ('PhD in Robotics', 'Ph.D. in Robotics, Example University')])
+def test_equivalent_spellings_of_the_same_degree_support_the_credential(tmp_path, monkeypatch, claim, education):
+    I, ctx, payload, finding = _credential_case(tmp_path, monkeypatch, claim, education)
+    assert I.adjudicate_summary(ctx, payload, [finding]) == []
+
+
+@pytest.mark.parametrize('claim,education', [
+    ('M.S. in Robotics', 'B.S. in Physics, Arizona State University'),
+    ('Master of Science in Robotics', 'Bachelor of Science in Robotics, Arizona State University'),
+    ('MBA from Example University', 'B.Tech in Electronics, Example University'),
+    ('Ph.D. in Robotics', 'M.S. in Robotics, Arizona State University')])
+def test_a_different_degree_level_cannot_support_the_credential(tmp_path, monkeypatch, claim, education):
+    I, ctx, payload, finding = _credential_case(tmp_path, monkeypatch, claim, education)
+    with pytest.raises(ValueError, match='different degree'):
+        I.adjudicate_summary(ctx, payload, [finding])

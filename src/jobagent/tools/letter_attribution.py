@@ -79,13 +79,16 @@ def aliases(entity):
         A set of token strings.
     """
     words = _tokens(entity).split()
-    names = {' '.join(words)} if words else set()
+    full = ' '.join(words)
+    derived = set()
     while len(words) > 1 and words[-1] in CORPORATE:
         words = words[:-1]
-        names.add(' '.join(words))
+        derived.add(' '.join(words))
     if len(words) >= 3 and words[-1] in GENERIC_TAIL:
-        names.add(' '.join(words[:-1]))
-    return {n for n in names if n and not (' ' not in n and len(n) <= 3) and n not in CORPORATE | GENERIC_TAIL}
+        derived.add(' '.join(words[:-1]))
+    # The owner's own entity name always counts, however short (SAP, IBM, AMD, ASU: whole-word matching keeps "measure" from containing "asu");
+    # only names derived from it must not collapse into a generic word.
+    return ({full} if full else set()) | {n for n in derived if not (' ' not in n and len(n) <= 3) and n not in CORPORATE | GENERIC_TAIL}
 
 
 def _names_in(text, entities):

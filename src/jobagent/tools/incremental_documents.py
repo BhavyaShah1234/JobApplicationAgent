@@ -259,6 +259,25 @@ CREDENTIAL_WORDS = re.compile(r'\b(?:bachelor\w*|master\w*|ph\.?d|doctor\w*|degr
 CREDENTIAL_ABBREVIATIONS = re.compile(r'(?<![\w.])(?:M\.?S\.?|B\.?S\.?|M\.?Sc\.?|B\.?Sc\.?|B\.?Tech\.?|M\.?Tech\.?|MBA|M\.?Eng\.?|B\.?Eng\.?|M\.?A\.?|B\.?A\.?|B\.?E\.?|D\.?Phil\.?)(?![\w])')
 
 
+_LEVEL_WORDS = {'doctorate': re.compile(r'\b(?:ph\.?d|doctorate|doctoral|d\.?phil)\b', re.I), 'master': re.compile(r'\bmaster\w*', re.I),
+                'bachelor': re.compile(r'\bbachelor\w*', re.I)}
+_LEVEL_ABBREVIATIONS = {'doctorate': re.compile(r'(?<![\w.])D\.?Phil\.?(?![\w])'),
+                        'master': re.compile(r'(?<![\w.])(?:M\.?S\.?|M\.?Sc\.?|M\.?Tech\.?|M\.?Eng\.?|M\.?A\.?|MBA)(?![\w])'),
+                        'bachelor': re.compile(r'(?<![\w.])(?:B\.?S\.?|B\.?Sc\.?|B\.?Tech\.?|B\.?Eng\.?|B\.?E\.?|B\.?A\.?)(?![\w])')}
+
+
+def degree_levels(text):
+    """The degree levels a text names, however written: `Master of Science`, `M.S.`, `MS` and `Master's` are all `master`.
+
+    Args:
+        text: A claim or a source passage.
+
+    Returns:
+        A subset of {'bachelor', 'master', 'doctorate'}.
+    """
+    return {level for level in _LEVEL_WORDS if _LEVEL_WORDS[level].search(text) or _LEVEL_ABBREVIATIONS.get(level, re.compile('(?!)')).search(text)}
+
+
 def names_a_credential(text):
     """Whether prose names a degree, school, GPA or certification: the summary reviewer is given the Education section only then.
 
@@ -396,8 +415,8 @@ def adjudicate_summary(ctx, payload, findings):
             if not _words(verdict.source_quote) or _words(verdict.source_quote) not in _words(source):
                 raise ValueError('unbound summary source_quote')
             if finding.kind=='credential' and verdict.status=='rejected':
-                degrees=re.findall(r'\b(?:ph\.?d|doctorate|bachelor\w*|master\w*)\b',verdict.claim_quote,re.I)
-                if any(re.sub(r'[^a-z]','',degree.lower()) not in re.sub(r'[^a-z]','',source.lower()) for degree in degrees):
+                # Levels, not spellings: "M.S." supports "Master's", a bachelor's source never supports a master's claim.
+                if degree_levels(verdict.claim_quote)-degree_levels(source):
                     raise ValueError('A credential cannot be supported by a different degree')
                 institutions=re.findall(r'\b(?:from|at)\s+([A-Z][\w&]*(?:\s+(?:[A-Z][\w&]*|of|the|and)){0,7})',verdict.claim_quote)
                 if any(_words(name) not in _words(source) for name in institutions):

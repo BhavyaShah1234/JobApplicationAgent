@@ -47,4 +47,15 @@ def test_aliases_drop_corporate_suffixes_but_never_become_generic():
     assert L.aliases("Anton Intelligence LLC") >= {"anton intelligence llc", "anton intelligence"}
     assert L.aliases("Accurate Industrial Controls Pvt Ltd") >= {"accurate industrial controls"}
     assert L.aliases("Logos Robotics Lab") >= {"logos robotics lab", "logos robotics"}
-    assert "lab" not in L.aliases("Lab") and L.aliases("Acme Inc.") >= {"acme"} and "inc" not in L.aliases("Acme Inc.")
+    assert L.aliases("Acme Inc.") >= {"acme"} and "inc" not in L.aliases("Acme Inc.")
+    assert L.aliases("Acme Co Inc") >= {"acme"} and "co" not in L.aliases("Acme Co Inc") and "acme co" in L.aliases("Acme Co Inc")
+
+
+@pytest.mark.parametrize("employer", ["SAP", "IBM", "AMD", "ASU"])
+def test_a_short_owner_employer_is_still_bound_and_never_matches_inside_another_word(employer):
+    bank = {**BANK, "employment:9": {"entity": employer, "kind": "employment", "text": f"Engineer at {employer}\nCut costs by 40%."}}
+    plain = L.binding_issues(letter(f"At {employer} I cut costs by 40%.", "employment:0", quote="Cut latency by 30%."), bank)
+    assert any("different employer" in i for i in plain), plain                            # the achievement is Anton's, not the short employer's
+    assert not L.binding_issues(letter(f"At {employer} I cut costs by 40%.", "employment:9", quote="Cut costs by 40%."), bank)
+    inside = L.binding_issues(letter("I measured and casually reviewed 30% of the samples.", "employment:0", quote="Cut latency by 30%."), bank)
+    assert not any("different employer" in i for i in inside), inside                       # 'asu' in 'measured/casually' is not ASU

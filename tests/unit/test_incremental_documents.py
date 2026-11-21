@@ -588,7 +588,12 @@ def test_mission_projection_does_not_hide_explicit_history_or_other_companies(se
     ('Engineer with experience building PyTorch systems.',False),
     ('Engineer with a PhD in computing.',True),
     ('Engineer with five post-baccalaureate years.',True),
-    ('Engineer who graduated from Example University in 2024.',True)])
+    ('Engineer who graduated from Example University in 2024.',True),
+    ('Engineer with an M.S. in Robotics.',True),
+    ('MS in Computer Science, building PyTorch systems.',True),
+    ('B.Tech graduate building ML systems.',True),
+    ('Engineer with an MBA and Python experience.',True),
+    ('Engineer who shipped as little as two sprints of PyTorch work.',False)])
 def test_summary_education_context_is_scoped_and_excludes_template_comments(tmp_path,monkeypatch,summary,needs_education):
     from jobagent.tools import incremental_documents as I
     from jobagent.steps import multi_agent as M
