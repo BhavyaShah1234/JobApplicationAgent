@@ -859,20 +859,37 @@ def review(ctx, filled):
                                  issue=f'{f.category}: {f.term}: {f.issue}'[:400]) for f in out.findings]
             if agent=='summary':return adjudicate_summary({**ctx,'review_abort':review_abort},payloads[agent],out.findings)
             return out.findings
-        except Exception as exc:
+        except (llm.LLMConfigError, M.T.ClaimsProfileError):
+            review_abort.set()
+            raise
+        except (llm.StructuredError, ValueError, TimeoutError) as exc:
             review_abort.set()
             raise ReviewUnavailable(agent,model_name,getattr(exc,'kind',type(exc).__name__)) from exc
+        except Exception:
+            review_abort.set()
+            raise
 
     with ThreadPoolExecutor(4) as pool:
         pending={pool.submit(with_context(one),agent):agent for agent in payloads}
         results={}
+        failures=[]
         for future in as_completed(pending):
             try:
                 results[pending[future]]=future.result()
             except Exception as exc:
-                failure=getattr(review_abort,'failure_info',None)
-                if failure:raise ReviewUnavailable(failure[0].split(':')[-1],failure[1],failure[2]) from exc
-                raise
+                failures.append(exc)
+        if failures:
+            # A cancelled sibling may finish first. Preserve the underlying
+            # configuration/programming error instead of misclassifying it as
+            # an ordinary unavailable review eligible for another draft.
+            fatal=next((exc for exc in failures if not isinstance(exc,ReviewUnavailable)
+                        and str(exc)!='review cancelled after another section failed'),None)
+            if fatal is not None:
+                raise fatal
+            failure=getattr(review_abort,'failure_info',None)
+            if failure:
+                raise ReviewUnavailable(failure[0].split(':')[-1],failure[1],failure[2]) from failures[0]
+            raise failures[0]
         return [finding for agent in payloads for finding in results[agent]]
 
 

@@ -576,9 +576,9 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
                           **({'first':'json_mode'} if ctx.get('incremental') and agent in ('experience','summary') else {}))
         log(f"  {agent} agent ({ctx['models'][agent]}): {time.monotonic() - t0:.0f}s")
         return agent, out
-    except llm.LLMConfigError:
+    except (llm.LLMConfigError, T.ClaimsProfileError):
         raise
-    except Exception as e:
+    except (llm.StructuredError, ValueError, TimeoutError) as e:
         log(f"  {agent} agent ({ctx['models'][agent]}): failed {type(e).__name__}: {str(e)[:120]}")
         return agent, None
 
@@ -1055,6 +1055,7 @@ def _review_hash(ctx: dict, f: T.Filled) -> str:
 
 
 def _reviewed_content(ctx: dict, f: T.Filled, state: dict) -> dict:
+    from jobagent.tools.incremental_documents import ReviewUnavailable
     fingerprint = _review_hash(ctx, f)
     if fingerprint == state.get("content_hash") and not state.get("content_error"):
         findings, error = state.get("content_findings", []), state.get("content_error", "")
@@ -1063,10 +1064,9 @@ def _reviewed_content(ctx: dict, f: T.Filled, state: dict) -> dict:
             try:
                 findings, error = content_review(ctx, f), ""
                 break
-            except llm.LLMConfigError:
+            except (llm.LLMConfigError, T.ClaimsProfileError):
                 raise
-            except Exception as exc:
-                from jobagent.tools.incremental_documents import ReviewUnavailable
+            except (llm.StructuredError, ReviewUnavailable, ValueError, TimeoutError) as exc:
                 error = str(exc) if ctx.get('incremental') and isinstance(exc,ReviewUnavailable) else \
                         f"document content review unavailable ({type(exc).__name__})"
                 findings = []

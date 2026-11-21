@@ -609,6 +609,10 @@ def learning_hint(jd) -> str:
         return ""
 
 
+class ClaimsProfileError(ValueError):
+    """Authoritative candidate facts are invalid; another draft cannot repair them."""
+
+
 def declared_claims() -> dict:
     """The `claims` block of data/master_profile.yaml ({} when there is no profile or no claims).
 
@@ -625,23 +629,23 @@ def declared_claims() -> dict:
     if not path.exists():
         return {}
     if not path.is_file():
-        raise ValueError(f"{path.name} is not a file; fix it before generating documents")
+        raise ClaimsProfileError(f"{path.name} is not a file; fix it before generating documents")
     try:
         data = yaml.safe_load(path.read_text())
     except (yaml.YAMLError, OSError, UnicodeError) as exc:
-        raise ValueError(f"{path.name} cannot be read ({type(exc).__name__}); fix it before generating documents") from exc
+        raise ClaimsProfileError(f"{path.name} cannot be read ({type(exc).__name__}); fix it before generating documents") from exc
     if data is None:
         return {}
     if not isinstance(data, dict):
-        raise ValueError(f"{path.name} must be a mapping with a `claims` block, not {type(data).__name__}")
+        raise ClaimsProfileError(f"{path.name} must be a mapping with a `claims` block, not {type(data).__name__}")
     claims = data.get("claims")
     if claims is None:
         return {}
     if not isinstance(claims, dict):
-        raise ValueError(f"`claims` in {path.name} must be a mapping, not {type(claims).__name__}")
+        raise ClaimsProfileError(f"`claims` in {path.name} must be a mapping, not {type(claims).__name__}")
     years = claims.get("years_experience")
     if years is not None and (isinstance(years, bool) or not isinstance(years, (int, float)) or not math.isfinite(years) or years < 0):
-        raise ValueError(f"`claims.years_experience` in {path.name} must be a finite number of years, 0 or more (got {years!r})")
+        raise ClaimsProfileError(f"`claims.years_experience` in {path.name} must be a finite number of years, 0 or more (got {years!r})")
     return claims
 
 
@@ -650,6 +654,7 @@ def facts_block() -> str:
     years = declared_claims().get("years_experience")
     lines = ["CANDIDATE FACTS (declared by the candidate):",
              "- " + WORK_DRAFT_POLICY,
+             "- 0 years of professional experience are declared; never claim a positive tenure." if years == 0 else
              f"- Up to {years}+ years of professional experience may be stated, overall or in any domain the posting "
              "asks for (e.g. 'fraud and abuse analysis')." if years else
              "- Years of experience: only what the current resume states.",

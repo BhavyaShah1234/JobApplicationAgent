@@ -76,7 +76,13 @@ def _is_technical_horizon(text: str, m: "re.Match") -> bool:
     if text[max(0, m.start("u") - 1):m.start("u")] in "-\u2011\u2013":              # "20-year X": the duration describes X
         nxt = re.findall(r"[A-Za-z]+", rest)[:2]
         return any(w.lower() in HORIZON_NOUNS for w in nxt)
-    return bool(_AHEAD.match(rest) or _DATA.match(rest))
+    data_span = _DATA.match(rest)
+    # "Years of data engineering" describes a career; "years of market data"
+    # describes the dataset. Do not discard the former as a technical horizon.
+    career = data_span and re.match(
+        r"(?i)^\s+(?:engineering|science|analytics|analysis|platform|infrastructure|"
+        r"architecture|management|experience|work|career|expertise)\b", rest[data_span.end():])
+    return bool(_AHEAD.match(rest) or (data_span and not career))
 
 
 def claimed_years(text: str) -> list[float]:

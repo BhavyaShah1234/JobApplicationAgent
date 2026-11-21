@@ -63,4 +63,7 @@ def model_version(stage=None):
         names=('tools/letter_attribution.py','tools/cover_letter.py','tools/tailor.py')
     elif stage and (stage.startswith('review:') or stage.startswith('adjudicate:')):
         names=('tools/incremental_documents.py','steps/multi_agent.py','tools/tailor.py')
+    # Shared metric/tenure policy affects both generated content and its
+    # acceptance. A helper-only correction must invalidate older artifacts.
+    names=(*names,'tools/number_claims.py')
     return digest({n: (root / n).read_text() for n in names if (root / n).exists()})

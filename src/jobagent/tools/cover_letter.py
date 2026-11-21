@@ -162,7 +162,9 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
         for sentence in re.split(r"(?<=[.!?])\s+", p.text):          # a figure needs its own spelling in a source, not just the same digits
             # A first-person RESULT ("I cut latency by 30%", "my team tripled...") is the candidate's claim and needs the resume; a figure about the
             # company or posting ("Acme grew 30%", "I admire that") may cite the posting or the company profile.
-            mine = bool(re.search(r"(?i)\b(?:I|we)\s+(?:\w+ly\s+)?(?:[a-z]+ed|cut|built|led|ran|wrote|drove|grew|saved|sped|won|made|did|began|took|got)\b"
+            mine = bool(re.search(r"(?i)\b(?:I|we)\s+(?:(?:have|has|had|am|are|was|were|been)\s+)*(?:\w+ly\s+)?"
+                                  r"(?!(?:admired|appreciated|noticed|impressed|excited|interested|attracted)\b)"
+                                  r"(?:[a-z]+ed|cut|built|led|ran|wrote|drove|grew|saved|sped|won|made|did|began|took|got|responsible)\b"
                                   r"|\bmy\s+(?:\w+\s+){0,2}(?:work|team|role|project|contribution)s?\b", sentence))
             for token, written in NC.metric_spans(sentence).items():
                 if token[0].isdigit() or token[0] == "$":
