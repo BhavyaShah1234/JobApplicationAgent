@@ -1380,8 +1380,8 @@ def run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, d
     """
     strategy = document_strategy or getattr(get_settings(), 'document_strategy', 'current')
     started = time.monotonic()
+    (job_dir / 'document-fallback.json').unlink(missing_ok=True)      # before the run: an exception must not leave an older run's "used: current" behind
     result = _run_job(job_dir, slug, models, sites, log, document_strategy=strategy, ats_refine=ats_refine)
-    (job_dir / 'document-fallback.json').unlink(missing_ok=True)
     if strategy != 'incremental' or result.get('produced') or result.get('source_inputs_changed'):
         return result
     first_seconds = time.monotonic() - started

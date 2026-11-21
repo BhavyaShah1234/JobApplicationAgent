@@ -904,3 +904,55 @@ def test_a_past_or_present_affiliation_with_the_target_or_another_company_still_
     payload['target_job_identity'] = {'company': 'Beta'}
     with pytest.raises(ValueError, match='another employer'):
         I.adjudicate_summary(ctx, payload, [finding])
+
+
+
+def test_a_valid_reason_that_discusses_a_source_figure_is_not_refused(tmp_path, monkeypatch):
+    """A mixed finding confirmed because of the feature, with the reason mentioning the source's own 30% benchmark."""
+    R, ctx, value = _project_world(tmp_path, monkeypatch, 'Turns requirements into deployed AWS infrastructure with Kubernetes autoscaling.')
+    for reason in ("Kubernetes is unsupported; the source's 30% benchmark concerns CPU use, not autoscaling.",
+                   'The README documents a 30% benchmark that the paragraph does not mention, but no autoscaling.'):
+        monkeypatch.setattr(R.llm, 'structured_invoke', lambda model, schema, messages, reason=reason, **kw: schema.model_validate(_verdict(0, 'confirmed', reason)))
+        finding = M.Finding(agent='projects', severity='error', issue='Kubernetes autoscaling is unsupported; the repository only documents a 30% CPU benchmark.')
+        assert len(R.adjudicate(ctx, value, [finding])) == 1, reason
+
+
+@pytest.mark.parametrize('reason', ['The paragraph claims 30% faster deploys, which no source supports.', "The project text states a 30% reduction that is not in the repository.",
+                                     "The displayed description mentions a 30% reduction in deployment time."])
+def test_a_reason_that_charges_the_displayed_text_with_an_absent_figure_is_refused(tmp_path, monkeypatch, reason):
+    R, ctx, value = _project_world(tmp_path, monkeypatch, 'Turns requirements into deployed AWS infrastructure.')
+    monkeypatch.setattr(R.llm, 'structured_invoke', lambda model, schema, messages, **kw: schema.model_validate(_verdict(0, 'confirmed', reason)))
+    finding = M.Finding(agent='projects', severity='error', issue='CloudForge shows a 30% reduction in deployment time.')
+    with pytest.raises(ValueError, match='not in the section it accuses'):
+        R.adjudicate(ctx, value, [finding])
+
+
+def test_a_rejection_of_an_experience_or_skills_error_cannot_rest_on_company_facts(tmp_path, monkeypatch):
+    from jobagent.tools import document_review as R
+    ctx, value = review_world(tmp_path, monkeypatch)
+    for agent, claim in (('experience', 'experience'), ('skills', 'skills')):
+        finding = M.Finding(agent=agent, severity='error', issue='A listed technology is not supported by the role.')
+        monkeypatch.setattr(R.llm, 'structured_invoke', lambda model, schema, messages, claim=claim, **kw: schema.model_validate(
+            {'verdicts': [{'finding': 0, 'status': 'rejected', 'claim_id': claim, 'source_id': 'company', 'reason': 'The company builds this.'}]}))
+        with pytest.raises(ValueError, match='Company facts cannot establish'):
+            R.adjudicate(ctx, value, [finding])
+        monkeypatch.setattr(R.llm, 'structured_invoke', lambda model, schema, messages, claim=claim, **kw: schema.model_validate(
+            {'verdicts': [{'finding': 0, 'status': 'rejected', 'claim_id': claim, 'source_id': 'owner_policy', 'reason': 'The owner policy permits it.'}]}))
+        assert R.adjudicate(ctx, value, [finding]) == []
+
+
+def test_company_context_and_the_posting_title_still_settle_summary_findings(tmp_path, monkeypatch):
+    from jobagent.tools import document_review as R
+    ctx, value = review_world(tmp_path, monkeypatch)
+    finding = M.Finding(agent='summary', severity='error', issue='The summary mission claim is unsupported.')
+    monkeypatch.setattr(R.llm, 'structured_invoke', lambda model, schema, messages, **kw: schema.model_validate(
+        {'verdicts': [{'finding': 0, 'status': 'rejected', 'claim_id': 'summary', 'source_id': 'company', 'reason': 'It restates the company mission.'}]}))
+    assert R.adjudicate(ctx, value, [finding]) == []
+
+
+def test_a_run_that_raises_does_not_leave_an_older_fallback_record_behind(tmp_path, monkeypatch):
+    (tmp_path / 'document-fallback.json').write_text('{"used": "current"}')
+    monkeypatch.setattr(M, '_run_job', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('provider down')))
+    with pytest.raises(RuntimeError):
+        M.run_job(tmp_path, 'acme', {}, sites=(), log=lambda _: None, document_strategy='incremental')
+    assert not (tmp_path / 'document-fallback.json').exists()

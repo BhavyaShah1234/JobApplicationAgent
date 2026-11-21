@@ -1,5 +1,6 @@
 """Adjudicate proposed document errors against immutable displayed and source IDs."""
 import json
+import re
 from typing import Annotated, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -18,6 +19,36 @@ class ReviewVerdict(BaseModel):
     claim_id: str
     source_id: str
     reason: str = Field(max_length=600)
+
+
+_DISPLAYED = r'(?:description|paragraph|text|claim|bullet|project|summary|draft|resume|entry)'
+_STATES = r'(?:mention|claim|state|say|show|describ|report|cit|assert|includ|present|contain|credit|attribut)\w*'
+_SOURCE_SUBJECT = re.compile(r"(?i)(?:source|repositor\w*|readme|benchmark|evidence|documents?|card)\W*(?:'s|s)?\W*[^.;]{0,25}$")
+
+
+def reason_blames_page_for(reason, absent):
+    """Absent figures a verdict's reason attributes to the displayed text ("the description mentions a 30% reduction").
+
+    Discussing a figure of the SOURCE ("the source's 30% benchmark concerns CPU use") is evidence, not an accusation of the page, and is never
+    reported: a valid confirmed or uncertain judgment must stay possible when it mentions a figure.
+
+    Args:
+        reason: The adjudicator's free-text reason.
+        absent: Normalised figures (see `figure_inventory`) that are not in the accused section.
+
+    Returns:
+        The absent figures the reason charges to the displayed text, sorted.
+    """
+    from .number_claims import metric_spans
+    blamed = set()
+    for sentence in re.split(r'(?<=[.;!?])\s+', reason):
+        for token, written in metric_spans(sentence).items():
+            if token not in absent:
+                continue
+            before = sentence[:sentence.find(written)]
+            if re.search(rf'(?i)\b{_DISPLAYED}\b[^.;]{{0,80}}?\b{_STATES}\b[^.;]{{0,60}}$', before) and not _SOURCE_SUBJECT.search(before):
+                blamed.add(token)
+    return sorted(blamed)
 
 
 def figure_inventory(issue, section_text):
@@ -128,13 +159,14 @@ def adjudicate(ctx, filled, findings):
             finding = errors[decision.finding]
             if decision.claim_id not in sections or sections[decision.claim_id] != finding.agent:
                 raise ValueError('A verdict cannot move the finding to another displayed section')
+            if decision.status == 'rejected' and finding.agent in ('experience', 'skills') and decision.source_id == 'company':
+                raise ValueError('Company facts cannot establish what the candidate did or knows: cite the role, skills or owner_policy source, or use uncertain')
             if decision.claim_id.startswith('project:') and decision.source_id not in (
                     'owner_policy', 'repo:' + decision.claim_id.split(':')[1]):
                 raise ValueError('Project findings require their own repository evidence, not another project')
             inventory = inventories[decision.finding]
             if decision.status != 'rejected' and inventory['cited'] and inventory['cited'] == inventory['absent_from_section']:
-                from .number_claims import metric_spans
-                relied = sorted(set(metric_spans(decision.reason)) & set(inventory['absent_from_section']))
+                relied = reason_blames_page_for(decision.reason, inventory['absent_from_section'])
                 if relied:
                     raise ValueError(f'The finding rests on {relied}, which is not in the section it accuses (see code_verified.finding_figures): '
                                      'reject it, or confirm a separate defect without relying on that figure')
