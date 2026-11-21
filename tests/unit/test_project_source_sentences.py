@@ -313,6 +313,16 @@ def test_an_invented_title_and_a_foreign_date_are_findings_but_owner_values_are_
     assert not P.binding_findings(st, P.known_entries(TEMPLATE))
 
 
+def test_a_bare_year_of_the_repositorys_own_date_is_the_same_fact_but_another_year_is_not():
+    st = bound(packet())
+    year = P.month_year(card()["created_at"]).split()[-1]
+    st["years"][entry(st)["repo"]] = year
+    assert not [f for f in P.binding_findings(st, P.known_entries(TEMPLATE)) if "date" in f]
+    st["years"][entry(st)["repo"]] = "March 2031"
+    assert [f for f in P.binding_findings(st, P.known_entries(TEMPLATE)) if "date" in f]
+    assert P.recover_years(st, P.known_entries(TEMPLATE)) == [entry(st)["repo"]] and not [f for f in P.binding_findings(st, {}) if "date" in f]
+
+
 def test_recover_title_gives_the_cards_own_title_or_the_owners():
     e = {"repo": DEVIL, "title": "Autonomous Robot Control Platform"}
     assert P.recover_title(e, card()) and P.title_supported(e["title"], card()) and not P.recover_title(e, card())

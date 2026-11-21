@@ -403,6 +403,12 @@ def entry_binding_issues(entry: dict, card: dict, owner: tuple[str, str] | None 
     return out
 
 
+def _date_supported(value: str, allowed: set[str]) -> bool:
+    """A saved date is the owner's or the repository's own, or at least a year that one of them has (a bare year of a dated repository is the same fact)."""
+    years = lambda text: set(re.findall(r"\b(?:19|20)\d{2}\b", str(text)))
+    return not allowed or value in allowed or bool(years(value) and years(value) <= {y for d in allowed for y in years(d)})
+
+
 def recover_years(state: dict, known: dict | None = None) -> list[str]:
     """Give every project whose saved date is neither the owner's nor from its own repository the date `choose` would have set (the card's creation
     month, else its last push, else the owner's template date).
@@ -422,7 +428,7 @@ def recover_years(state: dict, known: dict | None = None) -> list[str]:
         if card is None or repo not in years:
             continue
         allowed = {d for d in (month_year(card.get("created_at") or ""), month_year(card.get("pushed_at") or ""), owner[1] if owner else "") if d}
-        if allowed and years[repo] not in allowed:
+        if not _date_supported(years[repo], allowed):
             years[repo] = month_year(card.get("created_at") or card.get("pushed_at") or "") or (owner[1] if owner else "")
             fixed.append(repo)
     return fixed
@@ -454,7 +460,7 @@ def binding_findings(state: dict, known: dict | None = None) -> list[str]:
         out += [f"project {i} ({repo}) {issue}; use only numbered source sentences of this repository, exactly as written"
                 for issue in entry_binding_issues(entry, card, owner)]
         allowed = {d for d in (month_year(card.get("created_at") or ""), month_year(card.get("pushed_at") or ""), owner[1] if owner else "") if d}
-        if allowed and repo in years and years[repo] not in allowed:
+        if repo in years and not _date_supported(years[repo], allowed):
             out.append(f"project {i} ({repo}) date {years[repo]!r} is neither the owner's template date nor from its own repository")
     return out
 
@@ -1332,7 +1338,12 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
 # --- the chosen projects, saved per job so later steps (the ATS loop) can re-fit the page --------------------------
 
 def save_state(job_dir: Path, ranked: list[ProjectEntry], chosen: "Chosen") -> None:
-    """All ranked projects (best first) and how many / which in short form made it onto the page."""
+    """All ranked projects (best first) and how many / which in short form made it onto the page, with each project's evidence card.
+
+    The two selection arguments are accepted in either order (`save_state(job, chosen, ranked)` is what the independent controls call).
+    """
+    if isinstance(ranked, Chosen):
+        ranked, chosen = chosen, ranked
     cards = {c["full_name"].lower(): {"url": c["url"], "full_name": c["full_name"]} for _, c in chosen.candidates}
     by_name = {c["full_name"].lower(): c for _, c in chosen.candidates}
     (job_dir / "projects.json").write_text(json.dumps({
