@@ -450,3 +450,11 @@ def test_the_allocation_record_is_part_of_the_accepted_version_bundle():
     files = M._version_files({"tex": "t", "pdf": b"p", "projects": None, "layout_meta": None, "allocation": '{"added": []}', "f": None})
     assert files["skill_allocation.json"] == '{"added": []}'
     assert M._version_files({"tex": "t", "pdf": b"p", "allocation": None, "f": None})["skill_allocation.json"] is None    # no record in that version: no such file
+
+
+def test_comparable_issues_ignore_the_fill_percentage_only():
+    from jobagent.steps import multi_agent as M
+    a = M._comparable_issues(['Technical Skills "Databases" fills only 38% of its last line: add relevant skills', "text overflows the right margin"])
+    b = M._comparable_issues(['Technical Skills "Databases" fills only 71% of its last line: add relevant skills'])
+    assert b <= a and M._comparable_issues(['Technical Skills "AI" fills only 38% of its last line']) - a            # another line is a different finding
+    assert not M._comparable_issues(["a bullet wraps onto a line holding only x"]) <= a

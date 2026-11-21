@@ -999,6 +999,28 @@ def _restore_files(job_dir: Path, snap: dict[str, bytes]) -> None:
         (job_dir / name).unlink(missing_ok=True)
 
 
+def _comparable_issues(issues) -> set[str]:
+    """Layout findings as a set that ignores how full a short skills line is: `... "Databases" fills only 38% of its last line ...` and `... 55% ...` are
+    the same finding (adding a skill improves the number, it is not a new problem)."""
+    return {re.sub(r"fills only \d+%", "fills only N%", x) for x in issues}
+
+
+def _bound_allocation(directory: Path, f, pdf: bytes) -> str | None:
+    """The allocation record as it describes THIS version: additions still present in its skills, and the hash of ITS resume PDF. None without a record."""
+    path = directory / "skill_allocation.json"
+    if not path.exists():
+        return None
+    try:
+        rec = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    present = {SG.norm(a) for ln in f.skills for a in SG._atoms(ln)}
+    rec["added"] = [x for x in rec.get("added", []) if SG.norm(x["skill"]) in present]
+    rec["kept"] = bool(rec["added"])
+    rec["resume_sha256"] = hashlib.sha256(pdf).hexdigest()
+    return json.dumps(rec, indent=1)
+
+
 def _allocate_graph_skills(state: State, f, tex, problems, pages, err, lay, attempt: int):
     """Use leftover room on short skills lines for OWNED skill-graph candidates (no model call), as a transaction.
 
@@ -1043,7 +1065,7 @@ def _allocate_graph_skills(state: State, f, tex, problems, pages, err, lay, atte
         result = render({**state, "f": with_lines(chosen)})
         f2, _, problems2, pages2, err2 = result
         lay2 = layout.check(job_dir / "resume.pdf") if pages2 == 1 and not err2 else None
-        ok = (lay2 is not None and set(lay2.issues) <= set(lay.issues) and not (set(problems2) - set(problems))
+        ok = (lay2 is not None and _comparable_issues(lay2.issues) <= _comparable_issues(lay.issues) and not (set(problems2) - set(problems))
               and (lay.free_pt is None or lay2.free_pt is None or lay2.free_pt >= lay.free_pt - 1)
               and f2.model_dump(exclude={"skills"}) == base_other                           # a graph-only change leaves every other part of the content intact
               and _render_files(job_dir).get("projects.json") == snap.get("projects.json"))      # and the projects
@@ -1390,7 +1412,8 @@ def _snapshot(ctx: dict, f: T.Filled, hard: list, reviewed: dict | None = None, 
     return {"avg": A.average(ev["scores"]), "scores": dict(ev["scores"]), "f": f.model_copy(deep=True),
             "layout": len(layout.check(directory / "resume.pdf").issues), "hard": list(hard),
             "tex": read("resume.tex"), "pdf": (directory / "resume.pdf").read_bytes(),
-            "layout_meta": read("resume.layout.json"), "projects": read("projects.json"), "allocation": read("skill_allocation.json"),
+            "layout_meta": read("resume.layout.json"), "projects": read("projects.json"),
+            "allocation": _bound_allocation(directory, f, (directory / "resume.pdf").read_bytes()),
             "filled": f.model_dump_json(indent=1) if hasattr(f, "model_dump_json") else None,
             "ev": ev, "content_suggestions": [fd.issue for fd in (reviewed or {}).get("content_findings", [])
                                                if fd.severity == "suggestion"]}
