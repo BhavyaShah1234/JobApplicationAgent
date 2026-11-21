@@ -781,7 +781,7 @@ def fill_checks(r: Resume, jd: JobDescription, f: Filled, slots: int | None = No
             kept = [x for x in b.estimated if NC.digits(NC._norm(x)) in present or set(NC.metric_spans(x)) & set(spans)]
             if len(kept) != len(b.estimated):
                 b.estimated = kept
-            tagged = {NC._norm(x) for x in b.estimated}
+            tagged = {NC._norm(x) for x in b.estimated} | {tok for x in b.estimated for tok in NC.metric_spans(x)}   # word figures: 'Tripled' is the figure 'tripl'
             in_metric = {NC.digits(t) for t in spans}
             for n in re.findall(r"\d+(?:\.\d+)?", plain):
                 if n in known or n in tagged or n in in_metric:           # a figure with a unit is judged below, by its own spelling
