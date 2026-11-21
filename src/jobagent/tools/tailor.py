@@ -291,7 +291,7 @@ class FillBullet(BaseModel):
     duties: list[int] = Field(default_factory=list, max_length=3,
                              description="Indices of the JD ITEMS this bullet covers; empty for a reused original")
     original: int | None = Field(None, description="Index of this role's original bullet if reused, else null")
-    estimated: list[str] = Field(default_factory=list, max_length=3,
+    estimated: list[str] = Field(default_factory=list, max_length=8,
                                  description="Each number/metric in this bullet that you estimated (e.g. '22%', '40 s')")
 
     @model_validator(mode="after")
@@ -739,21 +739,31 @@ def fill_checks(r: Resume, jd: JobDescription, f: Filled, slots: int | None = No
                                                                               jd.preferred_qualifications)))
     warn = []
     from jobagent.tools import number_claims as NC
-    owner_figures = NC.metric_tokens(to_plain(r.tex))                 # the owner's own results: a posting's "5+ years" never vouches for a "5%"
     for e in f.roles:
+        # The owner's own result counts only in the role it came from: a "20%" written for another employer or a project is not proof of a
+        # newly generated "20%" here. Plain counts and technology versions keep the template-and-posting digit match above.
+        roles, index = getattr(r, "roles", None) or [], getattr(e, "role", None)
+        own = getattr(roles[index], "bullets", None) if isinstance(index, int) and 0 <= index < len(roles) else None
+        mine = (NC.metric_tokens(to_plain(" ".join(own))) if own is not None
+                else NC.metric_tokens(to_plain(getattr(r, "tex", "") or "")))      # no role to bind to: the template as a whole
         for b in e.bullets:
-            est = " ".join(b.estimated)
             plain = PLACEHOLDER.sub("", b.text)
+            spans = NC.metric_spans(plain)
+            tagged = {NC._norm(x) for x in b.estimated}
+            in_metric = {NC.digits(t) for t in spans}
             for n in re.findall(r"\d+(?:\.\d+)?", plain):
-                if n not in known and n not in est:  # an estimate the model didn't list: list it for review
-                    b.estimated = b.estimated + [n]
-                    est += " " + n
-            listed = {NC.digits(NC._norm(x)) for x in b.estimated} | {NC._norm(x) for x in b.estimated}
-            for token, written in NC.metric_spans(plain).items():
-                if token in owner_figures or token in listed or NC.digits(token) in listed:
-                    continue                                          # the owner's figure, or already listed for the candidate to confirm
+                if n in known or n in tagged or n in in_metric:           # a figure with a unit is judged below, by its own spelling
+                    continue
+                b.estimated = b.estimated + [n]                          # an estimate the model didn't list: list it for review
+                tagged.add(n)
+            for token, written in spans.items():
+                if token in mine or token in tagged:
+                    continue
+                d = NC.digits(token)
+                if d in tagged and sum(NC.digits(t) == d for t in spans) == 1:
+                    continue                                              # a legacy bare-digit tag covers the one figure with those digits
                 b.estimated = b.estimated + [written]
-                listed |= {token, NC.digits(token)}
+                tagged.add(token)
     return uncovered, missing, warn
 
 
@@ -954,7 +964,7 @@ class BulletFix(BaseModel):
     bullet: int = Field(description="1-based position of the bullet in that role")
     text: str = Field(max_length=BULLET_MAX, description=f"The rewritten bullet, plain text, about {BULLET_TARGET} characters, "
                                                            f"at most {BULLET_MAX}")
-    estimated: list[str] = Field(default_factory=list, max_length=3)
+    estimated: list[str] = Field(default_factory=list, max_length=8)
 
 
 class Repair(BaseModel):

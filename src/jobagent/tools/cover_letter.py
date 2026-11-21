@@ -146,7 +146,8 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
     low = sources.lower()
     known_numbers = set(re.findall(r"\d+(?:\.\d+)?", sources))
     from jobagent.tools import number_claims as NC
-    source_figures = NC.metric_tokens(to_plain(sources))
+    resume_figures = NC.metric_tokens(to_plain(resume))                       # what the candidate did
+    context_figures = resume_figures | NC.metric_tokens(to_plain("\n".join([company_md, jd.model_dump_json()])))   # what the company and posting say
     issues = []
     for k, p in enumerate(letter.paragraphs, 1):
         if not re.search(r"(?i)\b(?:certifications?|certificates?|certified)\b", resume) and re.search(
@@ -158,9 +159,19 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
         for n in re.findall(r"\d+(?:\.\d+)?", p.text):
             if n not in known_numbers:
                 issues.append(f"paragraph {k}: the number {n!r} is not in the resume, posting or company profile")
-        for token, written in NC.metric_spans(p.text).items():       # a figure needs its own spelling in a source, not just the same digits
-            if token not in source_figures and NC.digits(token) in known_numbers:
-                issues.append(f"paragraph {k}: the figure {written!r} is not in the resume, posting or company profile")
+        for sentence in re.split(r"(?<=[.!?])\s+", p.text):          # a figure needs its own spelling in a source, not just the same digits
+            # A first-person RESULT ("I cut latency by 30%", "my team tripled...") is the candidate's claim and needs the resume; a figure about the
+            # company or posting ("Acme grew 30%", "I admire that") may cite the posting or the company profile.
+            mine = bool(re.search(r"(?i)\b(?:I|we)\s+(?:\w+ly\s+)?(?:[a-z]+ed|cut|built|led|ran|wrote|drove|grew|saved|sped|won|made|did|began|took|got)\b"
+                                  r"|\bmy\s+(?:\w+\s+){0,2}(?:work|team|role|project|contribution)s?\b", sentence))
+            for token, written in NC.metric_spans(sentence).items():
+                if token[0].isdigit() or token[0] == "$":
+                    if NC.digits(token) not in known_numbers:
+                        continue                                          # reported above as an unknown number
+                if token not in (resume_figures if mine else context_figures):
+                    issues.append(f"paragraph {k}: the figure {written!r} is not in "
+                                  + ("your resume (the posting and company profile do not establish your results)" if mine
+                                     else "the resume, posting or company profile"))
         for name in sorted((set(TOOLISH.findall(p.text)) | proper_nouns(p.text)) - _NOT_TOOLS):
             if name.lower() not in low:
                 issues.append(f"paragraph {k}: {name!r} is not in the resume, posting or company profile")
