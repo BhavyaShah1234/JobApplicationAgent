@@ -212,7 +212,7 @@ ACHIEVED_CUE = re.compile(r"(?i)\b(?:compl(?:y|ies|ied|iant|iance)|conform\w*|ce
                           r"satisf\w*|fulfil\w*|zero\s+violations|no\s+violations|0\s+violations)\b")
 # A claim or a card line that denies or postpones the standard is not an achievement ("not HIPAA compliant", "working toward SOC 2", "designed to meet WCAG").
 NEGATED = re.compile(r"(?i)\b(?:not|no|never|without|lack(?:s|ing)?|isn't|aren't|wasn't|doesn't|don't|non|yet\s+to|working\s+toward\w*|pursuing|preparing\s+for|planned|"
-                     r"aims?\s+to|aiming\s+to|ready\s+for|designed\s+to|intended\s+to|goal\s+of|toward)\b[^.;]{0,30}$")
+                     r"aims?\s+to|aiming\s+to|ready\s+for|designed\s+to|intended\s+to|goal\s+of|toward)\b[^;]{0,30}$")
 GENERIC_STANDARD_CLAIM = re.compile(r"(?i)\b(?:achiev\w*|attain\w*|reach\w*|meets?|met|exceed\w*|pass\w*|satisf\w*)\b[^.!?]{0,40}?"
                                     r"\b(?:standards?|compliance|conformance|certifications?|accreditations?)\b")
 
@@ -234,6 +234,13 @@ def _card_strings(card: dict) -> list[str]:
                 walk(v, key)
     walk(card or {})
     return out
+
+
+def _family(standard: str) -> str:
+    """The standard without its version or level: `WCAG 2.1 AA` -> wcag, `SOC 2` -> soc2, `ISO/IEC 27001` -> iso27001, `Section 508` -> section508."""
+    s = re.sub(r"(?i)/iec", "", standard.lower())
+    keep = re.match(r"(?i)(wcag|hipaa|soc\s*2|gdpr|ccpa|ferpa|pci|fedramp|iso[-\s]?\d{4,5}|section\s*508|owasp|nist)", s)
+    return re.sub(r"[^a-z0-9]", "", keep.group(1)) if keep else re.sub(r"[^a-z0-9]", "", s)
 
 
 def _levels(standard: str) -> tuple[list[str], str]:
@@ -264,12 +271,13 @@ def standard_outcome_claims(text: str, card: dict) -> list[str]:
     strings = _card_strings(card)
     out = []
     for sentence in re.split(r"(?<=[.!?])\s+", text):
-        for m in NAMED_STANDARD.finditer(sentence):
+        named = list(NAMED_STANDARD.finditer(sentence))
+        for m in named:
             near = sentence[max(0, m.start() - 60):m.end() + 60]
             cues = [c for c in ACHIEVED_CUE.finditer(near) if _affirms(near, c)]
             if not cues:
                 continue                                  # "audits against WCAG 2.1 AA", "supports HIPAA-aligned logging", "not yet SOC 2 certified": no achievement claimed
-            ident = re.sub(r"\W", "", m.group(1).lower())[:4]
+            ident = _family(m.group(1))
             want_versions, want_level = _levels(m.group(1))
 
             def supports(s: str, e: "re.Match") -> bool:
@@ -281,12 +289,11 @@ def standard_outcome_claims(text: str, card: dict) -> list[str]:
                 window = s[max(0, e.start() - 150):e.end() + 150]
                 return any(_affirms(window, c) for c in ACHIEVED_CUE.finditer(window))
             if not any(supports(s, e) for s in strings for e in NAMED_STANDARD.finditer(s)
-                       if re.sub(r"\W", "", e.group(1).lower())[:4] == ident):
+                       if _family(e.group(1)) == ident):
                 out.append(sentence.strip()[:160])
                 break
-        else:
-            if GENERIC_STANDARD_CLAIM.search(sentence) and not any(GENERIC_STANDARD_CLAIM.search(s) for s in strings):
-                out.append(sentence.strip()[:160])
+        if not named and GENERIC_STANDARD_CLAIM.search(sentence) and not any(GENERIC_STANDARD_CLAIM.search(s) for s in strings):
+            out.append(sentence.strip()[:160])                       # an unnamed standard ("meets industry standards"); a named one was judged above
     return out
 
 
