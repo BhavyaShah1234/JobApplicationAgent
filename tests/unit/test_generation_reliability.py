@@ -669,6 +669,38 @@ def test_late_policy_review_receives_role_bound_estimate_metadata(tmp_path, monk
     assert "estimated impact awaiting confirmation: ['20%']" in repair[1].content
 
 
+def test_late_policy_scoped_experience_and_summary_receive_estimate_metadata(tmp_path, monkeypatch):
+    from jobagent.tools import incremental_documents as I
+    from jobagent.tools.artifact_cache import ArtifactCache
+    ctx, value = review_world(tmp_path, monkeypatch)
+    ctx['cache'] = ArtifactCache(tmp_path / 'cache')
+    value.roles[0].bullets[0].estimated = ['20%']
+    seen = {}
+    def invoke(cache, stage, model_name, model, schema, messages, **kwargs):
+        seen[stage] = json.loads(messages[-1].content)
+        return schema.model_validate({'findings': []})
+    monkeypatch.setattr(I, 'invoke', invoke)
+    assert I.review(ctx, value) == []
+    for section in ('experience', 'summary'):
+        assert seen['review:' + section]['roles'][0]['draft_impact_estimates'] == [
+            {'bullet': 1, 'values': ['20%']}]
+
+
+def test_late_policy_estimate_only_change_invalidates_a_previous_review(tmp_path, monkeypatch):
+    ctx, value = review_world(tmp_path, monkeypatch)
+    calls = []
+    def review(context, current):
+        estimates = current.roles[0].bullets[0].estimated
+        calls.append(list(estimates))
+        return [] if estimates else [M.Finding(agent='experience', severity='error', issue='Metric lacks an estimate tag.')]
+    monkeypatch.setattr(M, 'content_review', review)
+    first = M._reviewed_content(ctx, value, {})
+    assert first['semantic_hard']
+    value.roles[0].bullets[0].estimated = ['20%']
+    second = M._reviewed_content(ctx, value, first)
+    assert calls == [[], ['20%']] and not second['semantic_hard']
+
+
 def _late_policy_summary_case(tmp_path, monkeypatch, claim, extra_roles=()):
     from jobagent.tools import incremental_documents as I
     from jobagent.tools.artifact_cache import ArtifactCache

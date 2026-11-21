@@ -660,7 +660,10 @@ def review(ctx, filled):
     projects = M._displayed_projects(json.loads(path.read_text()) if path.exists() else {})
     roles = [{'employer': ctx['r'].roles[e.role].company,
               'title': ctx['r'].roles[e.role].title, 'dates': ctx['r'].roles[e.role].dates,
-              'bullets': [b.text for b in e.bullets]} for e in filled.roles]
+              'bullets': [b.text for b in e.bullets],
+              'draft_impact_estimates': [{'bullet': k, 'values': b.estimated}
+                                         for k, b in enumerate(e.bullets, 1) if b.estimated]}
+             for e in filled.roles]
     skills = [(s.category, s.render()) for s in filled.skills]
     jd = ctx['jd'].model_dump(mode='json')
     cards = dict(ctx.get('cards') or {})

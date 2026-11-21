@@ -1033,7 +1033,7 @@ def _content_hash(ctx: dict, f: T.Filled) -> str:
     """Bind a semantic review to visible content, not an earlier layout pass."""
     path = ctx["job_dir"] / "projects.json"
     visible = _displayed_projects(json.loads(path.read_text()) if path.exists() else {})
-    value = {"summary": f.summary, "roles": [(e.role, [b.text for b in e.bullets]) for e in f.roles],
+    value = {"summary": f.summary, "roles": [(e.role, [(b.text, sorted(b.estimated)) for b in e.bullets]) for e in f.roles],
              "skills": [(s.category, s.render()) for s in f.skills if s.render()], "projects": visible}
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
