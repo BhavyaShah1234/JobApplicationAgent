@@ -87,6 +87,7 @@ def adjudicate(ctx, filled, findings):
         ValueError: A verdict changes the finding's section or borrows another repo.
     """
     from jobagent.steps import multi_agent as M
+    from jobagent.tools import metric_direction as MD
     from .incremental_documents import _bound_schema, _review_method, review_model
     errors = [finding for finding in findings if finding.severity == 'error']
     if not errors:
@@ -134,6 +135,7 @@ def adjudicate(ctx, filled, findings):
     inventories = [figure_inventory(f.issue, section_text[f.agent]) for f in errors]
     facts = {'summary_title_prefix_matches': M._title_prefix(filled.summary, ctx['jd'].title),
              'expected_title': ctx['jd'].title,
+             'metric_direction': [why for role in filled.roles for b in role.bullets for why in MD.contradictions(b.text)],
              'nonempty_skills': claims['skills'],
              'immutable_role_headers': {name: 'role:' + name.split(':')[1]
                                         for name in claims if name.startswith('role-header:')},
@@ -196,6 +198,9 @@ def adjudicate(ctx, filled, findings):
         'Role titles are not exclusive job-family taxonomies: technical research can include software/data '
         'engineering, and platform/integrations work can include APIs. A different emphasis is not a '
         'contradiction. Require an actual conflict with supplied facts before confirming an attribution error. '
+        'A generated bullet that presents a worse metric as its achievement (increasing latency, response time, error rate, downtime or cost; '
+        'reducing throughput, uptime or reliability) is a genuine correctness error: the owner policy permits estimates, never a wrong-direction '
+        'result, and a closing period does not change that. code_verified.metric_direction lists such wording found in code. '
         'A broad accurate skills heading is allowed. Apply the owner policy for duties, impact estimates and '
         'overall/domain tenure. Do not demand extra proof that policy explicitly waives; protected identities, '
         'dates and credentials still require their real sources. Posting or company facts do not establish '

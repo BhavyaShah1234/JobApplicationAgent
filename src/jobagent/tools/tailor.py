@@ -413,7 +413,10 @@ WORK_DRAFT_POLICY = (
     "historical verification or submission approval. It does not permit inventing employers, job titles, dates "
     "or credentials, or moving another employer's accomplishments. This permission does not establish numerical "
     "repository results: Projects still require their own repository sources. Cover letters must reuse the "
-    "final resume's claims and metrics rather than invent new ones.")
+    "final resume's claims and metrics rather than invent new ones. Permission to estimate never allows a metric "
+    "to move the wrong way: lower latency, response time, error rate, downtime or cost, and higher throughput, "
+    "uptime, availability, reliability or accuracy are the benefits; \"increasing response time\" or \"reducing "
+    "throughput\" as an achievement is an error unless the bullet openly describes a trade-off, a test or a regression.")
 
 
 FILL_PROMPT = """You write the Experience bullets and the Technical Skills of a resume for one job posting.
@@ -454,7 +457,8 @@ Experience bullets:
 - Metrics: quantify results with believable, conservative numbers in units that fit the duty (e.g. downtime
   -18%, OEE +7 pts, cycle time -12%, changeover 45 -> 20 min, first-pass yield +4%, MTTR -25%, defect escapes -30%,
   15 technicians trained, 6 stations commissioned). Keep them modest and internally consistent; round numbers are
-  fine. List every number you estimated in the bullet's `estimated` field (the candidate confirms them). Numbers
+  fine. Check each metric's direction: lower latency/response time/error rate/downtime/cost and higher throughput/
+  uptime/reliability/accuracy are the benefits ("cutting response time by 28%", never "increasing response time by 28%"). List every number you estimated in the bullet's `estimated` field (the candidate confirms them). Numbers
   copied from an original bullet are not estimates. Every bullet carries one metric (two at most).
 - Never repeat yourself across roles: no two bullets may share an opening phrase or say the same thing. If a
   duty appears under two roles, the second bullet must use different wording, a different angle and a different
@@ -959,6 +963,9 @@ def moved_from(r: Resume, role: int, text: str) -> int | None:
     return None
 
 
+from jobagent.tools import metric_direction as MD
+
+
 def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
     """Bullets the user would reject: academic/unpaid wording, no technology named, no result stated."""
     tech = {t.lower() for t in jd.technical_skills}
@@ -985,6 +992,10 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
                            "Preserve a complete thought; do not just trim words or append punctuation to a fragment")
             if DASH.search(b.text):
                 out.append(f"{where} uses a dash as punctuation; rewrite with a comma, semicolon or colon")
+            if not is_verbatim(r, e.role, b):    # a verbatim template original is the owner's own recorded result: never judged or flipped here
+                for why in MD.contradictions(b.text):
+                    out.append(f"{where} has a metric-direction contradiction: {why}. Rewrite the bullet so the result moves the right way "
+                               "(an estimate is not an excuse); do not just swap one word")
             if e.role < len(r.roles) and (other := moved_from(r, e.role, b.text)) is not None:
                 out.append(f"{where} is the candidate's bullet from {r.roles[other].company}, not from "
                            f"{r.roles[e.role].company}: replace it with a new bullet for this role")
@@ -1026,7 +1037,8 @@ class Repair(BaseModel):
 _REPAIR_TEMPLATE = f"""You fix specific bullets of a tailored resume. {{coverage_rule}} Each rewritten bullet must
 name concrete technologies, state a result (a believable estimated metric is fine;
 list it in `estimated`), stay within the length budget (about {BULLET_TARGET} characters, at most {BULLET_MAX}), not repeat any other bullet, use no academic wording and no
-dashes as punctuation, and describe work done at THAT role's employer (never another employer's work). A change by
+dashes as punctuation, make every metric move the beneficial way (cut latency, response time, error rate, downtime or
+cost; raise throughput, uptime, reliability or accuracy; never present a worse metric as the achievement), and describe work done at THAT role's employer (never another employer's work). A change by
 a percentage takes "by". Finish each rewritten bullet as a complete sentence with a period INSIDE the budget.
 Rewrite the whole sentence concisely rather than cutting off a phrase or adding punctuation to a fragment."""
 REPAIR_PROMPT = _REPAIR_TEMPLATE.format(coverage_rule=(

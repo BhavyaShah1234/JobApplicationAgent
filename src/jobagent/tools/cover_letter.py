@@ -126,6 +126,8 @@ The letter must match the resume exactly in substance:
   separate sentences.
 - A change by a percentage takes "by": "cutting failed refreshes by 45%" (the resume may have been written either
   way; always write it with "by").
+- Never reverse a metric's direction from the resume: if the resume cuts latency, the letter never raises it, and a
+  worse metric (higher latency, response time, error rate, downtime; lower throughput, uptime) is never a benefit.
 - `evidence`: for each paragraph, the short resume lines / company facts it relies on."""
 
 
@@ -145,7 +147,7 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
     sources = "\n".join([resume, company_md, jd.model_dump_json()])
     low = sources.lower()
     known_numbers = set(re.findall(r"\d+(?:\.\d+)?", sources))
-    from jobagent.tools import number_claims as NC
+    from jobagent.tools import number_claims as NC, metric_direction as MD
     resume_figures = NC.metric_tokens(to_plain(resume))                       # what the candidate did
     context_figures = resume_figures | NC.metric_tokens(to_plain("\n".join([company_md, jd.model_dump_json()])))   # what the company and posting say
     issues = []
@@ -177,6 +179,8 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
         for name in sorted((set(TOOLISH.findall(p.text)) | proper_nouns(p.text)) - _NOT_TOOLS):
             if name.lower() not in low:
                 issues.append(f"paragraph {k}: {name!r} is not in the resume, posting or company profile")
+        for why in MD.contradictions(p.text) + MD.inversions(p.text, to_plain(resume)):
+            issues.append(f"paragraph {k}: metric-direction contradiction: {why}")
         if dashes := len(DASH.findall(p.text)):
             issues.append(f"paragraph {k}: {dashes} dash(es) used as punctuation; rewrite with commas, semicolons, "
                           "colons or separate sentences")

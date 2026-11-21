@@ -329,6 +329,8 @@ The opening job title is a TARGET headline, not employment at that company. Appl
 work duties, impact estimates and overall/domain tenure within the declared ceiling do not need extra dated
 proof. Locked Education establishes the listed degrees; never infer missing education because it is outside
 Experience. Employer identities, titles, dates, credentials and repository implementation features remain protected.
+A bullet that presents a worse metric as its achievement (increasing latency, response time, error rate, downtime or cost; reducing throughput,
+uptime or reliability) is an error unless it openly describes a trade-off, a test or a regression; estimate permission does not excuse it.
 Return an empty list if the resume is sound."""
 REVIEW_PROMPT += "\nFor the Projects section: " + P.SOURCE_POLICY
 REVIEW_PROMPT += ("\nOwner-template role titles, employers and dates are immutable inputs. "
