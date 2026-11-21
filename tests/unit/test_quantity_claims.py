@@ -74,3 +74,14 @@ def test_a_letter_spelling_a_source_count_differently_is_not_an_unknown_number()
     assert CL.consistency(letter, resume, JobDescription(title="Engineer", company="Example"), "", source_bank=bank) == []
     bad = CL.Letter(salutation="Dear Hiring Team,", closing="Sincerely", paragraphs=paras[:1] + [CL.Paragraph(text="At Atlas Systems LLC, I built 15 REST endpoints with FastAPI.", evidence=[])] + paras[2:])
     assert CL.consistency(bad, resume, JobDescription(title="Engineer", company="Example"), "", source_bank=bank)
+
+
+@pytest.mark.parametrize("text", ["Built dashboards in Python 3.11.", "Met WCAG 2.1 requirements with React.", "Targeted Java 17 services.", "Moved to version 2 services.",
+                                  "Worked on dashboards."])
+def test_the_spelled_count_fallback_keeps_versions_and_standards_negative(text):
+    assert T.has_result(text) is False, text
+
+
+def test_a_spelled_count_is_a_result_but_a_bare_counted_noun_is_not():
+    assert T.has_result("Owned twelve REST endpoints using FastAPI.") and T.has_result("Served five million events per day using Kafka.")
+    assert T.has_result("Wrote the endpoints using FastAPI.") is False

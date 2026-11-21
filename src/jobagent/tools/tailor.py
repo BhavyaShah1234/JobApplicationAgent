@@ -957,8 +957,14 @@ def metric_mix(f: "Filled") -> dict[str, int]:
 
 
 def has_result(text: str) -> bool:
-    """A bullet states a result: a measured quantity or relative change (versions and standards do not count) or a precise outcome verb."""
-    return bool(RESULT.search(VERSION_NUMBER.sub(" ", text)))
+    """A bullet states a result: a measured quantity or relative change (versions and standards do not count) or a precise outcome verb.
+
+    A quantity written in words ("twelve REST endpoints", "five million events per day") is a result like its digit spelling; it is recognised by the
+    shared quantity parser on the version-stripped text, so a version or standard label never turns into a measurement.
+    """
+    from jobagent.tools import number_claims as NC
+    plain = VERSION_NUMBER.sub(" ", text)
+    return bool(RESULT.search(plain)) or bool(NC.metric_spans(plain))
 COMPLETE_BULLET = re.compile(r'''[.!?]["'\u201d\u2019)\]]*\s*$''')
 TOOLISH = re.compile(r"\b(?:[A-Z][a-z]*[A-Z][A-Za-z0-9]*|[A-Z]{2,}[A-Za-z0-9]*)\b")  # ACT, CLIP, LoRA, PySpark, MuJoCo
 
