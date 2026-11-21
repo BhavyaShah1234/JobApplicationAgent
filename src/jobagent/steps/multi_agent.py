@@ -621,6 +621,7 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
                         ctx["log"](f"  projects: {sw.entry.repo}: dropped from the stack, not shown by its own card: {dropped}")
                     st["ranked"][sw.project - 1] = entry
                     st["cards"][repo] = {"url": cands[repo]["url"], "full_name": cands[repo]["full_name"]}
+                    st.setdefault("evidence", {})[repo] = P.evidence_snapshot(cands[repo])
                     st["years"][sw.entry.repo] = P.month_year(cands[repo].get("pushed_at", ""))
                     ctx["log"](f"  projects: swapped in {sw.entry.repo}")
             new = json.dumps(st, indent=1)
@@ -632,7 +633,6 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
                     e['title'] = known[e['repo'].lower()][0]
                 if len(e["paragraph"]) > P.MAX_PARAGRAPH:
                     e["paragraph"] = P._sentences(e["paragraph"], P.MAX_PARAGRAPH - 10)
-            _recover_scope(ctx, st)
             proj.write_text(json.dumps(st, indent=1))
     return g
 
@@ -845,7 +845,7 @@ def check_layout(state: State) -> dict:
     proj_path = job_dir / "projects.json"
     st = json.loads(proj_path.read_text()) if proj_path.exists() else None
     if st:
-        tasks["projects"] += P.content_findings(st, _cards_for(ctx))
+        tasks["projects"] += P.content_findings(st, _cards_for(ctx, st))
     if lay:
         for issue in lay.issues:
             if issue.startswith("Technical Skills") and "fills only" in issue:
@@ -976,29 +976,60 @@ def _title_prefix(summary: str, title: str) -> bool:
 SCOPE_REPAIRS = 2          # model repairs of one unsupported restriction before the card's own sentences replace the text
 
 
-def _recover_scope(ctx: dict, st: dict) -> None:
-    """After a project repair came back still claiming a restriction its card does not state, count the failed attempt;
-    after SCOPE_REPAIRS of them replace that description with the card's own complete sentences (`P.recover_scope`).
+_SCOPE_TASK = "claims a restriction that its own card does not state"
+
+
+def _recover_scope(ctx: dict, st: dict, stalled: frozenset = frozenset()) -> None:
+    """After a project repair round left a description still claiming a restriction its card does not state, count the failed attempt;
+    after SCOPE_REPAIRS of them (at once for a repo whose repair returned nothing usable or changed nothing) replace that description with the
+    card's own complete sentences (`P.recover_scope`).
 
     Args:
         ctx: Document context (holds the per-repo failure counts).
         st: The projects.json state after the repair; entries are changed in place.
+        stalled: Repos (lower case) whose repair this round was unavailable, malformed or unchanged: another attempt would not differ.
     """
-    cards, failed = _cards_for(ctx), ctx.setdefault("scope_failures", {})
+    cards, failed = _cards_for(ctx, st), ctx.setdefault("scope_failures", {})
     for e in st["ranked"][:st["kept"]]:
         card = cards.get((e.get("repo") or "").casefold())
         if not card or not (P.scope_claims(e.get("paragraph", ""), card) or P.scope_claims(e.get("short", ""), card)):
             continue
         failed[e["repo"]] = failed.get(e["repo"], 0) + 1
-        if failed[e["repo"]] >= SCOPE_REPAIRS:
+        if failed[e["repo"]] >= SCOPE_REPAIRS or e["repo"].casefold() in stalled:
             fixed = P.recover_scope(e, card)
-            ctx["log"](f"  projects: {e['repo']}: unsupported restriction persisted after {failed[e['repo']]} repairs; "
+            ctx["log"](f"  projects: {e['repo']}: unsupported restriction persisted after {failed[e['repo']]} repair(s); "
                        + (f"{fixed} replaced by the card's own sentences" if fixed else "no faithful card sentences fit; finding stays"))
 
 
-def _cards_for(ctx: dict) -> dict:
-    """Saved repository cards by lower-case full name: the chosen ones plus every candidate the project writer saw."""
-    cards = dict(ctx.get("cards") or {})
+def _scope_round(ctx: dict, tasks: dict, before: str | None) -> None:
+    """Count one project-repair round against the saved projects.json, whatever the repair returned (a changed text, the same text, or nothing).
+
+    Runs only when this round asked the projects agent to fix an unsupported restriction. A description that is exactly what it was before the
+    round, or whose repair failed, goes to recovery without waiting for a second identical failure (the incremental loop stops at the first round
+    that changes nothing, so waiting would never get there).
+
+    Args:
+        ctx: Document context.
+        tasks: This round's tasks by agent.
+        before: projects.json text before the round.
+    """
+    if not any(_SCOPE_TASK in t for t in tasks.get("projects", [])):
+        return
+    path = ctx["job_dir"] / "projects.json"
+    if not path.exists() or before is None:
+        return
+    old, st = json.loads(before), json.loads(path.read_text())
+    same = {e["repo"].casefold() for e, o in zip(st["ranked"], old["ranked"])
+            if (e.get("paragraph"), e.get("short")) == (o.get("paragraph"), o.get("short"))}
+    _recover_scope(ctx, st, frozenset(same))
+    path.write_text(json.dumps(st, indent=1))
+
+
+def _cards_for(ctx: dict, st: dict | None = None) -> dict:
+    """Saved repository cards by lower-case full name: the job's own saved evidence (`projects.json`), then the chosen ones plus every candidate
+    the project writer saw in this run (those win: they are the evidence the text was just written from)."""
+    cards = P.saved_evidence(st) if st else {}
+    cards.update(ctx.get("cards") or {})
     cards.update({c["full_name"].casefold(): c for _, c in ctx.get("candidates", []) if c.get("full_name")})
     return cards
 
@@ -1012,7 +1043,8 @@ def hard_issues(ctx: dict, f: T.Filled) -> list[str]:
     proj = ctx["job_dir"] / "projects.json"
     if proj.exists():  # a short form only adds an extra project: at least 2 (or all available) must be in full
         st = json.loads(proj.read_text())
-        out += P.content_findings(st, _cards_for(ctx))
+        cards = _cards_for(ctx, st)
+        out += P.content_findings(st, cards) + P.missing_evidence(st, cards)       # a project without its own card is a blocker, never an unchecked pass
         full, want = st["kept"] - len(st["short"]), min(2, len(st["ranked"]))
         if full < want:
             out.append(f"only {full} project(s) in full (short forms: {st['short']}); shorten the Summary or skills "
@@ -1140,6 +1172,8 @@ def edit_sections(state: State) -> dict:
     """The agents with tasks edit their sections in parallel (projects.json is backed up for a rollback)."""
     ctx, f, tasks = state["ctx"], state["f"], state["tasks"]
     ctx["log"]("editing: " + ", ".join(f"{a} ({len(t)})" for a, t in tasks.items()))
+    proj_path = ctx["job_dir"] / "projects.json"
+    proj_before = proj_path.read_text() if proj_path.exists() else None
     progress(ctx["log"], "documents", "running", "Fixing findings", detail=", ".join(f"{a} ({len(t)})" for a, t in tasks.items()))
     if ctx.get('incremental'):
         before=_content_hash(ctx,f)
@@ -1148,6 +1182,7 @@ def edit_sections(state: State) -> dict:
         with ThreadPoolExecutor(len(other) or 1) as ex:
             outs = dict(ex.map(with_context(lambda a: _run_agent(ctx, a, f, other[a], state.get('last', ''))), other))
         updated = _merge(ctx, f, outs)
+        _scope_round(ctx, tasks, proj_before)
         updated = ensure_incremental_coverage(ctx,updated)
         summary_tasks = list(tasks.get('summary', []))
         if before!=_content_hash(ctx,updated):
@@ -1163,7 +1198,9 @@ def edit_sections(state: State) -> dict:
         return result
     with ThreadPoolExecutor(len(tasks) or 1) as ex:
         outs = dict(ex.map(with_context(lambda a: _run_agent(ctx, a, f, tasks[a], state.get("last", ""))), list(tasks)))
-    return {"f": _merge(ctx, f, outs), "tasks": {}}
+    merged = _merge(ctx, f, outs)
+    _scope_round(ctx, tasks, proj_before)
+    return {"f": merged, "tasks": {}}
 
 
 def _snapshot(ctx: dict, f: T.Filled, hard: list, reviewed: dict | None = None, ev: dict | None = None) -> dict:

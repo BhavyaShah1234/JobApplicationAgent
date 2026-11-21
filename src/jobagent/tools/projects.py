@@ -340,30 +340,54 @@ _SCOPE_ALIAS = {"docs": "documentation", "doc": "documentation", "internet": "we
 
 
 def _scope_words(text: str) -> list[str]:
-    """Content words of a phrase, lower case, light plural/-ing/-ed stemming, a few common abbreviations unified."""
+    """Content words of a phrase, lower case; a few common abbreviations unified. Inflections are compared by `_same_word`, never cut here."""
     words = []
     for w in re.findall(r"[a-z0-9][a-z0-9+#.-]*", text.lower()):
         w = _SCOPE_ALIAS.get(w.strip(".-"), w.strip(".-"))
-        if not w or w in _SCOPE_STOP:
-            continue
-        for suffix in ("ing", "ed", "es", "s"):
-            if len(w) > len(suffix) + 3 and w.endswith(suffix):
-                w = w[:-len(suffix)]
-                break
-        words.append(w)
+        if w and w not in _SCOPE_STOP:
+            words.append(w)
     return words
 
 
+_INFLECTIONS = ("ations", "ation", "ings", "ing", "ies", "es", "ed", "s")
+
+
+def _forms(word: str) -> set[str]:
+    """The word and the stems its regular inflections could come from (reports/report, stored/store, documentation/document)."""
+    forms = {word}
+    for suffix in _INFLECTIONS:
+        if len(word) > len(suffix) + 2 and word.endswith(suffix):
+            stem = word[:-len(suffix)]
+            forms |= {stem, stem + "e"} | ({stem + "y"} if suffix == "ies" else set())
+    return forms
+
+
 def _same_word(a: str, b: str) -> bool:
-    """Equal after stemming, or sharing a 5-letter stem (document/documentation)."""
-    return a == b or (min(len(a), len(b)) >= 5 and a[:5] == b[:5])
+    """The same word up to regular inflection. Words that merely begin alike (private, privacy-safe) are different concepts."""
+    return bool(_forms(a) & _forms(b))
 
 
-def _restrictions(sentence: str) -> list[tuple[str, list[str], list[str]]]:
-    """Affirmed restrictions in a sentence: (printed phrase, words the restriction covers after the marker, words before a trailing marker).
+_PREPOSITION = re.compile(r"(?i)\b(?:from|using|with|in|on|via|by|to|for|through|within|at|into|across|over|about|during|when|while)\b")
+_SPLIT_ITEMS = re.compile(r"(?i)\s*(?:/|\band\b|\bor\b|\bplus\b|&)\s*")
 
-    "not only X", "the only X" and "only three X" are not restrictions. A trailing marker ("... official documentation only") covers the words just
-    before it, back to the last preposition or clause break.
+
+def _items(phrase: str) -> list[list[str]]:
+    """The separately restricted things in a phrase ("public reports and private datasets" is two), each cut at its first preposition so that
+    "local models for inference" restricts the models, not their purpose."""
+    items = []
+    for part in _SPLIT_ITEMS.split(phrase):
+        part = re.sub(r"(?i)^\W*(?:(?:from|using|with|in|on|via|by|to|through|within)\s+)+", "", part)
+        part = _PREPOSITION.split(part, maxsplit=1)[0]
+        if words := _scope_words(part)[:6]:
+            items.append(words)
+    return items
+
+
+def _restrictions(sentence: str) -> list[tuple[str, list[list[str]]]]:
+    """Affirmed restrictions in a sentence: (printed phrase, the separately restricted word groups).
+
+    "not only X", "the only X" and "only three X" are not restrictions. A marker followed by words restricts those words; a trailing marker
+    ("... official documentation only") restricts the words just before it, back to the last preposition or clause break.
     """
     out = []
     for m in _RESTRICTION.finditer(sentence):
@@ -375,17 +399,24 @@ def _restrictions(sentence: str) -> list[tuple[str, list[str], list[str]]]:
         lo, hi = max(0, m.start() - 40), m.end() + 60
         shown = sentence[lo:hi].strip()
         shown = shown.split(' ', 1)[1] if lo and ' ' in shown else shown       # no half word at either end
-        out.append((shown.rsplit(' ', 1)[0] if hi < len(sentence) and ' ' in shown else shown, _scope_words(after)[:6], _scope_words(before)[-4:]))
+        groups = _items(after) or _items(before)
+        out.append((shown.rsplit(' ', 1)[0] if hi < len(sentence) and ' ' in shown else shown, groups))
     return out
+
+
+def _covers(known: list[str], wanted: list[str]) -> bool:
+    """Every word of the generated group appears, up to inflection, in ONE restricted group of the card (modifiers are not borrowed across items)."""
+    return all(any(_same_word(w, c) for c in known) for w in wanted)
 
 
 def scope_claims(text: str, card: dict) -> list[str]:
     """Generated restrictions (only/solely/exclusively) that the project's OWN card does not state.
 
     A restriction is supported when one card value states a restriction over the same content words, in either position ("only from official
-    documentation", "official documentation only"). Documented fallbacks or alternatives, a named primary corpus and "not only X but Y" never support
-    an exclusivity claim. Faithful rewording of a card's restriction (plurals, "docs" for "documentation") still matches. Ordinary qualitative
-    benefits, numbers and sentences with no restriction word are not touched.
+    documentation", "official documentation only"), and each restricted item of the claim lies within one restricted item of the card. Documented
+    fallbacks or alternatives, a named primary corpus and "not only X but Y" never support an exclusivity claim. Faithful rewording of a card's
+    restriction (plurals, -ing/-ed forms, "docs" for "documentation") still matches. Ordinary qualitative benefits, numbers and sentences with no
+    restriction word are not touched.
 
     Args:
         text: The displayed paragraph.
@@ -394,17 +425,22 @@ def scope_claims(text: str, card: dict) -> list[str]:
     Returns:
         The unsupported phrases, in reading order.
     """
-    supported = []
-    for s in _card_strings(card):
-        for _, after, before in _restrictions(s):
-            supported.append(after[:10] + before)          # the card's own restricted words, either position
+    supported = [group for s in _card_strings(card) for _, groups in _restrictions(s) for group in groups]
     claims = []
     for sentence in re.split(r"(?<=[.!?])\s+", text):
-        for phrase, after, before in _restrictions(sentence):
-            wanted = after or before
-            if wanted and not any(all(any(_same_word(w, c) for c in known) for w in wanted) for known in supported):
+        for phrase, groups in _restrictions(sentence):
+            if groups and not all(any(_covers(known, wanted) for known in supported) for wanted in groups):
                 claims.append(phrase)
     return claims
+
+
+def _single_quotes_balanced(sentence: str) -> bool:
+    """Every opening single quote has a closing one. An apostrophe inside a word ("company's", "don't") or ending a plural possessive
+    ("customers' data") is not a quote, so a normal possessive no longer makes a complete sentence look unfinished."""
+    text = re.sub(r"(?<=\w)'(?=\w)", "", sentence)
+    opens = len(re.findall(r"(?:^|[\s(\[\u201c\"])'(?=\w)", text))
+    closes = len(re.findall(r"(?<=[\w.,!?)])'(?!\w)", text))
+    return closes >= opens
 
 
 def faithful_description(card: dict, limit: int, floor: int) -> str | None:
@@ -428,7 +464,7 @@ def faithful_description(card: dict, limit: int, floor: int) -> str | None:
         text = " ".join(chosen + [sentence])
         if (len(sentence) < 30 or len(text) > limit or DASH.search(sentence) or not re.search(r'[.!?]["\')\]]*$', sentence)
                 or re.search(r"(?i)\b(?:e\.g|i\.e|etc|vs|approx)\.$", sentence)
-                or sentence.count("(") != sentence.count(")") or sentence.count('"') % 2 or sentence.count("'") % 2
+                or sentence.count("(") != sentence.count(")") or sentence.count('"') % 2 or not _single_quotes_balanced(sentence)
                 or sentence.lower().startswith("the readme")
                 or standard_outcome_claims(sentence, card) or scope_claims(sentence, card)):
             continue
@@ -683,9 +719,58 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
 def save_state(job_dir: Path, ranked: list[ProjectEntry], chosen: "Chosen") -> None:
     """All ranked projects (best first) and how many / which in short form made it onto the page."""
     cards = {c["full_name"].lower(): {"url": c["url"], "full_name": c["full_name"]} for _, c in chosen.candidates}
+    by_name = {c["full_name"].lower(): c for _, c in chosen.candidates}
     (job_dir / "projects.json").write_text(json.dumps({
         "ranked": [e.model_dump() for e in ranked], "kept": len(chosen.entries), "short": sorted(chosen.short),
-        "years": chosen.years, "macro": chosen.macro, "cards": cards}, indent=1))
+        "years": chosen.years, "macro": chosen.macro, "cards": cards,
+        "evidence": {e.repo.lower(): evidence_snapshot(by_name[e.repo.lower()]) for e in ranked if e.repo.lower() in by_name}}, indent=1))
+
+
+def evidence_snapshot(card: dict) -> dict:
+    """The saved card as evidence for this one job: every text field, without the search vectors.
+
+    Stored in the job's `projects.json`, so the claims checks read the same evidence on every later refresh, whatever the shared card cache holds then.
+
+    Args:
+        card: A saved repository card.
+
+    Returns:
+        A copy that can be written to JSON and used by `content_findings`.
+    """
+    return {k: v for k, v in card.items() if k not in ("embedding", "vector", "embeddings")}
+
+
+def saved_evidence(state: dict) -> dict[str, dict]:
+    """The evidence cards stored in a job's `projects.json`, by lower-case full name.
+
+    A card counts only when it is a card of the repository it is stored under (its own `full_name`), so a copied or hand-edited entry cannot
+    stand in for another project.
+
+    Args:
+        state: `projects.json`.
+
+    Returns:
+        The usable cards (empty for a file saved before evidence snapshots).
+    """
+    stored = state.get("evidence") if isinstance(state, dict) else None
+    return {name.casefold(): card for name, card in (stored or {}).items()
+            if isinstance(card, dict) and str(card.get("full_name") or "").casefold() == name.casefold()}
+
+
+def missing_evidence(state: dict, cards: dict) -> list[str]:
+    """One finding per displayed project whose own card is unavailable, so its source checks cannot run (never read as "nothing wrong").
+
+    Args:
+        state: `projects.json`.
+        cards: The evidence cards that are available, by lower-case full name.
+
+    Returns:
+        The findings, in project order.
+    """
+    return [f"project {i} ({entry.get('repo')}) has no saved source evidence, so its claims cannot be checked against its own card; regenerate "
+            "this resume so the evidence is saved with it"
+            for i, entry in enumerate(state.get("ranked", [])[:state.get("kept", 0)], 1)
+            if (entry.get("repo") or "").casefold() not in cards]
 
 
 def layouts(n: int) -> list[tuple[int, int]]:

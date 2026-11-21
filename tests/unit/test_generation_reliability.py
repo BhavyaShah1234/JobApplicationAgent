@@ -366,7 +366,9 @@ def test_filled_two_project_page_does_not_demand_an_unnecessary_third_project(tm
         'Designed PostgreSQL indexes, cutting query costs by 25%.')])]
     entries = [{'repo': f'owner/repository-{i}', 'title': f'Readable Project {i}',
                 'paragraph': 'Built Python services. Delivered reliable systems.'} for i in range(4)]
-    (tmp_path / 'projects.json').write_text(json.dumps({'ranked': entries, 'kept': 2, 'short': []}))
+    (tmp_path / 'projects.json').write_text(json.dumps({
+        'ranked': entries, 'kept': 2, 'short': [],
+        'evidence': {e['repo']: {'full_name': e['repo'], 'summary': 'Built Python services. Delivered reliable systems.'} for e in entries}}))
     monkeypatch.setattr(M, 'render', lambda _: (f, '', [], 1, ''))
     monkeypatch.setattr(M.layout, 'check', lambda _: M.layout.Layout(pages=1, free_pt=free_pt))
     monkeypatch.setattr(M.layout, 'review', lambda *a, **kw: [])
