@@ -239,3 +239,8 @@ frontend/node_modules/
 # Archives made by scripts/agentctl backup (they hold your data and the encrypted vault)
 backups/
 *.before-restore-*/
+
+.vscode/
+.claude/
+CHAT.md
+CODE_REVIEW_FINDINGS.md
