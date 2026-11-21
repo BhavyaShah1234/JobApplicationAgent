@@ -358,11 +358,11 @@ def _tokens(text: str) -> list[str]:
 
 
 def card_terms(card: dict) -> list[str]:
-    """The technologies a card lists, one short term each (its grouped `tech_stack` lines are split on commas, `+` and semicolons)."""
+    """The technologies a card lists, preserving meaningful punctuation and splitting grouped names on commas, semicolons and spaced `+` or `/`."""
     out: list[str] = []
     for line in card.get("tech_stack") or []:
-        for part in re.split(r"[,;]|\s\+\s", re.sub(r"\([^)]*\)", " ", str(line))):
-            term = re.sub(r"\s+", " ", part).strip(" .")
+        for part in re.split(r"[,;]|\s[/+]\s", re.sub(r"\([^)]*\)", " ", str(line))):
+            term = re.sub(r"\s+", " ", part).strip().rstrip(".")
             if 0 < len(term) <= 28 and re.search(r"[A-Za-z0-9]", term) and term.lower() not in {t.lower() for t in out}:      # "R", "C" and "Go" are languages
                 out.append(term)
     return out
