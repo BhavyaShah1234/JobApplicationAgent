@@ -222,6 +222,7 @@ def _card_strings(card: dict) -> list[str]:
     out: list[str] = []
 
     def walk(value, key=""):
+        """Collect the strings under one card value (recursing into lists and dicts), skipping embeddings."""
         if key in ("embedding", "vector", "embeddings"):
             return
         if isinstance(value, str):
@@ -281,6 +282,7 @@ def standard_outcome_claims(text: str, card: dict) -> list[str]:
             want_versions, want_level = _levels(m.group(1))
 
             def supports(s: str, e: "re.Match") -> bool:
+                """This card occurrence of the standard affirms it, with the same version and level when both give one."""
                 versions, level = _levels(e.group(1))
                 if want_versions and versions and want_versions != versions:
                     return False                          # the card shows another version (2.1) than the claim (2.2)
