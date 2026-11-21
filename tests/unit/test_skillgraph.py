@@ -395,3 +395,58 @@ def test_the_allocation_step_keeps_the_lines_that_fit_and_drops_only_the_one_tha
     assert record["kept"] and record["added"] == [{"skill": "Redis", "line": "Databases"}] and any(o["skill"] == "Terraform" for o in record["omitted"])
     assert len(seen) <= 4                                                           # bounded: one all-at-once render, one per line, one to restore the kept state
     assert not (tmp_path / "skill_suggestions.json").exists()                       # the input fingerprint file is untouched
+
+
+def _alloc_state(tmp_path, monkeypatch, render):
+    from jobagent.steps import multi_agent as M
+    from jobagent.tools.tailor import Filled, SkillLine
+    f = Filled.model_construct(summary="s", roles=[], skills=[SkillLine(category="Databases", terms=["Relational databases"])], notes="")
+    lay = SimpleNamespace(skill_fill={"Databases": 0.2}, short_skills=["Databases"], issues=[], free_pt=0.0)
+    monkeypatch.setattr(M.SG, "load", lambda *a, **k: _typed_graph())
+    monkeypatch.setattr(M.SG, "place_skills", lambda *a, **k: ([("Databases", "Redis")], []))
+    monkeypatch.setattr(M.layout, "check", lambda path: SimpleNamespace(issues=[], free_pt=0.0, skill_fill=lay.skill_fill, short_skills=lay.short_skills))
+    monkeypatch.setattr(M, "render", render)
+    (tmp_path / "resume.pdf").write_bytes(b"original")
+    state = {"ctx": {"job_dir": tmp_path, "log": lambda *a, **k: None, "graph": {"owned": [item("Redis")]}, "r": SimpleNamespace(skills=[])}, "f": f}
+    return M, f, lay, state
+
+
+def test_a_programmer_error_during_a_trial_restores_the_files_and_is_raised(tmp_path, monkeypatch):
+    import pytest
+
+    def render(state):
+        (tmp_path / "resume.pdf").write_bytes(b"half written")
+        raise RuntimeError("source bug")
+    M, f, lay, state = _alloc_state(tmp_path, monkeypatch, render)
+    with pytest.raises(RuntimeError, match="source bug"):
+        M._allocate_graph_skills(state, f, "tex", [], 1, "", lay, 1)
+    assert (tmp_path / "resume.pdf").read_bytes() == b"original"
+
+
+def test_an_unreadable_graph_is_optional_and_reported_but_nothing_else_is(tmp_path, monkeypatch):
+    M, f, lay, state = _alloc_state(tmp_path, monkeypatch, lambda s: (s["f"], "tex", [], 1, ""))
+
+    def broken(*a, **k):
+        raise ValueError("bad graph file")
+    monkeypatch.setattr(M.SG, "load", broken)
+    out = M._allocate_graph_skills(state, f, "tex", [], 1, "", lay, 1)
+    assert out[0] is f and "graph unavailable" in json.loads((tmp_path / "skill_allocation.json").read_text())["omitted"][0]["reason"]
+
+
+def test_the_allocation_record_accumulates_names_the_pdf_and_keeps_earlier_additions(tmp_path, monkeypatch):
+    import hashlib
+    M, f, lay, state = _alloc_state(tmp_path, monkeypatch, lambda s: (s["f"], "tex", [], 1, ""))
+    out = M._allocate_graph_skills(state, f, "tex", [], 1, "", lay, 1)
+    assert [x["skill"] for x in json.loads((tmp_path / "skill_allocation.json").read_text())["added"]] == ["Redis"]
+    monkeypatch.setattr(M.SG, "place_skills", lambda *a, **k: ([], [{"skill": "SQL", "reason": "no room"}]))
+    M._allocate_graph_skills({**state, "f": out[0]}, out[0], "tex", [], 1, "", lay, 2)               # a later attempt that adds nothing
+    rec = json.loads((tmp_path / "skill_allocation.json").read_text())
+    assert [x["skill"] for x in rec["added"]] == ["Redis"] and len(rec["attempts"]) == 2 and rec["omitted"][0]["skill"] == "SQL"
+    assert rec["resume_sha256"] == hashlib.sha256((tmp_path / "resume.pdf").read_bytes()).hexdigest()
+
+
+def test_the_allocation_record_is_part_of_the_accepted_version_bundle():
+    from jobagent.steps import multi_agent as M
+    files = M._version_files({"tex": "t", "pdf": b"p", "projects": None, "layout_meta": None, "allocation": '{"added": []}', "f": None})
+    assert files["skill_allocation.json"] == '{"added": []}'
+    assert M._version_files({"tex": "t", "pdf": b"p", "allocation": None, "f": None})["skill_allocation.json"] is None    # no record in that version: no such file

@@ -32,12 +32,25 @@ WORD_PERCENT = re.compile(rf"(?i)\b((?:{'|'.join(_TENS)})(?:[- ](?:{'|'.join(_ON
 _COUNTED = ("endpoints?|services?|microservices?|users?|customers?|clients?|records?|events?|requests?|queries|transactions?|tests?|test cases?|pipelines?|dashboards?|"
             "models?|engineers?|developers?|technicians?|teams?|repositories|repos?|jobs?|tickets?|datasets?|stations?|systems?|applications?|apps?|integrations?|workflows?|"
             "APIs?|sensors?|devices?|machines?|documents?|images?|files?|rows|messages|alerts?|incidents?|releases?|features?|modules?|components?|environments?|clusters?|"
-            "nodes?|containers?|seconds?|minutes?|hours?|days?|weeks?|GB|TB|MB|PB")
+            "nodes?|containers?|seconds?|minutes?|hours?|days?|weeks?|GB|TB|MB|PB|secs?|mins?|hrs?|s|h")
 _SIZE_OR_TIME = re.compile(r"(?i)^(?:seconds?|minutes?|hours?|days?|weeks?|GB|TB|MB|PB)$")
 _VERSIONED_BEFORE = re.compile(r"(?i)(?:version|v|python|java|node|react|angular|vue|spring|django|ios|android|ubuntu|windows|iso|iec|wcag|soc|section|rfc|top|tls|http|ipv)\s*$")
 QUANTITY = re.compile(
     rf"(?<![\w.$])({_NUM}\s?[kKmMbB]?\+?(?:\s(?:hundred|thousand|million))?|(?:{'|'.join(sorted(set(_ONES[1:] + _TENS), key=len, reverse=True))})(?:[- ](?:{'|'.join(_ONES[:9])}))?(?:\s(?:hundred|thousand|million))?)"
-    rf"\s+(?:(?!(?:{_COUNTED})\b)[A-Za-z][\w/-]*\s+){{0,2}}((?:{_COUNTED})\b(?:\s+(?:{_COUNTED})\b)*)", re.I)
+    rf"\s+(?:(?!(?:{_COUNTED})\b)[A-Za-z][\w/-]*\s+){{0,2}}((?:{_COUNTED})\b(?:\s+(?:{_COUNTED})\b)*)"
+    rf"(?:(?:\s*/\s*|\s+per\s+|\s+(?:a|an|each)\s+)(day|hour|minute|second|week|month|sprint|release)s?\b)?", re.I)
+_UNIT_STEM = {"s": "second", "sec": "second", "secs": "second", "second": "second", "seconds": "second", "min": "minute", "mins": "minute", "minute": "minute",
+              "minutes": "minute", "h": "hour", "hr": "hour", "hrs": "hour", "hour": "hour", "hours": "hour"}
+
+
+def _stem(word: str) -> str:
+    """One spelling per noun or time unit: `endpoints` -> endpoint, `queries` -> query, `secs`/`s` -> second, `hrs` -> hour; sizes stay as written."""
+    w = word.lower()
+    if w in _UNIT_STEM:
+        return _UNIT_STEM[w]
+    if w.upper() in {"GB", "TB", "MB", "PB"}:
+        return w
+    return re.sub(r"s$", "", re.sub(r"ies$", "y", w))
 
 
 def quantity_spans(text: str) -> dict[str, str]:
@@ -53,9 +66,8 @@ def quantity_spans(text: str) -> dict[str, str]:
         base = number.rsplit(" ", 1)[0] if scale > 1 else number
         digits_ = (re.sub(r"[,+\s]", "", base.lower()) if scale == 1 else str(int(float(base.replace(",", ""))) * scale)) if number[:1].isdigit() \
             else str(_word_number(base) * scale)
-        stem = re.sub(r"ies$", "y", noun)
-        stem = stem if stem.upper() in {"GB", "TB", "MB", "PB"} else re.sub(r"s$", "", stem)
-        found.setdefault(digits_ + re.sub(r"\s", "", stem), m.group(0).strip())
+        basis = f"/{_stem(m.group(3))}" if m.group(3) else ""                    # "12 events per day" and "12 events per hour" are different figures
+        found.setdefault(digits_ + _stem(noun) + basis, m.group(0).strip())
     return found
 
 

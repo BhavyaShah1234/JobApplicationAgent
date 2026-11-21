@@ -983,13 +983,33 @@ def check_layout(state: State) -> dict:
             "reviewed": reviewed, "skills_padding_attempted": padding_attempted, "skills_allocations": allocations, **reviewed_content}
 
 
-def _allocate_graph_skills(state: State, f, tex, problems, pages, err, lay, attempt: int):
-    """Use leftover room on short skills lines for OWNED skill-graph candidates (no model call).
+def _render_files(job_dir: Path) -> dict[str, bytes]:
+    """The files a render may write or change in a job folder (the resume's own files, its projects layout and structure), as bytes."""
+    names = {p.name for p in job_dir.glob("resume.*") if p.is_file()} | {"projects.json", "filled.json"}
+    return {n: (job_dir / n).read_bytes() for n in sorted(names) if (job_dir / n).is_file()}
 
-    Required JD terms and the one-page layout come first: this runs only when nothing else is pending, places each candidate on the line of its own
-    category, renders the result and keeps it only when the page is still one page with no new layout finding and no lost free space; otherwise
-    the writer's own version is rendered again. Offered, added and omitted candidates (with reasons) go to `skill_allocation.json`, a separate
-    output so the input fingerprint of `skill_suggestions.json` is untouched.
+
+def _restore_files(job_dir: Path, snap: dict[str, bytes]) -> None:
+    """Put the job folder's render files back exactly as snapshotted: changed ones rewritten, ones a trial created removed."""
+    for name, data in snap.items():
+        path = job_dir / name
+        if not path.is_file() or path.read_bytes() != data:
+            path.write_bytes(data)
+    for name in set(_render_files(job_dir)) - set(snap):
+        (job_dir / name).unlink(missing_ok=True)
+
+
+def _allocate_graph_skills(state: State, f, tex, problems, pages, err, lay, attempt: int):
+    """Use leftover room on short skills lines for OWNED skill-graph candidates (no model call), as a transaction.
+
+    Required JD terms and the one-page layout come first: this runs only when nothing else is pending and places each candidate on the line of its
+    own category. Every trial starts from a byte-exact snapshot of the render files and a DEEP copy of the content, so a trial cannot change the
+    shared objects it is compared with. A trial is kept only when it is still one page with no new finding and no lost space AND changes nothing but
+    the skills (same bullets, duties, estimates, summary and projects). Anything else is restored exactly, with no re-render from mutated state. Only
+    graph problems (unreadable graph, no owned data) are optional; any other error restores the files and is raised.
+
+    Offered, added and omitted candidates (with reasons) accumulate in `skill_allocation.json`, a separate output so the input fingerprint of
+    `skill_suggestions.json` is untouched; it travels with the accepted version and names the resume PDF it describes.
 
     Returns:
         The (possibly new) content, LaTeX, problems, page count, compile error and layout report.
@@ -998,61 +1018,83 @@ def _allocate_graph_skills(state: State, f, tex, problems, pages, err, lay, atte
     job_dir, log = ctx["job_dir"], ctx["log"]
     owned = list((ctx.get("graph") or {}).get("owned") or [])
     record = {"attempt": attempt, "offered": [x["skill"] for x in owned], "added": [], "omitted": [], "kept": False}
+    base = f.model_copy(deep=True)                                        # independent baseline: later trials cannot mutate what they are compared with
+    base_other = base.model_dump(exclude={"skills"})
+    snap = _render_files(job_dir)
     try:
         room = {k: max(0, round((1 - v) * 115)) for k, v in lay.skill_fill.items() if v < 0.85}
-        added, omitted = SG.place_skills(f.skills, owned, SG.load(), room, getattr(ctx["r"], "skills", None))
-        record["omitted"] = omitted
+        added, omitted = SG.place_skills(base.skills, owned, SG.load(), room, getattr(ctx["r"], "skills", None))
+        record["omitted"] = list(omitted)
+    except (OSError, ValueError, KeyError) as exc:                       # an unreadable or inconsistent graph: optional, reported
+        record["omitted"].append({"skill": "*", "reason": f"graph unavailable: {type(exc).__name__}"})
+        _record_allocation(job_dir, record, f)
+        return f, tex, problems, pages, err, lay
 
-        def with_lines(chosen: list[tuple[str, str]]):
-            """The writer's content with these (line, term) pairs appended."""
-            lines = [ln.model_copy(update={"terms": ln.terms + [n for c, n in chosen if c == ln.category]}) for ln in f.skills]
-            return f.model_copy(update={"skills": lines})
+    def with_lines(chosen: list[tuple[str, str]]):
+        """A fresh deep copy of the content with these (line, term) pairs appended to their skills lines."""
+        copy = base.model_copy(deep=True)
+        for ln in copy.skills:
+            ln.terms = ln.terms + [n for c, n in chosen if c == ln.category]
+        return copy
 
-        def fits(result) -> tuple[bool, object]:
-            """Whether a render is still one page with no new finding, no new problem and no lost space (and its layout report)."""
-            _, _, problems2, pages2, err2 = result
-            lay2 = layout.check(job_dir / "resume.pdf") if pages2 == 1 and not err2 else None
-            ok = (lay2 is not None and set(lay2.issues) <= set(lay.issues) and not (set(problems2) - set(problems))
-                  and (lay.free_pt is None or lay2.free_pt is None or lay2.free_pt >= lay.free_pt - 1))
-            return ok, lay2
+    def trial(chosen: list[tuple[str, str]]):
+        """Render these additions from the snapshot; (accepted, result, layout report)."""
+        _restore_files(job_dir, snap)
+        result = render({**state, "f": with_lines(chosen)})
+        f2, _, problems2, pages2, err2 = result
+        lay2 = layout.check(job_dir / "resume.pdf") if pages2 == 1 and not err2 else None
+        ok = (lay2 is not None and set(lay2.issues) <= set(lay.issues) and not (set(problems2) - set(problems))
+              and (lay.free_pt is None or lay2.free_pt is None or lay2.free_pt >= lay.free_pt - 1)
+              and f2.model_dump(exclude={"skills"}) == base_other                           # a graph-only change leaves every other part of the content intact
+              and _render_files(job_dir).get("projects.json") == snap.get("projects.json"))      # and the projects
+        return ok, result, lay2
 
-        keep: list[tuple[str, str]] = []
-        final = None
+    keep: list[tuple[str, str]] = []
+    final = None
+    try:
         if added:
-            result = render({**state, "f": with_lines(added)})              # all at once first
-            ok, lay2 = fits(result)
+            ok, result, lay2 = trial(added)                               # all at once first
             if ok:
                 keep, final = list(added), (result, lay2)
-            else:                                                           # then one line at a time (bounded by the number of lines), keeping what fits
+            else:                                                         # then one line at a time (bounded by the number of lines), keeping what fits
                 for line in dict.fromkeys(c for c, _ in added):
-                    trial = keep + [x for x in added if x[0] == line]
-                    result = render({**state, "f": with_lines(trial)})
-                    ok, lay2 = fits(result)
+                    attempt_set = keep + [x for x in added if x[0] == line]
+                    ok, result, lay2 = trial(attempt_set)
                     if ok:
-                        keep, final = trial, (result, lay2)
+                        keep, final = attempt_set, (result, lay2)
                     else:
-                        record["omitted"] += [{"skill": n, "reason": f"rendering with it on '{line}' left the page worse (a new finding, a wrapped line or lost space)"}
-                                              for c, n in added if c == line]
-        if keep:
-            result, lay2 = final
-            if keep != added or final is None:                              # the last render on disk must be the kept state
-                result = render({**state, "f": with_lines(keep)})
-                lay2 = layout.check(job_dir / "resume.pdf")
-            record["added"] = [{"skill": n, "line": c} for c, n in keep]
-            record["kept"] = True
-            log(f"skill graph: added {[n for _, n in keep]} to short skills lines")
-            _write_json(job_dir / "skill_allocation.json", record)
-            f2, tex2, problems2, pages2, err2 = result
-            return f2, tex2, problems2, pages2, err2, lay2
-        if added:
-            f, tex, problems, pages, err = render(state)                    # restore the writer's own files on disk
-            lay = layout.check(job_dir / "resume.pdf") if pages == 1 and not err else lay
-    except Exception as exc:                                                # the graph never stops a run
-        record["omitted"].append({"skill": "*", "reason": f"allocation skipped: {type(exc).__name__}"})
-        f, tex, problems, pages, err = render(state)
-        lay = layout.check(job_dir / "resume.pdf") if pages == 1 and not err else lay
-    _write_json(job_dir / "skill_allocation.json", record)
+                        record["omitted"] += [{"skill": n, "reason": f"rendering with it on '{line}' left the page or the other content worse"} for c, n in added if c == line]
+            if keep and final is not None and keep != list(added):
+                ok, result, lay2 = trial(keep)                            # the files on disk must be exactly the kept state
+                final = (result, lay2) if ok else None
+                keep = keep if ok else []
+    except BaseException:
+        _restore_files(job_dir, snap)                                     # never leave a half-trial on disk; the error stays visible
+        raise
+    if keep and final is not None:
+        (f2, tex2, problems2, pages2, err2), lay2 = final
+        record["added"] = [{"skill": n, "line": c} for c, n in keep]
+        record["kept"] = True
+        log(f"skill graph: added {[n for _, n in keep]} to short skills lines")
+        _record_allocation(job_dir, record, f2)
+        return f2, tex2, problems2, pages2, err2, lay2
+    _restore_files(job_dir, snap)
+    _record_allocation(job_dir, record, f)
     return f, tex, problems, pages, err, lay
+
+
+def _record_allocation(job_dir: Path, record: dict, f) -> None:
+    """Add this attempt to `skill_allocation.json`: earlier additions still on the resume are kept, the resume PDF they describe is named."""
+    path = job_dir / "skill_allocation.json"
+    try:
+        prev = json.loads(path.read_text()) if path.exists() else {}
+    except (OSError, ValueError):
+        prev = {}
+    present = {SG.norm(a) for ln in f.skills for a in SG._atoms(ln)}
+    added = [x for x in prev.get("added", []) if SG.norm(x["skill"]) in present] + record["added"]
+    pdf = job_dir / "resume.pdf"
+    _write_json(path, {"attempts": prev.get("attempts", []) + [record], "added": added, "omitted": record["omitted"], "kept": bool(added),
+                       "resume_sha256": hashlib.sha256(pdf.read_bytes()).hexdigest() if pdf.is_file() else None})
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -1348,7 +1390,7 @@ def _snapshot(ctx: dict, f: T.Filled, hard: list, reviewed: dict | None = None, 
     return {"avg": A.average(ev["scores"]), "scores": dict(ev["scores"]), "f": f.model_copy(deep=True),
             "layout": len(layout.check(directory / "resume.pdf").issues), "hard": list(hard),
             "tex": read("resume.tex"), "pdf": (directory / "resume.pdf").read_bytes(),
-            "layout_meta": read("resume.layout.json"), "projects": read("projects.json"),
+            "layout_meta": read("resume.layout.json"), "projects": read("projects.json"), "allocation": read("skill_allocation.json"),
             "filled": f.model_dump_json(indent=1) if hasattr(f, "model_dump_json") else None,
             "ev": ev, "content_suggestions": [fd.issue for fd in (reviewed or {}).get("content_findings", [])
                                                if fd.severity == "suggestion"]}
@@ -1456,6 +1498,8 @@ def _version_files(best: dict) -> dict:
     had no projects layout means NO such file (a later attempt's must not survive a rollback to it)."""
     files = {"resume.tex": best["tex"], "resume.pdf": best["pdf"], "projects.json": best.get("projects"),
              "resume.layout.json": best.get("layout_meta")}
+    if "allocation" in best:           # every real snapshot has the key (None = no record): rolling back removes a later attempt's record
+        files["skill_allocation.json"] = best["allocation"]
     if best.get("filled"):
         files["filled.json"] = best["filled"]
     elif hasattr(best.get("f"), "model_dump_json"):
@@ -1642,6 +1686,7 @@ def _run_job(job_dir: Path, slug: str, models: dict, sites=SITES, log=print, *, 
            "r": T.parse(template_text),
            "jd_text": (job_dir / "jd.txt").read_text() if (job_dir / "jd.txt").exists() else "",
            "models": models, "log": log, "sites": () if strategy == "incremental" or _final_only else sites}
+    (job_dir / "skill_allocation.json").unlink(missing_ok=True)       # a new generation never inherits an earlier one's allocation record
     ctx["graph"] = SG.for_tailor(job_dir, jd, ctx["r"])               # related skills (step 4c); {} when off or empty
     SG.guard_resume(ctx["r"], job_dir)                                # every render of this resume drops skills that are not the candidate's
     if strategy == 'incremental':

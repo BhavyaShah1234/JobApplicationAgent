@@ -8,7 +8,7 @@ from test_figure_provenance import check
 
 @pytest.mark.parametrize("text,token", [
     ("Built 12 REST API endpoints for the platform.", "12endpoint"), ("Owned 3 services.", "3service"), ("Trained fifteen technicians.", "15technician"),
-    ("Handled five million events a day.", "5000000event"), ("Ran 2,500 tests nightly.", "2500test"), ("Stored 1.5 TB of images.", "1.5tb"),
+    ("Handled five million events a day.", "5000000event/day"), ("Ran 2,500 tests nightly.", "2500test"), ("Stored 1.5 TB of images.", "1.5tb"),
     ("Cut build time to 6 minutes.", "6minute"), ("Served 40k users.", "40kuser")])
 def test_counted_quantities_are_figures(text, token):
     assert token in NC.metric_spans(text)
@@ -52,3 +52,25 @@ def test_a_percentage_tag_cannot_vouch_for_a_count_with_the_same_digits():
 def test_the_owners_own_count_in_this_role_is_not_an_estimate():
     got = check("Wrote SQL reports for 3 finance teams.", role=1)
     assert got and any("3" in t for t in got)                                                  # Beta's original bullet has no count: a new one is listed
+
+
+def test_the_report_shows_the_result_mix_without_checking_it():
+    def bullet(text):
+        return T.FillBullet.model_construct(text=text, duties=[], original=None, estimated=[])
+    f = T.Filled.model_construct(summary="s", skills=[], notes="", roles=[T.FillRole.model_construct(role=0, bullets=[
+        bullet("Cut latency 30% using Redis."), bullet("Owned 12 REST endpoints using FastAPI."), bullet("Streamlined releases using GitHub Actions."),
+        bullet("Cut cost 20% across 4 services using Terraform."), bullet("Ran builds 3x faster in 40 s using Bazel.")])])
+    mix = T.metric_mix(f)
+    assert mix == {"bullets": 5, "percent": 2, "quantity": 3, "other": 1, "qualitative": 1}, mix
+
+
+def test_a_letter_spelling_a_source_count_differently_is_not_an_unknown_number():
+    from jobagent.state import JobDescription
+    from jobagent.tools import cover_letter as CL
+    resume = "Engineer at Atlas Systems LLC. Built twelve REST endpoints with FastAPI and completed Docker builds in forty seconds."
+    bank = {"employment:0": {"entity": "Atlas Systems LLC", "kind": "employment", "text": resume}}
+    paras = [CL.Paragraph(text=t, evidence=[]) for t in ("I am interested.", "At Atlas Systems LLC, I built 12 REST endpoints with FastAPI and completed Docker builds in 40 seconds.", "Thank you.")]
+    letter = CL.Letter(salutation="Dear Hiring Team,", closing="Sincerely", paragraphs=paras)
+    assert CL.consistency(letter, resume, JobDescription(title="Engineer", company="Example"), "", source_bank=bank) == []
+    bad = CL.Letter(salutation="Dear Hiring Team,", closing="Sincerely", paragraphs=paras[:1] + [CL.Paragraph(text="At Atlas Systems LLC, I built 15 REST endpoints with FastAPI.", evidence=[])] + paras[2:])
+    assert CL.consistency(bad, resume, JobDescription(title="Engineer", company="Example"), "", source_bank=bank)

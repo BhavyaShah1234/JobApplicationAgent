@@ -37,7 +37,10 @@ def report(r, jd, f, pages, problems, uncovered, missing, warn, rounds, filled_i
              f"{'unchanged ✅' if not any('LOCKED' in p for p in problems) else 'CHANGED ❌'}",
              f"- Required JD items covered by new bullets: **{need - len(uncovered)}/{need}**"
              + (f" (missing: {uncovered})" if uncovered else ""),
-             f"- JD tech-stack items not found verbatim anywhere: {', '.join(missing) or 'none'}", ""]
+             f"- JD tech-stack items not found verbatim anywhere: {', '.join(missing) or 'none'}"]
+    mix = T.metric_mix(f)
+    lines += [f"- Result mix (information only, not a check; a bullet with several kinds counts in each): {mix['bullets']} bullets: "
+              f"{mix['percent']} percentage, {mix['quantity']} count/volume/duration, {mix['other']} other figure, {mix['qualitative']} qualitative", ""]
     dups = T.duplicates(r, f, substantive=True) + T.quality(r, jd, f)
     if problems or warn or dups:
         lines += ["## Problems", ""] + [f"- {p}" for p in problems + warn + dups] + [""]

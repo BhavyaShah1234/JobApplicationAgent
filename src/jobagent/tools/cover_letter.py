@@ -151,6 +151,7 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
     low = sources.lower()
     known_numbers = set(re.findall(r"\d+(?:\.\d+)?", sources))
     from jobagent.tools import number_claims as NC, metric_direction as MD
+    known_numbers |= {NC.digits(t) for t in NC.quantity_spans(to_plain(sources))}     # "twelve endpoints" in a source makes 12 a known number
     resume_figures = NC.metric_tokens(to_plain(resume))                       # what the candidate did
     context_figures = resume_figures | NC.metric_tokens(to_plain("\n".join([company_md, jd.model_dump_json()])))   # what the company and posting say
     from .letter_attribution import paragraph_metric_issues
@@ -162,8 +163,9 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
                 r"\bI\s+(?:(?:also|currently)\s+)?(?:hold|have|earned|obtained|possess|maintain)\s+"
                 r"[^.!?;\n]{0,80}\bcertificat(?:ion|e)s?\b|\bI\s+am\s+(?:[\w-]+\s+){0,5}certified\b", p.text):
             issues.append(f"paragraph {k}: a candidate certification is claimed but no certification appears in the resume")
+        spelled = {n for token, written in NC.quantity_spans(p.text).items() if token in context_figures for n in re.findall(r"\d+(?:\.\d+)?", written)}
         for n in re.findall(r"\d+(?:\.\d+)?", p.text):
-            if n not in known_numbers:
+            if n not in known_numbers and n not in spelled:
                 issues.append(f"paragraph {k}: the number {n!r} is not in the resume, posting or company profile")
         for sentence in re.split(r"(?<=[.!?])\s+", p.text):          # a figure needs its own spelling in a source, not just the same digits
             # A first-person RESULT ("I cut latency by 30%", "my team tripled...") is the candidate's claim and needs the resume; a figure about the

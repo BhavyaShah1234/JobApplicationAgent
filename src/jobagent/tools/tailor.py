@@ -936,6 +936,26 @@ VERSION_NUMBER = re.compile(r"(?i)\b(?:version\s*|v)\d[\d.]*|\b(?:python|java|no
                             r"\b\d+(?:\.\d+)+\b(?!\s?(?:%|x\b|ms\b|percent|tb|gb|mb|pb|k\b|m\b|b\b))")
 
 
+def metric_mix(f: "Filled") -> dict[str, int]:
+    """How the Experience bullets state their result, for the review report (never a check): `percent`, `quantity` (counts, volumes, durations), `other`
+    (multipliers, currency, milliseconds, magnitudes) and `qualitative` (no figure). A bullet that uses several kinds counts in each, so the kinds can
+    add up to more than `bullets`."""
+    from jobagent.tools import number_claims as NC
+    mix = {"bullets": 0, "percent": 0, "quantity": 0, "other": 0, "qualitative": 0}
+    for e in f.roles:
+        for b in e.bullets:
+            text = PLACEHOLDER.sub("", b.text)
+            tokens = NC.metric_spans(text)
+            quantities = set(NC.quantity_spans(text))
+            kinds = {"percent": any(t.endswith("%") for t in tokens), "quantity": bool(quantities),
+                     "other": any(t not in quantities and not t.endswith("%") for t in tokens)}
+            mix["bullets"] += 1
+            for k, on in kinds.items():
+                mix[k] += on
+            mix["qualitative"] += not any(kinds.values())
+    return mix
+
+
 def has_result(text: str) -> bool:
     """A bullet states a result: a measured quantity or relative change (versions and standards do not count) or a precise outcome verb."""
     return bool(RESULT.search(VERSION_NUMBER.sub(" ", text)))
