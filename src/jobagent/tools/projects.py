@@ -375,6 +375,7 @@ def _items(phrase: str) -> list[list[str]]:
     """The separately restricted things in a phrase ("public reports and private datasets" is two), each cut at its first preposition so that
     "local models for inference" restricts the models, not their purpose."""
     items = []
+    phrase = _SCOPE_CONDITION.split(phrase, maxsplit=1)[0]  # conditions have their own binding, not restricted objects
     for part in _SPLIT_ITEMS.split(phrase):
         part = re.sub(r"(?i)^\W*(?:(?:from|using|with|in|on|via|by|to|through|within)\s+)+", "", part)
         part = _PREPOSITION.split(part, maxsplit=1)[0]
