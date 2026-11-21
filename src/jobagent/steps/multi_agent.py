@@ -605,6 +605,9 @@ def _check_project_edits(ctx: dict, st: dict, result) -> None:
         if card is None or swap.entry.repo.casefold() in {str(e.get("repo") or "").casefold() for e in ranked}:
             problems.append(f"swap repo {pick.repo!r} is not an unused CANDIDATE")
             continue
+        if twin := P.repeats_visible(st, swap.project, card, cards):
+            problems.append(f"swap repo {pick.repo!r} is the same project as displayed {twin}; choose a different project")
+            continue
         try:
             P.compose(card, pick.paragraph_sentences, P.FULL_LIMIT, P.FULL_FLOOR)
             if pick.short_sentences:
@@ -646,6 +649,9 @@ def _merge(ctx: dict, f: T.Filled, outs: dict) -> T.Filled:
         for sw in outs["projects"].swaps:
             repo = sw.entry.repo.lower()
             if 1 <= sw.project <= st["kept"] and repo in cands and repo not in {e["repo"].lower() for e in st["ranked"]}:
+                if twin := P.repeats_visible(st, sw.project, cands[repo], cands):
+                    ctx["log"](f"  projects: {sw.entry.repo} not swapped in: it is the same project as displayed {twin}")
+                    continue
                 entry = P.entry_from_pick(sw.entry, cands[repo], vocab, terms, log=ctx["log"])
                 if entry is None:
                     ctx["log"](f"  projects: {sw.entry.repo} not swapped in: its card has no complete sentences that fill a description")

@@ -906,6 +906,7 @@ def content_findings(state: dict, cards: dict | None = None) -> list[str]:
     short = set(state.get("short", []))
     out = []
     vocab = tech_vocabulary(cards or {}, state.get("ranked", [])) if cards else []
+    out += duplicate_findings(state, cards)
     for i, entry in enumerate(state.get("ranked", [])[:state.get("kept", 0)], 1):
         text = entry.get("short") if entry.get("repo") in short and entry.get("short") else entry.get("paragraph", "")
         if not re.search(r'''[.!?]["'\u201d\u2019)\]]*\s*$''', text):
@@ -1153,6 +1154,91 @@ def unsupported_claims(text: str, card: dict, vocabulary: list[str] | None = Non
             + (prose_tech_claims(text, card, vocabulary) if vocabulary else []))
 
 
+# --- one project is shown once --------------------------------------------------------------------------------------------------------
+_SOURCE_KEYS = ("fork_of", "parent", "parent_full_name", "source_repo", "upstream")
+
+
+def identity_cues(card: dict | None, repo: str = "", title: str = "") -> set[str]:
+    """Stable cues that two cards are the same project (a fork or collaborator copy), from the card's OWN data only.
+
+    Cues: the repository itself; an explicit fork/source repository the card names; the same commit (`head_sha`, a 40-hex id); or the same
+    repository leaf together with the same canonical project name of its own card (`card_title`). A shared generic leaf (`service`) or a shared
+    generic title alone is NOT a cue, so unrelated projects are never merged.
+
+    Args:
+        card: The saved repository card (None when unavailable: the entry's repo and title are used).
+        repo: The entry's repository full name when there is no card.
+        title: The entry's title when there is no card.
+
+    Returns:
+        A set of opaque cue strings; two projects are the same when their sets intersect.
+    """
+    card = card or {}
+    full = str(card.get("full_name") or repo or "").casefold()
+    leaf = re.sub(r"[^a-z0-9]+", "", full.split("/")[-1])
+    cues = {f"repo:{full}"} if full else set()
+    for key in _SOURCE_KEYS:
+        value = card.get(key)
+        if isinstance(value, dict):
+            value = value.get("full_name")
+        if isinstance(value, str) and "/" in value:
+            cues.add(f"repo:{value.casefold()}")
+    sha = str(card.get("head_sha") or "")
+    if re.fullmatch(r"[0-9a-fA-F]{40}", sha) and set(sha) != {"0"}:
+        cues.add(f"sha:{sha.casefold()}")
+    name = re.sub(r"[^a-z0-9]+", "", (card_title(card) if card else title).casefold())
+    if leaf and name:
+        cues.add(f"leaf-title:{leaf}:{name}")
+    return cues
+
+
+def distinct_projects(items: list, cue_of, preferred=lambda item: False) -> tuple[list, list]:
+    """Keep one item per project, in order; a `preferred` item (the owner's template project) replaces an earlier duplicate in its place.
+
+    Returns:
+        (kept, dropped)
+    """
+    kept: list = []
+    seen: list[set[str]] = []
+    dropped: list = []
+    for item in items:
+        cues = cue_of(item)
+        index = next((i for i, other in enumerate(seen) if cues & other), None)
+        if index is None:
+            kept.append(item)
+            seen.append(cues)
+        elif preferred(item) and not preferred(kept[index]):
+            dropped.append(kept[index])
+            kept[index], seen[index] = item, cues | seen[index]
+        else:
+            dropped.append(item)
+    return kept, dropped
+
+
+def duplicate_findings(state: dict, cards: dict | None = None) -> list[str]:
+    """One finding per VISIBLE kept project that repeats an earlier visible one (hidden alternatives may duplicate freely)."""
+    cards, saved = cards or {}, saved_evidence(state)
+    out, seen = [], []
+    for i, entry in enumerate(state.get("ranked", [])[:state.get("kept", 0)], 1):
+        repo = str(entry.get("repo") or "")
+        cues = identity_cues(cards.get(repo.casefold()) or saved.get(repo.casefold()), repo, str(entry.get("title") or ""))
+        j = next((n for n, other in seen if cues & other), None)
+        if j is not None:
+            out.append(f"project {i} ({repo}) is the same project as project {j}: show it once and use another repository")
+        seen.append((i, cues))
+    return out
+
+
+def repeats_visible(state: dict, slot: int, card: dict, cards: dict | None = None) -> str:
+    """The repository of another VISIBLE kept project (not the one in 1-based `slot`, which is being replaced) that `card` duplicates, else ''."""
+    cards, saved, mine = cards or {}, saved_evidence(state), identity_cues(card)
+    for i, entry in enumerate(state.get("ranked", [])[:state.get("kept", 0)], 1):
+        repo = str(entry.get("repo") or "")
+        if i != slot and mine & identity_cues(cards.get(repo.casefold()) or saved.get(repo.casefold()), repo, str(entry.get("title") or "")):
+            return repo
+    return ""
+
+
 def from_card(c: dict, terms: frozenset[str] | None = None, vocabulary: list[str] | None = None) -> ProjectEntry | None:
     """A project entry straight from a repo card (fallback when the model can't choose): its own title and stack, and descriptions made only of the
     card's whole sentences (`faithful_variants`).
@@ -1325,13 +1411,15 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
                 chosen.append(entry)
             else:
                 skipped.add(pick.repo.lower())
-        heads = [re.split(r"[:,]", e.title)[0].strip().lower() for e in chosen]
-        if len(set(heads)) < len(heads):  # one project under two titles (e.g. "SolBot: ..." and "SolBot, ...")
-            dup = sorted({h for h in heads if heads.count(h) > 1})
-            log(f"projects: the same project twice ({dup}); asking again")
-            messages = messages + [HumanMessage(f"{dup} appears twice: every entry must be a DIFFERENT repo, and each "
-                                                "selection must use its own repo's SOURCE SENTENCES.")]
-            continue
+        chosen, repeated = distinct_projects(chosen, lambda e: identity_cues(by_name.get(e.repo.lower()), e.repo, e.title),
+                                             lambda e: e.repo.lower() in known)
+        if repeated:  # one project under two repositories/titles: keep one (the owner's template project first), never publish both
+            dup = sorted({e.repo for e in repeated})
+            log(f"projects: the same project twice ({dup}); keeping one")
+            if len(chosen) < MIN_PROJECTS:
+                messages = messages + [HumanMessage(f"{dup} repeats another selection: every entry must be a DIFFERENT project, and each "
+                                                    "selection must use its own repo's SOURCE SENTENCES.")]
+                continue
         # too short only when the card's own sentences could reach the wanted length (asking again cannot add facts a card lacks)
         thin = [e.title for e in chosen if len(e.paragraph) < MIN_PARAGRAPH
                 and faithful_description(by_name[e.repo.lower()], FULL_LIMIT, MIN_PARAGRAPH, vocab, terms, minimum=MIN_PARAGRAPH)]
@@ -1349,11 +1437,16 @@ def choose(r: Resume, jd: JobDescription, model, user: str, token: str | None = 
     if len(chosen) < MIN_PROJECTS:  # the model failed or picked too few: top-ranked cards, in their own sentences
         log(f"projects: model gave {len(chosen)} usable project(s); filling from the top-ranked repo cards")
         have = {e.repo.lower() for e in chosen}
+        shown = [identity_cues(by_name.get(e.repo.lower()), e.repo, e.title) for e in chosen]
         for _, c in cands:
             if len(chosen) >= MAX_PROJECTS:
                 break
-            if c["full_name"].lower() not in have and (entry := from_card(c, terms, vocab)):
+            cues = identity_cues(c)
+            if c["full_name"].lower() in have or any(cues & other for other in shown):
+                continue
+            if entry := from_card(c, terms, vocab):
                 chosen.append(entry)
+                shown.append(cues)
     if len(chosen) < MIN_PROJECTS:
         raise RuntimeError(f"only {len(chosen)} candidate project(s) have complete source sentences to describe them "
                            f"(at least {MIN_PROJECTS} needed); no description was written without a source")
