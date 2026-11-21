@@ -819,3 +819,18 @@ def test_a_figureless_finding_and_a_stale_one_together_send_only_the_real_one_to
     suggestion = M.Finding(agent='summary', severity='suggestion', issue='Consider a shorter opening.')
     result = R.adjudicate(ctx, value, [stale, real, suggestion])
     assert seen == [[real.issue]] and [f.severity for f in result] == ['suggestion', 'error']
+
+
+
+@pytest.mark.parametrize('text', ['M.S. in Robotics from ASU with Python.', 'MS in Computer Science, building ML systems.', 'B.Tech in Electronics and 3 years of ML work.',
+                                   'MBA and software engineer.', 'B.E. in Mechanical Engineering.', 'Ph.D. candidate.', 'Master of Science graduate.', 'Holds a GPA of 4.0.'])
+def test_the_summary_reviewer_gets_the_education_source_for_degree_abbreviations(text):
+    from jobagent.tools import incremental_documents as I
+    assert I.names_a_credential(text), text
+
+
+@pytest.mark.parametrize('text', ['Built services as a platform engineer.', 'Used ms-level timers and be-spoke tooling.', 'Python engineer shipping ML systems at scale.',
+                                   'Designed a REST API in as little as two sprints.'])
+def test_ordinary_words_are_not_read_as_degrees(text):
+    from jobagent.tools import incremental_documents as I
+    assert not I.names_a_credential(text), text

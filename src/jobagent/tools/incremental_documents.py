@@ -254,6 +254,23 @@ def _bound_schema(schema, validator):
     return create_model(schema.__name__,__base__=schema,__validators__={'check_sources':check_sources})
 
 
+CREDENTIAL_WORDS = re.compile(r'\b(?:bachelor\w*|master\w*|ph\.?d|doctor\w*|degree|graduat\w*|post[- ]?baccalaureate|university|college|alumn\w*|gpa|certif\w*|licen[cs]\w*)\b', re.I)
+# Abbreviations are matched case-sensitively: "as", "ms" and "be" in ordinary prose are not degrees, "M.S.", "MS", "B.Tech" are.
+CREDENTIAL_ABBREVIATIONS = re.compile(r'(?<![\w.])(?:M\.?S\.?|B\.?S\.?|M\.?Sc\.?|B\.?Sc\.?|B\.?Tech\.?|M\.?Tech\.?|MBA|M\.?Eng\.?|B\.?Eng\.?|M\.?A\.?|B\.?A\.?|B\.?E\.?|D\.?Phil\.?)(?![\w])')
+
+
+def names_a_credential(text):
+    """Whether prose names a degree, school, GPA or certification: the summary reviewer is given the Education section only then.
+
+    Args:
+        text: The summary as reviewed.
+
+    Returns:
+        True for words (bachelor, master's, PhD, university, GPA, certified) and for degree abbreviations (M.S., MS, B.Tech, MBA, B.E.).
+    """
+    return bool(CREDENTIAL_WORDS.search(text) or CREDENTIAL_ABBREVIATIONS.search(text))
+
+
 def _words(text):
     return ' '.join(re.findall(r'\w+|[%+]',str(text).replace('\\n',' ').casefold()))
 
@@ -706,8 +723,7 @@ def review(ctx, filled):
     }
     education=re.search(r'\\section\{Education\}(.*?)(?=\\section\{|\\end\{document\})',
                         getattr(ctx['r'],'tex',''),re.S)
-    credential_claim=re.search(r'\b(?:bachelor\w*|master\w*|ph\.?d|doctor\w*|degree|graduat\w*|'
-        r'post[- ]?baccalaureate|university|college|alumn\w*|gpa|certif\w*|licen[cs]\w*)\b',summary_for_review,re.I)
+    credential_claim=names_a_credential(summary_for_review)
     payloads['summary']['education']=(re.sub(r'(?m)(?<!\\)%.*$','',education.group(1))
                                       if education and credential_claim else '')
     payloads['summary']['company_context']=ctx.get('company','')
