@@ -41,7 +41,10 @@ class Projects(BaseModel):
 SOURCE_POLICY = ("Describe each repository's own supplied features and results. Project numerical measurements, "
                  "benchmarks, user counts and capability counts must be present in that repository's supplied "
                  "sources. When no measurement is supplied, use a qualitative outcome instead of inventing a number. "
-                 "Work-experience impact estimates do not establish repository measurements or product features.")
+                 "Work-experience impact estimates do not establish repository measurements or product features. "
+                 "Compliance mapping or configured tests establish checks, not guaranteed or achieved compliance. "
+                 "Describe what the system maps, checks or validates unless its own source establishes the outcome. "
+                 "Preserve documented scope: checks in selected stages do not establish compliance at every stage.")
 
 PROMPT = """You choose the projects for the Projects section of a resume tailored to one job posting, from cards
 the agent wrote by reading each GitHub repository's code.
@@ -213,8 +216,8 @@ ACHIEVED_CUE = re.compile(r"(?i)\b(?:compl(?:y|ies|ied|iant|iance)|conform\w*|ce
 # A claim or a card line that denies or postpones the standard is not an achievement ("not HIPAA compliant", "working toward SOC 2", "designed to meet WCAG").
 NEGATED = re.compile(r"(?i)\b(?:not|no|never|without|lack(?:s|ing)?|isn't|aren't|wasn't|doesn't|don't|non|yet\s+to|working\s+toward\w*|pursuing|preparing\s+for|planned|"
                      r"aims?\s+to|aiming\s+to|ready\s+for|designed\s+to|intended\s+to|goal\s+of|toward)\b[^;]{0,30}$")
-GENERIC_STANDARD_CLAIM = re.compile(r"(?i)\b(?:achiev\w*|attain\w*|reach\w*|meets?|met|exceed\w*|pass\w*|satisf\w*)\b[^.!?]{0,40}?"
-                                    r"\b(?:standards?|compliance|conformance|certifications?|accreditations?)\b")
+GENERIC_STANDARD_CLAIM = re.compile(r"(?i)\b(?:achiev\w*|attain\w*|reach\w*|meets?|met|exceed\w*|pass\w*|satisf\w*|ensur\w*|guarantee\w*)\b[^.!?]{0,40}?"
+                                    r"\b(standards?|compliance|conformance|certifications?|accreditations?)\b")
 
 
 def _card_strings(card: dict) -> list[str]:
@@ -266,6 +269,16 @@ def _affirms(window: str, cue: "re.Match") -> bool:
     return not NEGATED.search(window[max(0, cue.start() - 45):cue.start()])
 
 
+def _generic_outcomes(text: str) -> set[str]:
+    """Affirmed generic standard outcomes, excluding mapping/checking capabilities, denials and plans."""
+    outcomes = set()
+    for match in GENERIC_STANDARD_CLAIM.finditer(_mask(text)):
+        if _affirms(text, match):
+            noun = match.group(1).lower().removesuffix('s')
+            outcomes.add('compliance' if noun == 'conformance' else noun)
+    return outcomes
+
+
 def standard_outcome_claims(text: str, card: dict) -> list[str]:
     """Achieved-standard claims in a project paragraph that the project's OWN card does not support.
 
@@ -281,6 +294,7 @@ def standard_outcome_claims(text: str, card: dict) -> list[str]:
         The unsupported claim phrases, in reading order.
     """
     strings = _card_strings(card)
+    generic_supported = set().union(*(_generic_outcomes(s) for s in strings))
     out = []
     for sentence in re.split(r"(?<=[.!?])\s+", text):
         named = list(NAMED_STANDARD.finditer(sentence))
@@ -305,7 +319,7 @@ def standard_outcome_claims(text: str, card: dict) -> list[str]:
                        if _family(e.group(1)) == ident):
                 out.append(sentence.strip()[:160])
                 break
-        if not named and GENERIC_STANDARD_CLAIM.search(sentence) and not any(GENERIC_STANDARD_CLAIM.search(s) for s in strings):
+        if not named and _generic_outcomes(sentence) - generic_supported:
             out.append(sentence.strip()[:160])                       # an unnamed standard ("meets industry standards"); a named one was judged above
     return out
 
