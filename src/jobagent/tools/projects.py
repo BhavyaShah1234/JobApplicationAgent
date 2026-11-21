@@ -203,11 +203,81 @@ def _sentences(text: str, limit: int) -> str:
     return out or text[:limit].rsplit(" ", 1)[0] + "."
 
 
-def content_findings(state: dict) -> list[str]:
+# --- capability is not achievement -------------------------------------------------------------------------------------------------------
+# A card that lists a tool or an audit ("Playwright + axe-core (WCAG 2.1 AA audits)") shows what the project USES or TESTS AGAINST. Saying the project
+# "achieved high accessibility standards", "is HIPAA compliant" or "earned SOC 2 certification" claims a result the repository has to show itself.
+NAMED_STANDARD = re.compile(r"(?i)\b(WCAG(?:\s*\d(?:\.\d)?)?(?:\s*(?:AAA|AA|A)\b)?|HIPAA|SOC\s*2|GDPR|CCPA|FERPA|PCI(?:[-\s]?DSS)?|FedRAMP|ISO[-\s]?\d{4,5}|"
+                            r"Section\s*508|OWASP(?:\s*Top\s*10)?|NIST(?:\s*\d[\w.-]*)?)\b")
+ACHIEVED_CUE = re.compile(r"(?i)\b(?:compl(?:y|ies|ied|iant|iance)|conform\w*|certif\w*|accredit\w*|passed|passes|passing|achiev\w*|attain\w*|meets?|met|adher\w*|"
+                          r"satisf\w*|fulfil\w*|zero\s+violations|no\s+violations|0\s+violations)\b")
+GENERIC_STANDARD_CLAIM = re.compile(r"(?i)\b(?:achiev\w*|attain\w*|reach\w*|meets?|met|exceed\w*|pass\w*|satisf\w*)\b[^.!?]{0,40}?"
+                                    r"\b(?:standards?|compliance|conformance|certifications?|accreditations?)\b")
+
+
+def _card_strings(card: dict) -> list[str]:
+    """Every text value of a card (embeddings excluded), one string each: evidence is judged inside a single value, never across neighbouring fields."""
+    out: list[str] = []
+
+    def walk(value, key=""):
+        if key in ("embedding", "vector", "embeddings"):
+            return
+        if isinstance(value, str):
+            out.append(value)
+        elif isinstance(value, dict):
+            for k, v in value.items():
+                walk(v, k)
+        elif isinstance(value, list):
+            for v in value:
+                walk(v, key)
+    walk(card or {})
+    return out
+
+
+def standard_outcome_claims(text: str, card: dict) -> list[str]:
+    """Achieved-standard claims in a project paragraph that the project's OWN card does not support.
+
+    "Tested accessibility with Playwright and axe-core WCAG 2.1 AA audits" (capability) is fine. "Achieved high accessibility standards" or "HIPAA-compliant"
+    is an outcome and needs the card to say so too: the named standard next to an achievement cue within 150 characters, or the same generic phrase.
+    Ordinary qualitative benefits and numbers the repository supplies are not touched.
+
+    Args:
+        text: The displayed paragraph (the variant that is actually rendered).
+        card: The project's saved card.
+
+    Returns:
+        The unsupported claim phrases, in reading order.
+    """
+    strings = _card_strings(card)
+    out = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        for m in NAMED_STANDARD.finditer(sentence):
+            near = sentence[max(0, m.start() - 60):m.end() + 60]
+            if not ACHIEVED_CUE.search(near):
+                continue                                                        # "audits against WCAG 2.1 AA", "supports HIPAA-aligned logging": capability
+            ident = re.sub(r"\W", "", m.group(1).lower())[:4]
+            if not any(ACHIEVED_CUE.search(s[max(0, e.start() - 150):e.end() + 150]) for s in strings for e in NAMED_STANDARD.finditer(s)
+                       if re.sub(r"\W", "", e.group(1).lower())[:4] == ident):
+                out.append(sentence.strip()[:160])
+                break
+        else:
+            if GENERIC_STANDARD_CLAIM.search(sentence) and not any(GENERIC_STANDARD_CLAIM.search(s) for s in strings):
+                out.append(sentence.strip()[:160])
+    return out
+
+
+def content_findings(state: dict, cards: dict | None = None) -> list[str]:
     """Check the actual project variants selected for rendering, including short forms.
 
     A model can satisfy max_length by stopping mid-sentence. Page count and text
     bounds do not detect that, so these drafts must be rewritten before use.
+
+    Args:
+        state: `projects.json` (ranked entries, how many are kept, which use their short form).
+        cards: Saved repository cards by lower-case full name. When given, an achieved-standard claim the card does not support is also reported
+            (`standard_outcome_claims`); without cards only completeness is checked.
+
+    Returns:
+        One instruction per problem, in the wording the project writer receives.
     """
     short = set(state.get("short", []))
     out = []
@@ -216,6 +286,11 @@ def content_findings(state: dict) -> list[str]:
         if not re.search(r'''[.!?]["'\u201d\u2019)\]]*\s*$''', text):
             out.append(f"project {i} description ends without a complete sentence: {text[-100:]!r}; "
                        "rewrite the whole description within its length budget, ending the final sentence")
+        card = (cards or {}).get((entry.get("repo") or "").casefold())
+        for claim in (standard_outcome_claims(text, card) if card else []):
+            out.append(f"project {i} claims an achieved standard or compliance that its own card does not show ({claim!r}): the card lists tooling or capability "
+                       "only. Say what the project uses, tests or audits against (for example 'tested with <tool> against <standard>'); never that the standard "
+                       "was achieved, met, passed or certified")
     return out
 
 
