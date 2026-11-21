@@ -1033,13 +1033,28 @@ def _content_hash(ctx: dict, f: T.Filled) -> str:
     """Bind a semantic review to visible content, not an earlier layout pass."""
     path = ctx["job_dir"] / "projects.json"
     visible = _displayed_projects(json.loads(path.read_text()) if path.exists() else {})
-    value = {"summary": f.summary, "roles": [(e.role, [(b.text, sorted(b.estimated)) for b in e.bullets]) for e in f.roles],
+    value = {"summary": f.summary, "roles": [(e.role, [b.text for b in e.bullets]) for e in f.roles],
              "skills": [(s.category, s.render()) for s in f.skills if s.render()], "projects": visible}
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+def _review_hash(ctx: dict, f: T.Filled) -> str:
+    """Bind a review to printed content and the estimate permissions it evaluated.
+
+    Args:
+        ctx: Posting and displayed project context.
+        f: Current resume with role-bound draft-estimate metadata.
+
+    Returns:
+        A review fingerprint. The separate visible-content hash still controls
+        summary reconciliation and whether a section edit changed printed text.
+    """
+    estimates = [(e.role, [sorted(b.estimated) for b in e.bullets]) for e in f.roles]
+    return hashlib.sha256(json.dumps([_content_hash(ctx, f), estimates]).encode()).hexdigest()
+
+
 def _reviewed_content(ctx: dict, f: T.Filled, state: dict) -> dict:
-    fingerprint = _content_hash(ctx, f)
+    fingerprint = _review_hash(ctx, f)
     if fingerprint == state.get("content_hash") and not state.get("content_error"):
         findings, error = state.get("content_findings", []), state.get("content_error", "")
     else:
@@ -1142,7 +1157,7 @@ def score(state: State) -> dict:
             {"ats_round": rnd + 1, "last": "the page overflowed: shorten bullets"}
     hard = list(dict.fromkeys(hard_issues(ctx, f) + state.get("semantic_hard", [])))
     hard=list(dict.fromkeys(hard+problems))
-    if state.get("content_hash") and _content_hash(ctx, f) != state["content_hash"]:
+    if state.get("content_hash") and _review_hash(ctx, f) != state["content_hash"]:
         hard.append("skills content changed after its semantic review")
     if hard:
         log(f"ats round {rnd}: document checks failed; no scans spent: {hard}")
