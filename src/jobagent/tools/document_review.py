@@ -52,6 +52,9 @@ def adjudicate(ctx, filled, findings):
         sources['education'] = T.to_plain(education[1])
     for role in filled.roles:
         original = ctx['r'].roles[role.role]
+        header_id = f'role-header:{role.role}'
+        claims[header_id] = {'employer': original.company, 'title': original.title, 'dates': original.dates}
+        sections[header_id] = 'experience'
         sources[f'role:{role.role}'] = {'employer': original.company, 'title': original.title,
             'dates': original.dates, 'original_bullets': [T.to_plain(b) for b in original.bullets],
             'current_bullets': [b.text for b in role.bullets]}
@@ -75,6 +78,8 @@ def adjudicate(ctx, filled, findings):
     facts = {'summary_title_prefix_matches': M._title_prefix(filled.summary, ctx['jd'].title),
              'expected_title': ctx['jd'].title,
              'nonempty_skills': claims['skills'],
+             'immutable_role_headers': {name: 'role:' + name.split(':')[1]
+                                        for name in claims if name.startswith('role-header:')},
              'rule': 'Each bullet inherits its employer, title and dates from its role heading.'}
     verdict = create_model('BoundDocumentVerdict', __base__=ReviewVerdict,
         finding=(Annotated[int, Field(strict=True, ge=0, lt=len(errors))], ...),
@@ -99,6 +104,9 @@ def adjudicate(ctx, filled, findings):
             if decision.claim_id.startswith('project:') and decision.source_id not in (
                     'owner_policy', 'repo:' + decision.claim_id.split(':')[1]):
                 raise ValueError('Project findings require their own repository evidence, not another project')
+            if decision.claim_id.startswith('role-header:') and decision.source_id != (
+                    'role:' + decision.claim_id.split(':')[1]):
+                raise ValueError('A protected header requires its own template role as the source')
 
     messages = [SystemMessage(with_today(
         'Independently adjudicate EACH proposed resume error. A first critic is fallible. '
@@ -109,6 +117,12 @@ def adjudicate(ctx, filled, findings):
         'A populated category is not empty. A summary that starts with the expected title must not be rejected '
         'for its opening title. Every bullet inherits the employer/title/dates printed in its role heading; '
         'there is no requirement to repeat employer names or context inside each bullet. '
+        'role-header IDs are immutable owner-template INPUTS, not generated claims. Select a role-header ID '
+        'only for a concern entirely about its original employer/title/dates, such as original roles with '
+        'overlapping dates. Concurrent source roles do not by themselves contradict a generated bullet. '
+        'Input concerns are retained as advisories; the writer must not change protected source dates. '
+        'An unsupported duration/date newly claimed inside a generated bullet belongs to experience, '
+        'not role-header, and remains a blocking correctness error. '
         'Role titles are not exclusive job-family taxonomies: technical research can include software/data '
         'engineering, and platform/integrations work can include APIs. A different emphasis is not a '
         'contradiction. Require an actual conflict with supplied facts before confirming an attribution error. '
@@ -130,9 +144,12 @@ def adjudicate(ctx, filled, findings):
     for decision in result.verdicts:
         if decision.status != 'rejected':
             finding = errors[decision.finding]
-            kept.append(M.Finding(agent=finding.agent, severity='error',
-                issue=f'{decision.status}: {finding.issue} Evidence {decision.source_id}: {decision.reason}'[:400]))
+            source_concern = decision.claim_id.startswith('role-header:')
+            prefix = 'Source input advisory' if source_concern else decision.status
+            kept.append(M.Finding(agent=finding.agent, severity='suggestion' if source_concern else 'error',
+                issue=f'{prefix}: {finding.issue} Evidence {decision.source_id}: {decision.reason}'[:400]))
     ctx['log'](f'  content adjudication: {len(errors)} proposed, '
                f'{sum(v.status == "rejected" for v in result.verdicts)} rejected, '
-               f'{sum(v.status != "rejected" for v in result.verdicts)} blocking')
+               f'{sum(v.status != "rejected" and not v.claim_id.startswith("role-header:") for v in result.verdicts)} blocking, '
+               f'{sum(v.status != "rejected" and v.claim_id.startswith("role-header:") for v in result.verdicts)} source advisories')
     return kept

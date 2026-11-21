@@ -85,6 +85,10 @@ Last updated 2026-11-16 (template provenance and live-acceptance corrections). E
 - Retry an invalid cover-letter stage without rebuilding an unchanged valid resume. Prefer a compiled one-page
   letter, retain its exact PDF instead of recompiling it at publication, and require its header to match the final resume.
   Changed generation code, project metadata or layout measurements invalidate the corresponding workflow cache.
+- The exact employer name from a bullet's own source role is identity context, not academic/unpaid wording or
+  duplicated work. Other academic wording and genuinely repeated duties still fail the same checks. Concerns
+  about unchanged template role headers (including concurrent dates) are source-input advisories, bound to that
+  exact role; newly generated duration/date claims remain subject to blocking source checks.
 
 **Learning is advisory.** Recommendations appear only at declared looks (100, 200, 400, 800, 1600 resolved applications); behavior switches are off by default; the site-mix switch is unsupported.
 

@@ -487,6 +487,86 @@ def review_world(tmp_path, monkeypatch):
     return ctx, value
 
 
+def test_employer_lab_name_is_not_academic_wording(tmp_path, monkeypatch):
+    ctx, value = review_world(tmp_path, monkeypatch)
+    ctx['r'].roles[0].company = 'Logos Robotics Lab'
+    value.roles[0].bullets = [T.FillBullet(text=text, duties=[0]) for text in (
+        'Built Playwright suites, lifting coverage by 20% at Logos Robotics Lab.',
+        'Analyzed Jenkins logs, reducing failures by 15% at Logos Robotics Lab.')]
+    assert T.quality(ctx['r'], ctx['jd'], value) == []
+    assert T.duplicates(ctx['r'], value, substantive=True) == []
+
+
+def test_employer_name_exception_retains_real_academic_wording(tmp_path, monkeypatch):
+    ctx, value = review_world(tmp_path, monkeypatch)
+    ctx['r'].roles[0].company = 'Logos Robotics Lab'
+    value.roles[0].bullets[0].text = 'Built Python tools for unpaid student teams at Logos Robotics Lab, reducing errors.'
+    assert any('academic/unpaid' in issue for issue in T.quality(ctx['r'], ctx['jd'], value))
+    ctx['r'].roles[0].company = 'Acme'
+    value.roles[0].bullets[0].text = 'Built Python tools at Another Robotics Lab, reducing errors.'
+    assert any('academic/unpaid' in issue for issue in T.quality(ctx['r'], ctx['jd'], value))
+
+
+def test_repeated_employer_identity_does_not_make_distinct_duties_duplicates(tmp_path, monkeypatch):
+    ctx, value = review_world(tmp_path, monkeypatch)
+    ctx['r'].roles[0].company = 'Logos Robotics Lab'
+    value.roles[0].bullets = [T.FillBullet(text=text, duties=[0]) for text in (
+        'Built Playwright suites, lifting coverage by 20% at Logos Robotics Lab.',
+        'Analyzed Jenkins logs, reducing failures by 15% at Logos Robotics Lab.')]
+    assert T.duplicates(ctx['r'], value, substantive=True) == []
+
+
+def test_employer_name_exception_retains_repeated_duties(tmp_path, monkeypatch):
+    ctx, value = review_world(tmp_path, monkeypatch)
+    ctx['r'].roles[0].company = 'Logos Robotics Lab'
+    value.roles[0].bullets = [T.FillBullet(text=text, duties=[0]) for text in (
+        'Built Python regression suites to reduce release failures at Logos Robotics Lab.',
+        'Built Python regression suites to reduce release failures.')]
+    assert T.duplicates(ctx['r'], value, substantive=True)
+
+
+@pytest.mark.parametrize('status', ['confirmed', 'uncertain'])
+def test_protected_template_date_concerns_are_input_advisories_not_rewrite_targets(tmp_path, monkeypatch, status):
+    from jobagent.tools import document_review as R
+    ctx, value = review_world(tmp_path, monkeypatch)
+    ctx['r'].roles[0].dates = 'January 2026 -- Present'
+    original = ctx['r'].roles[0].dates
+    finding = M.Finding(agent='experience', severity='error', issue='The original role dates overlap another role.')
+    def adjudicate(model, schema, messages, **kwargs):
+        data = json.loads(messages[-1].content)
+        assert data['claims']['role-header:0']['dates'] == original
+        return schema.model_validate({'verdicts':[{'finding':0, 'status':status,
+            'claim_id':'role-header:0', 'source_id':'role:0', 'reason':'Concern about the original dates.'}]})
+    monkeypatch.setattr(R.llm, 'structured_invoke', adjudicate)
+    result = R.adjudicate(ctx, value, [finding])
+    assert len(result) == 1 and result[0].severity == 'suggestion'
+    assert 'source input' in result[0].issue.lower()
+    assert ctx['r'].roles[0].dates == original
+
+
+def test_protected_header_cannot_borrow_a_different_source(tmp_path, monkeypatch):
+    from jobagent.tools import document_review as R
+    ctx, value = review_world(tmp_path, monkeypatch)
+    finding = M.Finding(agent='experience', severity='error', issue='Dates need checking.')
+    monkeypatch.setattr(R.llm, 'structured_invoke', lambda model, schema, messages, **kwargs:
+        schema.model_validate({'verdicts':[{'finding':0, 'status':'confirmed',
+            'claim_id':'role-header:0', 'source_id':'posting', 'reason':'Posting dates differ.'}]}))
+    with pytest.raises(ValueError, match='own template role'):
+        R.adjudicate(ctx, value, [finding])
+
+
+def test_generated_tenure_claim_still_blocks_against_protected_dates(tmp_path, monkeypatch):
+    from jobagent.tools import document_review as R
+    ctx, value = review_world(tmp_path, monkeypatch)
+    value.roles[0].bullets[0].text = 'Built Python APIs over ten years, reducing errors.'
+    finding = M.Finding(agent='experience', severity='error', issue='The generated ten-year tenure conflicts with source dates.')
+    monkeypatch.setattr(R.llm, 'structured_invoke', lambda model, schema, messages, **kwargs:
+        schema.model_validate({'verdicts':[{'finding':0, 'status':'confirmed',
+            'claim_id':'experience', 'source_id':'role:0', 'reason':'Generated duration is unsupported.'}]}))
+    result = R.adjudicate(ctx, value, [finding])
+    assert len(result) == 1 and result[0].severity == 'error'
+
+
 def test_independent_project_reader_sees_the_same_readme_evidence_as_the_writer(tmp_path, monkeypatch):
     from jobagent.tools import document_review as R
     ctx, value = review_world(tmp_path, monkeypatch)

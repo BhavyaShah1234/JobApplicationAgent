@@ -774,6 +774,27 @@ def _words(t: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", t.lower())
 
 
+def _without_role_employer(r: Resume, role: int, text: str) -> str:
+    """Remove the exact source employer before judging a bullet's wording.
+
+    Args:
+        r: Owner-supplied template with protected role identities.
+        role: Index of this bullet's source role.
+        text: Generated bullet, left unchanged for rendering and reporting.
+
+    Returns:
+        Text with only whole occurrences of that role's employer masked.
+        Generic academic wording and names of other employers remain visible.
+    """
+    if not 0 <= role < len(r.roles):
+        return text
+    name = to_plain(getattr(r.roles[role], 'company', '')).strip()
+    if not name:
+        return text
+    pattern = r'(?<!\w)' + r'\s+'.join(re.escape(word) for word in name.split()) + r'(?!\w)'
+    return re.sub(pattern, ' ', text, flags=re.I)
+
+
 def duplicates(r: Resume, f: Filled, *, substantive: bool = False) -> list[str]:
     """Pairs of bullets (anywhere in Experience) that repeat each other: a shared 4-word phrase (ignoring very
     common joiners) or > 50% word overlap. With substantive=True, a shared phrase
@@ -794,7 +815,8 @@ def duplicates(r: Resume, f: Filled, *, substantive: bool = False) -> list[str]:
             (ra, ka, ta), (rb, kb, tb) = items[x], items[y]
             # A technical compound is one concept. Splitting real-time made
             # the generic connector "for real-time constraints" a 4-word duty.
-            wa, wb = tokens(ta), tokens(tb)
+            # Repeating an inherited employer identity is not repeating a duty.
+            wa, wb = tokens(_without_role_employer(r, ra, ta)), tokens(_without_role_employer(r, rb, tb))
             grams = lambda w: {tuple(w[i:i + 4]) for i in range(len(w) - 3) if not set(w[i:i + 4]) <= stop}
             shared = grams(wa) & grams(wb)
             if substantive:
@@ -881,7 +903,7 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
             if e.role < len(r.roles) and (other := moved_from(r, e.role, b.text)) is not None:
                 out.append(f"{where} is the candidate's bullet from {r.roles[other].company}, not from "
                            f"{r.roles[e.role].company}: replace it with a new bullet for this role")
-            if m := ACADEMIC.search(b.text):
+            if m := ACADEMIC.search(_without_role_employer(r, e.role, b.text)):
                 out.append(f"{where} uses academic/unpaid wording \"{m.group(0)}\"")
             low = b.text.lower()
             # "AI", "ML", "LLM" or "machine learning" name a field, not a tool: they don't count

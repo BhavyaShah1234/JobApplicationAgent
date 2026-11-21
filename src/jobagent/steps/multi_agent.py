@@ -344,6 +344,10 @@ proof. Locked Education establishes the listed degrees; never infer missing educ
 Experience. Employer identities, titles, dates, credentials and repository implementation features remain protected.
 Return an empty list if the resume is sound."""
 REVIEW_PROMPT += "\nFor the Projects section: " + P.SOURCE_POLICY
+REVIEW_PROMPT += ("\nOwner-template role titles, employers and dates are immutable inputs. "
+                 "Concurrent or overlapping source roles alone are not a generated-content contradiction. "
+                 "Do not ask the writer to change those headers or repeat them inside bullets. "
+                 "New duration/date claims within generated bullets still require their actual sources.")
 
 ROUTER_PROMPT = """You are the ATS validator of a resume team. Online ATS checkers scored the resume; their MISSING
 keywords and ADVICE are below. Turn them into tasks for the agents that own each part of the resume:
