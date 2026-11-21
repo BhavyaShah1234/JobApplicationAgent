@@ -614,10 +614,14 @@ def declared_claims() -> dict:
     import yaml
 
     from jobagent.config import get_settings
-    try:
-        return yaml.safe_load((get_settings().data_dir / "master_profile.yaml").read_text()).get("claims") or {}
-    except Exception:
+    path = get_settings().data_dir / "master_profile.yaml"
+    if not path.is_file():
         return {}
+    try:
+        return (yaml.safe_load(path.read_text()) or {}).get("claims") or {}
+    except (yaml.YAMLError, AttributeError, OSError) as exc:
+        # An unreadable profile used to mean "no declared facts": the years cap and the claims policy silently vanished.
+        raise ValueError(f"{path.name} cannot be read ({type(exc).__name__}); fix it before generating documents") from exc
 
 
 def facts_block() -> str:

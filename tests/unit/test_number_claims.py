@@ -104,3 +104,38 @@ def test_a_letter_figure_needs_that_figure_in_the_sources_not_just_its_digits():
     assert not any("45" in i for i in ok), ok
     plain = CL.consistency(letter("With 5 years in data engineering I am ready."), RESUME_TEXT, jd_, "")
     assert not any("number" in i for i in plain), plain
+
+
+# --- years of experience ------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("summary", ["Engineer with a 12-year track record in ML.", "Engineer with twelve years of experience.", "Engineer with over a decade of experience.",
+                                      "Engineer with ten-plus years building models.", "Engineer with 12+ yrs in ML.", "Engineer with two decades in data.",
+                                      "Engineer with a decade-plus of ML work."])
+def test_a_summary_claiming_more_years_than_declared_is_flagged_in_any_wording(monkeypatch, summary):
+    from jobagent.steps import multi_agent as M
+    monkeypatch.setattr(T, "declared_claims", lambda: {"years_experience": 5})
+    assert any("declared 5" in i for i in M.summary_issues(summary, False)), summary
+
+
+@pytest.mark.parametrize("summary", ["Engineer with 5 years of experience.", "Engineer with five years building models.", "Engineer with a 3-year record.",
+                                      "Engineer with 4+ yrs in ML.", "Engineer who shipped in the last quarter."])
+def test_years_within_the_declared_total_are_not_flagged(monkeypatch, summary):
+    from jobagent.steps import multi_agent as M
+    monkeypatch.setattr(T, "declared_claims", lambda: {"years_experience": 5})
+    assert not any("declared" in i for i in M.summary_issues(summary, False)), summary
+
+
+def test_claimed_years_reads_words_decades_and_hyphens():
+    from jobagent.tools.number_claims import claimed_years
+    assert claimed_years("3 years, ten-plus years, a decade, two decades, 7-year, 2.5 yrs") == [3.0, 10.0, 10.0, 20.0, 7.0, 2.5]
+    assert claimed_years("Python 3.11 in 2025, one year ago") == [1.0]
+
+
+def test_an_unreadable_profile_stops_generation_instead_of_dropping_the_claims_policy(tmp_path, monkeypatch):
+    from jobagent.config import get_settings
+    (tmp_path / "master_profile.yaml").write_text("claims: [unclosed\n  years_experience: 5")
+    monkeypatch.setattr(get_settings(), "data_dir", tmp_path, raising=False)
+    with pytest.raises(ValueError, match="cannot be read"):
+        T.declared_claims()
+    (tmp_path / "master_profile.yaml").unlink()
+    assert T.declared_claims() == {}                                                       # no profile at all keeps the old behaviour

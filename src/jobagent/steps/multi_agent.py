@@ -947,7 +947,8 @@ def summary_issues(summary: str, overflow: bool) -> list[str]:
     elif overflow and len(summary) > T.SUMMARY_TIGHT + 30:
         out.append(f"The page overflows: shorten the Summary to at most {T.SUMMARY_TIGHT} characters.")
     years = T.declared_claims().get("years_experience")
-    claimed = [float(n) for n in re.findall(r"(?<![\w.])(\d+(?:\.\d+)?)\+?\s*(?:years?|yrs)\b", summary, re.I)]
+    from jobagent.tools.number_claims import claimed_years
+    claimed = claimed_years(summary)                  # also "10-year", "ten years", "a decade"
     if years is not None and any(n > years for n in claimed):
         out.append(f"The Summary claims more than the declared {years} years of experience.")
     if re.search(r"(?i)\binternships?\b|\bor related (field|discipline)|\bsuch as\b.*\bor\b", summary):

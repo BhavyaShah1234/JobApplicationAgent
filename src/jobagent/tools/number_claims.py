@@ -53,3 +53,29 @@ def digits(token: str) -> str:
     """The number inside a token (`30%` -> `30`), or the token itself for a word figure."""
     m = re.search(_NUM, token)
     return m.group(0).replace(",", "") if m else token
+
+
+_WORDS = {w: i for i, w in enumerate("one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen "
+                                      "eighteen nineteen twenty".split(), 1)} | {"thirty": 30, "forty": 40, "fifty": 50}
+YEARS = re.compile(
+    r"(?i)(?<![\w.])(?:(?P<a>an?)\s+(?P<au>decade)|(?P<n>\d+(?:\.\d+)?|" + "|".join(_WORDS) + r")\s*(?:\+|[-\s]?plus)?[\s-]*(?P<u>years?|yrs?|decades?))\b")
+
+
+def claimed_years(text: str) -> list[float]:
+    """Years of experience a text claims: `5 years`, `10+ yrs`, `a 10-year record`, `ten years`, `ten-plus years`, `a decade`, `two decades`.
+
+    Args:
+        text: A summary or other prose.
+
+    Returns:
+        Every duration found, in years (a decade counts as ten).
+    """
+    out = []
+    for m in YEARS.finditer(text or ""):
+        if m.group("a"):
+            out.append(10.0)
+            continue
+        n = m.group("n").lower()
+        value = float(n) if n[0].isdigit() else float(_WORDS[n])
+        out.append(value * (10 if m.group("u").lower().startswith("decade") else 1))
+    return out
