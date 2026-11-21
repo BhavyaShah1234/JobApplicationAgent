@@ -96,8 +96,8 @@
   "src/jobagent/tools/wizard.py": 3,
   "src/jobagent/tools/workflow.py": 8
  },
- "public_items": 1557,
+ "public_items": 1558,
  "without_docstring": 507,
- "covered_percent": 67.4,
+ "covered_percent": 67.5,
  "long_functions_without_args_section": 335
 }

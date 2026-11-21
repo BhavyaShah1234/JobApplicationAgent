@@ -161,9 +161,13 @@ def adjudicate(ctx, filled, findings):
                 raise ValueError('A verdict cannot move the finding to another displayed section')
             if decision.status == 'rejected' and finding.agent in ('experience', 'skills') and decision.source_id == 'company':
                 raise ValueError('Company facts cannot establish what the candidate did or knows: cite the role, skills or owner_policy source, or use uncertain')
-            if decision.claim_id.startswith('project:') and decision.source_id not in (
-                    'owner_policy', 'repo:' + decision.claim_id.split(':')[1]):
-                raise ValueError('Project findings require their own repository evidence, not another project')
+            if decision.claim_id.startswith('project:'):
+                own = 'repo:' + decision.claim_id.split(':')[1]
+                # Dismissing a project finding needs the project's OWN repository (its card already embeds the
+                # owner template title/award); owner_policy is global work-role guidance, not implementation evidence.
+                if decision.source_id != own and (decision.status == 'rejected' or decision.source_id != 'owner_policy'):
+                    raise ValueError('Project findings require their own repository evidence (not another project or '
+                                     'global owner policy) to be rejected')
             inventory = inventories[decision.finding]
             if decision.status != 'rejected' and inventory['cited'] and inventory['cited'] == inventory['absent_from_section']:
                 relied = reason_blames_page_for(decision.reason, inventory['absent_from_section'])

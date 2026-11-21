@@ -738,6 +738,52 @@ def _term_pattern(term: str) -> "re.Pattern | None":
     return re.compile(r"(?<![A-Za-z0-9+#])" + r"[\s\-_]?".join(parts) + r"(?![A-Za-z0-9+#]|\.(?!js\b)[A-Za-z0-9])", re.IGNORECASE)
 
 
+# A technology the PROSE denies ("without React or TypeScript") is not a claim to have used it; a technology the SOURCE denies or postpones ("does not use React",
+# "React is planned for a future release") is not evidence that it was built. Both are decided per clause, so a denial of one name never hides another.
+_DENY_CUE = re.compile(r"(?i)\b(?:without|not|no|never|nor|neither|instead\s+of|rather\s+than|avoid\w*|excluding|minus|free\s+of)\b|n't\b|\bnon-")
+_DENY_FILLER = re.compile(r"(?i)^(?:[\s,/&+]|\b(?:and|or|nor|any|either|using|use|uses|used|a|an|the|of|with)\b)*$")
+_NOT_BUILT_CUE = re.compile(r"(?i)\b(?:not|no|never|without|nor|neither|instead\s+of|rather\s+than|avoid\w*|excluding|plans?|planned|planning|future|roadmap|upcoming|"
+                            r"will|would|could|might|may|consider\w*|evaluat\w*|explor\w*|intend\w*|aims?|hop\w*|later|eventually|someday|todo|yet)\b|n't\b")
+_CLAUSE = re.compile(r"(?<=[.!?;\n])\s+|[;\n]|,\s+(?:but|and|while|whereas|although)\b")
+
+
+def _denied_in_prose(text: str, start: int, vocabulary: list[str]) -> bool:
+    """Whether the technology mention at `start` is governed by a negation in its own clause (only list words / other names in between)."""
+    clause = max((text.rfind(c, 0, start) for c in ".;:!?\n"), default=-1) + 1
+    before = text[clause:start]
+    cues = list(_DENY_CUE.finditer(before))
+    if not cues:
+        return False
+    between = before[cues[-1].end():]
+    for term in vocabulary:
+        pattern = _term_pattern(term)
+        if pattern is not None:
+            between = pattern.sub(" ", between)
+    return bool(_DENY_FILLER.match(between))
+
+
+def _affirmed_card(card: dict, term: str) -> dict:
+    """The card with every clause removed that names `term` only to deny or postpone it (`does not use React`, `React is planned`).
+
+    The structured `tech_stack` is untouched (it lists what the repository uses); free-text fields lose just the non-affirming clauses.
+    """
+    pattern = _term_pattern(term)
+    if pattern is None:
+        return card
+    out = dict(card)
+    for key in ("title", "summary", "evidence_notes", "readme"):
+        value = card.get(key)
+        if value is None:
+            continue
+
+        def clean(raw) -> str:
+            """Join the clauses of one field that do not deny or postpone the term."""
+            kept = [c for c in _CLAUSE.split(str(raw)) if c and not (pattern.search(c) and _NOT_BUILT_CUE.search(c))]
+            return " ".join(kept)
+        out[key] = [clean(v) for v in value] if isinstance(value, list) else clean(value)
+    return out
+
+
 def prose_tech_claims(text: str, card: dict, vocabulary: list[str]) -> list[str]:
     """Technologies the displayed prose names that the project's OWN card does not establish.
 
@@ -767,11 +813,13 @@ def prose_tech_claims(text: str, card: dict, vocabulary: list[str]) -> list[str]
                 continue                                      # "react to events", "spark of interest": ordinary words, not the product
             if _PROSE_SKIP_AFTER.match(text[m.end():]) and shown.isalpha():
                 continue
+            if _denied_in_prose(text, m.start(), vocabulary):
+                continue
             taken.append((m.start(), m.end()))
             found.append((m.start(), shown, term))
     out: list[str] = []
     for _, shown, term in sorted(found):
-        if ground_stack([term], card)[1] and shown not in out:
+        if ground_stack([term], _affirmed_card(card, term))[1] and shown not in out:
             out.append(shown)
     return out
 

@@ -349,3 +349,40 @@ def test_a_round_without_a_source_finding_never_counts_toward_recovery(tmp_path,
     tasks = {"projects": ["Shorten project 1 to fit."]}
     st, _ = round_(ctx, tasks, d)
     assert entry(st, COLLIDE)["paragraph"] == entry(PACKET, COLLIDE)["paragraph"] and not ctx.get("scope_failures")
+
+
+# --- source denial / plan and negated lists (follow-up to the independent controls) ------------------------------------------------------------
+def _clause_findings(text, summary, stack=('Python', 'FastAPI')):
+    entry = {'repo': 'o/s', 'title': 'S', 'stack': ['Python'], 'paragraph': text, 'short': text}
+    cards = {'o/s': {'full_name': 'o/s', 'summary': summary, 'tech_stack': list(stack)},
+             'o/x': {'full_name': 'o/x', 'summary': 'React TypeScript Vue app', 'tech_stack': ['React', 'TypeScript', 'Vue']}}
+    return P.content_findings({'ranked': [entry], 'kept': 1, 'short': []}, cards)
+
+
+def test_negated_technology_lists_are_not_claims_but_other_names_still_are():
+    assert not _clause_findings('Built a Python service with no React, TypeScript or Vue.', 'Built a Python API.')
+    assert not _clause_findings('Built a Python service, not React.', 'Built a Python API.')
+    assert _clause_findings('Built a Python service without tests; React frontend.', 'Built a Python API.')
+    assert _clause_findings('Built a Python API without Vue, plus a React frontend.', 'Built a Python API.')
+    assert _clause_findings('Built a Python API, not only Vue but also React.', 'Built a Python API.')
+
+
+def test_source_denials_and_plans_in_any_phrasing_do_not_support_the_claim():
+    for summary in ('Built a Python API. No React is used.', 'Built a Python API, without React.',
+                    'Built a Python API. Future work: React.', 'Built a Python API. We may add React later.'):
+        assert _clause_findings('Built a React frontend.', summary), summary
+
+
+def test_an_affirmed_clause_survives_a_denied_neighbour():
+    assert not _clause_findings('Built a React frontend.', 'Built a React frontend, but no Vue. Planned: TypeScript.')
+
+
+def test_project_rejection_cannot_cite_owner_policy_but_a_confirmation_may(tmp_path, monkeypatch):
+    import pytest
+    from test_generation_reliability import _project_world, _verdict
+    from jobagent.steps import multi_agent as M
+    R, ctx, value = _project_world(tmp_path, monkeypatch, 'Built a React frontend.')
+    finding = M.Finding(agent='projects', severity='error', issue='React is not shown by this project card.')
+    monkeypatch.setattr(R.llm, 'structured_invoke', lambda model, schema, messages, **kw:
+                        schema.model_validate(_verdict(0, 'confirmed', 'React is absent from the card.', source_id='owner_policy')))
+    assert R.adjudicate(ctx, value, [finding])
