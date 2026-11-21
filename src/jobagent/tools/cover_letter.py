@@ -145,6 +145,8 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
     sources = "\n".join([resume, company_md, jd.model_dump_json()])
     low = sources.lower()
     known_numbers = set(re.findall(r"\d+(?:\.\d+)?", sources))
+    from jobagent.tools import number_claims as NC
+    source_figures = NC.metric_tokens(to_plain(sources))
     issues = []
     for k, p in enumerate(letter.paragraphs, 1):
         if not re.search(r"(?i)\b(?:certifications?|certificates?|certified)\b", resume) and re.search(
@@ -156,6 +158,9 @@ def consistency(letter: Letter, resume: str, jd: JobDescription, company_md: str
         for n in re.findall(r"\d+(?:\.\d+)?", p.text):
             if n not in known_numbers:
                 issues.append(f"paragraph {k}: the number {n!r} is not in the resume, posting or company profile")
+        for token, written in NC.metric_spans(p.text).items():       # a figure needs its own spelling in a source, not just the same digits
+            if token not in source_figures and NC.digits(token) in known_numbers:
+                issues.append(f"paragraph {k}: the figure {written!r} is not in the resume, posting or company profile")
         for name in sorted((set(TOOLISH.findall(p.text)) | proper_nouns(p.text)) - _NOT_TOOLS):
             if name.lower() not in low:
                 issues.append(f"paragraph {k}: {name!r} is not in the resume, posting or company profile")

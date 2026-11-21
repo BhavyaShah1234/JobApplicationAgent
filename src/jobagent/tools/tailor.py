@@ -734,13 +734,22 @@ def fill_checks(r: Resume, jd: JobDescription, f: Filled, slots: int | None = No
     known = set(re.findall(r"\d+(?:\.\d+)?", to_plain(r.tex) + " " + " ".join(jd.responsibilities + jd.technical_skills +
                                                                               jd.preferred_qualifications)))
     warn = []
+    from jobagent.tools import number_claims as NC
+    owner_figures = NC.metric_tokens(to_plain(r.tex))                 # the owner's own results: a posting's "5+ years" never vouches for a "5%"
     for e in f.roles:
         for b in e.bullets:
             est = " ".join(b.estimated)
-            for n in re.findall(r"\d+(?:\.\d+)?", PLACEHOLDER.sub("", b.text)):
+            plain = PLACEHOLDER.sub("", b.text)
+            for n in re.findall(r"\d+(?:\.\d+)?", plain):
                 if n not in known and n not in est:  # an estimate the model didn't list: list it for review
                     b.estimated = b.estimated + [n]
                     est += " " + n
+            listed = {NC.digits(NC._norm(x)) for x in b.estimated} | {NC._norm(x) for x in b.estimated}
+            for token, written in NC.metric_spans(plain).items():
+                if token in owner_figures or token in listed or NC.digits(token) in listed:
+                    continue                                          # the owner's figure, or already listed for the candidate to confirm
+                b.estimated = b.estimated + [written]
+                listed |= {token, NC.digits(token)}
     return uncovered, missing, warn
 
 
