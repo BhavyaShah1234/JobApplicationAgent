@@ -125,6 +125,13 @@ def _state_from_label(label: str) -> str | None:
         ):
             return code
 
+    # In "USA, DC, Washington", the explicit state code precedes a city
+    # that is also a state name. A trailing code still wins above for
+    # conventional city/state labels such as "Washington, DC".
+    head, separator, _ = cleaned.strip(" ,").partition(",")
+    if separator and head.strip() in STATE_CITIES:
+        return head.strip()
+
     # A trailing state name, such as "Folsom, California".
     # Longer names come first so West Virginia isn't read as Virginia.
     ordered = sorted(
@@ -136,6 +143,15 @@ def _state_from_label(label: str) -> str | None:
         if normalized.endswith(" " + _key(state)):
             return code
 
+    # Country-first ATS labels can put the state before the city:
+    # "USA, CO, Boulder". Keep the existing trailing-state precedence above
+    # so "Washington, DC" continues to mean the District of Columbia.
+    head, separator, _ = cleaned.strip(" ,").partition(",")
+    if separator:
+        for code, (state, _) in STATE_CITIES.items():
+            if head.strip() == code or _key(head) == _key(state):
+                return code
+
     return None
 
 
@@ -145,10 +161,14 @@ def _city_key(city: str) -> str:
 
 
 def _explicit_city(location: str, code: str) -> str:
-    """Retain a city preceding a state; country qualifiers are not cities."""
+    """Retain the explicit city in either city/state or state/city order."""
     text = re.sub(r"(?i)\b(?:united states(?: of america)?|usa|us)\b", "", location).strip(" ,")
     state = STATE_CITIES[code][0]
-    city = re.sub(r"(?i)(?:^|[,\s]+)(?:" + re.escape(state) + "|" + code + r")\s*$", "", text).strip(" ,")
+    head, separator, tail = text.partition(",")
+    if separator and (head.strip() == code or _key(head) == _key(state)):
+        city = tail.strip(" ,")
+    else:
+        city = re.sub(r"(?i)(?:^|[,\s]+)(?:" + re.escape(state) + "|" + code + r")\s*$", "", text).strip(" ,")
     if city == text or not city or _key(city) in {"remote", "hybrid", "onsite", "united states"}:
         return ""
     # Broad geography such as 'Remote, Arizona' is still state-only.
