@@ -1134,7 +1134,10 @@ def summary_issues(summary: str, overflow: bool) -> list[str]:
     facts (years above the declared total, internships), no copied qualification list."""
     import re
     out = []
-    sentences = [x for x in re.split(r"(?<=[.!?])\s+", summary.strip()) if x]
+    # An opening seniority abbreviation belongs to the target title, rather
+    # than forming a one-word sentence of its own. Keep the printed text.
+    counted = re.sub(r"^(\s*(?:Sr|Jr))\.(?=\s+\w)", r"\1", summary, flags=re.I)
+    sentences = [x for x in re.split(r"(?<=[.!?])\s+", counted.strip()) if x]
     if len(summary) > SUMMARY_MAX or len(sentences) > 3:
         out.append(f"The Summary is {len(summary)} characters / {len(sentences)} sentences: rewrite it in 2-3 "
                    f"sentences, at most {T.SUMMARY_TARGET} characters (never over {SUMMARY_MAX}).")
@@ -1154,7 +1157,8 @@ def summary_issues(summary: str, overflow: bool) -> list[str]:
 def _title_prefix(summary: str, title: str) -> bool:
     """Check the opening directly instead of asking a critic to guess."""
     import re
-    tokens=lambda text:re.findall(r'\w+',T.summary_text(text).casefold())
+    seniority = {'sr': 'senior', 'jr': 'junior'}
+    tokens=lambda text:[seniority.get(t, t) for t in re.findall(r'\w+',T.summary_text(text).casefold())]
     expected=tokens(title);actual=tokens(summary)
     return bool(expected) and actual[:len(expected)]==expected
 
