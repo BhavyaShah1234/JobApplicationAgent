@@ -15,15 +15,28 @@ test("the header shows the tabs with their counts and the overview shows what is
   expect(await screen.findByText("Robotics Engineer")).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: /Questions/ })).toHaveTextContent("3");
   expect(screen.getByRole("tab", { name: /Review/ })).toHaveTextContent("2");
-  expect(screen.getByRole("tab", { name: "Start a run" })).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: "Start a run" })).toBeNull();                 // the start form lives on the Queue page now
   expect(screen.getByText(/live/)).toBeInTheDocument();
 });
 
-test("a read-only dashboard has no Start tab", async () => {
-  mockFetch({ "/api/overview": { ...OVERVIEW, read_only: true }, "/api/config": { read_only: true, novnc: "" }, "/api/pipeline": [] });
+test("a read-only dashboard shows the queue without the start form or delete buttons", async () => {
+  history.replaceState(null, "", "/queue");
+  mockFetch({ "/api/overview": { ...OVERVIEW, read_only: true }, "/api/config": { read_only: true, novnc: "" }, "/api/pipeline": [],
+    "/api/queue": [{ id: 1, company: "Acme", title: "Dev", status: "queued", has_application: false, updated_at: "2026-11-17T09:00:00Z" }] });
   render(<App />);
-  await screen.findByText(/Read-only view/);
+  expect(await screen.findByText("Acme")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Delete/ })).toBeNull();
+  expect(screen.queryByPlaceholderText(/One per line/)).toBeNull();
   expect(screen.queryByRole("tab", { name: "Start a run" })).toBeNull();
+});
+
+test("the old /start address opens the Queue page", async () => {
+  history.replaceState(null, "", "/start");
+  mockFetch({ "/api/overview": OVERVIEW, "/api/config": { read_only: false, novnc: "" }, "/api/pipeline": [], "/api/queue": [] });
+  render(<App />);
+  expect(await screen.findByPlaceholderText(/One per line/)).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Queue" })).toHaveAttribute("aria-selected", "true");
+  expect(location.pathname).toBe("/queue");
 });
 
 test("tabs switch the view", async () => {

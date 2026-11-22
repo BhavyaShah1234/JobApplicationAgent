@@ -49,7 +49,7 @@ export default function Overview({ overview: o, config, onWatch }) {
       </div>
 
       <h2>Working now</h2>
-      {live.length ? live.map((j) => <JobCard key={j.identity || j.job_dir || j.url || j.job} job={j} onWatch={onWatch} />) : <Empty>Nothing is running. Start a run from the Start tab or `jobagent run` in a terminal.</Empty>}
+      {live.length ? live.map((j) => <JobCard key={j.identity || j.job_dir || j.url || j.job} job={j} onWatch={onWatch} />) : <Empty>Nothing is running. Start a run from the Queue tab or `jobagent run` in a terminal.</Empty>}
       {recent.length > 0 && (
         <>
           <h2>Recently finished</h2>

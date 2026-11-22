@@ -9,15 +9,15 @@ import Questions from "./views/Questions.jsx";
 import Queue from "./views/Queue.jsx";
 import Review from "./views/Review.jsx";
 import Runs from "./views/Runs.jsx";
-import StartRun from "./views/StartRun.jsx";
 import FetchError from "./components/FetchError.jsx";
 
-const TABS = [["overview", "Overview"], ["jobs", "Jobs"], ["browser", "Browser"], ["questions", "Questions"], ["review", "Review"], ["queue", "Queue"], ["runs", "Runs"], ["outcomes", "Outcomes"], ["start", "Start a run"]];
+const TABS = [["overview", "Overview"], ["jobs", "Jobs"], ["browser", "Browser"], ["questions", "Questions"], ["review", "Review"], ["queue", "Queue"], ["runs", "Runs"], ["outcomes", "Outcomes"]];
 
 function currentTab() {
   const path = location.pathname.replace(/\/+$/, "") || "/";
   const legacy = ["/", "/index.html"].includes(path) ? location.hash.slice(1) : "";
-  const id = legacy || path.slice(1);
+  const raw = legacy || path.slice(1);
+  const id = raw === "start" ? "queue" : raw;                       // the old Start a run page now lives on the Queue page
   return TABS.some(([key]) => key === id) ? id : "overview";
 }
 
@@ -54,7 +54,7 @@ export default function App() {
   }
   if (signedOut) return <main><p>Signed out: open the address that `jobagent dashboard` printed.</p></main>;
   const live = overview?.jobs_active > 0;
-  const tabs = TABS.filter(([id]) => !(config.read_only && id === "start"));
+  const tabs = TABS;
   return (
     <>
       <header className="top">
@@ -86,10 +86,9 @@ export default function App() {
         {tab === "browser" && <Browser config={config} />}
         {tab === "questions" && <Questions config={config} onChange={reload} />}
         {tab === "review" && <Review />}
-        {tab === "queue" && <Queue />}
+        {tab === "queue" && <Queue config={config} onOpenJobs={() => go("jobs")} />}
         {tab === "runs" && <Runs />}
         {tab === "outcomes" && <Outcomes />}
-        {tab === "start" && !config.read_only && <StartRun onStarted={() => go("jobs")} />}
       </main>
     </>
   );

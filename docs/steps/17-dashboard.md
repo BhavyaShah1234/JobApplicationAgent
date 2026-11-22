@@ -16,10 +16,9 @@ sources (`static/source.sha256`).
 | Jobs | the same job cards with filters (working now, needs attention, finished) and a history of what each job did | `progress` records in the run logs |
 | Questions | what the agent is waiting on; a text box to answer (not for secrets) | `state/hitl/pending` |
 | Review | applications filled to their review screen: ready or not, blockers, hours waiting, and the exact command that opens each review | `tools/review_queue.py` |
-| Queue | discovered postings and their status, role, match score, note | `jobs` |
+| Queue | discovered postings and their status, role, match score, note; **a start form at the top** (add job links or companies and start `jobagent run INPUTS --through scrape\|tailor\|apply --limit N` in the background: found postings appear in the table); filter by status; select postings and **delete** the waiting ones (queued, needs review, skipped, failed, blocked) after a confirmation | `jobs`, `queue_removed`, the `run` command (step 16) |
 | Runs | each run (step, job, start, lines, errors, last line, running) and its full log | `state/logs/*.jsonl` (step 22) |
 | Outcomes | counts by stage and the latest outcome mails per application | `outcome_events` |
-| Start a run | `jobagent run INPUTS --through scrape\|tailor\|apply --limit N` in the background | the `run` command (step 16) |
 
 **Analytics honesty (on the Overview).** Silence is never counted as a rejection: the outcome labels are the agent's own (pending inside the cutoff, ghosted after it as a weak negative), and a reply rate is shown as "k of n" with a Wilson 95% interval. A group with fewer than 15 resolved applications is drawn grey and a banner says the figures describe what happened, not what to expect, until there are enough applications. Charts are small hand-written SVG components (`frontend/src/charts`), no charting library.
 
@@ -63,7 +62,9 @@ scripts/dashboard.sh logs
 
 The older separate `jobagent-dashboard` container must be stopped before moving to the integrated service on the same port. Its old access cookie is separate: obtain the integrated service's link with `scripts/dashboard.sh url`.
 
-Start a run accepts the normal inputs, a scrape/tailor/apply stop point, optional ATS-scan skipping, and explicit stage refresh. It uses automatic browser fallback and retains startup output and exit status in Runs. A second dashboard launch is refused while its existing child is active. CLI runs still use their normal workflow and browser locks. Nothing started here can pass the review screen.
+The start form on the Queue page (the old separate Start tab; `/start` now opens the Queue) accepts the normal inputs, a scrape/tailor/apply stop point, optional ATS-scan skipping, and explicit stage refresh. It uses automatic browser fallback and retains startup output and exit status in Runs. A second dashboard launch is refused while its existing child is active. CLI runs still use their normal workflow and browser locks. Nothing started here can pass the review screen.
+
+**Deleting from the queue.** `POST /api/queue/delete {ids}` (`tools/queue_admin.py`) removes postings that are `queued`, `needs_review`, `skipped`, `failed` or `blocked` and have no application; a running, scraped, applied or closed posting, or one with an application on record, is refused with the reason and kept. The deleted address is stored in `queue_removed`, so the next discovery run does not add it back (`jobqueue.enqueue` skips it). The route has the same guards as every POST (token, host, same-site JSON header) and is absent in read-only mode, where the page shows no form or delete controls.
 
 Progress records carry a canonical job directory and execution ID. Same-numbered requisitions at different companies remain separate, and a retry does not inherit a previous attempt's failure. Standalone tailor/apply/ATS commands report their actual final status. The form page number has no fabricated total; the configured maximum-page budget is not a count of discovered pages. Field progress counts the current inventory and cannot change whether a field is accepted. HITL requests identify their execution, show a waiting stage, and resume through the normal file queue. Read-only viewers do not create or prune requests, including requests from a different PID namespace.
 

@@ -77,9 +77,10 @@ def queue(settings, limit: int = 300) -> list[dict]:
     if conn is None:
         return []
     try:
-        keep = ("id", "company", "title", "location", "status", "notes", "role_id", "match_score", "claimed_by", "updated_at", "url")
+        keep = ("id", "company", "title", "location", "status", "notes", "role_id", "match_score", "claimed_by", "updated_at", "url", "has_application")
         return [{k: (str(r[k])[:200] if isinstance(r.get(k), str) else r.get(k)) for k in keep if k in r}
-                for r in _rows(conn, "SELECT * FROM jobs ORDER BY updated_at DESC, id DESC LIMIT ?", (limit,))]
+                for r in _rows(conn, "SELECT jobs.*, EXISTS(SELECT 1 FROM applications a WHERE a.job_id = jobs.id OR a.url = jobs.url) AS has_application "
+                                     "FROM jobs ORDER BY updated_at DESC, id DESC LIMIT ?", (limit,))]
     finally:
         conn.close()
 

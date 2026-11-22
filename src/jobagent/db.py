@@ -30,6 +30,13 @@ CREATE TABLE IF NOT EXISTS jobs (
     discovered_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+-- Dashboard: postings the candidate deleted from the queue. Discovery skips these addresses, so a deleted posting does not come back on the next run.
+CREATE TABLE IF NOT EXISTS queue_removed (
+    url         TEXT PRIMARY KEY,
+    company     TEXT,
+    title       TEXT,
+    removed_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
 -- Step 10: every ATS score of a resume version (an online checker, or one the user ran by hand), per round.
 CREATE TABLE IF NOT EXISTS ats_runs (
     id          INTEGER PRIMARY KEY,

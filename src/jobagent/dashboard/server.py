@@ -272,6 +272,14 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/hitl/answer":
                 return self._json(self._answer(s, body))
+            if path == "/api/queue/delete":
+                from jobagent import db
+                from jobagent.tools import queue_admin as QA
+                conn = db.connect(s.state_dir / "jobs.sqlite")
+                try:
+                    return self._json(QA.delete(conn, body.get("ids")))
+                finally:
+                    conn.close()
             if path == "/api/run":
                 with self.server.lock:
                     return self._json(start_run(s, body.get("inputs"), str(body.get("through", "apply")), body.get("limit", 5), self.server.popen,

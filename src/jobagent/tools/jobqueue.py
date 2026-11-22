@@ -104,6 +104,8 @@ def enqueue(conn: sqlite3.Connection, item: Listing, match: Match, location: Dec
                             "AND status != 'skipped'", (company_slug, item.req_id, url)).fetchone()
         if twin:
             return "duplicate"
+    if conn.execute("SELECT 1 FROM queue_removed WHERE url = ?", (url,)).fetchone():
+        return "unchanged"                                  # the candidate deleted this posting in the dashboard
     row = conn.execute("SELECT status FROM jobs WHERE url = ?", (url,)).fetchone()
     if row and row["status"] not in OPEN:
         return "unchanged"
