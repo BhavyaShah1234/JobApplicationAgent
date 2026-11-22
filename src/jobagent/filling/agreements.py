@@ -13,7 +13,10 @@ def agreement_value(field):
     """Choose an offered acceptance, never a history answer or submit action."""
     if field.kind not in {'checkbox', 'checkboxes', 'radio', 'buttons', 'select', 'combobox', 'text', 'textarea'}:
         return None
-    q = norm(field.label + ' ' + field.help)
+    # A warning quoting the rejection option is not a negated question.
+    primary = [re.split(r'(?i)\(?\bnote\s*:', text, maxsplit=1)[0]
+               for text in (field.label, field.help)]
+    q = norm(' '.join(primary))
     if re.search(r'captcha|\b(?:not a robot|i am human|human verification|verify you are human)\b',
                  q + ' ' + norm(field.identity)):
         return None
@@ -22,7 +25,7 @@ def agreement_value(field):
     action = re.search(r'\b(?:agree|disagree|accept|acknowledge|acknowledgement|acknowledgment|consent|certify|confirm|understand|read)\b', q)
     subject = re.search(r'\b(?:terms|conditions|agreements?|nda|arbitration|privacy|polic(?:y|ies)|notice|'
                         r'code of conduct|data processing|background check|communications|messages|'
-                        r'truthful|accurate|accuracy|at will)\b', q + ' ' + norm(field.section))
+                        r'truthful(?:ly)?|accurate(?:ly)?|accuracy|at will)\b', q + ' ' + norm(field.section))
     if not action or not subject:
         return None
     # Consent does not establish that a separate activity was completed or that

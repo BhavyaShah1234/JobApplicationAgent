@@ -40,6 +40,9 @@ def field(label, kind='combobox', options=None, **kwargs):
         'Yes, I understand there is no employment contract'),
     (field('I do not agree to the terms', 'checkbox'), ''),
     (field('Do you disagree with the terms?', 'radio'), 'No'),
+    (field('Do you agree to the terms? (NOTE: applicants who do not agree will not be considered.)'), 'Yes'),
+    (field('I acknowledge that I have read, understood and reviewed the above questions, '
+           'and I have answered them truthfully and accurately. Please enter yes if you acknowledge.'), 'Yes'),
 ])
 def test_standing_permission_is_bound_and_plans_without_a_model_or_hitl(f, expected):
     facts = project([f], [], policy())
