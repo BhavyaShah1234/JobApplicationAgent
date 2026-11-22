@@ -172,6 +172,8 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         sheet=ctx.get('ANSWERS_FOR_THIS_APPLICATION','')
         from .routing import answer_sheet_facts
         facts+=answer_sheet_facts(sheet)
+        from .agreements import project
+        facts=project(fields,facts,learned.load())
         if ctx.get('_application_address'):
             for fact in facts:
                 if any('/'+q+'/answer' in fact.source for q in ('Current address','Current location (city)')):

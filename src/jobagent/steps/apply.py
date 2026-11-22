@@ -1010,6 +1010,13 @@ def consult_learned(todo: list[forms.Field], answers: dict, ctx: dict, model, lo
 def resolve(todo: list[forms.Field], answers: dict, ctx: dict, model, env: dict, log,
             deferred: list | None = None) -> None:
     """Lookups the planner asked for, then the questions only the candidate can answer."""
+    from jobagent.filling.agreements import permission, agreement_value
+    if permission(learned.load()):
+        for f in todo:
+            value = agreement_value(f)
+            if value is not None and getattr(answers.get(f.id), 'source', '') != 'human':
+                answers[f.id] = Answer(id=f.id, value=value, source='learned',
+                                      why='owner standing agreement permission in data/learned.yaml')
     from jobagent.tools import lookup
     need = [f for f in todo if (a := answers.get(f.id)) and a.lookup]
     if need:
