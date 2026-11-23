@@ -102,7 +102,9 @@ class PlannedFiller:
                           if(!e)return '';
                           const up=e.closest('label,fieldset,[role=radiogroup],li,div')||e;
                           const cs=getComputedStyle(e), r=e.getBoundingClientRect();
-                          return JSON.stringify({style:{display:cs.display,visibility:cs.visibility,opacity:cs.opacity,position:cs.position,w:r.width,h:r.height},
+                          const labs=[...(e.labels||[])].map(l=>{const q=l.getBoundingClientRect(),s=getComputedStyle(l);
+                            return {text:(l.innerText||'').slice(0,80),w:q.width,h:q.height,display:s.display,visibility:s.visibility,opacity:s.opacity,html:l.outerHTML.slice(0,400)};});
+                          return JSON.stringify({labels:labs,style:{display:cs.display,visibility:cs.visibility,opacity:cs.opacity,position:cs.position,w:r.width,h:r.height},
                                                  html:(up.parentElement||up).outerHTML.slice(0,3000)});}""",item)
                     except Exception:snippet=''
                     if snippet:break
