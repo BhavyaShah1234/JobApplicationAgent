@@ -173,3 +173,16 @@ Not now, Maybe later, No thanks, Get started, Start/Begin application) and the l
 something (Enable, Allow, Subscribe, Accept, Agree, Consent, Turn on, Opt in) and anything that sends the application (Submit, Apply, Finish) is never pressed; a
 page with fields is never skipped; if the same kind of field-less page comes back three times in a row the run stops with "stuck on an intermediate page".
 A field-less page with no safe button is still a blocker. Tests: `tests/unit/test_interstitial_pages.py`, `tests/unit/test_interstitial_browser.py`.
+
+## Hidden consent modals, card-style radios and unresolved-field evidence (2026-11-23)
+- **Closed dialogs are not missing fields.** The discovery inventory (`filling/discovery.py`) skips required controls inside a modal or dialog that is not open
+  (`display: none`, hidden, zero size or `aria-hidden`). Amazon keeps its optional AI/transcription consent modal in the page source, shown only after Submit;
+  it used to end every Amazon run as "unresolved potential field". An open dialog is still counted.
+- **Card-style radios and checkboxes.** An input can have several labels for one id (an empty decorative one and the card with the text). The reader prefers
+  the label with text, accepts a label whose own box has zero size while a card inside it is visible, and the click goes to the card text when the label itself
+  cannot be clicked (`forms.py`: `labelFor`, `labelShown`).
+- **Evidence for the next blocker.** When a page is blocked by unresolved required controls, `application/unresolved-fields.json` holds the HTML around each one,
+  the labels' sizes and styles and their ancestors' boxes, so the fix is built on the real page.
+- **Identity verification stop (Amazon).** After Work Eligibility, Amazon shows "Identity verification": the consent checkbox is filled from the applicant file, and
+  the only way on is "Begin identity verification", which opens a verification portal asking for a government ID photo and a selfie. That needs the candidate; the agent
+  never starts it and reports the run as stopped at that step with all earlier fields verified.
