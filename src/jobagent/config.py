@@ -19,7 +19,7 @@ CONCERN = {                      # which file each setting belongs to
     "documents": ["document_strategy"],
     "ats": ["ats_shortfall", "ats_target"],
     "browser": ["chrome_channel", "headless"],
-    "queue": ["pacing_max_per_company", "pacing_window_days", "queue_lease_seconds"],
+    "queue": ["pacing_max_per_company", "pacing_window_days", "queue_lease_seconds", "eligibility_mode"],
     "learning": ["learning_use_site_mix", "learning_use_tailoring_hints", "learning_use_lessons"],
     "logging": ["log_level"],
     "skills": ["skills_model", "skills_use_graph", "skills_max_neighbours", "skills_duty_merge"],
@@ -118,6 +118,9 @@ class Settings(BaseSettings):
     # Per-company pacing for the queue (tools/pacing.py): at most this many applications started or sent per company in the window; 0 = off
     pacing_max_per_company: int = Field(default=2, ge=0)
     pacing_window_days: int = Field(default=7, ge=1, le=365)
+    # What the posting screen (tools/eligibility.py: citizenship, clearance, "no sponsorship" against data/applicant.yaml) does: off = no screen; warn = log and record the
+    # finding and show it at review, never stop anything; stop = stop the job before any work and block approval until an explicit --ignore-eligibility.
+    eligibility_mode: Literal["off", "warn", "stop"] = "warn"
     queue_lease_seconds: int = Field(default=900, ge=30)               # how long a claimed queue job stays its runner's without a heartbeat (tools/jobqueue.py)
     apply_max_pages: int = Field(default=15, ge=1, le=60)                    # the most wizard pages `apply` walks through before it stops
     skills_model: Literal["fast", "planner"] = "fast"        # model that groups a posting's skills by duty (planner: ~10 min a posting, better groups)

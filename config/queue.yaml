@@ -2,3 +2,5 @@
 # pacing_max_per_company: 2
 # pacing_window_days: 7
 # queue_lease_seconds: 900
+# eligibility_mode: warn   # off | warn | stop. warn (default): citizenship / clearance / sponsorship findings are logged, saved in eligibility.json and shown at review, and never stop a job.
+#                          stop: the job stops before any work (override one URL with --ignore-eligibility); off: no screen at all.

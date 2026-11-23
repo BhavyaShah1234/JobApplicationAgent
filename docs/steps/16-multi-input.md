@@ -15,8 +15,12 @@ others; the table at the end says what happened to each, and the command exits 1
 last `PACING_WINDOW_DAYS` (default 7); its other jobs wait and the log says so. `PACING_MAX_PER_COMPANY=0` turns it off. An explicit URL
 is never blocked.
 
-**Eligibility screen.** After the posting is read and before any document or form work, the posting's hard requirements are compared with
-what your own file says (`data/applicant.yaml`: work authorization, sponsorship, citizenship, clearance):
+**Eligibility screen (warn-only by default, 2026-11-23).** `eligibility_mode` in `config/queue.yaml` (or `ELIGIBILITY_MODE`): **`warn`** (the default)
+logs the finding, saves it in the job's `eligibility.json` and shows it in the application report under "Eligibility" (marked "warning only"), and
+**never stops or blocks anything**, at any stage; `stop` enforces it as described below; `off` does not screen at all. (The owner never asked for a
+stopping guard: it was added on 2026-11-15 after Pantex rejected a citizenship-required role, and two benchmark postings were stopped by it.)
+After the posting is read and before any document or form work, the posting's hard requirements are compared with
+what your own file says (`data/applicant.yaml`: work authorization, sponsorship, citizenship, clearance); in `stop` mode:
 - U.S. citizenship required and your file says you are not a citizen: the job stops as `needs_review` with the quoted sentence
   (`--ignore-eligibility` goes on for that posting; the queue never does);
 - a clearance, or "no sponsorship", that your file does not satisfy: the same;

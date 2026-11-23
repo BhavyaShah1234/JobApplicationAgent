@@ -25,6 +25,13 @@ PANTEX = ("Cloud Solutions Engineer. Travel - 30% or less. This position require
 
 # --- eligibility ----------------------------------------------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _stop_mode(monkeypatch):
+    """These tests are about what the screen does when it enforces (eligibility_mode: stop); the default is now warn (tests/unit/test_eligibility_mode.py)."""
+    from jobagent.tools import eligibility
+    monkeypatch.setattr(eligibility, "mode", lambda: "stop")
+
+
 def test_a_citizenship_requirement_blocks_a_candidate_whose_file_says_they_are_not_a_citizen():
     v = eligibility.screen(PANTEX, NOT_CITIZEN)
     assert v.level == "blocked" and v.reasons[0]["requirement"] == "U.S. citizenship"

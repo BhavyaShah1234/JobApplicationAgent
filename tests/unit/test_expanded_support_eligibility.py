@@ -14,6 +14,13 @@ QUESTION = ('Will you now or in the future require immigration support or sponso
             'Support does include documentation needed for F-1 OPT and STEM OPT.')
 
 
+@pytest.fixture(autouse=True)
+def _stop_mode(monkeypatch):
+    """These tests are about what the screen does when it enforces (eligibility_mode: stop); the default is now warn (tests/unit/test_eligibility_mode.py)."""
+    from jobagent.tools import eligibility
+    monkeypatch.setattr(eligibility, "mode", lambda: "stop")
+
+
 def test_no_visa_sponsorship_does_not_clear_a_broader_no_support_policy():
     verdict = eligibility.screen(POLICY, FACTS)
     assert verdict.level == 'review'

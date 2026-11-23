@@ -579,7 +579,8 @@ def run_pipeline_cmd(
     document_strategy: str = typer.Option(None, help="current or incremental; defaults to DOCUMENT_STRATEGY/current."),
     ats_refine: bool = typer.Option(False, "--ats-refine", help="Allow at most two targeted incremental ATS revisions."),
     ignore_eligibility: bool = typer.Option(False, "--ignore-eligibility", help="Go on although the posting's hard requirements "
-        "(U.S. citizenship, a clearance, no sponsorship) conflict with your file. The queue never does this."),
+        "(U.S. citizenship, a clearance, no sponsorship) conflict with your file. Only matters when eligibility_mode is stop (config/queue.yaml); "
+        "the default, warn, never stops a job. The queue never overrides stop."),
 ) -> None:
     """Take every input through the shared workflow: a job URL directly, company names and files through discovery and the queue (US-only,
     role-matched, paced per company). Stops at the review screen; sending needs your typed `approve` per application (`review-queue`)."""

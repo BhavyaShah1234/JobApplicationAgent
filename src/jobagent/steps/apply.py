@@ -1799,7 +1799,7 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         result["pages"].append({"page": page_no, "headings": view.headings[:4], "screenshot": shot.name,
                                 "errors": view.errors, "buttons": view.buttons,
                                 "extraction": view.coverage.summary()})           # F17: what the reader could and could not see
-        if forms.click_button(page, view, forms.NEXT) is None:
+        if forms.advance(page, view) is None:
             human = forms.human_check(page)
             if human:
                 result["human_check"] = human  # the candidate ticks it in noVNC; then Submit shows
@@ -1849,8 +1849,8 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
     from jobagent.tools import eligibility
     eligibility_verdict=eligibility.assess_job(job_dir)
     eligibility_blockers=eligibility.review_blockers(job_dir,eligibility_verdict)
-    result['eligibility']={'level':eligibility_verdict.level,'reasons':eligibility_verdict.reasons,
-                           'override_applied':eligibility_verdict.level!='ok' and not eligibility_blockers}
+    result['eligibility']={'level':eligibility_verdict.level,'reasons':eligibility_verdict.reasons,'mode':eligibility.mode(),
+                           'override_applied':eligibility.mode()=='stop' and eligibility_verdict.level!='ok' and not eligibility_blockers}
     blockers += eligibility_blockers
     result["extraction_complete"] = all(p.get("extraction", {}).get("complete", True) for p in result["pages"])
     if result["state"] == "blocked":
@@ -1876,7 +1876,8 @@ def report(result: dict, jd: dict) -> str:
     if eligibility_info.get('level','ok')!='ok':
         lines += ['', '## Eligibility', '',
                   f"- Result: **{eligibility_info['level']}**" +
-                  (' (explicit override for this posting)' if eligibility_info.get('override_applied') else '')]
+                  (' (explicit override for this posting)' if eligibility_info.get('override_applied') else '') +
+                  (' (warning only: it does not stop or block anything; set eligibility_mode: stop in config/queue.yaml to enforce it)' if eligibility_info.get('mode', 'stop') == 'warn' else '')]
         lines += [f"- {x['requirement']}: {x['why']} — {x['quote']}" for x in eligibility_info.get('reasons',[])]
     lines.append("- Ready to submit: **yes**" if result.get("ready_to_submit") else "- Ready to submit: **NOT ready**")
     lines += [f"  - {b}" for b in result.get("blockers", [])]

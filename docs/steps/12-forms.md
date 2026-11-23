@@ -163,3 +163,13 @@ Use `--browser-mode auto` to hand off immediately when Docker detects a challeng
 or `--browser-mode desktop` to open the host browser directly. Start the host bridge
 with `PYTHONPATH=src python3 -m jobagent.tools.desktop_browser serve`.
 See [Desktop application fallback](../desktop-applications.md) for setup and limitations.
+
+
+## Intermediate screens without fields (2026-11-23)
+A portal may show a page with no fields at all between the questions: a progress tracker, an optional notification opt-in (Amazon: "Get SMS updates"),
+a welcome or "before you start" page. The default filler used to report such a page as `no application fields discovered` and stop, before the loop
+reached the code that presses Next. Now `forms.interstitial_button` picks the safe button on a field-less page (Next, Continue, Skip and continue, Skip,
+Not now, Maybe later, No thanks, Get started, Start/Begin application) and the loop presses it (`forms.advance`). A button that opts in or agrees to
+something (Enable, Allow, Subscribe, Accept, Agree, Consent, Turn on, Opt in) and anything that sends the application (Submit, Apply, Finish) is never pressed; a
+page with fields is never skipped; if the same kind of field-less page comes back three times in a row the run stops with "stuck on an intermediate page".
+A field-less page with no safe button is still a blocker. Tests: `tests/unit/test_interstitial_pages.py`, `tests/unit/test_interstitial_browser.py`.

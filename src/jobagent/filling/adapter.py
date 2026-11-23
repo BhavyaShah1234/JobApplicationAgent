@@ -73,6 +73,36 @@ def _saved_matches(fields, eligible, company):
     return matches
 
 
+MAX_INTERSTITIAL_STREAK=3     # the same kind of field-less page this many times in a row means the click is not moving it on
+
+
+def fieldless_page(view,env,page_no,log):
+    """What to do with a page that has no application fields.
+
+    A page without fields is not necessarily the end of the road: portals show progress trackers, optional notification opt-ins and
+    "before you start" pages between the questions. Move on when the page offers a safe button (Next, Continue, Skip and continue, Not now,
+    Get started; never an opt-in or a Submit); stop when it does not, or when such pages keep coming back because the click did not move it.
+
+    Args:
+        view: The page as read now (no fields).
+        env: The run's mutable state (`_interstitial_streak` counts consecutive field-less pages).
+        page_no: The page number, for the log line.
+        log: The run's logger.
+
+    Returns:
+        The result update: `{'state': 'page_complete', ...}` to move on, or a `blocked` state with the reason.
+    """
+    from jobagent.tools import forms
+    step=forms.interstitial_button(view);streak=env.get('_interstitial_streak',0)
+    if step and streak<MAX_INTERSTITIAL_STREAK:
+        env['_interstitial_streak']=streak+1
+        log(f"apply: page {page_no} has no fields ({'; '.join(view.headings[:3]) or 'no heading'}): moving on with {step!r}")
+        return {'state':'page_complete','blockers':[],'interstitial':step}
+    if step:
+        return {'state':'blocked','blockers':[f'stuck on an intermediate page without fields: {step!r} did not move it on']}
+    return {'state':'blocked','blockers':['no application fields discovered']}
+
+
 def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
     from jobagent.steps import apply as A
     from jobagent.tools import forms,application_address,learned
@@ -287,7 +317,9 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         raise A.PlannerFailed(f'experimental planner failed: {type(exc).__name__}') from exc
     view=read_view(page);history=result['records'];done={}
     if not view.fields and not record:
-        result.update(state='blocked',blockers=['no application fields discovered'])
+        result.update(fieldless_page(view,env,page_no,log))
+    elif view.fields:
+        env['_interstitial_streak']=0
     for f in view.fields:
         entry=next((e for e in reversed(history) if e.get('step')==page_no and
                     e.get('field_key')==key(f)),None)

@@ -26,6 +26,11 @@ SUBMIT = re.compile(r"(?i)^\s*(submit|send)\b|submit (my |your )?application|^\s
                     r"application|^\s*apply\s*$")
 TEXT_KINDS = ("date_parts", "text", "email", "tel", "url", "number", "date", "textarea", "spin", "password")
 NEXT = re.compile(r"(?i)^\s*(next|continue|(?:save|skip) (and|&) continue|proceed|review( (my |your )?application)?)\b")
+# A page with no fields at all is an intermediate screen: a progress tracker, an optional notification opt-in, a welcome or "before you start" page.
+# These buttons move it on without sending anything and without giving a consent. A button that opts in or agrees to something is never among them.
+INTERSTITIAL = re.compile(r"(?i)^\s*(skip(\s+(for\s+now|this(\s+step)?|and\s+continue|&\s+continue))?|not\s+now|maybe\s+later|no,?\s+thanks|"
+                          r"get\s+started|start(\s+(my|the|your))?\s+application|begin(\s+application)?)\s*$")
+OPT_IN = re.compile(r"(?i)\b(enable|subscribe|allow|opt[\s-]?in|turn\s+on|sign\s+me\s+up|accept|agree|consent)\b")
 
 WIDGET_VALUE_JS = r"""e => {
   const clean = t => (t || '').replace(/\s+/g, ' ').trim();
@@ -2040,13 +2045,41 @@ def click_button(page: Page, view: PageView, pattern: re.Pattern) -> str | None:
             continue
         if pattern is NEXT and re.search(r'\bsubmit\b', text, re.I):
             continue
+        if pattern is INTERSTITIAL and OPT_IN.search(text):
+            continue                                      # "Enable SMS updates" is a consent, not a way forward
         for btn in _visible_buttons(view, text):
-            if pattern is NEXT and (btn.get_attribute('role') == 'tab' or
-                                    btn.get_attribute('aria-current') in ('step', 'page', 'true')):
+            if pattern in (NEXT, INTERSTITIAL) and (btn.get_attribute('role') == 'tab' or
+                                                    btn.get_attribute('aria-current') in ('step', 'page', 'true')):
                 continue
             _press(page, btn)
             return text
     return None
+
+
+def interstitial_button(view: PageView) -> str | None:
+    """On a page without any field: the button that moves it on (Next, Continue, Skip and continue, Not now, Get started), or None.
+
+    Args:
+        view: The page as read now.
+
+    Returns:
+        The button's text, or None when the page has fields, or has no safe way forward (only Submit, only an opt-in, nothing)."""
+    if view.fields:
+        return None
+    for text in view.buttons:
+        if SUBMIT.search(text) or OPT_IN.search(text):
+            continue
+        if NEXT.search(text) or INTERSTITIAL.search(text):
+            return text
+    return None
+
+
+def advance(page: Page, view: PageView) -> str | None:
+    """Move the wizard on: the Next button; on a page with no fields also the safe intermediate-screen buttons. Returns what was clicked."""
+    clicked = click_button(page, view, NEXT)
+    if clicked is None and not view.fields:
+        clicked = click_button(page, view, INTERSTITIAL)
+    return clicked
 
 
 # What a startup control can do. Its element type does not tell: a link, a type=button control or a button outside the

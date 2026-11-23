@@ -50,14 +50,20 @@ class Pipeline:
         document or form work is spent. `blocked` stops the job as needs_review with the quoted sentence (override per posting with
         --ignore-eligibility; the queue never overrides); `review` is logged and recorded and the job continues."""
         from jobagent.tools import eligibility, jobqueue
+        mode = eligibility.mode()
+        if mode == "off":
+            return None
         text = (d / "jd.txt").read_text() if (d / "jd.txt").exists() else ""
         verdict = eligibility.assess_job(d)
         import hashlib
-        (d / "eligibility.json").write_text(json.dumps({"level": verdict.level, "reasons": verdict.reasons, "ignored": bool(ignored),
+        (d / "eligibility.json").write_text(json.dumps({"level": verdict.level, "reasons": verdict.reasons, "ignored": bool(ignored), "mode": mode,
                                                       "jd_sha256": hashlib.sha256((d/'jd.txt').read_bytes() if (d/'jd.txt').exists() else b'').hexdigest()}, indent=1))
         if verdict.level == "ok":
             return None
         note = "eligibility: " + verdict.text()
+        if mode == "warn" and verdict.level != "ok":
+            self.log(f"pipeline: eligibility WARNING (going on; eligibility_mode=warn): {verdict.text()}")
+            return None
         if verdict.level == "review" or ignored:
             self.log(f"pipeline: eligibility {verdict.level}{' (overridden for this posting)' if ignored else ''}: {verdict.text()}")
             return None

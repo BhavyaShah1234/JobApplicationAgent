@@ -88,8 +88,19 @@ def assess_job(job_dir: Path) -> Verdict:
     return screen(text.read_text() if text.exists() else '',facts)
 
 
+def mode() -> str:
+    """`eligibility_mode` from the settings (off | warn | stop); warn when the settings cannot be read."""
+    try:
+        from jobagent.config import get_settings
+        return get_settings().eligibility_mode
+    except Exception:
+        return "warn"
+
+
 def review_blockers(job_dir: Path, verdict: Verdict | None = None) -> list[str]:
-    """Recheck at review/approval; an explicit override belongs to this exact posting text."""
+    """Recheck at review/approval; an explicit override belongs to this exact posting text. Only in `stop` mode: in `warn` mode the
+    finding is shown (the report's Eligibility section) and never blocks, and `off` does not look at all."""
+    if mode()!='stop':return []
     job_dir=Path(job_dir);text=job_dir/'jd.txt'
     if not text.exists():return []
     verdict=verdict or assess_job(job_dir)
