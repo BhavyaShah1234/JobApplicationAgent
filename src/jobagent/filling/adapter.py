@@ -300,6 +300,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                             ('today',ctx.get('TODAY','')),('date_facts',ctx.get('DATE_FACTS',''))] if v},
             {'company':ctx.get('_jd',{}).get('company',''),'contact':ctx.get('REFERRAL',{})},sources,prepare,**strategy_options)
         ctx['_experimental_filler']=filler
+    filler.evidence_dir=env.get('out_dir')
     if filler.step!=page_no:
         filler.cache={};filler.step=page_no;filler.failures={}
     filler.log=log

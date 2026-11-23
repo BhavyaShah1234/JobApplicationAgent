@@ -82,6 +82,37 @@ class PlannedFiller:
     def observe_view(self, view):
         """Strategy hook for source/schema invalidation; legacy execution is unchanged."""
 
+    def save_unresolved_evidence(self,page,items):
+        """Write the HTML around each unresolved required control to `unresolved-fields.json` so the next fix is built on the real page.
+
+        Args:
+            page: The page the controls were found on.
+            items: The inventory entries (label, type, locator_ref, native_id) that stayed unresolved.
+        """
+        try:
+            from jobagent.tools.forms import frames_of
+            found=[]
+            for item in items[:10]:
+                snippet=''
+                for frame in frames_of(page):
+                    try:
+                        snippet=frame.evaluate("""(it)=>{let e=null;
+                          if(it.locator_ref)e=document.querySelector('[data-jf-ref="'+it.locator_ref+'"]');
+                          if(!e&&it.native_id)e=document.getElementById(it.native_id);
+                          if(!e)return '';
+                          const up=e.closest('label,fieldset,[role=radiogroup],li,div')||e;
+                          const cs=getComputedStyle(e), r=e.getBoundingClientRect();
+                          return JSON.stringify({style:{display:cs.display,visibility:cs.visibility,opacity:cs.opacity,position:cs.position,w:r.width,h:r.height},
+                                                 html:(up.parentElement||up).outerHTML.slice(0,3000)});}""",item)
+                    except Exception:snippet=''
+                    if snippet:break
+                found.append({'label':item['label'][:200],'type':item.get('type'),'evidence':snippet})
+            import json
+            from pathlib import Path
+            out=getattr(self,'evidence_dir',None)
+            if out:Path(out,'unresolved-fields.json').write_text(json.dumps(found,indent=1))
+        except Exception:pass
+
     def applicable_inventory(self, inventory):
         """Retain the existing passive-discovery coverage rules by default."""
         return inventory
@@ -598,7 +629,9 @@ class PlannedFiller:
                          and not represented(x)
                          and (norm(x['label']),norm(x.get('section','')),x['type'].lower()) not in self.prepared
                          and not x.get('condition')]
-                if unknown:return self.result('blocked',records,started,['unresolved potential field: '+x for x in unknown])
+                if unknown:
+                    self.save_unresolved_evidence(page,[x for x in inventory['fields'] if x['label'] in unknown])
+                    return self.result('blocked',records,started,['unresolved potential field: '+x for x in unknown])
                 if not advance_pages:return self.result('page_complete',records,started,[])
                 before=wizard.state_of(page,view)
                 if forms.click_button(page,view,forms.NEXT):
