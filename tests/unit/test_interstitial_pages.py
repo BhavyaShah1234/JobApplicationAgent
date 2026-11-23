@@ -62,3 +62,14 @@ def test_the_same_intermediate_page_coming_back_is_a_stuck_loop_not_an_endless_c
 
 def test_the_streak_is_per_run_state_so_a_new_run_starts_clean():
     assert adapter.fieldless_page(view(["Next"]), {}, 3, lambda m: None)["state"] == "page_complete"
+
+
+def test_a_dash_inside_the_exact_posting_title_is_not_punctuation_the_writer_chose():
+    """Intel's posting is titled 'Software Engineer – Datacenter'; the summary must open with that exact title and may not use dashes."""
+    import re
+    from jobagent.tools import tailor
+    dash = tailor.DASH
+    title = "Software Engineer – Datacenter"
+    summary = f"{title} with 5 years building Python services, focused on reliability."
+    assert dash.search(summary) and not dash.search(summary.replace(title, " "))
+    assert dash.search((summary + " Built tools – fast ones.").replace(title, " "))      # a dash the writer added is still caught

@@ -1056,7 +1056,10 @@ def quality(r: Resume, jd: JobDescription, f: Filled) -> list[str]:
                 no_result.append(f"{where} states no result")
             if (m := GENERIC_TOOLS.search(b.text)) and not has_tool:
                 out.append(f"{where} says \"{m.group(0)}\": name the actual tools (e.g. LangChain, PyTorch, BigQuery)")
-    if DASH.search(f.summary):
+    # The summary must open with the exact posting title (a separate rule), and a title such as "Software Engineer – Datacenter" contains
+    # a dash that is part of the name, not punctuation the writer chose: leave it out of the dash check.
+    summary = f.summary.replace(jd.title, " ") if jd.title else f.summary
+    if DASH.search(summary):
         out.append("the summary uses a dash as punctuation; rewrite with a comma, semicolon or colon")
     return out + (no_result if len(no_result) > MAX_NO_RESULT else [])
 
