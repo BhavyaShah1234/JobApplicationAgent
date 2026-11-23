@@ -73,3 +73,14 @@ def test_a_dash_inside_the_exact_posting_title_is_not_punctuation_the_writer_cho
     summary = f"{title} with 5 years building Python services, focused on reliability."
     assert dash.search(summary) and not dash.search(summary.replace(title, " "))
     assert dash.search((summary + " Built tools – fast ones.").replace(title, " "))      # a dash the writer added is still caught
+
+
+def test_a_sign_in_form_is_a_credentials_page_but_an_application_page_with_account_fields_is_not():
+    """iCIMS's candidate profile has Login / Password / Re-enter password plus sixty more fields: fill the rest, never the passwords."""
+    from jobagent.filling.planned import credentials_only_page
+    F = lambda kind, label: forms.Field(id=0, kind=kind, label=label)
+    assert credentials_only_page([F("text", "Username or email address *"), F("password", "Password *")])
+    assert credentials_only_page([F("password", "Password")])
+    assert credentials_only_page([F("email", "Email"), F("password", "Password"), F("password", "Password (Re-enter)")])
+    page = [F("text", "Login"), F("password", "Password"), F("password", "Password (Re-enter)"), F("text", "First Name"), F("text", "Phone")]
+    assert not credentials_only_page(page)

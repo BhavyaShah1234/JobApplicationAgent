@@ -45,6 +45,19 @@ def held_file_sha256(view, field):
     return hashlib.sha256(base64.b64decode(encoded)).hexdigest() if encoded else None
 
 
+CREDENTIAL_LABEL=re.compile(r'(?i)\b(e-?mail|user\s*name|login|log\s*in|sign\s*in)\b')
+
+
+def credentials_only_page(fields):
+    """Whether a page is a sign-in form: a password field and nothing but account-identity fields besides.
+
+    A real application page (iCIMS's candidate profile, 65 fields) can contain Login / Password / Re-enter password for the account;
+    that is not a sign-in page, and the rest of it is filled. The password fields themselves are never planned, filled or asked.
+    """
+    others=[f for f in fields if f.kind!='password']
+    return all(CREDENTIAL_LABEL.search(f.label or '') for f in others)
+
+
 class Mapping(BaseModel):
     field_id: int
     fact_id: str | None = None
@@ -474,7 +487,7 @@ class PlannedFiller:
                 if added:continue
                 inventory=self.applicable_inventory(discovery.inventory())
                 self.events.append({'event':'inventory','round':round_no,**inventory})
-                if any(f.kind=='password' for f in view.fields):
+                if any(f.kind=='password' for f in view.fields) and credentials_only_page(view.fields):
                     return self.result('blocked',records,started,['authentication is outside the filling experiment'])
                 if not view.coverage.complete:
                     return self.result('blocked',records,started,view.coverage.problems())
@@ -512,7 +525,8 @@ class PlannedFiller:
                         except Exception:
                             return False
                     return forms.same_value(self.rendered.get(key(f),decision.value),f.value,f.kind,f.label,f.multiple)
-                todo=[f for f in view.fields if not unchanged(f) and self.failures.get(key(f),0)<2]
+                # A password is never filled or asked about: on an application page that merely contains account fields they stay for the candidate
+                todo=[f for f in view.fields if f.kind!='password' and not unchanged(f) and self.failures.get(key(f),0)<2]
                 if todo or potential:
                     forms.discover_options(page,view,fields=todo)
                     live.remember_options(todo)
