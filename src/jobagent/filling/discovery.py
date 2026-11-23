@@ -13,6 +13,15 @@ for(let i=0;i<roots.length;i++) for(const e of roots[i].querySelectorAll('*')) {
  const composite=e.matches('[data-automation-id^=dateSection][data-automation-id$=-input]') &&
    ['Month','Day','Year'].includes(e.getAttribute('aria-label'))
    ? e.closest('[data-automation-id=dateInputWrapper][data-jf-ref]') : null;
+ // A control inside a dialog that is not open (a modal shown only after an action, e.g. a consent that follows Submit) cannot be
+ // answered or required on this page: it is not a missing field of the current page.
+ const closedDialog=(()=>{for(let a=e;a;a=a.parentElement||(a.getRootNode&&a.getRootNode().host)){
+   if(a.nodeType!==1)continue;
+   if(a.matches('.modal,[role=dialog],[role=alertdialog],[aria-modal=true],dialog')){
+     const c=getComputedStyle(a),b=a.getBoundingClientRect();
+     if(c.display==='none'||c.visibility==='hidden'||(b.width<2&&b.height<2)||a.getAttribute('aria-hidden')==='true')return true;}}
+   return false;})();
+ if(closedDialog)continue;
  if(lab) out.push({label:lab.trim(), type:e.type||e.getAttribute('role')||e.tagName.toLowerCase(),
    visible:rect.width>1&&rect.height>1&&s.visibility!=='hidden'&&s.display!=='none',
    required:e.required||e.getAttribute('aria-required')==='true',format:e.placeholder||'',source:'DOM',locator_ref:e.getAttribute('data-jf-ref')||'',native_id:e.id||'',frame_identity:window.__jobagentFieldNodes?.epoch||'',

@@ -86,3 +86,21 @@ def test_a_zero_size_radio_with_an_empty_label_and_card_text_in_a_second_label_i
     opts, checked = with_page(CONSENT_CARDS, run)
     assert len(opts) == 2 and opts[0].startswith("Yes") and opts[1].startswith("No")
     assert checked == [True, False]
+
+
+MODALS = """<!doctype html><html><body><h1>Questions</h1>
+<label for="yrs">Years</label><input id="yrs" required>
+<div class="ai-preference-modal modal fade" style="display:none"><div class="modal-body"><fieldset>
+ <input type="radio" id="consent-yes" name="c" required aria-label="Consent yes" style="opacity:0;position:absolute;width:0;height:0"></fieldset></div></div>
+<div class="modal open-now" role="dialog" style="display:block;position:fixed;top:0;left:0;width:300px;height:200px;background:#fff">
+ <label for="open-q">Open dialog question</label><input id="open-q" required></div>
+</body></html>"""
+
+
+def test_required_controls_in_a_closed_modal_are_not_missing_fields_of_the_page_but_an_open_dialog_still_counts():
+    from jobagent.filling.discovery import INVENTORY
+    def run(page):
+        return [x["label"] for x in page.evaluate(INVENTORY)]
+    labels = with_page(MODALS, run)
+    assert "Years" in labels and "Open dialog question" in labels
+    assert "Consent yes" not in labels
