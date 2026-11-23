@@ -59,3 +59,30 @@ def test_not_now_is_chosen_over_a_turn_on_button():
         return clicked, [f.label for f in forms.read_page(page).fields], page.title()
     clicked, labels, title = with_page(NOT_NOW, run)
     assert clicked == "Not now" and any("Email" in x for x in labels) and title != "OPTED-IN"
+
+
+# Amazon's consent step: radios of size 0 with an EMPTY decorative label, and the card text in a second label for the same input.
+CONSENT_CARDS = """<!doctype html><html><body><h1>Consent</h1>
+<div role="group"><p>Do you consent to personalised job recommendations?</p>
+<div class="card"><div class="custom-control custom-radio"><input type="radio" id="consent-yes" name="consent-choice" required
+ style="position:absolute;opacity:0;width:0;height:0"><label class="custom-control-label" for="consent-yes"></label></div>
+ <label class="card-body" for="consent-yes"><b>Yes</b> Provide personalised job recommendations and transcribe my interviews</label></div>
+<div class="card"><div class="custom-control custom-radio"><input type="radio" id="consent-no" name="consent-choice" required
+ style="position:absolute;opacity:0;width:0;height:0"><label class="custom-control-label" for="consent-no"></label></div>
+ <label class="card-body" for="consent-no"><b>No</b> Continue without personalised job recommendations</label></div></div>
+<button>Continue</button></body></html>"""
+
+
+def test_a_zero_size_radio_with_an_empty_label_and_card_text_in_a_second_label_is_a_field_and_can_be_chosen():
+    from jobagent.tools import forms
+    def run(page):
+        v = forms.read_page(page)
+        radios = [f for f in v.fields if f.kind == "radio"]
+        assert len(radios) == 1, [f.label for f in v.fields]
+        f = radios[0]
+        opts = f.options
+        forms.fill_field(page, v, f, "Yes", {})
+        return opts, page.evaluate("[document.getElementById('consent-yes').checked, document.getElementById('consent-no').checked]")
+    opts, checked = with_page(CONSENT_CARDS, run)
+    assert len(opts) == 2 and opts[0].startswith("Yes") and opts[1].startswith("No")
+    assert checked == [True, False]

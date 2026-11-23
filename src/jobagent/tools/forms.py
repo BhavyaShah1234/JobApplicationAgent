@@ -73,6 +73,10 @@ FIELDS_JS = r"""(start) => {
     return true; };
   const clean = t => (t || '').replace(/\s+/g, ' ').trim();
   const caption = (__JOBAGENT_CAPTION__);
+  // A styled radio/checkbox can have several labels for one id: an empty decorative one (the box itself) and the real text. Prefer the one with text.
+  const labelFor = b => { if (!b.id) return null;
+    const all = [...b.getRootNode().querySelectorAll(`label[for="${CSS.escape(b.id)}"]`)];
+    return all.find(x => clean(x.innerText)) || all[0] || null; };
   // F17: author roots, including closed roots recovered through the DOM protocol, share the same reader.
   const roots = [];
   const walk = r => { roots.push(r); for (const h of r.querySelectorAll('*')) {
@@ -184,7 +188,7 @@ FIELDS_JS = r"""(start) => {
       const t = (lg && clean(lg.innerText)) || byIds(g.getAttribute('aria-labelledby'), g) || clean(g.getAttribute('aria-label'));
       if (t) return t; }
     const labels = [...e.getRootNode().querySelectorAll(`input[name="${CSS.escape(name)}"]`)].map(b => {
-      const l = b.closest('label') || (b.id && b.getRootNode().querySelector(`label[for="${CSS.escape(b.id)}"]`));
+      const l = b.closest('label') || labelFor(b);
       return l ? clean(l.innerText) : clean(b.value); });
     return around(e, labels) || question(e); };
   const section = e => {
@@ -395,7 +399,7 @@ FIELDS_JS = r"""(start) => {
     if (!vis(seenBox) && !(t === 'radio' || t === 'checkbox')) continue;
     if ((t === 'radio' || t === 'checkbox') && !vis(e)) {
       // custom-styled boxes hide the input itself; its label must show
-      const l = e.closest('label') || (e.id && e.getRootNode().querySelector(`label[for="${CSS.escape(e.id)}"]`));
+      const l = e.closest('label') || labelFor(e);
       if (!l || !vis(l)) continue; }
     if (!shown(seenBox) && !(t === 'radio' || t === 'checkbox')) continue;
     if (mediaControl(e) || e.closest('[data-jf-skip], header, nav, [role=banner], [data-automation-id=navigationContainer]')) continue;
@@ -411,7 +415,7 @@ FIELDS_JS = r"""(start) => {
       // Workday lists one question's checkboxes under one form field, each with its own name
       const boxes = ffBoxes.length > 1 ? ffBoxes : (e.name ? sameName : [e]);
       const opts = boxes.map(b => { let l = ownText(b);
-        if (!l && b.id) { const x = b.getRootNode().querySelector(`label[for="${CSS.escape(b.id)}"]`); if (x) l = caption(x); }
+        if (!l && b.id) { const x = labelFor(b); if (x) l = caption(x); }
         return l || clean(b.getAttribute('aria-label')) || b.value; });
       const q = groupQuestion(e, e.name);
       boxes.forEach((b, k) => b.setAttribute('data-jf-opt', String(k)));
@@ -1575,7 +1579,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 box.set_checked(on, timeout=4000)
             except Exception:  # hidden custom input: click its label
                 bid = box.get_attribute("id")
-                lab = shadow_locator(frame, f'label[for="{bid}"]').first if bid else shadow_locator(frame, f'label:has([data-jf-opt="{k}"][data-jf="{f.id}"])').first
+                lab = (shadow_locator(frame, f'label[for="{bid}"]').filter(has_text=re.compile(r"\S")).first if shadow_locator(frame, f'label[for="{bid}"]').filter(has_text=re.compile(r"\S")).count() else shadow_locator(frame, f'label[for="{bid}"]').first) if bid else shadow_locator(frame, f'label:has([data-jf-opt="{k}"][data-jf="{f.id}"])').first
                 lab.click(timeout=8000)
         return "; ".join(chosen)
     if f.kind == "combobox":
