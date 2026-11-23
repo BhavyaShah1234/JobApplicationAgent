@@ -19,7 +19,7 @@ import json
 import time
 import re
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
@@ -1142,6 +1142,19 @@ def exit_code(result: dict) -> int:
     return EXIT_FAILED
 
 
+def _email_gate(page: Page, env: dict, log, posting_url: str) -> bool:
+    """A page with no fields that says a link was just emailed: fetch the portal's mail and open the link (at most twice a run)."""
+    from jobagent.tools import email_gate
+    count = env.get('_email_gate_count', 0)
+    if count >= email_gate.MAX_FOLLOWS:
+        return False
+    since = env.get('_advance_at') or (datetime.now(timezone.utc) - timedelta(minutes=5))
+    opened = email_gate.follow(page, log, since, posting_url)
+    if opened:
+        env['_email_gate_count'] = count + 1
+    return opened
+
+
 def outcome_of(e: dict, f) -> str:
     """What happened to one field, as the page shows it now (`f`, None if it is gone): verified | mismatch | failed |
     gone | unplanned | unplanned (optional) | unanswered (required) | left empty (optional)."""
@@ -1779,6 +1792,9 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
             if strategy in ('experimental','adaptive'):
                 from jobagent.filling.adapter import fill_page as planned_page
                 view,done=planned_page(page,ctx,files,model,log,record,page_no,env,known,errors)
+                if env.get('_experimental_blockers') and not view.fields and _email_gate(page, env, log, ctx.get('_jd', {}).get('source_url') or url):
+                    env['_experimental_blockers']=[];known, errors, same = None, [], 0
+                    continue        # the portal's emailed link was opened: read the page it led to
                 if env.get('_experimental_blockers'):
                     result.update(state='blocked',blocked_by='filling',reason='; '.join(env['_experimental_blockers']),resumable=True)
                     result['pages'].append({'page':page_no,'headings':view.headings[:4],'errors':view.errors,
@@ -1801,7 +1817,11 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         result["pages"].append({"page": page_no, "headings": view.headings[:4], "screenshot": shot.name,
                                 "errors": view.errors, "buttons": view.buttons,
                                 "extraction": view.coverage.summary()})           # F17: what the reader could and could not see
+        env['_advance_at'] = datetime.now(timezone.utc)      # an emailed link must be newer than this click
         if forms.advance(page, view) is None:
+            if not view.fields and _email_gate(page, env, log, ctx.get('_jd', {}).get('source_url') or url):
+                known, errors, same = None, [], 0
+                continue
             human = forms.human_check(page)
             if human:
                 result["human_check"] = human  # the candidate ticks it in noVNC; then Submit shows

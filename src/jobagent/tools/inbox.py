@@ -470,7 +470,7 @@ class Inbox:
 
     def wait_for_verification(self, site: str, since: datetime, kind: str = "portal",
                               timeout_s: float = 300, address: str | None = None,
-                              header_filter=None) -> tuple[Mail, Verification]:
+                              header_filter=None, classify=None, also_from=()) -> tuple[Mail, Verification]:
         """Wait for a verification mail from `site` (URL or domain) sent after `since` (the agent's action).
 
         An action is recorded first. A candidate is read only if, from its headers alone, it comes from the site's exact
@@ -479,6 +479,9 @@ class Inbox:
         allows it to be trashed.
         """
         allowed = db.record_agent_domain(self.conn, site, kind) if self.conn is not None else {db.registrable_domain(site)}
+        for extra in also_from:       # another site the same flow hands over to (a posting on garmin.com whose mail comes from icims.com)
+            allowed |= db.record_agent_domain(self.conn, extra, kind) if self.conn is not None else {db.registrable_domain(extra)}
+        classify = classify or classify_verification
         action = self.begin_action(site, kind, since, address)
         end = since + self.ACTION_WINDOW
         want = (address or "").lower() if address and "+" in address else ""
@@ -496,7 +499,7 @@ class Inbox:
             return (not want or want in m.recipients) and (header_filter is None or header_filter(m))
 
         def match(m: Mail) -> bool:
-            v = classify_verification(m)
+            v = classify(m)
             if v:
                 found[m.uid] = v
             return v is not None
