@@ -14,9 +14,9 @@ from urllib.parse import urlparse
 from jobagent import db
 
 GATE = re.compile(
-    r"(?i)(?:verify|confirm)\s+(?:your\s+)?e-?mail(?:\s+account|\s+address)?|"
+    r"(?i)(?:verify|confirm)\s+(?:your\s+)?e-?mail(?:\s+account)?(?!\s+address)|"
     r"(?:link|e-?mail|message)\s+(?:we\s+(?:have\s+)?|has\s+|was\s+|that\s+we\s+)?(?:just\s+)?(?:been\s+)?sent|"
-    r"check\s+your\s+(?:e-?mail|inbox)|"
+    r"check\s+your\s+(?:e-?mail(?!\s+address)|inbox)|"
     r"we(?:'ve|\s+have)\s+sent\s+(?:you\s+)?(?:an?\s+)?(?:e-?mail|link|message)|"
     r"click\s+(?:on\s+)?the\s+link\s+(?:in|we|sent|below)")
 # links that are never the way on: unsubscribing, policies, help, images and stylesheets

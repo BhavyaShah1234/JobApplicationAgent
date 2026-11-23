@@ -1819,7 +1819,7 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
                                 "extraction": view.coverage.summary()})           # F17: what the reader could and could not see
         env['_advance_at'] = datetime.now(timezone.utc)      # an emailed link must be newer than this click
         if forms.advance(page, view) is None:
-            if not view.fields and _email_gate(page, env, log, ctx.get('_jd', {}).get('source_url') or url):
+            if _email_gate(page, env, log, ctx.get('_jd', {}).get('source_url') or url):
                 known, errors, same = None, [], 0
                 continue
             human = forms.human_check(page)
@@ -1833,6 +1833,9 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
                 log(f"apply: no Next or Submit button; buttons: {view.buttons[:15]}")
             break
         verdict, view, _after, why = wizard.wait_for_progress(page, before)       # the next page loads in steps
+        if verdict == "same" and _email_gate(page, env, log, ctx.get('_jd', {}).get('source_url') or url):
+            known, errors, same = None, [], 0       # the page did not move because it is waiting for a link sent by email
+            continue
         if verdict == "same":
             # the site refused Next on this page (its error banner may be out of view: the page just didn't move)
             same += 1

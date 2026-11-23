@@ -11,13 +11,13 @@ GARMIN = ("Please verify your email account with us by clicking on the link we h
 ALLOWED = {"icims.com", "garmin.com"}
 
 
-@pytest.mark.parametrize("text", [GARMIN, "Check your email to continue.", "We've sent you an email with a link.", "Verify your e-mail address",
+@pytest.mark.parametrize("text", [GARMIN, "Check your email to continue.", "We've sent you an email with a link.",
                                   "A link has been sent to your inbox", "Click the link in the email to continue your application"])
 def test_pages_that_wait_for_an_emailed_link_are_recognised(text):
     assert G.is_gate(text)
 
 
-@pytest.mark.parametrize("text", ["", "Enter Your Information\nEmail\nNext", "Upload your resume", "Work Eligibility questions", "Review your application"])
+@pytest.mark.parametrize("text", ["", "Please check your email address and try again", "Please verify your email address format", "Enter Your Information\nEmail\nNext", "Upload your resume", "Work Eligibility questions", "Review your application"])
 def test_ordinary_pages_are_not_gates(text):
     assert not G.is_gate(text)
 
