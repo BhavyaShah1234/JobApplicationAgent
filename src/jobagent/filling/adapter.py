@@ -193,8 +193,13 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         from .routing import family,field_family
         address_needed=any(e.get('question') in {'Current address','Current location (city)'} for _,e in matches.values()) or any(
             f.kind in ('text','combobox','select') and field_family(f)=='location' for f in fields)
-        if env.get('out_dir') and not ctx.get('_application_address') and address_needed:
-            application_address.prepare(ctx,env['out_dir'],model,log)
+        if env.get('out_dir') and not ctx.get('_application_address') and address_needed and not ctx.get('_application_address_unavailable'):
+            try:application_address.prepare(ctx,env['out_dir'],model,log)
+            except application_address.NoUsLocation as exc:
+                # A region or remote posting: go on, so the fields that do not need an address are still filled; the ones that do
+                # fall back to the recorded facts or a question. Said once, with the real reason.
+                ctx['_application_address_unavailable']=str(exc)
+                log(f"address: not prepared ({exc}); the fields that need it use the recorded facts or are asked")
         if '_experimental_compiled_facts' not in ctx:
             ctx['_experimental_compiled_facts']=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''),ctx.get('TODAY',''))
         from .routing import personal_facts

@@ -37,6 +37,12 @@ def _street(text: str) -> str:
     return " ".join(aliases.get(word, word) for word in _key(text).split())
 
 
+class NoUsLocation(RuntimeError):
+    """The posting names no US city or state the address search can start from (a region such as "San Francisco Bay Area", a bare
+    "United States", "Remote"). Callers go on without a prepared address: only the fields that need one fall back to the
+    recorded facts or a question; nothing is invented."""
+
+
 ADDRESS_LOCATION_POLICY = "explicit-city-first-v3"
 
 STATE_CITIES = {
@@ -224,7 +230,7 @@ def _target(locations: list[str], log, *, allow_geocode: bool = True) -> dict | 
         return fallback
     if not allow_geocode:
         return None
-    raise RuntimeError(
+    raise NoUsLocation(
         "No valid US city/state could be resolved from jd.json locations; "
         "provide a state-only location or a resolvable US city. Application not started."
     )

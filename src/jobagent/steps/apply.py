@@ -1254,6 +1254,8 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                    for _, entry in matched.values()):
                 try:
                     application_address.prepare(ctx, env['out_dir'], model, log)
+                except application_address.NoUsLocation as e:   # a region or remote posting: go on without a prepared address
+                    log(f"apply: address not prepared ({str(e)[:120]}); the fields that need it use the recorded facts or are asked")
                 except Exception as e:  # the model / search behind the address choice is down: the planner cannot answer either
                     log(f"apply: address preparation failed ({type(e).__name__}: {str(e)[:120]})")
                     unplanned(todo, f"address preparation failed: {type(e).__name__}: {str(e)[:140]}")

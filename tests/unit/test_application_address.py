@@ -170,3 +170,12 @@ def test_conflicting_research_city_cannot_hide_a_failed_city_only_resolution(tmp
     monkeypatch.setattr(A.lookup, 'geocode', lambda _: {'address': {'country_code':'us', 'state':'Arizona', 'city':'Phoenix'}})
     with pytest.raises(RuntimeError, match='city/state'):
         A.prepare(ctx, tmp_path, None, log=lambda _: None)
+
+
+@pytest.mark.parametrize('locations', [['San Francisco Bay Area'], ['United States'], ['Remote'], ['Remote - US']])
+def test_a_region_or_remote_posting_raises_the_specific_no_location_error_so_callers_can_go_on(monkeypatch, locations):
+    """Samsara, MongoDB and Simbe Robotics lost their whole form to this: the error must be one callers can catch on its own."""
+    monkeypatch.setattr(A.lookup, 'geocode', lambda _: {})
+    with pytest.raises(A.NoUsLocation, match='city/state'):
+        A._target(locations, lambda _: None)
+    assert issubclass(A.NoUsLocation, RuntimeError)
