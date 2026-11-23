@@ -103,7 +103,9 @@ class PlannedFiller:
                           const up=e.closest('label,fieldset,[role=radiogroup],li,div')||e;
                           const cs=getComputedStyle(e), r=e.getBoundingClientRect();
                           const labs=[...(e.labels||[])].map(l=>{const q=l.getBoundingClientRect(),s=getComputedStyle(l);
-                            return {text:(l.innerText||'').slice(0,80),w:q.width,h:q.height,display:s.display,visibility:s.visibility,opacity:s.opacity,html:l.outerHTML.slice(0,400)};});
+                            const box=n=>{const b=n.getBoundingClientRect(),c=getComputedStyle(n);return n.tagName+'.'+(n.className||'').toString().slice(0,40)+' '+Math.round(b.width)+'x'+Math.round(b.height)+' '+c.display+'/'+c.position+'/ov:'+c.overflow;};
+                            const kids=[...l.querySelectorAll('*')].slice(0,6).map(box);const ups=[];for(let a=l.parentElement;a&&ups.length<6;a=a.parentElement)ups.push(box(a));
+                            return {text:(l.innerText||'').slice(0,80),w:q.width,h:q.height,display:s.display,visibility:s.visibility,opacity:s.opacity,kids:kids,ups:ups,html:l.outerHTML.slice(0,200)};});
                           return JSON.stringify({labels:labs,style:{display:cs.display,visibility:cs.visibility,opacity:cs.opacity,position:cs.position,w:r.width,h:r.height},
                                                  html:(up.parentElement||up).outerHTML.slice(0,3000)});}""",item)
                     except Exception:snippet=''
