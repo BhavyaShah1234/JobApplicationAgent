@@ -74,6 +74,8 @@ FIELDS_JS = r"""(start) => {
   const clean = t => (t || '').replace(/\s+/g, ' ').trim();
   const caption = (__JOBAGENT_CAPTION__);
   // A styled radio/checkbox can have several labels for one id: an empty decorative one (the box itself) and the real text. Prefer the one with text.
+  // A label can have a zero-size box while the card inside it is what shows (Amazon's consent cards): it counts as shown then.
+  const labelShown = l => vis(l) || [...l.querySelectorAll('*')].some(x => vis(x) && clean(x.innerText));
   const labelFor = b => { if (!b.id) return null;
     const all = [...b.getRootNode().querySelectorAll(`label[for="${CSS.escape(b.id)}"]`)];
     return all.find(x => clean(x.innerText)) || all[0] || null; };
@@ -400,7 +402,7 @@ FIELDS_JS = r"""(start) => {
     if ((t === 'radio' || t === 'checkbox') && !vis(e)) {
       // custom-styled boxes hide the input itself; its label must show
       const l = e.closest('label') || labelFor(e);
-      if (!l || !vis(l)) continue; }
+      if (!l || !labelShown(l)) continue; }
     if (!shown(seenBox) && !(t === 'radio' || t === 'checkbox')) continue;
     if (mediaControl(e) || e.closest('[data-jf-skip], header, nav, [role=banner], [data-automation-id=navigationContainer]')) continue;
     if (e.closest('[data-automation-id=promptOption], [data-automation-id=activeListContainer], [role=option]')) continue;  // inside an open option list
@@ -1580,7 +1582,9 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             except Exception:  # hidden custom input: click its label
                 bid = box.get_attribute("id")
                 lab = (shadow_locator(frame, f'label[for="{bid}"]').filter(has_text=re.compile(r"\S")).first if shadow_locator(frame, f'label[for="{bid}"]').filter(has_text=re.compile(r"\S")).count() else shadow_locator(frame, f'label[for="{bid}"]').first) if bid else shadow_locator(frame, f'label:has([data-jf-opt="{k}"][data-jf="{f.id}"])').first
-                lab.click(timeout=8000)
+                try:lab.click(timeout=3000)
+                except Exception:      # a zero-size label whose card is a visible child: click the text inside it
+                    lab.get_by_text(re.compile(r"\S")).first.click(timeout=8000)
         return "; ".join(chosen)
     if f.kind == "combobox":
         single_select2 = loc.evaluate("e => e.matches('.select2-selection--single[role=combobox]')")

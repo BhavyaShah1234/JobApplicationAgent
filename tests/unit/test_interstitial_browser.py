@@ -64,12 +64,12 @@ def test_not_now_is_chosen_over_a_turn_on_button():
 # Amazon's consent step: radios of size 0 with an EMPTY decorative label, and the card text in a second label for the same input.
 CONSENT_CARDS = """<!doctype html><html><body><h1>Consent</h1>
 <div role="group"><p>Do you consent to personalised job recommendations?</p>
-<div class="card"><div class="custom-control custom-radio"><input type="radio" id="consent-yes" name="consent-choice" required
+<div class="card" style="min-height:60px"><div class="custom-control custom-radio"><input type="radio" id="consent-yes" name="consent-choice" required
  style="position:absolute;opacity:0;width:0;height:0"><label class="custom-control-label" for="consent-yes"></label></div>
- <label class="card-body" for="consent-yes"><b>Yes</b> Provide personalised job recommendations and transcribe my interviews</label></div>
-<div class="card"><div class="custom-control custom-radio"><input type="radio" id="consent-no" name="consent-choice" required
+ <label class="card-body" for="consent-yes" style="display:block;width:0;height:0;overflow:visible"><div style="width:300px;height:40px;position:relative"><b>Yes</b> Provide personalised job recommendations and transcribe my interviews</div></label></div>
+<div class="card" style="min-height:60px"><div class="custom-control custom-radio"><input type="radio" id="consent-no" name="consent-choice" required
  style="position:absolute;opacity:0;width:0;height:0"><label class="custom-control-label" for="consent-no"></label></div>
- <label class="card-body" for="consent-no"><b>No</b> Continue without personalised job recommendations</label></div></div>
+ <label class="card-body" for="consent-no" style="display:block;width:0;height:0;overflow:visible"><div style="width:300px;height:40px;position:relative"><b>No</b> Continue without personalised job recommendations</div></label></div></div>
 <button>Continue</button></body></html>"""
 
 
