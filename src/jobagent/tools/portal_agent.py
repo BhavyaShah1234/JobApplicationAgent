@@ -177,6 +177,13 @@ def is_registration(view: str) -> bool:
         bool(re.search(r"(?i)\b(first|last|given|family)\s*name\b", elements)) and bool(re.search(r"(?i)password", elements)))
 
 
+def is_create_account_page(view: str) -> bool:
+    """A page whose own heading or text says it creates an account ('Create your account', 'Create an account', 'Sign up' with an
+    'Already have an account? Log in' link), even when it asks only for an email and a password (UKG)."""
+    text = view.split("ELEMENTS:", 1)[0]
+    return bool(re.search(r"(?i)create\s+(?:your|an?)\s+account|already have an account", text))
+
+
 def _settle_unknown(page: Page, seconds: int = 20):
     """An 'unknown' challenge is a page that is blank, loading or mid-navigation, not a puzzle: wait for it to become an ordinary page
     (or a real challenge) before anyone is asked for help."""
@@ -238,6 +245,7 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
     state["alt_password_used"] = False
     _extras = None           # the registration profile, loaded the first time a form asks for it
     came_from = url          # the last portal page before any Google page
+    last_create_hint_url = ""
     login_candidate, register_attempted, toggles, last_nav = None, False, 0, None
     unconfirmed_claims: dict[str, int] = {}
     unchanged_waits,last_wait_view=0,None
@@ -286,6 +294,11 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
                 break
             continue
         view, frames = snapshot(page)
+        if wrong_pw >= 1 and is_create_account_page(view) and page.url != last_create_hint_url:
+            # the model read "the user already has an account" from its own failed login and clicked Log in, then Sign up, in a loop
+            last_create_hint_url = page.url
+            history.append("this page CREATES an account (its heading says so): fill {EMAIL} and {PASSWORD} (and any other required "
+                           "field it shows), then click its Continue / Create button. Do NOT click 'Log in' or Google here")
         if unchanged_waits>=MAX_UNCHANGED_WAITS and view==last_wait_view:
             state['reason']=f'The portal remained unchanged after {MAX_UNCHANGED_WAITS} loading waits; sign-in is unconfirmed.'
             history.append(state['reason'])

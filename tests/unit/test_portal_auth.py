@@ -257,3 +257,15 @@ def test_the_sign_up_link_is_found_by_name_with_its_index_after_a_rejected_passw
     no_signup = type("F", (), {"evaluate": lambda self, js: {"items": [{"label": "Email"}, {"label": "Sign in"}]}})()
     assert signup_link_hint({0: no_signup}) is None
     assert signup_link_hint({0: type("F", (), {"evaluate": lambda self, js: 1 / 0})()}) is None
+
+
+def test_a_create_your_account_page_is_recognised_even_with_only_email_and_password():
+    from jobagent.tools.portal_agent import is_create_account_page as c, is_registration
+    ukg = "\n".join(["FRAME 0 https://signin-us.ultipro.com/u/signup",
+                     "TEXT: Create your account | Enter the credentials you will use to sign in | Already have an account? Log in",
+                     "ELEMENTS:", '  [0] input/text "Email address *"', '  [1] input/password "Password *"'])
+    login = "\n".join(["FRAME 0 https://signin-us.ultipro.com/u/login",
+                       "TEXT: Welcome, come on in! | Create or reset your password | Don't have an account? Sign up",
+                       "ELEMENTS:", '  [0] input/text "Email address *"', '  [1] input/password "Password *"'])
+    assert c(ukg) and not is_registration(ukg)          # the older detector missed it: no confirm field, no name fields
+    assert not c(login)                                  # a sign-in page that merely links to Sign up is not one
