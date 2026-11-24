@@ -587,6 +587,12 @@ def pick_combobox_option(page: Page, loc, value: str) -> str | None:
             entries.nth(i).click(timeout=5000)
             page.wait_for_timeout(500)
             return t
+    # A nationality list ("Indian" for the country "India"): the ONE entry that is the typed value plus at most two letters.
+    near = [i for i, t in enumerate(texts) if t.lower().startswith(want) and 0 < len(t) - len(want) <= 2]
+    if len(near) == 1 and len(texts) == 1:
+        entries.nth(near[0]).click(timeout=5000)
+        page.wait_for_timeout(500)
+        return texts[near[0]]
     try:
         loc.press("Escape")
     except Exception:

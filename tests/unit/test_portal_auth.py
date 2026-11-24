@@ -205,3 +205,21 @@ def test_a_search_and_click_picklist_takes_the_exact_entry_not_a_longer_one_that
     finally:
         browser.close()
         pw.stop()
+
+
+def test_a_nationality_list_takes_the_single_entry_that_is_the_country_plus_a_short_suffix():
+    from jobagent.tools.portal_agent import pick_combobox_option
+    pw, browser, page = _chrome_page()
+    try:
+        page.set_content(PICKLIST.replace('["British Indian Ocean Territory","India","Indonesia","Iceland"]',
+                                          '["Indian","Indonesian","Icelandic"]'))
+        assert pick_combobox_option(page, page.locator("#c"), "India") == "Indian"
+        assert page.evaluate("document.getElementById('hidden').value") == "Indian"
+        # two candidates, or a long suffix, is never guessed
+        page.set_content(PICKLIST.replace('["British Indian Ocean Territory","India","Indonesia","Iceland"]', '["Indiana","Indian"]'))
+        assert pick_combobox_option(page, page.locator("#c"), "India") is None
+        page.set_content(PICKLIST.replace('["British Indian Ocean Territory","India","Indonesia","Iceland"]', '["Indiana"]'))
+        assert pick_combobox_option(page, page.locator("#c"), "India") is None
+    finally:
+        browser.close()
+        pw.stop()
