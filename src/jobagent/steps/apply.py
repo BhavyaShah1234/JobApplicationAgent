@@ -228,6 +228,14 @@ def jd_passages(text: str, fields: list[forms.Field], limit: int = 6000) -> str:
     return "\n".join(out)
 
 
+def _privacy_acknowledgement_allowed(ctx: dict) -> bool:
+    """The candidate's profile says yes to privacy-notice / data-processing acknowledgements (a standing, recorded consent)."""
+    for _, e in applicant.entries(ctx.get("_applicant") or {}):
+        if re.search(r"(?i)privacy notice|data processing acknowledgement", e.get("question", "")) and e.get("answer") is True:
+            return True
+    return False
+
+
 def registration_profile(job_dir: Path, company: str, model, log=print, docs_dir: Path | None = None):
     """The provider the sign-in agent calls when a REGISTRATION form requires more than identity: citizenship from the applicant
     file and the address this application uses for the job (the existing job-city logic and its cache), nothing invented."""
@@ -1887,6 +1895,9 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
                                             'buttons':view.buttons,'extraction':view.coverage.summary()})
                     checkpoint();break
             else:
+                from jobagent.tools import notices
+                if notices.resolve_blocking_dialogs(page, privacy_ok=_privacy_acknowledgement_allowed(ctx), log=log):
+                    view = forms.read_page(page)
                 view, done = fill_page(page, ctx, files, model, log, record, page_no, env, known, errors)
         except PlannerFailed as exc:
             # the fields found are recorded (outcome unplanned); the form is not advanced, and no review is offered
