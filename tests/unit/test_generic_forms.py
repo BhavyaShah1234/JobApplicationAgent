@@ -205,7 +205,24 @@ def test_an_add_control_without_a_new_row_blocks_after_one_click(page,monkeypatc
         lambda _:pytest.fail('A failed Add is a technical blocker, not a missing owner fact'))
     result=filler.fill(page,advance_pages=False)
     assert page.evaluate('clicks')==1 and result['state']=='blocked'
-    assert 'stopped before clicking again' in result['blockers'][0]
+    assert 'not clicked again' in result['blockers'][0]
+
+
+def test_a_row_that_cannot_be_added_does_not_stop_the_rest_of_the_page_from_being_filled(page,monkeypatch):
+    """Dayforce (Amphenol): the extra education row never appears; the 65 other fields were left empty because the page stopped there."""
+    from jobagent.filling.facts import Fact
+    from jobagent.filling.planned import PlannedFiller
+    page.set_content('''<h1>Application</h1><label>Preferred name<input id=pn></label><section><h2>Education</h2>
+      <label>School<input id=school></label><button type=button onclick="window.clicks=(window.clicks||0)+1">Add</button></section>''')
+    monkeypatch.setattr(PlannedFiller,'ROW_ADD_TIMEOUT_S',0.25)
+    facts=[Fact('pn',['Preferred name'],'Bhavya','applicant/identity/preferred'),
+           Fact('school1',['School'],'First University','applicant/education/0/school',section='Education 1'),
+           Fact('school2',['School'],'Second University','applicant/education/1/school',section='Education 2')]
+    filler=PlannedFiller(facts,lambda _:pytest.fail('nothing here needs the candidate'))
+    result=filler.fill(page,advance_pages=False)
+    assert page.evaluate('clicks')==1                                                   # one click, never repeated
+    assert page.locator('#pn').input_value()=='Bhavya'                                  # the rest of the page was filled
+    assert result['state']=='blocked' and any('not clicked again' in b for b in result['blockers'])   # and the gap is reported
 
 
 @pytest.mark.parametrize('unrelated', [False, True])

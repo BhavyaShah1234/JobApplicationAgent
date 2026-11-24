@@ -438,6 +438,7 @@ class PlannedFiller:
     def fill(self,page,files=None,max_rounds=12,advance_pages=True,errors=()):
         files=files or {};records=[row for (step,_),row in self.record_state.items() if advance_pages or step==self.step]
         self._call_start=(self.human_wait_s,self.questions,self.batches,self.model_calls,len(self.events))
+        self._row_failures=[];skipped_rows=set()      # rows the page would not add: reported at the end, never a reason to leave the rest unfilled
         discovery=getattr(page,'_jobagent_discovery',None) or Discovery(page)
         own_discovery=not hasattr(page,'_jobagent_discovery');started=time.monotonic()
         # Validation feedback invalidates only the affected fields, retaining
@@ -459,7 +460,7 @@ class PlannedFiller:
                 for button in view.adds:
                     group=norm(button.get('section','')+' '+button.get('text',''))
                     prefix=next((x for x in ('education','work experience') if x in group),None)
-                    if not prefix:continue
+                    if not prefix or prefix in skipped_rows:continue
                     desired={norm(f.section) for f in self.facts if norm(f.section).startswith(prefix)}
                     present={norm(f.section) for f in view.fields
                              if f.frame==button['frame'] and norm(f.section).startswith(prefix)}
@@ -480,10 +481,14 @@ class PlannedFiller:
                                         'wait_s':time.monotonic()-wait_started})
                                     break
                             if time.monotonic()-wait_started>=self.ROW_ADD_TIMEOUT_S:
-                                return self.result('blocked',records,started,
-                                    [f'{prefix}: a new row did not appear after Add; stopped before clicking again'])
+                                skipped_rows.add(prefix)      # no second click; the rows already on the page are filled, the missing one is reported
+                                self._row_failures.append(f'{prefix}: a new row did not appear after Add (not clicked again); the entries beyond the existing rows were not entered')
+                                self.events.append({'event':'entity_row_add_failed','group':prefix,'before':len(present)})
+                                break
                             page.wait_for_timeout(100)
-                        added=True;break
+                        added=prefix not in skipped_rows
+                        if prefix in skipped_rows:break
+                        break
                 if added:continue
                 inventory=self.applicable_inventory(discovery.inventory())
                 self.events.append({'event':'inventory','round':round_no,**inventory})
@@ -674,6 +679,10 @@ class PlannedFiller:
                 for proof in self.upload_proofs.values():proof.close()
 
     def result(self,state,records,started,blockers):
+        failures=list(getattr(self,'_row_failures',[]))
+        if failures:                     # a page missing entries is never complete or ready, whatever else was filled
+            blockers=[*blockers,*[x for x in failures if x not in blockers]]
+            if state in ('review','page_complete'):state='blocked'
         wait,questions,batches,calls,event_start=self._call_start
         elapsed=time.monotonic()-started;human_wait=self.human_wait_s-wait
         return {'engine':self.engine_name,'state':state,'ready':state=='review','records':records,'blockers':blockers,
