@@ -67,7 +67,7 @@ def owner_only(f):
                           r'pronouns|currently.*client|(?:opened|have) an? account|conferences?.*(?:attend|planning)|gatherings.*attend|citizen|sponsor|disab|medical|dismiss|religio|faith|gender|sexual|ethnic|\brace\b|birth|social security|\bssn\b|passport|clearance|resident|^legal name$|^full name$|^name$|\bemail\b|\bphone\b|share.*(?:external|partner)' , f.label))
 
 
-ENTITY_HEADER = re.compile(r'^(?:(?:previous|prior|past)\s*)?(work\s*experience|employment(?:\s*history)?|professional\s*experience|education|academic(?:\s*(?:history|qualifications))?|references?|referrals?)\s*(?:entry\s*)?(\d+)?$')
+ENTITY_HEADER = re.compile(r'^(?:(?:previous|prior|past)\s*)?(work\s*experience|employment(?:\s*history)?|professional\s*experience|education(?:\s*(?:history|details|information))?|academic(?:\s*(?:history|qualifications))?|references?|referrals?)\s*(?:entry\s*)?(\d+)?$')
 ENTITY_COMPONENTS = {
     'first name','given name','middle name','last name','family name','surname','full name','name',
     'email','email address','phone','phone number','primary phone','telephone','mobile',

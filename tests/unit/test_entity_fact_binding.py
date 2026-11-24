@@ -30,3 +30,13 @@ def test_a_quote_from_another_resume_role_cannot_bypass_row_binding():
     model=Model(Mapping(field_id=0,value='Director',source='resume',quote='Director at Another Company'))
     d=PlannedFiller([],lambda _: {},model,{'resume':'Director at Another Company'}).plan([field],allow_human=False)[0]
     assert d.value is None
+
+
+@pytest.mark.parametrize('heading,expected',[('Education History',('education',None)),('Education Details',('education',None)),
+                                             ('Education 2',('education',2)),('Employment History',('employment',None)),
+                                             ('References',('reference',None)),('Personal Information *',None),
+                                             ('Please enter the highest level of education you have attained',None)])
+def test_section_headings_are_scoped_to_their_fact_rows_including_education_history(heading,expected):
+    """Dayforce: 'Education History' was unknown, so no education fact could bind and every school field was asked."""
+    from jobagent.filling.facts import entity_scope
+    assert entity_scope(heading)==expected
