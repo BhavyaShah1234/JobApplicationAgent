@@ -487,3 +487,23 @@ def test_two_file_inputs_with_one_label_and_one_id_get_the_document_once(page,tm
     filler.fill(page,files={'resume':str(pdf)},advance_pages=False)
     assert page.evaluate('window.sent')==1
     assert page.locator('#extra').input_value()=='Ada'
+
+
+def test_repeated_rows_under_one_heading_are_numbered_by_id_and_the_new_row_is_seen(page):
+    """Dayforce: every education row sits under 'Education History', Add puts the NEW row (_1_) above the old one (_0_)."""
+    from jobagent.filling.facts import Fact
+    from jobagent.filling.planned import PlannedFiller
+    page.set_content('''<h1>Application</h1><section><h2>Education History</h2>
+      <button type=button onclick="window.addClicks++;setTimeout(()=>{const i=window.n++;
+        rows.insertAdjacentHTML('afterbegin',`<div><label for=edu_${i}_school>School</label><input id=edu_${i}_school></div>`)},700)">Add Education History</button>
+      <div id=rows><div><label for=edu_0_school>School</label><input id=edu_0_school></div></div></section>
+      <script>window.addClicks=0;window.n=1;</script>''')
+    facts=[Fact('s1',['School'],'Arizona State University','applicant/education/0/school',section='Education 1'),
+           Fact('s2',['School'],'Gujarat Technological University','applicant/education/1/school',section='Education 2')]
+    filler=PlannedFiller(facts,lambda _:pytest.fail('nothing here needs the candidate'))
+    result=filler.fill(page,advance_pages=False)
+    page.wait_for_timeout(900)
+    assert page.evaluate('addClicks')==1
+    assert result['state']=='page_complete',result
+    assert page.locator('#edu_0_school').input_value()=='Arizona State University'     # row 0 is education 1 even though row 1 is drawn first
+    assert page.locator('#edu_1_school').input_value()=='Gujarat Technological University'

@@ -37,7 +37,32 @@ def read_view(page):
         if f.kind!='file' and f.identity.startswith('node:') and sum(
                 (g.frame,norm(g.section),norm(g.label),g.kind)==semantic for g in view.fields)==1:
             f.identity='question:'+repr(semantic[1:])
+    number_repeated_rows(view)
     return view
+
+
+ROW_INDEX=re.compile(r'_(\d+)_')
+
+
+def number_repeated_rows(view):
+    """Give each repeated record its own numbered heading ("Education History 1", "... 2") when the page repeats ONE heading.
+
+    Dayforce shows every education/employment row under a single "Education History" heading, with the row in the field ids
+    (`..._educationHistory_0_degreeName`, `..._1_...`) and the newest row placed ABOVE the older one. Without a number, both rows were
+    the same entity: the filler could not see that Add had produced a row (it waited out the whole timeout) and would have bound every
+    row to the first education entry. Rows are numbered by their id index (0 first), never by where the page happens to draw them.
+    """
+    from .facts import entity_scope
+    groups={}
+    for f in view.fields:
+        scope=entity_scope(f.section)
+        match=ROW_INDEX.search(f.identity[3:]) if f.identity.startswith('id:') else None
+        if scope and scope[1] is None and match:
+            groups.setdefault((f.frame,f.section),{}).setdefault(int(match[1]),[]).append(f)
+    for (_,section),rows in groups.items():
+        if len(rows)<2:continue
+        for rank,index in enumerate(sorted(rows),1):
+            for f in rows[index]:f.section=f'{section} {rank}'
 
 
 def held_file_sha256(view, field):
