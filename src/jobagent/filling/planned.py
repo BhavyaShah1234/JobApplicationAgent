@@ -182,6 +182,8 @@ class PlannedFiller:
         self.record_state={};self.rendered={}
         self.prepared={};self.potential_seen=set()
         self.upload_proofs={}
+        self.uploaded={}          # (page step, the input's own identity) -> the proof of an upload that was verified
+        self.uploaded_labels={}   # (page step, label) -> the same proof: two inputs of one page can carry one label (and one HTML id)
         self.lookup_resolver=None;self.lookup_cache={}
         self.dom_reads=0;self.routes=[];self.technical_failures={};self.session_facts={};self.session_fact_steps={}
 
@@ -532,6 +534,13 @@ class PlannedFiller:
                     future.identity='schema:'+item.get('schema_id','')+repr(qkey)
                     potential.append(future);self.potential_seen.add(qkey)
                 def unchanged(f):
+                    if f.kind=='file' and (f.identity or f.label):
+                        # A verified upload is remembered by the input's own identity: the widget's LABEL changes once the file name appears in
+                        # it, which used to make the same upload look undone and re-send it (re-triggering a resume parser every round).
+                        done=self.uploaded.get((self.step,f.identity)) or self.uploaded_labels.get((self.step,f.label))
+                        try:
+                            if done is not None and done.verify():return True
+                        except Exception:pass
                     if not self.can_reuse(f):return False
                     decision=self.cache.get(key(f))
                     if decision is None:return False
@@ -600,6 +609,17 @@ class PlannedFiller:
                             proof=None
                             if f.kind=='file':
                                 if value not in files:raise ValueError('no role-specific file provided')
+                                prior=self.uploaded_labels.get((self.step,f.label))
+                                if prior is not None and prior.verify():
+                                    # the same document was just verified on an input carrying this very label: not sent a second time
+                                    self.cache[key(f)]=d;self.rendered[key(f)]=Path(files[value]).name;changed=True
+                                    row={'step':self.step,'field_key':key(f),'identity':f.identity,'label':f.label,'section':f.section,'answer':value,
+                                         'readback':Path(files[value]).name,'frame':f.frame,'kind':f.kind,'slot':f.slot,'required':f.required,'before':f.value,
+                                         'chosen':value,'source':d.source,'fact_id':d.fact_id,'outcome':'verified','held_file_sha256':prior.expected,
+                                         'upload_verification':'same label as an upload already verified on this page','replaced_attachment_count':0}
+                                    records.append(row);self.record_state[(self.step,key(f))]=row
+                                    self.trace(ev='field',ok=True,label=f.label[:40],kind='file',secs=0,note='same label as a verified upload')
+                                    continue
                                 if self.upload_observer:self.upload_observer(fresh,f,value)
                                 old_proof=self.upload_proofs.get((self.step,key(f)))
                                 if old_proof:old_proof.close()
@@ -633,6 +653,9 @@ class PlannedFiller:
                                     except Exception:pass
                                 raise ValueError(f"control not accepted or exact readback unavailable (wanted {str(chosen)[:40]!r}, the page shows {str(getattr(actual,'value',None))[:40]!r})")
                             readback=actual.value if actual else Path(files[value]).name
+                            if f.kind=='file' and proof is not None:
+                                if f.identity:self.uploaded[(self.step,f.identity)]=proof
+                                self.uploaded_labels[(self.step,f.label)]=proof
                             self.trace(ev='field',ok=True,label=f.label[:40],kind=f.kind,secs=round(time.monotonic()-_t0,1))
                             self.failures.pop(key(f),None)
                             self.cache[key(f)]=d;self.rendered[key(f)]=readback;changed=True

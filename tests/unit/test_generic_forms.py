@@ -468,3 +468,22 @@ def test_an_ant_design_upload_that_clears_its_input_and_shows_the_file_name_is_a
         assert page.locator('input[type=file]').evaluate('e=>e.files.length')==0              # the page really emptied the input
         assert proof.verify() and proof.method=='dispatched bytes and widget acknowledgement'
     finally:proof.close()
+
+
+def test_two_file_inputs_with_one_label_and_one_id_get_the_document_once(page,tmp_path):
+    """Dayforce (Amphenol): 'Import Resume' and 'Attachment: Import Resume' are two inputs with the SAME id and label; the second upload
+    failed its check (31 s) every round and each upload re-ran the resume parser."""
+    from jobagent.filling.facts import Fact
+    from jobagent.filling.planned import PlannedFiller
+    pdf=tmp_path/'resume.pdf';pdf.write_bytes(b'%PDF-1.4 resume fixture')
+    page.set_content('''<h1>Application</h1>
+      <div class="ant-form-item"><span class="ant-upload"><input id=jobPostingApplication_files_resume type=file
+        onchange="window.sent=(window.sent||0)+1;const n=this.files[0].name;this.value='';setTimeout(()=>{document.getElementById('s1').textContent=n},150)">
+        <button type=button>Import Resume</button></span><span id=s1></span></div>
+      <div class="ant-form-item"><span>Attachment:</span><span class="ant-upload"><input id=jobPostingApplication_files_resume type=file
+        onchange="window.sent=(window.sent||0)+1;this.value=''"><button type=button>Import Resume</button></span></div>
+      <label for=extra>Nickname</label><input id=extra>''')
+    filler=PlannedFiller([Fact('n',['Nickname'],'Ada','applicant/identity/nick')],lambda _:pytest.fail('nothing here needs the candidate'))
+    filler.fill(page,files={'resume':str(pdf)},advance_pages=False)
+    assert page.evaluate('window.sent')==1
+    assert page.locator('#extra').input_value()=='Ada'

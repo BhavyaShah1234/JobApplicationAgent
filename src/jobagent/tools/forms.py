@@ -1050,7 +1050,13 @@ def selection_parts(value: str, question: str = "") -> list[str]:
 def same_value(want: str, got: str, kind: str, question: str = "", multiple: bool = False) -> bool:
     """The page shows the value that was meant (read-back check)."""
     if kind in ('combobox', 'select') and PHONE_CODE_Q.search(question):
-        return phone_code_option(want, [got]) is not None
+        if phone_code_option(want, [got]) is not None:
+            return True
+        # A closed dial-code box often shows only '<flag> +1' for a choice that was made as '<flag> +1 <Country>' (Dayforce): the same code,
+        # with no country shown, is the choice that was clicked.
+        wanted_code = re.search(r"\+(\d{1,4})", want)
+        shown_code = re.fullmatch(r"[^\w+]*\+(\d{1,4})\s*", got or "")
+        return bool(wanted_code and shown_code and wanted_code[1] == shown_code[1])
     if multiple and kind in ('combobox','select'):
         return {_norm(x) for x in selection_parts(want,question)} == {_norm(x) for x in got.split(';') if x.strip()}
     if kind in ('combobox','select','radio','buttons') and is_identity(question):

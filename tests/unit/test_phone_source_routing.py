@@ -110,3 +110,12 @@ def test_an_ant_design_select_reads_back_the_shown_choice_not_its_empty_search_i
             assert next(f for f in forms.read_page(page).fields if f.label == "Preferred Contact Method").value == ""     # nothing chosen: empty
         finally:
             b.close()
+
+
+def test_a_dial_code_box_that_shows_only_flag_and_code_reads_back_as_the_choice_that_was_clicked():
+    from jobagent.tools.forms import same_value
+    q='Country dialing code'
+    assert same_value('🇺🇸 +1 United States of America','🇺🇸 +1','combobox',q)
+    assert same_value('United States (+1)','+1','combobox',q)
+    assert not same_value('🇺🇸 +1 United States of America','🇬🇧 +44','combobox',q)       # a different code is a different choice
+    assert not same_value('🇺🇸 +1 United States of America','','combobox',q)
