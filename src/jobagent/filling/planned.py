@@ -456,7 +456,7 @@ class PlannedFiller:
     def fill(self,page,files=None,max_rounds=12,advance_pages=True,errors=()):
         files=files or {};records=[row for (step,_),row in self.record_state.items() if advance_pages or step==self.step]
         self._call_start=(self.human_wait_s,self.questions,self.batches,self.model_calls,len(self.events))
-        self._row_failures=[];skipped_rows=set()      # rows the page would not add: reported at the end, never a reason to leave the rest unfilled
+        self._trace_t0=time.monotonic();self._row_failures=[];skipped_rows=set()      # rows the page would not add: reported at the end, never a reason to leave the rest unfilled
         discovery=getattr(page,'_jobagent_discovery',None) or Discovery(page)
         own_discovery=not hasattr(page,'_jobagent_discovery');started=time.monotonic()
         # Validation feedback invalidates only the affected fields, retaining
@@ -550,6 +550,7 @@ class PlannedFiller:
                     return forms.same_value(self.rendered.get(key(f),decision.value),f.value,f.kind,f.label,f.multiple)
                 # A password is never filled or asked about: on an application page that merely contains account fields they stay for the candidate
                 todo=[f for f in view.fields if f.kind!='password' and not unchanged(f) and self.failures.get(key(f),0)<2]
+                self.trace(ev='round',n=round_no,fields=len(view.fields),todo=len(todo),labels=[f.label[:24] for f in todo][:14])
                 if todo or potential:
                     forms.discover_options(page,view,fields=todo)
                     live.remember_options(todo)
@@ -593,6 +594,7 @@ class PlannedFiller:
                             continue
                         try:
                             attempted.add(key(f))
+                            _t0=time.monotonic()
                             value=d.value
                             held_sha=None
                             proof=None
@@ -629,8 +631,9 @@ class PlannedFiller:
                                 if f.kind=='combobox':      # keep the real control's HTML for the next fix (state/logs/combobox-failures.jsonl)
                                     try:forms._save_combobox_failure(forms.locate(fresh,f),f,chosen,f"readback: chosen={chosen!r} actual={getattr(actual,'value',None)!r} invalid={getattr(actual,'invalid',None)}")
                                     except Exception:pass
-                                raise ValueError('control not accepted or exact readback unavailable')
+                                raise ValueError(f"control not accepted or exact readback unavailable (wanted {str(chosen)[:40]!r}, the page shows {str(getattr(actual,'value',None))[:40]!r})")
                             readback=actual.value if actual else Path(files[value]).name
+                            self.trace(ev='field',ok=True,label=f.label[:40],kind=f.kind,secs=round(time.monotonic()-_t0,1))
                             self.failures.pop(key(f),None)
                             self.cache[key(f)]=d;self.rendered[key(f)]=readback;changed=True
                             row={'step':self.step,'field_key':key(f),'identity':f.identity,'label':f.label,'section':f.section,'answer':value,'readback':readback,
@@ -645,6 +648,8 @@ class PlannedFiller:
                             from jobagent.tools.challenge import Blocked
                             if isinstance(e,Blocked):raise
                             self.control_failed(f,d,e)
+                            self.trace(ev='field',ok=False,label=f.label[:40],kind=f.kind,secs=round(time.monotonic()-_t0,1) if '_t0' in locals() else None,
+                                       error=(type(e).__name__+': '+(str(e).splitlines() or [''])[0])[:200])
                             row={'step':self.step,'field_key':key(f),'identity':f.identity,'label':f.label,'section':f.section,'frame':f.frame,'kind':f.kind,'slot':f.slot,
                                  'required':f.required,'outcome':'failed','error':str(e)[:200]}
                             records.append(row);self.record_state[(self.step,key(f))]=row
@@ -698,6 +703,17 @@ class PlannedFiller:
             if own_discovery:discovery.close()
             if advance_pages:
                 for proof in self.upload_proofs.values():proof.close()
+
+    def trace(self,**event):
+        """One line per fill attempt / round in <job>/application/fill-trace.jsonl: what was tried, how long it took, and the exact failure,
+        so a slow or looping page can be diagnosed from evidence (values are trimmed and passwords never recorded)."""
+        try:
+            import json as _j
+            directory=getattr(self,'evidence_dir',None)
+            if not directory:return
+            event={'t':round(time.monotonic()-getattr(self,'_trace_t0',time.monotonic()),1),**event}
+            with (Path(directory)/'fill-trace.jsonl').open('a') as fh:fh.write(_j.dumps(event,ensure_ascii=False,default=str)+'\n')
+        except Exception:pass
 
     def result(self,state,records,started,blockers):
         failures=list(getattr(self,'_row_failures',[]))

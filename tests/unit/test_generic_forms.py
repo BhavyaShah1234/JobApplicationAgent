@@ -434,3 +434,19 @@ def test_documents_are_uploaded_first_and_values_typed_are_not_lost_to_a_resume_
     assert result['state']=='page_complete'
     order=page.evaluate('window.order')
     assert order[0]=='upload' and order.count('upload')==1          # the document goes first; nothing typed before the parser has had its say
+
+
+def test_every_round_and_field_attempt_is_traced_with_timing_and_the_exact_failure(page,tmp_path):
+    import json
+    from jobagent.filling.facts import Fact
+    from jobagent.filling.planned import PlannedFiller
+    page.set_content('''<h1>Application</h1><label for=a>First Name</label><input id=a>
+      <label for=b>Nickname</label><input id=b onchange="this.value=''">''')       # b throws its value away: a failing field
+    facts=[Fact('a',['First Name'],'Ada','applicant/identity/first'),Fact('b',['Nickname'],'Countess','applicant/identity/nick')]
+    filler=PlannedFiller(facts,lambda _:None);filler.evidence_dir=tmp_path
+    filler.fill(page,advance_pages=False)
+    lines=[json.loads(l) for l in (tmp_path/'fill-trace.jsonl').read_text().splitlines()]
+    assert any(l['ev']=='round' and l['todo']>=1 for l in lines)
+    ok=[l for l in lines if l['ev']=='field' and l['ok']];bad=[l for l in lines if l['ev']=='field' and not l['ok']]
+    assert any(l['label']=='First Name' and l['secs']>=0 for l in ok)
+    assert any(l['label']=='Nickname' and 'the page shows' in l['error'] and "'Countess'" in l['error'] for l in bad)
