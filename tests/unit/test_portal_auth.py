@@ -147,3 +147,21 @@ def test_the_registration_placeholder_substitution_lives_in_the_function_that_in
     from jobagent.tools import portal_agent as pa
     src = inspect.getsource(pa._run)
     assert "_extras = None" in src and "registration_extras(log)" in src
+
+
+def test_the_registration_profile_turns_a_model_name_into_the_model_object(tmp_path, monkeypatch):
+    """Live Ericsson run: the CLI passes a model NAME (or None); address preparation needs the model object ('NoneType has no model_name')."""
+    import json
+    from jobagent import llm
+    from jobagent.steps import apply as A
+    from jobagent.tools import application_address
+    job = tmp_path / "job"
+    job.mkdir()
+    (job / "jd.json").write_text(json.dumps({"company": "Acme", "title": "Eng", "locations": ["Austin, TX"], "locations_resolved": []}))
+    made, seen = object(), {}
+    class Writer:
+        model_name = "writer"
+    monkeypatch.setattr(llm, "writer", lambda *a, **k: Writer())
+    monkeypatch.setattr(application_address, "prepare", lambda ctx, out, model, log=print: seen.update(model=model) or {})
+    A.registration_profile(job, "acme", None)()
+    assert getattr(seen["model"], "model_name", None) == "writer"

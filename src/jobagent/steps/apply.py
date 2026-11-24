@@ -238,7 +238,8 @@ def registration_profile(job_dir: Path, company: str, model, log=print, docs_dir
                 out["CITIZENSHIP"] = e["answer"].get("citizenship", "")
         try:
             (job_dir / "application").mkdir(exist_ok=True)
-            application_address.prepare(ctx, job_dir / "application", model, log)
+            writer = model if hasattr(model, "model_name") else llm.writer(8000, timeout=300, model=model)   # a name (or None) -> the model object
+            application_address.prepare(ctx, job_dir / "application", writer, log)
         except application_address.NoUsLocation:
             return out                               # a region or remote posting: no address to give
         for _, e in applicant.entries(ctx["_applicant"]):
