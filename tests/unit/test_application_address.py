@@ -179,3 +179,14 @@ def test_a_region_or_remote_posting_raises_the_specific_no_location_error_so_cal
     with pytest.raises(A.NoUsLocation, match='city/state'):
         A._target(locations, lambda _: None)
     assert issubclass(A.NoUsLocation, RuntimeError)
+
+
+def test_a_city_that_shares_its_states_name_is_the_city_not_the_state():
+    from jobagent.tools.places import written_place as w
+    assert w("New York, NY")["city"] == "New York" and w("New York, NY")["state"] == "New York"
+    assert w("New York, New York")["city"] == "New York"
+    assert w("Washington, WA")["city"] == "Washington" and w("Washington, WA")["state"] == "Washington"
+    assert w("Austin, TX")["city"] == "Austin"
+    assert w("Indiana, Pennsylvania")["state"] == "Indiana"        # two different states are unchanged by the rule
+    assert w("USA WILMINGTON, MA - HQ")["city"] == "WILMINGTON"
+    assert w("New York")["city"] == "" and w("New York")["state"] == "New York"   # a bare state stays a state

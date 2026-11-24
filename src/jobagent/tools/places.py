@@ -20,16 +20,23 @@ JARGON = re.compile(r"(?i)\b(corporate\s+)?(head\s?quarters|hq|head\s+office|hom
                     r"corporate\s+(office|campus|center|centre)|global\s+(headquarters|hq)|world\s?headquarters)\b")
 US = re.compile(r"(?i)\b(united states( of america)?|usa|u\.s\.a?\.?|us)\b")
 CODES = {v.upper(): k.title() for k, v in US_STATES.items()}
-RESOLVER_VERSION = 2
+RESOLVER_VERSION = 3
 COUNTRY_PREFIX = re.compile(r"(?i)^(?:united states(?: of america)?|usa|u\.s\.a\.?|u\.s\.?|us)(?:\s+|$)")
 
 
 def written_place(text: str) -> dict | None:
     """A location that already names a US place: 'Austin, TX', 'Minneapolis, Minnesota', 'Remote - US'."""
     parts = [p.strip() for p in re.split(r"[,|/;-]", text) if p.strip()]
+    def state_of(p: str) -> str:
+        return CODES.get(p.upper()) or (p.title() if p.lower() in US_STATES else "")
+
     for i, p in enumerate(parts):
-        state = CODES.get(p.upper()) or (p.title() if p.lower() in US_STATES else "")
+        state = state_of(p)
         if state:
+            # "New York, NY": a state name followed by its own code or name is a CITY that shares the state's name.
+            if i + 1 < len(parts) and state_of(parts[i + 1]) == state and not (i > 0 and state_of(parts[i - 1])):
+                city = COUNTRY_PREFIX.sub("", p).strip()
+                return {"city": city, "state": state, "country": "United States", "how": "written in the posting"}
             city = parts[i - 1] if i > 0 and not JARGON.search(parts[i - 1]) else ""
             # Workday commonly writes "USA WILMINGTON, MA - HQ". The
             # country tag is not part of the city, nor is a country-only
