@@ -190,3 +190,17 @@ def test_a_city_that_shares_its_states_name_is_the_city_not_the_state():
     assert w("Indiana, Pennsylvania")["state"] == "Indiana"        # two different states are unchanged by the rule
     assert w("USA WILMINGTON, MA - HQ")["city"] == "WILMINGTON"
     assert w("New York")["city"] == "" and w("New York")["state"] == "New York"   # a bare state stays a state
+
+
+def test_apply_re_resolves_locations_that_an_older_parser_resolved(tmp_path, monkeypatch):
+    import json
+    from jobagent.steps import apply as A
+    from jobagent.tools import places
+    job = tmp_path / "job"
+    job.mkdir()
+    (job / "jd.json").write_text(json.dumps({"company": "Acme", "title": "Eng", "locations": ["New York, NY"],
+        "locations_resolved": [{"as_written": "New York, NY", "city": "", "state": "New York", "country": "United States", "how": "written in the posting"}]}))
+    monkeypatch.setattr(places, "_profile", lambda slug: (tmp_path / "x.json", {}))
+    ctx = A.context(job, "acme")
+    assert ctx["_jd"]["locations_resolved"][0]["city"] == "New York"
+    assert ctx["_jd"]["locations_resolver_version"] == places.RESOLVER_VERSION

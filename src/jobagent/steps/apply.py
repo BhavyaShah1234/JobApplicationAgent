@@ -235,8 +235,9 @@ def context(job_dir: Path, company: str, docs_dir: Path | None = None) -> dict:
         resume = subprocess.run(["pdftotext", "-layout", str(docs / "resume.pdf"), "-"], capture_output=True,
                                 text=True).stdout
     jd = json.loads((job_dir / "jd.json").read_text()) if (job_dir / "jd.json").exists() else {}
-    if jd and "locations_resolved" not in jd:  # "Corporate Headquarters" -> the city it means (once per job)
-        from jobagent.tools import places
+    from jobagent.tools import places
+    if jd and ("locations_resolved" not in jd or jd.get("locations_resolver_version", 0) < places.RESOLVER_VERSION):
+        # "Corporate Headquarters" -> the city it means (once per job and parser version)
         try:
             places.resolve_job(job_dir, company, log=lambda m: None)
             jd = json.loads((job_dir / "jd.json").read_text())

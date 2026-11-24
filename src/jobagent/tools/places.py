@@ -112,6 +112,7 @@ def resolve(jd: dict, company_slug: str, log=print) -> list[dict]:
         log(f"places: {text!r} -> " + (", ".join(x for x in (out[-1]['city'], out[-1]['state'], out[-1]['country'])
                                                   if x) or "unresolved") + f" ({out[-1]['how']})")
     jd["locations_resolved"] = out
+    jd["locations_resolver_version"] = RESOLVER_VERSION      # a later parser fix re-resolves jobs resolved by an older one
     return out
 
 
