@@ -177,6 +177,47 @@ def is_registration(view: str) -> bool:
         bool(re.search(r"(?i)\b(first|last|given|family)\s*name\b", elements)) and bool(re.search(r"(?i)password", elements)))
 
 
+REJECTION_WINDOW_S = 6 * 3600
+MAX_RECENT_REJECTIONS = 2
+
+
+def _rejections_file(host: str):
+    from jobagent.config import get_settings
+    return get_settings().state_dir / "portal-rejections" / (re.sub(r"[^a-z0-9.-]", "_", host.lower()) + ".json")
+
+
+def recent_rejections(host: str, now: float | None = None) -> list[float]:
+    """Times (epoch seconds) a password was rejected at this host in the last few hours, across runs: the per-run limit alone let
+    five reruns send the same rejected password about ten times and lock the account (UKG, 2026-11-24)."""
+    import time
+    now = time.time() if now is None else now
+    try:
+        stamps = json.loads(_rejections_file(host).read_text())
+    except (OSError, ValueError):
+        return []
+    return [t for t in stamps if isinstance(t, (int, float)) and now - t < REJECTION_WINDOW_S]
+
+
+def record_rejection(host: str, now: float | None = None) -> None:
+    import time
+    now = time.time() if now is None else now
+    path = _rejections_file(host)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps([*recent_rejections(host, now), now]))
+    except OSError:
+        pass
+
+
+def too_many_recent_rejections(host: str) -> str | None:
+    n = len(recent_rejections(host))
+    if n >= MAX_RECENT_REJECTIONS:
+        return (f"{host}: the stored password was rejected {n} times in the last {REJECTION_WINDOW_S // 3600} hours; another attempt risks "
+                "locking the account. Wait, or reset the password yourself and store the new one with "
+                f"`jobagent vault set portal:{host} password`")
+    return None
+
+
 def is_create_account_page(view: str) -> bool:
     """A page whose own heading or text says it creates an account ('Create your account', 'Create an account', 'Sign up' with an
     'Already have an account? Log in' link), even when it asks only for an email and a password (UKG)."""
@@ -243,6 +284,10 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
     since = datetime.now(UTC)
     code, challenges, repeats, last_action, pw_submitted, wrong_pw = "", 0, 0, None, False, 0
     state["alt_password_used"] = False
+    if goal == "sign_in" and (why := too_many_recent_rejections(host)):
+        state["state"], state["reason"] = "failed", why          # never type a rejected password into the same site again and again
+        log(f"portal {host}: {why}")
+        return state
     _extras = None           # the registration profile, loaded the first time a form asks for it
     came_from = url          # the last portal page before any Google page
     last_create_hint_url = ""
@@ -320,6 +365,7 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             genuine = False
         if REJECTED.search(shown_text) and genuine:
             wrong_pw += 1
+            record_rejection(host)
             if (hint := signup_link_hint(frames)):
                 history.append(hint)
             if wrong_pw >= 2 and "PASSWORD REJECTED" not in " ".join(history[-2:]):

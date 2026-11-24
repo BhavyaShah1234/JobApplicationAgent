@@ -269,3 +269,27 @@ def test_a_create_your_account_page_is_recognised_even_with_only_email_and_passw
                        "ELEMENTS:", '  [0] input/text "Email address *"', '  [1] input/password "Password *"'])
     assert c(ukg) and not is_registration(ukg)          # the older detector missed it: no confirm field, no name fields
     assert not c(login)                                  # a sign-in page that merely links to Sign up is not one
+
+
+def test_password_rejections_are_counted_across_runs_and_the_third_attempt_is_refused(tmp_path, monkeypatch):
+    from jobagent.tools import portal_agent as pa
+    monkeypatch.setattr(pa, "_rejections_file", lambda host: tmp_path / f"{host}.json")
+    host = "signin-us.ultipro.com"
+    assert pa.too_many_recent_rejections(host) is None
+    pa.record_rejection(host, now=1000.0)
+    assert pa.too_many_recent_rejections(host) is None                      # one rejection: a second try is still allowed
+    pa.record_rejection(host, now=1100.0)
+    import time
+    monkeypatch.setattr(time, "time", lambda: 1200.0)
+    why = pa.too_many_recent_rejections(host)
+    assert why and "vault set" in why and "locking the account" in why
+    monkeypatch.setattr(time, "time", lambda: 1100.0 + pa.REJECTION_WINDOW_S + 1)
+    assert pa.too_many_recent_rejections(host) is None                      # old rejections expire
+
+
+def test_other_hosts_are_not_affected_by_one_hosts_rejections(tmp_path, monkeypatch):
+    from jobagent.tools import portal_agent as pa
+    monkeypatch.setattr(pa, "_rejections_file", lambda host: tmp_path / f"{host}.json")
+    pa.record_rejection("a.example.com", now=1.0)
+    pa.record_rejection("a.example.com", now=2.0)
+    assert pa.recent_rejections("b.example.com", now=3.0) == []
