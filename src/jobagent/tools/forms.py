@@ -1391,13 +1391,19 @@ def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
             search.press_sequentially(str(answer), delay=45)
             page.wait_for_timeout(1200)
         area = results if results.count() else panel
+        # Match whole list entries, never fragments: the widget highlights the typed text inside each result, so "British <b>India</b>n
+        # Ocean Territory" contains a bare "India" element that belongs to the wrong country.
+        entries = area.locator("li, [role=option]")
         texts = []
         for _ in range(8):      # the ajax list fills a moment after typing
-            texts = [t.strip() for t in area.evaluate("e => [...e.querySelectorAll('*')].filter(n => !n.children.length).map(n => (n.textContent || '').replace(/\\s+/g, ' '))")
-                     if t.strip() and not re.match(r"(?i)^[—–-]*\s*(make a selection|select)", t.strip())]
+            texts = [t.strip() for t in entries.all_inner_texts()]
+            texts = [t for t in texts if t and not re.match(r"(?i)^[—–-]*\s*(make a selection|select)", t)]
             if texts:
                 break
             page.wait_for_timeout(500)
+        if not texts:       # a list without li / option elements: fall back to the leaf texts
+            texts = [t.strip() for t in area.evaluate("e => [...e.querySelectorAll('*')].filter(n => !n.children.length).map(n => (n.textContent || '').replace(/\\s+/g, ' '))")
+                     if t.strip() and not re.match(r"(?i)^[—–-]*\s*(make a selection|select)", t.strip())]
         opt = strict_option(answer, texts) if strict else close_option(answer, texts)
         if opt is None and texts and all(re.search(r"(?i)^no (results|states?|matches)\b", t) for t in texts):
             page.keyboard.press("Escape")
@@ -1415,7 +1421,11 @@ def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
             _save_combobox_failure(loc, f, answer, f"icims dropdown: no match among {texts[:25]} | results: {shown}")
             page.keyboard.press("Escape")
             raise UnavailableOption(f"{answer!r} isn't offered as such")
-        area.get_by_text(re.compile(rf"^\s*{re.escape(opt)}\s*$")).first.click(timeout=8000)
+        shown_entries = [t.strip() for t in entries.all_inner_texts()]
+        if opt in shown_entries:
+            entries.nth(shown_entries.index(opt)).click(timeout=8000)
+        else:
+            area.get_by_text(re.compile(rf"^\s*{re.escape(opt)}\s*$")).first.click(timeout=8000)
         page.wait_for_timeout(400)
         return opt
     except UnavailableOption:

@@ -135,9 +135,11 @@ ICIMS_DROPDOWN = """<!doctype html><html><head><meta charset="utf-8"></head><bod
 <div id="c_icimsDropdown_ctnr" class="dropdown-container" aria-owns="c_dropdown-results" style="display:none;border:1px solid #888;width:220px"><input type="text" class="dropdown-search" id="q" aria-label="Search">
 <ul id="c_dropdown-results" role="listbox" style="margin:0;padding:0;list-style:none"></ul></div>
 <script>
-const ALL=["— Make a Selection —","United States","Canada","India","Åland Islands"], ul=document.getElementById('c_dropdown-results'), q=document.getElementById('q'),
+const ALL=["— Make a Selection —","United States","British Indian Ocean Territory","Canada","India","Åland Islands"], ul=document.getElementById('c_dropdown-results'), q=document.getElementById('q'),
  a=document.getElementById('c_icimsDropdown'), box=document.getElementById('c_icimsDropdown_ctnr');
-function draw(){ul.innerHTML='';ALL.filter(x=>!q.value||x.toLowerCase().includes(q.value.toLowerCase())).forEach(x=>{const li=document.createElement('li');li.setAttribute('role','option');li.textContent=x;li.style.padding='4px';
+function draw(){ul.innerHTML='';ALL.filter(x=>!q.value||x.toLowerCase().includes(q.value.toLowerCase())).forEach(x=>{const li=document.createElement('li');li.setAttribute('role','option');const k=q.value?x.toLowerCase().indexOf(q.value.toLowerCase()):-1;
+  if(k>=0){li.innerHTML=x.slice(0,k)+'<b>'+x.slice(k,k+q.value.length)+'</b>'+x.slice(k+q.value.length)}else{li.textContent=x}   // the real widget highlights the typed text
+  li.style.padding='4px';
   li.onclick=()=>{document.getElementById('c_fake').textContent=x;box.style.display='none'};ul.appendChild(li)})}
 a.onclick=()=>{box.style.display='block';draw()}; q.onkeyup=draw;
 </script></body></html>"""
@@ -153,7 +155,7 @@ def test_the_icims_dropdown_widget_is_opened_searched_and_read_back_from_its_own
         after = next(x for x in forms.read_page(page).fields if x.kind == "combobox").value
         return before, got, after
     before, got, after = with_page(ICIMS_DROPDOWN, run)
-    assert before == "" and got == "India" and after == "India"
+    assert before == "" and got == "India" and after == "India"      # not British Indian Ocean Territory, whose highlighted fragment is also "India"
 
 
 def test_a_country_with_no_states_leaves_the_state_dropdown_as_it_is_and_an_address_list_with_only_enter_manually_takes_that_entry():
@@ -164,7 +166,7 @@ def test_a_country_with_no_states_leaves_the_state_dropdown_as_it_is_and_an_addr
         f = next(x for x in v.fields if x.kind == "combobox")
         return forms.fill_field(page, v, f, "Maharashtra", {}, strict=True)
     assert "No states available" in with_page(html_states, run)
-    html_addr = ICIMS_DROPDOWN.replace('"United States","Canada","India","Åland Islands"', '"— Enter Manually —"').replace("!q.value||", "x.includes('Enter Manually')||!q.value||")   # an address list always offers it
+    html_addr = ICIMS_DROPDOWN.replace('"United States","British Indian Ocean Territory","Canada","India","Åland Islands"', '"— Enter Manually —"').replace("!q.value||", "x.includes('Enter Manually')||!q.value||")   # an address list always offers it
     def run2(page):
         v = forms.read_page(page)
         f = next(x for x in v.fields if x.kind == "combobox")
