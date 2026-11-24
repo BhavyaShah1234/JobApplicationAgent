@@ -596,7 +596,11 @@ class PlannedFiller:
                             if f.kind=='file':
                                 valid=bool(proof and proof.verify()) and (actual is None or not actual.invalid)
                                 held_sha=proof.expected if valid else None
-                            if not valid:raise ValueError('control not accepted or exact readback unavailable')
+                            if not valid:
+                                if f.kind=='combobox':      # keep the real control's HTML for the next fix (state/logs/combobox-failures.jsonl)
+                                    try:forms._save_combobox_failure(forms.locate(fresh,f),f,chosen,f"readback: chosen={chosen!r} actual={getattr(actual,'value',None)!r} invalid={getattr(actual,'invalid',None)}")
+                                    except Exception:pass
+                                raise ValueError('control not accepted or exact readback unavailable')
                             readback=actual.value if actual else Path(files[value]).name
                             self.failures.pop(key(f),None)
                             self.cache[key(f)]=d;self.rendered[key(f)]=readback;changed=True
