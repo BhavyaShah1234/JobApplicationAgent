@@ -96,3 +96,46 @@ def test_the_sign_in_agent_may_type_only_approved_placeholders_never_a_value_it_
         assert r(ok, "x") is None, ok
     for bad in ("New York", "10001", "United States", "India", "1990-01-01"):
         assert "never invent" in (r(bad, "Citizenship 1") or ""), bad
+
+
+def test_registration_extras_are_lazy_filtered_and_never_raise():
+    from jobagent.tools import portal_agent as pa
+    pa.set_registration_profile(None)
+    assert pa.registration_extras() == {}
+    pa.set_registration_profile(lambda: {"CITIZENSHIP": "India", "CITY": "Austin", "EMAIL": "x", "STATE": ""})
+    assert pa.registration_extras() == {"CITIZENSHIP": "India", "CITY": "Austin"}     # only the approved keys, none empty
+    pa.set_registration_profile(lambda: 1 / 0)
+    assert pa.registration_extras() == {}
+    pa.set_registration_profile(None)
+
+
+def test_the_registration_profile_gives_the_applicants_citizenship_and_the_jobs_address_from_the_existing_logic(tmp_path, monkeypatch):
+    import json
+    from jobagent.steps import apply as A
+    from jobagent.tools import applicant, application_address
+    job = tmp_path / "job"
+    job.mkdir()
+    (job / "jd.json").write_text(json.dumps({"company": "Acme", "title": "Eng", "locations": ["Austin, TX"], "locations_resolved": []}))
+
+    def fake_prepare(ctx, out_dir, model, log=print):          # what the real job-city logic does: override the application's address
+        for _, e in applicant.entries(ctx["_applicant"]):
+            if e["question"] == "Current address":
+                e["answer"] = {"line1": "100 Congress Ave", "city": "Austin", "state": "Texas", "postal_code": "78701",
+                               "county": "Travis", "country": "United States"}
+        return {}
+    monkeypatch.setattr(application_address, "prepare", fake_prepare)
+    got = A.registration_profile(job, "acme", None)()
+    assert got["CITIZENSHIP"] == "India" and got["CITY"] == "Austin" and got["POSTAL_CODE"] == "78701"
+    assert got["COUNTRY_OF_RESIDENCE"] == "United States" and got["ADDRESS_LINE1"] == "100 Congress Ave"
+
+
+def test_a_posting_with_no_us_location_gives_citizenship_only_and_no_address(tmp_path, monkeypatch):
+    import json
+    from jobagent.steps import apply as A
+    from jobagent.tools import application_address
+    job = tmp_path / "job"
+    job.mkdir()
+    (job / "jd.json").write_text(json.dumps({"company": "Acme", "title": "Eng", "locations": ["Remote"], "locations_resolved": []}))
+    monkeypatch.setattr(application_address, "prepare", lambda *a, **k: (_ for _ in ()).throw(application_address.NoUsLocation("no")))
+    got = A.registration_profile(job, "acme", None)()
+    assert got == {"CITIZENSHIP": "India"}

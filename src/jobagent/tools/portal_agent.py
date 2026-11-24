@@ -108,7 +108,10 @@ ONE action. Rules:
 - need_human only for something a person must do that is VISIBLE on the page (a phone/SMS check, a puzzle shown
   to you); CAPTCHAs are checked separately, so never answer need_human just because a CAPTCHA script exists.
   failed when stuck.
-- Never fill fields that ask for anything other than the candidate's identity and contact (no answers, no resumes)."""
+- Registration forms that REQUIRE more (SuccessFactors asks for citizenship, address and country of residence) may use only these placeholders,
+  and only for a field that is required and empty: {CITIZENSHIP}, {ADDRESS_LINE1}, {CITY}, {STATE}, {POSTAL_CODE}, {COUNTY},
+  {COUNTRY_OF_RESIDENCE}. Never type your own value for them. Never fill fields that ask for anything else beyond the candidate's identity
+  and contact (no answers, no resumes)."""
 
 
 SIGN_OUT_PROMPT = """You operate a job portal in a browser for the candidate, to SIGN THEM OUT of their account on
@@ -199,6 +202,7 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
     against a real credential submission."""
     posts: list[dict] = []
     secrets = [s for s in (values.get("PASSWORD"), values.get("ALT_PASSWORD")) if s]
+    _extras = None                   # the registration profile, loaded the first time a form asks for it
 
     def listener(r) -> None:
         """Remember data-sending requests and ONLY whether each carried the password (never the password or the body)."""
@@ -411,6 +415,14 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             continue
         value = re.sub(r"\{CODE\[(\d+)\]\}", lambda m: code[int(m.group(1))] if int(m.group(1)) < len(code) else "",
                        a.value)  # one digit of a code split over several boxes (0-based)
+        if any("{" + k + "}" in a.value for k in REGISTRATION_KEYS):
+            if _extras is None:
+                _extras = registration_extras(log)
+            missing = [k for k in REGISTRATION_KEYS if "{" + k + "}" in a.value and k not in _extras]
+            if missing:
+                history.append(f"refused: no value is available for {missing}; answer need_human if the form requires it")
+                continue
+            values = {**values, **_extras}
         for k, v in {**values, "CODE": code}.items():
             value = value.replace("{" + k + "}", v or "")
         if a.action == "fill" and "PASSWORD}" in a.value and wrong_pw >= 2 and goal == "sign_in" and not is_registration(view):
@@ -517,6 +529,28 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
 
 
 SOCIAL_LOGIN = re.compile(r"(?i)\b(?:continue|sign\s*in|log\s*in|login|sign\s*up)\s+with\s+(?:google|microsoft|apple|facebook|linkedin|indeed|github)\b|corporate login|single sign[- ]on")
+
+
+REGISTRATION_KEYS = ("CITIZENSHIP", "ADDRESS_LINE1", "CITY", "STATE", "POSTAL_CODE", "COUNTY", "COUNTRY_OF_RESIDENCE")
+_REGISTRATION_PROFILE = None            # set by `apply`: a callable returning the facts a registration form may ask for
+
+
+def set_registration_profile(provider) -> None:
+    """The facts a registration form can require beyond identity (SuccessFactors asks for citizenship, address and country of
+    residence): citizenship from the applicant file and the address the application uses for THIS job (the job-city logic).
+    Loaded lazily, only when a form actually asks, and never invented by the model."""
+    global _REGISTRATION_PROFILE
+    _REGISTRATION_PROFILE = provider
+
+
+def registration_extras(log=print) -> dict:
+    if _REGISTRATION_PROFILE is None:
+        return {}
+    try:
+        return {k: str(v) for k, v in (_REGISTRATION_PROFILE() or {}).items() if k in REGISTRATION_KEYS and v}
+    except Exception as exc:
+        log(f"portal: the registration profile could not be prepared ({type(exc).__name__}: {str(exc)[:120]})")
+        return {}
 
 
 PLACEHOLDER = re.compile(r"\{[A-Z_]+(?:\[\d+\])?\}")

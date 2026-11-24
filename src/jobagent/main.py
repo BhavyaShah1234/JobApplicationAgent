@@ -930,6 +930,9 @@ def apply_cmd(
             with open_inbox() as inbox, open_session(mode, url, related) as sess:
                 page = sess.page
                 sign_in = lambda url: ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log, already_open=True)
+                from jobagent.steps.apply import registration_profile
+                from jobagent.tools import portal_agent
+                portal_agent.set_registration_profile(registration_profile(Path(job_dir), company, model, log))
                 res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
                           ask_s=ask_minutes * 60, model_name=model, filling_strategy=strategy, documents_from=documents_from,
                           **sess.run_options(observe_s=30, auto_fallback=browser_mode == 'auto'))

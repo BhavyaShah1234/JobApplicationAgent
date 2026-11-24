@@ -226,6 +226,31 @@ def jd_passages(text: str, fields: list[forms.Field], limit: int = 6000) -> str:
     return "\n".join(out)
 
 
+def registration_profile(job_dir: Path, company: str, model, log=print, docs_dir: Path | None = None):
+    """The provider the sign-in agent calls when a REGISTRATION form requires more than identity: citizenship from the applicant
+    file and the address this application uses for the job (the existing job-city logic and its cache), nothing invented."""
+    def provide() -> dict:
+        from jobagent.tools import application_address
+        ctx = context(job_dir, company, docs_dir)
+        out = {}
+        for _, e in applicant.entries(ctx["_applicant"]):
+            if e["question"] == "Visa status / citizenship" and isinstance(e.get("answer"), dict):
+                out["CITIZENSHIP"] = e["answer"].get("citizenship", "")
+        try:
+            (job_dir / "application").mkdir(exist_ok=True)
+            application_address.prepare(ctx, job_dir / "application", model, log)
+        except application_address.NoUsLocation:
+            return out                               # a region or remote posting: no address to give
+        for _, e in applicant.entries(ctx["_applicant"]):
+            if e["question"] == "Current address" and isinstance(e.get("answer"), dict):
+                a = e["answer"]
+                out.update({"ADDRESS_LINE1": a.get("line1", ""), "CITY": a.get("city", ""), "STATE": a.get("state", ""),
+                            "POSTAL_CODE": a.get("postal_code", ""), "COUNTY": a.get("county", ""),
+                            "COUNTRY_OF_RESIDENCE": a.get("country", "")})
+        return out
+    return provide
+
+
 def context(job_dir: Path, company: str, docs_dir: Path | None = None) -> dict:
     """The candidate's files, as the planner sees them. `docs_dir` holds the resume and cover letter when they are borrowed from another job."""
     from jobagent.config import get_settings
