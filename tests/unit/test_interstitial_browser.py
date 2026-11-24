@@ -104,3 +104,23 @@ def test_required_controls_in_a_closed_modal_are_not_missing_fields_of_the_page_
     labels = with_page(MODALS, run)
     assert "Years" in labels and "Open dialog question" in labels
     assert "Consent yes" not in labels
+
+
+NATIVE_COMBO = """<!doctype html><html><body><label>Country <select role="combobox" name="country" required>
+<option value="">— Make a Selection —</option><option value="1">United States</option><option value="2">India</option><option value="3">Åland Islands</option></select></label>
+<label>I consent <select role="combobox" name="sms"><option value="">— Make a Selection —</option><option value="9">I consent to receive text messages</option><option value="8">No thanks</option></select></label></body></html>"""
+
+
+def test_a_native_select_reported_as_a_combobox_is_chosen_with_select_option_from_its_live_options():
+    from dataclasses import replace
+    from jobagent.tools import forms
+    def run(page):
+        v = forms.read_page(page)
+        out = {}
+        for f in v.fields:
+            f = replace(f, kind="combobox", options=[])          # the reader's option list can be empty or cut short: the live one is used
+            ans = "India" if "Country" in f.label else "I consent to receive text messages"
+            out[f.label] = forms.fill_field(page, v, f, ans, {})
+        return out, page.evaluate("[...document.querySelectorAll('select')].map(s => s.options[s.selectedIndex].text)")
+    out, chosen = with_page(NATIVE_COMBO, run)
+    assert chosen == ["India", "I consent to receive text messages"] and len(out) == 2

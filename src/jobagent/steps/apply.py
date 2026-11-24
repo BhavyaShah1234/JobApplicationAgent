@@ -1171,6 +1171,8 @@ def outcome_of(e: dict, f) -> str:
         return "gone"
     if e.get("clear"):
         return "verified" if e["verified"] else "failed"
+    if getattr(f, "kind", "") == "password" and forms.has_value(f):
+        return "verified"        # the account's own password the portal already holds: never typed, read or judged by the agent
     if forms.has_value(f):
         return "verified" if e.get('verified') else "unverified prefill"
     if not e.get("answered", True):

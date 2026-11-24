@@ -1586,6 +1586,17 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 except Exception:      # a zero-size label whose card is a visible child: click the text inside it
                     lab.get_by_text(re.compile(r"\S")).first.click(timeout=8000)
         return "; ".join(chosen)
+    if f.kind == "combobox" and loc.evaluate("e => e.tagName === 'SELECT'"):
+        # A native <select> the page reports as a combobox (iCIMS): its options cannot be clicked like a custom list; read the live
+        # options (the reader may have seen only the first screenful) and select one.
+        live = loc.evaluate("e => [...e.options].filter(o => !o.disabled && !o.hidden).map(o => ({t: (o.textContent || '').replace(/\\s+/g, ' ').trim(), v: o.value}))")
+        labels = [x["t"] for x in live if x["t"] and not re.match(r"(?i)^[—–-]+\s*(make a selection|select)", x["t"])]
+        opt = strict_option(answer, labels) if strict else close_option(answer, labels)
+        if opt is None:
+            raise UnavailableOption(f"{answer!r} isn't offered as such")
+        values = [x["v"] for x in live if x["t"] == opt]
+        loc.select_option(**({"value": values[0]} if len(set(values)) == 1 else {"label": opt}), timeout=8000)
+        return opt
     if f.kind == "combobox":
         single_select2 = loc.evaluate("e => e.matches('.select2-selection--single[role=combobox]')")
         workday_picker = loc.get_attribute("data-uxi-widget-type") == "selectinput"

@@ -97,3 +97,12 @@ def test_a_bare_city_in_a_sentence_style_education_or_employer_section_never_tak
     assert loose_entity_scope("Enter your information") is None and loose_entity_scope("Education 2") is None
     assert not scope_allows(edu, address) and not scope_allows(emp, address)
     assert scope_allows(contact, address)         # the contact section still takes the current address
+
+
+def test_a_password_the_account_already_holds_is_not_an_unverified_prefill_but_an_empty_required_one_still_blocks():
+    from jobagent.steps import apply as A
+    entry = {"filled": "", "answer": "", "verified": False, "planner_failed": False, "required": True, "answered": False, "clear": False}
+    held = forms.Field(id=1, kind="password", label="Password", value="••••••••")
+    empty = forms.Field(id=2, kind="password", label="Password", value="")
+    assert A.outcome_of(dict(entry), held) == "verified"
+    assert A.outcome_of(dict(entry), empty) != "verified"
