@@ -1383,13 +1383,24 @@ def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
         if search.count():
             search.fill(str(answer))
             page.wait_for_timeout(1200)
-        items = (results if results.count() else panel).locator("li, [role=option]")
-        texts = [t.strip() for t in items.all_inner_texts() if t.strip() and not re.match(r"(?i)^[—–-]*\s*(make a selection|select)", t.strip())]
+        area = results if results.count() else panel
+        texts = []
+        for _ in range(8):      # the ajax list fills a moment after typing
+            texts = [t.strip() for t in area.evaluate("e => [...e.querySelectorAll('*')].filter(n => !n.children.length).map(n => (n.textContent || '').replace(/\\s+/g, ' '))")
+                     if t.strip() and not re.match(r"(?i)^[—–-]*\s*(make a selection|select)", t.strip())]
+            if texts:
+                break
+            page.wait_for_timeout(500)
         opt = strict_option(answer, texts) if strict else close_option(answer, texts)
         if opt is None:
+            try:
+                shown = area.evaluate("e => e.outerHTML.slice(0, 1500)")
+            except Exception:
+                shown = ""
+            _save_combobox_failure(loc, f, answer, f"icims dropdown: no match among {texts[:25]} | results: {shown}")
             page.keyboard.press("Escape")
             raise UnavailableOption(f"{answer!r} isn't offered as such")
-        items.filter(has_text=re.compile(rf"^\s*{re.escape(opt)}\s*$")).first.click(timeout=8000)
+        area.get_by_text(re.compile(rf"^\s*{re.escape(opt)}\s*$")).first.click(timeout=8000)
         page.wait_for_timeout(400)
         return opt
     except UnavailableOption:
