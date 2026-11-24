@@ -35,10 +35,16 @@ def test_no_owner_approval_means_no_invented_day(policy,source):
     assert from_fact(Field(id=0,kind='date',label='Start Date'),f).value is None
 
 
-def test_the_employment_rule_never_supplies_an_unknown_month_or_an_education_day():
-    f=date_fact(facts('2026'));assert from_fact(Field(id=0,kind='date',label='Start Date'),f).value is None
+def test_the_rule_never_supplies_an_unknown_month_and_covers_education_only_with_the_owners_approval():
+    f=date_fact(facts('2026'));assert from_fact(Field(id=0,kind='date',label='Start Date'),f).value is None      # year only: never guessed
+    # owner decision 2026-11-24: "use the 1st of the month for everything if they need day information" (education included)
     f=date_fact(facts(education=True),'Education 1')
-    assert from_fact(Field(id=0,kind='date',label='Start Date'),f).value is None
+    d=from_fact(Field(id=0,kind='date',label='Start Date'),f)
+    assert d.value=='2026-01-01' and 'approximation' in d.source
+    f=date_fact(facts('2026',education=True),'Education 1')
+    assert from_fact(Field(id=0,kind='date',label='Start Date'),f).value is None                               # year-only education too
+    f=date_fact(facts(policy='leave_unknown',education=True),'Education 1')
+    assert from_fact(Field(id=0,kind='date',label='Start Date'),f).value is None                               # no approval, no day
 
 
 def test_ongoing_employment_clears_an_optional_end_date_without_inventing_one():

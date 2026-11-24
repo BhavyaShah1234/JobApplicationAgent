@@ -289,7 +289,7 @@ def from_fact(f, fact):
             try:parsed=datetime.strptime(fact.value,fmt);break
             except ValueError:pass
         if parsed is None and needs_day and fact.date_policy==FIRST_DAY_POLICY and fact.policy_fact_id and \
-                (entity_scope(fact.section) or ('',))[0]=='employment':
+                (entity_scope(fact.section) or ('',))[0] in ('employment','education'):
             for fmt in ('%Y-%m','%m/%Y','%m-%Y','%Y/%m','%B %Y','%b %Y'):
                 try:parsed=datetime.strptime(fact.value,fmt);break
                 except ValueError:pass
@@ -464,7 +464,7 @@ def compile_facts(data, raw_jd, reference_date=''):
               EMPLOYMENT_MONTH_POLICY in f.aliases]
     if policies and {p.value for p in policies}=={FIRST_DAY_POLICY}:
         for fact in facts:
-            if (entity_scope(fact.section) or ('',))[0]=='employment' and not fact.record and \
+            if (entity_scope(fact.section) or ('',))[0] in ('employment','education') and not fact.record and \
                     any(a in ('From Date','Start Date','End Date') for a in fact.aliases):
                 fact.date_policy=FIRST_DAY_POLICY;fact.policy_fact_id=policies[0].id
     return facts
