@@ -253,3 +253,26 @@ def test_the_restriction_page_text_is_recognised():
             "Rapid taps or clicks\\nAutomated (bot) activity on your network")
     assert any(kind == "access-restricted" and pat.search(text) for kind, pat in challenge._TEXT_SIGNS)
     assert not any(kind == "access-restricted" and pat.search("Apply now. Access to benefits is restricted to employees.") for kind, pat in challenge._TEXT_SIGNS)
+
+
+def test_a_turnstile_widget_in_an_iframe_is_detected_even_when_it_reports_verification_failed():
+    """UKG's sign-up: a Turnstile in an iframe ('Verification failed / Troubleshoot') beside a greyed-out Create account button."""
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch(channel="chrome", headless=True)
+        except Exception:
+            pytest.skip("no Chrome here")
+        try:
+            page = browser.new_page()
+            frame_url = "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv/x/0xAAA/light/fbE/new/normal/auto/"
+            page.context.route("**/*", lambda r: r.fulfill(status=200, content_type="text/html",
+                body=(f'<html><body><h2>Almost there!</h2><input placeholder="First name"><iframe src="{frame_url}" style="width:300px;height:65px"></iframe>'
+                      '<button disabled>Create account</button></body></html>') if "example.com" in r.request.url
+                else "<html><body>Verification failed. Troubleshoot</body></html>"))
+            page.goto("https://example.com/signup")
+            page.wait_for_timeout(800)
+            block = challenge.detect(page)
+            assert block is not None and block.kind == "turnstile"
+        finally:
+            browser.close()

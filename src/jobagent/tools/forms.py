@@ -26,7 +26,7 @@ CAPTCHA_FRAME = re.compile(r"(?i)hcaptcha|recaptcha|google\.com/recaptcha|challe
 SUBMIT = re.compile(r"(?i)^\s*(submit|send)\b|submit (my |your )?application|^\s*finish\b|complete (my |your )?"
                     r"application|^\s*apply\s*$")
 TEXT_KINDS = ("date_parts", "text", "email", "tel", "url", "number", "date", "textarea", "spin", "password")
-NEXT = re.compile(r"(?i)^\s*(next|continue|(?:save|skip) (and|&) continue|proceed|review( (my |your )?application)?)\b")
+NEXT = re.compile(r"(?i)^\s*(next|continue|(?:save|skip) (and|&) continue|proceed|create (an |your )?account|review( (my |your )?application)?)\b")
 # A page with no fields at all is an intermediate screen: a progress tracker, an optional notification opt-in, a welcome or "before you start" page.
 # These buttons move it on without sending anything and without giving a consent. A button that opts in or agrees to something is never among them.
 INTERSTITIAL = re.compile(r"(?i)^\s*(skip(\s+(for\s+now|this(\s+step)?|and\s+continue|&\s+continue))?|not\s+now|maybe\s+later|no,?\s+thanks|"

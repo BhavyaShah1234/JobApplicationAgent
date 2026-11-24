@@ -1906,6 +1906,9 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
             if _email_gate(page, env, log, ctx.get('_jd', {}).get('source_url') or url):
                 known, errors, same = None, [], 0
                 continue
+            if challenge.guard(page):        # a verification widget is why no button works (UKG's sign-up Turnstile): the candidate's to pass
+                known, errors, same = None, [], 0
+                continue
             human = forms.human_check(page)
             if human:
                 result["human_check"] = human  # the candidate ticks it in noVNC; then Submit shows

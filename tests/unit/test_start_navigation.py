@@ -638,3 +638,10 @@ def test_a_web_component_button_whose_text_is_slotted_from_outside_its_shadow_tr
     """UKG/UltiPro: the posting's Apply now is <ukg-button> whose inner <button> holds only a <slot>."""
     state, view = start(UKG_BUTTON)
     assert state["opened"] is True and len([f for f in view.fields if f.kind != "file"]) >= 3
+
+
+def test_create_account_is_a_step_forward_never_a_submission():
+    from jobagent.tools.forms import NEXT, SUBMIT
+    for text in ("Create account", "Create an account", "Create your account"):
+        assert NEXT.search(text) and not SUBMIT.search(text), text
+    assert not NEXT.search("Create a job alert")
