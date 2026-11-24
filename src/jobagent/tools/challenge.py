@@ -85,6 +85,26 @@ class Challenge:
     excerpt: str
 
 
+# A blank page whose only content is a verification provider's frame (SmartRecruiters shows DataDome's slider from
+# geo.captcha-delivery.com in an iframe, with an empty top-level body): named by the frame's address.
+_FRAME_KINDS = [
+    ("datadome", re.compile(r"(?i)captcha-delivery\.com/captcha")),
+    ("hcaptcha", re.compile(r"(?i)hcaptcha\.com/captcha")),
+    ("cloudflare", re.compile(r"(?i)challenges\.cloudflare\.com/cdn-cgi/challenge-platform/.*/(?:turnstile|orchestrate)|/cdn-cgi/challenge-platform/h/[bg]/orchestrate")),
+]
+
+
+def _verification_frame(page: Page) -> str | None:
+    try:
+        urls = [f.url for f in page.frames if f.url and f is not page.main_frame]
+    except Exception:
+        return None
+    for kind, pattern in _FRAME_KINDS:
+        if any(pattern.search(u) for u in urls):
+            return kind
+    return None
+
+
 def detect(page: Page, *, include_application_email: bool = True) -> Challenge | None:
     """Return the challenge on the page, if any. Visible widgets count; hidden/invisible reCAPTCHA badges don't."""
     try:
@@ -93,6 +113,8 @@ def detect(page: Page, *, include_application_email: bool = True) -> Challenge |
     except Exception:
         return Challenge("unknown", safe_url(page.url), "Page inspection failed")
     if not text.strip():
+        if kind := _verification_frame(page):
+            return Challenge(kind, safe_url(page.url), "Verification frame on a blank page")
         return Challenge("unknown", safe_url(page.url), "Page is blank or transitioning")
     if include_application_email and _APPLICATION_EMAIL_CODE.search(text):
         return Challenge("application-email-code", safe_url(page.url), "Application requires an emailed security code")

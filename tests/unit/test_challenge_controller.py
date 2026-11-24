@@ -205,3 +205,33 @@ def test_a_done_answered_just_before_the_deadline_still_gets_its_readiness_check
     holder["page"] = page
     controller.wait(page, challenge.Challenge('unknown', page.url, ''))     # must not raise Blocked
     assert page.clock >= 899
+
+
+class _Frame:
+    def __init__(self, url):
+        self.url = url
+
+
+class _BlankPage:
+    """A page whose top-level body is empty and whose only content is a provider's frame (SmartRecruiters + DataDome)."""
+    url = "https://jobs.smartrecruiters.com/oneclick-ui/company/X/publication/1"
+
+    def __init__(self, frame_urls):
+        self.main_frame = _Frame(self.url)
+        self.frames = [self.main_frame, *[_Frame(u) for u in frame_urls]]
+
+    def title(self):
+        return "smartrecruiters.com"
+
+    def locator(self, selector):
+        return SimpleNamespace(inner_text=lambda timeout=None: "")
+
+
+def test_a_blank_page_with_a_datadome_frame_is_that_challenge_for_the_human_not_unknown():
+    block = challenge.detect(_BlankPage(["https://geo.captcha-delivery.com/captcha/?initialCid=AHrlqAA"]))
+    assert block is not None and block.kind == "datadome"
+
+
+def test_a_blank_page_without_a_verification_frame_stays_unknown_and_a_tracking_frame_is_not_a_challenge():
+    assert challenge.detect(_BlankPage([])).kind == "unknown"
+    assert challenge.detect(_BlankPage(["about:blank", "https://www.googletagmanager.com/ns.html"])).kind == "unknown"
