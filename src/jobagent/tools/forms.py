@@ -1785,6 +1785,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 page.keyboard.press('Escape')
                 return fill_field(page,view,f,fallback,files,strict=True)
         if opt is None and (strict or close):
+            _save_combobox_failure(loc, f, answer, f"combobox: no match among {list(opts or [])[:25]}")
             page.keyboard.press("Escape")
             raise UnavailableOption(f"{answer!r} isn't offered as such")
         if opt is None:
