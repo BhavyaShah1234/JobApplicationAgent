@@ -477,6 +477,11 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
                 # a code split over one-character boxes: type it; such boxes move to the next box by themselves
                 loc.click()
                 page.keyboard.type(code, delay=120)
+            elif a.action == "fill" and (loc.get_attribute("role") or "").lower() == "combobox":
+                picked = pick_combobox_option(page, loc, value)      # a search-and-click picklist (SuccessFactors citizenship, country, ...)
+                if picked is None:
+                    history.append(f"refused: \"{_label(frames, a)}\" is a list and offers no entry '{value}'")
+                    continue
             elif a.action == "fill":
                 loc.fill(value)
             elif a.action == "click":
@@ -554,6 +559,39 @@ def registration_extras(log=print) -> dict:
 
 
 PLACEHOLDER = re.compile(r"\{[A-Z_]+(?:\[\d+\])?\}")
+
+
+def pick_combobox_option(page: Page, loc, value: str) -> str | None:
+    """A combobox that filters on key events and is chosen by CLICKING an entry (SAP SuccessFactors' picklists): type the value with
+    key events, wait for the list, click the entry that equals it (never a longer entry that merely contains it). The chosen entry's
+    text, or None when the list offers no such entry."""
+    want = re.sub(r"\s+", " ", value or "").strip().lower()
+    if not want:
+        return None
+    loc.click()
+    try:
+        loc.press("Control+a")
+        loc.press("Delete")
+    except Exception:
+        pass
+    loc.press_sequentially(value, delay=70)
+    page.wait_for_timeout(1200)
+    lid = loc.get_attribute("aria-controls") or ""
+    scope = page.locator(f"[id='{lid}']") if lid else page
+    entries = scope.locator("[role=option], li").filter(visible=True)
+    texts = []
+    for i in range(min(entries.count(), 60)):
+        t = re.sub(r"\s+", " ", entries.nth(i).inner_text() or "").strip()
+        texts.append(t)
+        if t.lower() == want:
+            entries.nth(i).click(timeout=5000)
+            page.wait_for_timeout(500)
+            return t
+    try:
+        loc.press("Escape")
+    except Exception:
+        pass
+    return None
 
 
 def literal_fill_refusal(value: str, label: str) -> str | None:

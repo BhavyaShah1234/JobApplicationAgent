@@ -165,3 +165,43 @@ def test_the_registration_profile_turns_a_model_name_into_the_model_object(tmp_p
     monkeypatch.setattr(application_address, "prepare", lambda ctx, out, model, log=print: seen.update(model=model) or {})
     A.registration_profile(job, "acme", None)()
     assert getattr(seen["model"], "model_name", None) == "writer"
+
+
+PICKLIST = """<html><body>
+<input id="c" role="combobox" aria-controls="lst" aria-expanded="false" type="text" placeholder="No Selection">
+<ul id="lst" role="listbox"></ul><input id="hidden" type="hidden" value="">
+<script>
+const DATA=["British Indian Ocean Territory","India","Indonesia","Iceland"];
+const c=document.getElementById('c'), l=document.getElementById('lst');
+c.addEventListener('keyup',()=>{                      // filters on key events only; a programmatic fill() fires none
+  const q=c.value.toLowerCase(); l.innerHTML='';
+  DATA.filter(x=>x.toLowerCase().includes(q)).forEach(x=>{const li=document.createElement('li');li.setAttribute('role','option');li.textContent=x;
+    li.onclick=()=>{c.value=x;document.getElementById('hidden').value=x;l.innerHTML='';};l.appendChild(li);});});
+</script></body></html>"""
+
+
+def _chrome_page():
+    import pytest
+    from playwright.sync_api import sync_playwright
+    pw = sync_playwright().start()
+    try:
+        browser = pw.chromium.launch(channel="chrome", headless=True)
+    except Exception:
+        pw.stop()
+        pytest.skip("no Chrome here")
+    return pw, browser, browser.new_page()
+
+
+def test_a_search_and_click_picklist_takes_the_exact_entry_not_a_longer_one_that_contains_it():
+    from jobagent.tools.portal_agent import pick_combobox_option
+    pw, browser, page = _chrome_page()
+    try:
+        page.set_content(PICKLIST)
+        assert pick_combobox_option(page, page.locator("#c"), "India") == "India"
+        assert page.evaluate("document.getElementById('hidden').value") == "India"      # not 'British Indian Ocean Territory'
+        page.set_content(PICKLIST)
+        assert pick_combobox_option(page, page.locator("#c"), "Narnia") is None
+        assert page.evaluate("document.getElementById('hidden').value") == ""
+    finally:
+        browser.close()
+        pw.stop()
