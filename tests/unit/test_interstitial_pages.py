@@ -106,3 +106,16 @@ def test_a_password_the_account_already_holds_is_not_an_unverified_prefill_but_a
     empty = forms.Field(id=2, kind="password", label="Password", value="")
     assert A.outcome_of(dict(entry), held) == "verified"
     assert A.outcome_of(dict(entry), empty) != "verified"
+
+
+def test_a_bare_repo_title_is_replaced_by_the_repo_name_with_its_words_split_and_no_model_is_called(monkeypatch):
+    """Ericsson's Baseband resume failed its gate because the model could not title 'DynamicTaskAllocation' with words its card has."""
+    from jobagent.steps import multi_agent as M
+    card = {"full_name": "someone/DynamicTaskAllocation", "title": "DynamicTaskAllocation"}
+    monkeypatch.setattr(M.P, "saved_evidence", lambda st: {"someone/dynamictaskallocation": card})
+    st = {"kept": 2, "ranked": [{"repo": "someone/SolBot", "title": "SolBot"}, {"repo": "someone/DynamicTaskAllocation", "title": "DynamicTaskAllocation"}]}
+    assert M._readable_titles(st, [2]) == {2: "Dynamic Task Allocation"}
+    assert M._readable_titles(st, [3]) is None            # not a displayed project: the model path handles it
+    card2 = {"full_name": "someone/hiring", "title": "hiring"}
+    monkeypatch.setattr(M.P, "saved_evidence", lambda st: {"someone/hiring": card2})
+    assert M._readable_titles({"kept": 1, "ranked": [{"repo": "someone/hiring"}]}, [1]) is None       # a one-word slug has no better title

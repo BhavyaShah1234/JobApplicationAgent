@@ -500,7 +500,17 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
             schema = project_title_schema([int(match[1]) for match in title_matches]) if title_only else IncrementalProjectsOut
             from jobagent.tools.incremental_documents import _bound_schema
             schema = _bound_schema(schema, lambda result: _check_project_edits(ctx, json.loads(proj.read_text()), result))
-            out = _invoke(ctx, agent, model, schema, msgs, log=log, deadline_s=180)
+            out = None
+            if title_only:
+                titles = _readable_titles(json.loads(proj.read_text()), [int(match[1]) for match in title_matches])
+                if titles:
+                    try:
+                        out = schema.model_validate({"projects": [{"project": n, "title": t} for n, t in titles.items()], "swaps": []})
+                        log("  projects agent: readable title(s) taken from each project's own source name: " + "; ".join(titles.values()))
+                    except Exception:
+                        out = None
+            if out is None:
+                out = _invoke(ctx, agent, model, schema, msgs, log=log, deadline_s=180)
         elif targeted:
             # targeted edit: only the bullets the validators named (a full rewrite moves every orphan word)
             msgs = T.build_repair_prompt(ctx["r"], ctx["jd"], f, tasks + ([f"LAST ROUND: {last}"] if last else []),
@@ -565,6 +575,39 @@ def _run_agent(ctx: dict, agent: str, f: T.Filled | None, tasks: list[str], last
     except (llm.StructuredError, ValueError, TimeoutError) as e:
         log(f"  {agent} agent ({ctx['models'][agent]}): failed {type(e).__name__}: {str(e)[:120]}")
         return agent, None
+
+
+def _readable_titles(st: dict, numbers: list[int]) -> dict[int, str] | None:
+    """A readable title for each project shown under its bare repo name, taken from its own source, with no model call.
+
+    The title rule accepts the card's own title or its repository name with the words split apart ("DynamicTaskAllocation" ->
+    "Dynamic Task Allocation"). A model asked to repair these titles kept inventing words the card does not have ("Multi-Agent
+    Task Allocation ...") and failed every round, so the repair never reached its descriptions.
+
+    Args:
+        st: The job's `projects.json`.
+        numbers: The displayed project numbers (1-based) that carry a bare repo name.
+
+    Returns:
+        {number: title}, or None when any of them has no source-supported title that differs from the bare name.
+    """
+    evidence, ranked = P.saved_evidence(st), st.get("ranked", [])
+    titles: dict[int, str] = {}
+    for n in numbers:
+        if not 1 <= n <= min(st.get("kept", 0), len(ranked)):
+            return None
+        entry = ranked[n - 1]
+        repo = str(entry.get("repo") or "")
+        card = evidence.get(repo.casefold())
+        if card is None:
+            return None
+        slug = repo.split("/")[-1]
+        split = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", slug).replace("-", " ").replace("_", " ")
+        pick = next((t for t in (P.card_title(card), split) if t and t.casefold() != slug.casefold() and P.title_supported(t, card)), None)
+        if not pick:
+            return None
+        titles[n] = pick
+    return titles
 
 
 def _check_project_edits(ctx: dict, st: dict, result) -> None:
