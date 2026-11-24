@@ -1374,6 +1374,8 @@ def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
     current = loc.evaluate(WIDGET_VALUE_JS)
     if current and _norm(current) == _norm(answer):
         return current
+    if current and re.search(r"(?i)\bno (states?|provinces?|regions?|options?) (available|found)\b", current):
+        return current        # the chosen country has no states in this list: there is nothing to select
     panel = frame.locator(f'[id="{base}_icimsDropdown_ctnr"]')      # the open panel: a search box and the results list
     results = frame.locator(f'[id="{base}_dropdown-results"]')
     try:
@@ -1394,6 +1396,14 @@ def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
                 break
             page.wait_for_timeout(500)
         opt = strict_option(answer, texts) if strict else close_option(answer, texts)
+        if opt is None and texts and all(re.search(r"(?i)^no (results|states?|matches)\b", t) for t in texts):
+            page.keyboard.press("Escape")
+            return current or ""      # the list is empty for this value (a country with no states)
+        if opt is None and any(re.search(r"(?i)enter manually", t) for t in texts):
+            manual = next(t for t in texts if re.search(r"(?i)enter manually", t))
+            area.get_by_text(re.compile(rf"^\s*{re.escape(manual)}\s*$")).first.click(timeout=8000)      # type the value into the field that opens
+            page.wait_for_timeout(600)
+            return manual
         if opt is None:
             try:
                 shown = area.evaluate("e => e.outerHTML.slice(0, 1500)")

@@ -154,3 +154,19 @@ def test_the_icims_dropdown_widget_is_opened_searched_and_read_back_from_its_own
         return before, got, after
     before, got, after = with_page(ICIMS_DROPDOWN, run)
     assert before == "" and got == "India" and after == "India"
+
+
+def test_a_country_with_no_states_leaves_the_state_dropdown_as_it_is_and_an_address_list_with_only_enter_manually_takes_that_entry():
+    from jobagent.tools import forms
+    html_states = ICIMS_DROPDOWN.replace('— Make a Selection —</span>', 'No states available</span>')
+    def run(page):
+        v = forms.read_page(page)
+        f = next(x for x in v.fields if x.kind == "combobox")
+        return forms.fill_field(page, v, f, "Maharashtra", {}, strict=True)
+    assert "No states available" in with_page(html_states, run)
+    html_addr = ICIMS_DROPDOWN.replace('"United States","Canada","India","Åland Islands"', '"— Enter Manually —"').replace("!q.value||", "x.includes('Enter Manually')||!q.value||")   # an address list always offers it
+    def run2(page):
+        v = forms.read_page(page)
+        f = next(x for x in v.fields if x.kind == "combobox")
+        return forms.fill_field(page, v, f, "100 East Santa Fe Street", {}, strict=True)
+    assert "Enter Manually" in with_page(html_addr, run2)
