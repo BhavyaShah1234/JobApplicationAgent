@@ -324,3 +324,10 @@ def test_a_frame_that_detaches_while_the_page_navigates_does_not_stop_the_cookie
         frames = [Detached(), Detached()]
 
     assert dismiss_cookie_overlay(Page()) is False
+
+
+def test_a_too_many_attempts_or_locked_page_is_recognised_and_a_plain_login_page_is_not():
+    from jobagent.tools.portal_agent import lockout_in_view as lk
+    assert lk("FRAME 0 x\nTEXT: Too many attempts were detected from this network. Please try again later.\nELEMENTS:\n")
+    assert lk("FRAME 0 x\nTEXT: The account is locked due to too many incorrect login attempts\nELEMENTS:\n")
+    assert not lk("FRAME 0 x\nTEXT: Welcome, come on in! | Create or reset your password | Sign up\nELEMENTS:\n  [0] input/text \"Email\"")

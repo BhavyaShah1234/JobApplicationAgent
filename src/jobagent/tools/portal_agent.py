@@ -227,6 +227,14 @@ def too_many_recent_rejections(host: str) -> str | None:
     return None
 
 
+TOO_MANY = re.compile(r"(?i)too many (?:incorrect |failed |login |sign[- ]?in )?attempts|try again later|account (?:is|has been) locked|temporarily (?:locked|blocked)")
+
+
+def lockout_in_view(view: str) -> bool:
+    """The portal itself says the network or account has made too many attempts or is locked: nothing the agent can do helps."""
+    return bool(TOO_MANY.search(view.split("ELEMENTS:", 1)[0]))
+
+
 def is_create_account_page(view: str) -> bool:
     """A page whose own heading or text says it creates an account ('Create your account', 'Create an account', 'Sign up' with an
     'Already have an account? Log in' link), even when it asks only for an email and a password (UKG)."""
@@ -348,6 +356,12 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
                 break
             continue
         view, frames = snapshot(page)
+        if goal in ("sign_in", "register") and lockout_in_view(view):
+            record_rejection(host)
+            record_rejection(host)         # two strikes at once: the next run is refused until the window passes
+            state["state"], state["reason"] = "failed", "the portal says there were too many attempts or the account is locked; wait before trying again"
+            log(f"portal {host}: {state['reason']}")
+            break
         if wrong_pw >= 1 and is_create_account_page(view) and page.url != last_create_hint_url:
             # the model read "the user already has an account" from its own failed login and clicked Log in, then Sign up, in a loop
             last_create_hint_url = page.url

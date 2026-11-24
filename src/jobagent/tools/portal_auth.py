@@ -259,6 +259,8 @@ def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, ema
     values = {**candidate_values(email, password), "ALT_PASSWORD": alt}
     out = portal_agent.run(page, url, values, inbox, hitl, host, log=log, notes=mem.data.get("notes", []),
                            goal="register" if register_only else "sign_in")
+    if out["state"] == "failed":            # every failed sign-in run is a strike at this host, whatever the page said (cross-run cap)
+        portal_agent.record_rejection(host)
     if out.get("alt_password_used"):
         old = vault.get(key) or {}
         vault.set(key, **{**old, "password": alt, "note": "this portal rejected the shared password; its own "
