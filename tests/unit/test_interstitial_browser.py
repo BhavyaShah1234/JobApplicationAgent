@@ -139,7 +139,7 @@ const ALL=["— Make a Selection —","United States","Canada","India","Åland I
  a=document.getElementById('c_icimsDropdown'), box=document.getElementById('c_icimsDropdown_ctnr');
 function draw(){ul.innerHTML='';ALL.filter(x=>!q.value||x.toLowerCase().includes(q.value.toLowerCase())).forEach(x=>{const li=document.createElement('li');li.setAttribute('role','option');li.textContent=x;li.style.padding='4px';
   li.onclick=()=>{document.getElementById('c_fake').textContent=x;box.style.display='none'};ul.appendChild(li)})}
-a.onclick=()=>{box.style.display='block';draw()}; q.oninput=draw;
+a.onclick=()=>{box.style.display='block';draw()}; q.onkeyup=draw;
 </script></body></html>"""
 
 

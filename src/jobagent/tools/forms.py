@@ -1381,7 +1381,9 @@ def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
         panel.wait_for(state="visible", timeout=5000)
         search = panel.locator("input.dropdown-search, input[type=text], input[type=search]").first
         if search.count():
-            search.fill(str(answer))
+            # the widget filters on key events, which fill() does not send: type the characters
+            search.click(timeout=3000)
+            search.press_sequentially(str(answer), delay=45)
             page.wait_for_timeout(1200)
         area = results if results.count() else panel
         texts = []
