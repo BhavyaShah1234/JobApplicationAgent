@@ -185,7 +185,7 @@ class Pipeline:
         source.pop("locations_resolved", None)
         source_sha = W.fingerprint(source)
         profiles = [str((self.settings.state_dir / "companies" / (slug + ext)).resolve()) for ext in (".json", ".md")]
-        result, _ = current.run("research", lambda: {"code": self.invoke("research", companies=[company], workers=1)},
+        result, _ = current.run("research", lambda: {"code": self.invoke("research", companies=[company], workers=1, posting=str(d / "jd.json"))},
                                 inputs={"company": company, "jd": source_sha}, outputs=profiles,
                                 force=force, log=self.log, check=lambda r: "research failed" if r["code"] else None)
         if result["code"]:

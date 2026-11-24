@@ -1139,9 +1139,12 @@ def research_cmd(
     file: str = typer.Option(None, "--file", "-f", help="One company per line."),
     workers: int = typer.Option(5),
     refresh: bool = typer.Option(False, help="Ignore profiles cached in the last 7 days."),
+    posting: str = typer.Option("", help="A saved jd.json: when a company's own site cannot be read, its company description is the official source."),
 ) -> None:
     """Research companies (cited profiles in state/companies/<company>.md)."""
+    import json as _json
     import time
+    from pathlib import Path
 
     from jobagent.tools.research import research_many
 
@@ -1150,7 +1153,14 @@ def research_cmd(
         console.print("[red]give at least one company or --file[/]")
         raise typer.Exit(1)
     t0 = time.monotonic()
-    results = research_many(names, workers=workers, refresh=refresh, log=runlog("research"))
+    postings = {}
+    if posting:
+        try:
+            jd = _json.loads(Path(posting).read_text())
+            postings = {n: {"url": jd.get("source_url") or jd.get("apply_url"), "text": jd.get("company_description")} for n in names}
+        except (OSError, ValueError):
+            postings = {}
+    results = research_many(names, workers=workers, refresh=refresh, log=runlog("research"), postings=postings)
     table, failed = _research_table(results, f"{len(names)} compan(ies) in {time.monotonic() - t0:.0f}s")
     console.print(table)
     if failed:

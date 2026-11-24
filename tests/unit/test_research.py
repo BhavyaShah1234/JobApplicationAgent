@@ -170,3 +170,37 @@ def test_strip_boilerplate_catches_reworded_banner_text():
     text = ("Intel uses technologies to count device visits and traffic sources.\nWe collect aggregated data.\n"
             "Intel invents processors.")
     assert r.strip_boilerplate(text) == "Intel invents processors."
+
+
+def test_the_employers_own_posting_is_an_official_source_when_its_website_cannot_be_read():
+    """Peraton's site answers a script with 403; its iCIMS posting carries its own 'Peraton Overview'."""
+    blurb = "Peraton is a next-generation national security company that drives missions of consequence spanning the globe and extending to the farthest reaches of the galaxy."
+    src = r.posting_source({"url": "https://careers-peraton.icims.com/jobs/173607/x/job", "text": blurb})
+    assert src == {"kind": "official", "url": "https://careers-peraton.icims.com/jobs/173607/x/job", "text": blurb}
+    assert r.posting_source({"url": "https://x.test/j", "text": "too short"}) is None
+    assert r.posting_source({"url": "", "text": blurb}) is None and r.posting_source(None) is None
+
+
+def test_research_goes_on_with_the_posting_source_instead_of_failing_when_no_official_page_is_readable(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    blurb = "Peraton is a next-generation national security company that drives missions of consequence spanning the globe and beyond. " * 2
+    monkeypatch.setattr(r, "gather_sources", lambda company, hint="": (None, [{"kind": "news", "url": "https://n.test/a", "text": "Peraton wins a contract"}]))
+    monkeypatch.setattr(r, "get_settings", lambda: SimpleNamespace(state_dir=tmp_path))
+    seen = {}
+    def fake_structured(*a, **k):
+        class Fake:
+            def invoke(self, messages):
+                seen["prompt"] = messages[-1].content
+                raise RuntimeError("stop here: the sources were built")
+        return Fake()
+    import jobagent.llm as llm
+    monkeypatch.setattr(llm, "structured", fake_structured)
+    logs = []
+    try:
+        r.research("Peraton", posting={"url": "https://careers-peraton.icims.com/jobs/1/x/job", "text": blurb}, log=logs.append)
+    except Exception:
+        pass
+    assert any("employer's own posting" in x for x in logs)
+    assert "(official) https://careers-peraton.icims.com/jobs/1/x/job" in seen["prompt"]
+    with pytest.raises(RuntimeError, match="official company source"):
+        r.research("Peraton", log=logs.append)       # without the posting the old, strict behavior stays

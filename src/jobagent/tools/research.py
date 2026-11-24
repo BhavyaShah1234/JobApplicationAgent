@@ -374,7 +374,20 @@ def usable_profile(profile: CompanyProfile) -> bool:
                 any(source.get('kind')=='official' for source in profile.sources.values()))
 
 
-def research(company: str, hint_text: str = "", refresh: bool = False, log=print) -> CompanyProfile:
+def posting_source(posting: dict | None) -> dict | None:
+    """The employer's own posting as an official source: its company description, on the employer's own application site.
+
+    Used only when the company's website cannot be read (bot protection answers a script with 403). The text is what the employer
+    wrote about itself in the posting, so a claim citing it is the company's own statement; nothing else is added to it.
+    """
+    posting = posting or {}
+    text, url = " ".join(str(posting.get("text") or "").split()), str(posting.get("url") or "")
+    if len(text) < 80 or not url.startswith("http"):
+        return None
+    return {"kind": "official", "url": url, "text": text}
+
+
+def research(company: str, hint_text: str = "", refresh: bool = False, log=print, posting: dict | None = None) -> CompanyProfile:
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from jobagent import llm
@@ -390,6 +403,10 @@ def research(company: str, hint_text: str = "", refresh: bool = False, log=print
                 return cached
         except (OSError,ValueError,TypeError):pass
     website, sources = gather_sources(company, hint_text)
+    if not any(source['kind'] == 'official' for source in sources) and (own := posting_source(posting)):
+        log(f"research: {company}'s website could not be read; using the employer's own posting as the official source ({own['url'][:80]})")
+        sources.insert(0, own)
+        website = website or "{0.scheme}://{0.netloc}".format(urlparse(own["url"]))
     if not sources:
         raise RuntimeError(f"no sources found for {company!r}")
     if not website or not any(source['kind']=='official' for source in sources):
@@ -468,13 +485,14 @@ def render_md(p: CompanyProfile) -> str:
     return "\n".join(lines) + "\n"
 
 
-def research_many(companies: list[str], workers: int = 5, refresh: bool = False, log=print) -> list[tuple[str, CompanyProfile | None, str | None, float]]:
+def research_many(companies: list[str], workers: int = 5, refresh: bool = False, log=print,
+                  postings: dict | None = None) -> list[tuple[str, CompanyProfile | None, str | None, float]]:
     from concurrent.futures import ThreadPoolExecutor
 
     def one(name):
         t0 = time.monotonic()
         try:
-            return name, research(name, refresh=refresh, log=log), None, time.monotonic() - t0
+            return name, research(name, refresh=refresh, log=log, posting=(postings or {}).get(name)), None, time.monotonic() - t0
         except Exception as e:
             return name, None, f"{type(e).__name__}: {str(e)[:150]}", time.monotonic() - t0
 
