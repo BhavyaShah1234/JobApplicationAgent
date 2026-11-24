@@ -237,6 +237,7 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
     code, challenges, repeats, last_action, pw_submitted, wrong_pw = "", 0, 0, None, False, 0
     state["alt_password_used"] = False
     _extras = None           # the registration profile, loaded the first time a form asks for it
+    came_from = url          # the last portal page before any Google page
     login_candidate, register_attempted, toggles, last_nav = None, False, 0, None
     unconfirmed_claims: dict[str, int] = {}
     unchanged_waits,last_wait_view=0,None
@@ -261,6 +262,17 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             hitl.ask(f"{host}: a {c.kind} puzzle is on the page (screenshot {shot}). Solve it in noVNC "
                      "(http://localhost:6080) and press its submit/verify button, then answer 'done'.")
             history.append(f"the user solved a {c.kind} challenge")
+        if urlparse(page.url).netloc == "accounts.google.com" and (why := social_login_refusal(came_from, "Continue with Google")):
+            # a click whose label gave nothing away still landed on Google, from a portal where that is a dead end: go back
+            history.append(why)
+            log(f"portal {host}: {why}")
+            try:
+                page.go_back(wait_until="domcontentloaded", timeout=15000)
+            except Exception:
+                page.goto(came_from, wait_until="domcontentloaded")
+            continue
+        if urlparse(page.url).netloc != "accounts.google.com":
+            came_from = page.url
         if urlparse(page.url).netloc == "accounts.google.com":  # Google's own pages: handled by code, not the model
             note = _google_step(page, values.get("EMAIL", ""))
             history.append(note)

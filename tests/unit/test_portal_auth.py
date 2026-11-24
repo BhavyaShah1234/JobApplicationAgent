@@ -238,3 +238,10 @@ def test_the_agent_prompt_tells_it_to_use_sign_up_when_invalid_credentials_is_al
     import inspect
     src = inspect.getsource(pa)
     assert "Invalid credentials" in src and "use that route once" in src and "Never use \"Continue with Google\" on ultipro.com" in src
+
+
+def test_a_click_that_lands_on_google_from_a_refusing_portal_is_sent_back():
+    from jobagent.tools.portal_agent import social_login_refusal as r
+    # the loop asks exactly this question about the page it came from when it finds itself on accounts.google.com
+    assert r("https://signin-us.ultipro.com/u/login", "Continue with Google")
+    assert r("https://www.amazon.jobs/en/x", "Continue with Google") is None     # elsewhere the Google route is still allowed
