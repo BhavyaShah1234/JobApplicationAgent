@@ -622,3 +622,19 @@ def test_the_network_trace_records_what_a_search_box_asked_and_what_came_back_wi
             assert F._net_trace(page) is trace                                 # attached once per page
         finally:
             browser.close()
+
+
+UKG_BUTTON = """<html><body><h1>Posting</h1>
+<ukg-button class="apply-now-button" id="host">Apply now</ukg-button>
+<script>
+class UkgButton extends HTMLElement { constructor(){ super(); const r=this.attachShadow({mode:'open'});
+  r.innerHTML='<button type="button" part="b"><slot></slot></button>';
+  r.querySelector('button').addEventListener('click',()=>{window.opened=true; document.body.insertAdjacentHTML('beforeend','%s');}); } }
+customElements.define('ukg-button', UkgButton);
+</script></body></html>""" % FORM3.replace("'", "\\'")
+
+
+def test_a_web_component_button_whose_text_is_slotted_from_outside_its_shadow_tree_is_listed_and_opens_the_application():
+    """UKG/UltiPro: the posting's Apply now is <ukg-button> whose inner <button> holds only a <slot>."""
+    state, view = start(UKG_BUTTON)
+    assert state["opened"] is True and len([f for f in view.fields if f.kind != "file"]) >= 3

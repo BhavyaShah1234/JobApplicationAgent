@@ -469,7 +469,9 @@ FIELDS_JS = r"""(start) => {
   }
   const buttons = all('button, [role=button], input[type=submit], a[href]')
       .filter(b => vis(b) && shown(b) && !b.disabled && !b.hasAttribute('data-jf'))
-      .map(b => clean(b.innerText || b.value || b.getAttribute('aria-label'))).filter(t => t && t.length < 60);
+      .map(b => { const host = b.getRootNode && b.getRootNode().host;      // a web component's inner <button> holds only a <slot>: its label is the host's text
+                  return clean(b.innerText || b.value || b.getAttribute('aria-label') || (host && (host.innerText || host.getAttribute('aria-label')))); })
+      .filter(t => t && t.length < 60);
   // "Add" / "Add Another" buttons (Workday work experience, education, languages): the planner may ask for entries
   const adds = [];
   for (const b of all('button, [role=button]')) {
