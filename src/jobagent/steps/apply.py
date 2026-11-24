@@ -1813,15 +1813,17 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         model.callbacks = list(model.callbacks or []) + [PlannerAudit(audit, getattr(model, 'model_name', 'configured writer'))]
         if _filling_metrics is not None:model.callbacks.append(_filling_metrics)
     if already_open:
+        if candidate_start:
+            # First: the candidate drives the early steps on a page the generic checks cannot judge (an iCIMS posting is a blank frame
+            # until it is opened); the checks below run on the application page they leave behind.
+            _candidate_start(page, hitl, log, timeout_s=ask_s)
         recover_desktop_form(page, log)
         challenge.guard(page)
         if gone := availability.check_page(page):
             raise gone
         # Listing pages can have utility controls (for example a language picker).
         # Use the same guarded navigation as Docker, even when those fields exist.
-        if candidate_start:
-            _candidate_start(page, hitl, log, timeout_s=ask_s)
-        else:
+        if not candidate_start:
             _start(page, url, ensure_signed_in or (lambda u: None), log,
                    fallback=ctx['_jd'].get('source_url'), hitl=hitl, already_open=True)
         if not forms.read_page(page).fields:
