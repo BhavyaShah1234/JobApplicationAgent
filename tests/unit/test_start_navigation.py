@@ -508,3 +508,18 @@ def test_a_detached_iframe_is_not_reused_for_startup_buttons():
         view=forms.read_page(page);page.locator('iframe').evaluate('(e)=>e.remove()')
         assert forms.click_open_application(page,view,re.compile('^Apply$')) is None
         b.close()
+
+
+def test_a_posting_pages_optional_resume_match_upload_does_not_stop_the_apply_button_from_opening_the_application():
+    """Eightfold (Ericsson): the posting offers 'Upload resume: find out how well you match' beside an ordinary Apply Now button."""
+    html = ("<h1>Baseband Software Test Developer</h1><label>Use AI to find out how well you match<input type=file></label>"
+            f"<button type=button onclick=\"{OPEN_ON_CLICK}\">Apply Now</button>")
+    state, view = start(html)
+    assert state["opened"] is True and len([f for f in view.fields if f.kind != "file"]) >= 3
+
+
+def test_a_required_upload_is_still_a_field_of_a_real_form_and_apply_is_left_alone():
+    html = ("<form onsubmit=\"window.sent = true; return false;\"><label>Resume<input type=file required></label>"
+            "<button type=submit>Apply</button></form>")
+    state, view = start(html)
+    assert state["sent"] is False

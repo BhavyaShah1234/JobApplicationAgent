@@ -2304,7 +2304,8 @@ def click_open_application(page: Page, view: PageView, pattern: re.Pattern, *, e
     from jobagent.tools import challenge
     if challenge.guard(page):
         view = read_page(page)
-    fields_on_page = bool(view.fields) or not view.coverage.complete
+    # An optional upload on its own ("Upload resume: find out how well you match") is a posting-page widget, not an application form.
+    fields_on_page = any(not (f.kind == "file" and not f.required) for f in view.fields) or not view.coverage.complete
     for text in view.buttons:
         if not pattern.search(text):
             continue
