@@ -72,3 +72,19 @@ def test_rejected_registration_is_not_recorded_as_account_creation(live_login,mo
     assert not result.created and not result.signed_in
     saved=vault.get('portal:careers.example.test')
     assert 'created' not in saved and not saved['account']
+
+
+@pytest.mark.parametrize("label", ["Continue with Google", "Continue with Microsoft", "Continue with Linkedin", "Continue with Indeed",
+                                   "Continue with Corporate Login", "Sign in with Google", "Log in with Facebook"])
+def test_a_social_login_button_is_refused_on_icims_so_the_agent_cannot_loop_on_it(label):
+    from jobagent.tools.portal_agent import social_login_refusal
+    why = social_login_refusal("https://login.icims.com/u/login/identifier?state=x", label)
+    assert why and why.startswith("refused") and "already linked" in why
+
+
+@pytest.mark.parametrize("url,label", [("https://login.icims.com/u/login", "Continue"), ("https://login.icims.com/u/login", "Next"),
+                                       ("https://login.icims.com/u/login", "Forgot password"), ("https://accounts.example.com/", "Continue with Google"),
+                                       ("https://jobs.example.com/login", "Sign in with Google")])
+def test_other_buttons_and_other_sites_are_not_affected(url, label):
+    from jobagent.tools.portal_agent import social_login_refusal
+    assert social_login_refusal(url, label) is None

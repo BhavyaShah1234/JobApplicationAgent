@@ -286,8 +286,9 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             wrong_pw += 1
             if wrong_pw >= 2 and "PASSWORD REJECTED" not in " ".join(history[-2:]):
                 history.append("PASSWORD REJECTED twice: never type a password again here (lockout risk). If the "
-                               "site offers Continue with Google use it; if not visible, go back to the first "
-                               "sign-in page (an Edit / Back link) where it is shown; otherwise answer failed")
+                               "site has a create-account, sign-up or forgot-password route use that; do NOT use social logins "
+                               "(Continue with Google, Microsoft, LinkedIn, Indeed, Corporate Login): they only work for an account "
+                               "already linked to them; otherwise answer failed")
                 log(f"portal {host}: the password was rejected twice; no more password attempts")
         if register_attempted and ACCOUNT_EXISTS.search(shown_text) and wrong_pw >= 1:
             state["state"] = "failed"
@@ -400,6 +401,10 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
         if loc is None:
             history.append(f"{a.action} on F{a.frame}[{a.element}] failed: no such element")
             continue
+        if a.action in ("click", "press_enter") and (why := social_login_refusal(page.url, _label(frames, a))):
+            history.append(why)
+            log(f"portal {host}: {why}")
+            continue
         value = re.sub(r"\{CODE\[(\d+)\]\}", lambda m: code[int(m.group(1))] if int(m.group(1)) < len(code) else "",
                        a.value)  # one digit of a code split over several boxes (0-based)
         for k, v in {**values, "CODE": code}.items():
@@ -505,6 +510,24 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
         state["verified_mail"] = cleanup.ok
         log(f"portal {host}: verification mail accepted by the site; cleanup {cleanup.status} ({accepted_mail.subject!r})")
     return state
+
+
+SOCIAL_LOGIN = re.compile(r"(?i)\b(?:continue|sign\s*in|log\s*in|login|sign\s*up)\s+with\s+(?:google|microsoft|apple|facebook|linkedin|indeed|github)\b|corporate login|single sign[- ]on")
+
+
+def social_login_refusal(url: str, label: str) -> str | None:
+    """Why a click on a social or corporate login button is refused (None when it is allowed).
+
+    On iCIMS a social button only signs in an account that was already linked to that provider ("Unable to log in with the social
+    account. Please make sure your iCIMS account is connected to one"); for an email that has no iCIMS account it dead-ends, and the
+    model repeated the click until the run stopped as stuck. The way in is the application's own sign-up, or the email's own login.
+    """
+    if not SOCIAL_LOGIN.search(label or ""):
+        return None
+    if "icims.com" not in (url or "").lower():
+        return None
+    return ("refused: a social or corporate login only works on iCIMS for an account already linked to it, and this email has no "
+            "such link; use the email field (sign in, or the sign-up and verification-link route) or answer failed")
 
 
 def _google_step(page: Page, email: str) -> str:
