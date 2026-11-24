@@ -850,6 +850,30 @@ def portal_login_cmd(
     console.print(res, highlight=False)
 
 
+@app.command("portal-forget")
+def portal_forget_cmd(
+    url: str = typer.Argument(..., help="A posting or sign-in URL on the portal whose local browser state should be forgotten."),
+    attempts: bool = typer.Option(False, "--attempts", help="Also forget the cross-run password-attempt count for this host. "
+                                  "Only when you know the credentials are right: the count protects the account from a lockout."),
+) -> None:
+    """Forget ONE portal's cookies and site storage in the agent's browser (a stale session or a half-finished registration).
+    It cannot lift a rate limit or a lockout: those are held by the portal for the network and the email, not by this browser."""
+    from jobagent.tools import portal_state
+    from jobagent.tools.browser import persistent_context
+    from jobagent.tools.portal_auth import portal_key
+    from jobagent.tools.memory import PortalMemory
+
+    log = runlog("portal-forget")
+    known = PortalMemory(portal_key(url)).data.get("domains", [])
+    with persistent_context() as ctx:
+        report = portal_state.forget_portal(ctx.pages[0], url, known)
+    console.print(portal_state.describe(report), highlight=False)
+    if attempts and not report.get("refused"):
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc.lower()
+        console.print(f"attempt count for {host}: {'cleared' if portal_state.clear_attempts(host) else 'nothing to clear'}", highlight=False)
+
+
 @app.command("portal-logout")
 def portal_logout_cmd(url: str = typer.Argument(..., help="A posting or career-site URL on the portal.")) -> None:
     """Sign the agent out of a job portal (confirmed: the site no longer shows the account)."""
@@ -879,6 +903,9 @@ def apply_cmd(
     filling_strategy: str = typer.Option(None, help="original, experimental or adaptive; default FILLING_STRATEGY/experimental."),
     desktop_allow_origin: list[str] = typer.Option(None, "--desktop-allow-origin",
         help="Additional trusted application/login HTTPS origin; repeat for extra origins."),
+    forget_portal: bool = typer.Option(False, "--forget-portal",
+        help="Before starting, forget the portal's cookies and site storage in this browser (a stale session or a half-finished "
+             "registration). It does not lift a rate limit or lockout."),
     register_account: bool = typer.Option(False, "--register-account",
         help="The portal's sign-in step goes straight to its Sign up route (no login attempt) and completes the registration, "
              "including email verification. Use it when you know no account exists for the agent's email there."),
@@ -932,6 +959,11 @@ def apply_cmd(
             related = [u for u in (jd.get('source_url'), *(desktop_allow_origin or [])) if u]
             with open_inbox() as inbox, open_session(mode, url, related) as sess:
                 page = sess.page
+                if forget_portal:
+                    from jobagent.tools import portal_state
+                    from jobagent.tools.memory import PortalMemory, portal_key
+                    log("apply: " + portal_state.describe(portal_state.forget_portal(page, url, PortalMemory(portal_key(url)).data.get("domains", []))))
+                    page.goto(url, wait_until="domcontentloaded")
                 sign_in = lambda url: ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log, already_open=True,
                                                      register_only=register_account)
                 from jobagent.steps.apply import registration_profile
