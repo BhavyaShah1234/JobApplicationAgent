@@ -45,6 +45,10 @@ WIDGET_VALUE_JS = r"""e => {
     if (e.querySelector('.select2-selection__placeholder')) return '';
     return clean(e.querySelector('.select2-selection__rendered')?.innerText);
   }
+  if (e.matches('a.dropdown-select[role=combobox]')) {      // iCIMS: the shown value is in a span; the real <select> behind it holds only the loaded options
+    const shown = clean(e.querySelector('.dropdown-text')?.innerText);
+    return /^[—–-]*\s*(make a selection|select)/i.test(shown) ? '' : shown;
+  }
   if (e.matches('.iti__selected-flag[role=combobox]'))
     return clean(e.getAttribute('title')).replace(/:\s*(\+\d+)\s*$/, ' ($1)');
   return null;
@@ -1360,6 +1364,48 @@ def _save_combobox_failure(loc, f, opt, exc) -> None:
         pass
 
 
+def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
+    """Choose an item in iCIMS's own dropdown: open the widget, search the (ajax-loaded) list for the answer, click the exact item.
+
+    The real <select> behind it holds only the options already loaded, and the shown value is a span, so neither selecting in the
+    <select> nor reading its value works; the widget itself is operated, and the value is read back from its span.
+    """
+    base = loc.evaluate("e => e.id.replace(/_icimsDropdown$/, '')")
+    current = loc.evaluate(WIDGET_VALUE_JS)
+    if current and _norm(current) == _norm(answer):
+        return current
+    panel = frame.locator(f'[id="{base}_listbox"]')
+    try:
+        loc.click(timeout=5000)
+        panel.wait_for(state="visible", timeout=5000)
+        search = panel.locator("input[type=text], input[type=search], input:not([type])").first
+        if search.count():
+            search.fill(str(answer))
+            page.wait_for_timeout(900)
+        items = panel.locator("li, [role=option]")
+        texts = [t.strip() for t in items.all_inner_texts() if t.strip() and not re.match(r"(?i)^[—–-]*\s*(make a selection|select)", t.strip())]
+        opt = strict_option(answer, texts) if strict else close_option(answer, texts)
+        if opt is None:
+            page.keyboard.press("Escape")
+            raise UnavailableOption(f"{answer!r} isn't offered as such")
+        items.filter(has_text=re.compile(rf"^\s*{re.escape(opt)}\s*$")).first.click(timeout=8000)
+        page.wait_for_timeout(400)
+        return opt
+    except UnavailableOption:
+        raise
+    except Exception as exc:
+        try:
+            html = panel.evaluate("e => e.outerHTML.slice(0, 1800)") if panel.count() else ""
+        except Exception:
+            html = ""
+        _save_combobox_failure(loc, f, answer, f"icims dropdown: {type(exc).__name__}: {str(exc)[:120]} | panel: {html}")
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        raise
+
+
 def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[str, str], tie_break=None,
                strict: bool = False, close: bool = False, before_upload=None, upload_confirmation=None, alternatives=()) -> str:
     """Put `answer` into the field. Returns what was chosen (the option text for choice fields)."""
@@ -1602,6 +1648,8 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 except Exception:      # a zero-size label whose card is a visible child: click the text inside it
                     lab.get_by_text(re.compile(r"\S")).first.click(timeout=8000)
         return "; ".join(chosen)
+    if f.kind == "combobox" and loc.evaluate("e => e.matches('a.dropdown-select[role=combobox]')"):
+        return _fill_icims_dropdown(page, frame, loc, f, answer, strict, close)
     if f.kind == "combobox" and loc.evaluate("e => e.tagName === 'SELECT'"):
         # A native <select> the page reports as a combobox (iCIMS): its options cannot be clicked like a custom list; read the live
         # options (the reader may have seen only the first screenful) and select one.

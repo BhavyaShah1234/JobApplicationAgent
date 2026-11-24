@@ -125,3 +125,32 @@ def test_a_native_select_reported_as_a_combobox_is_chosen_with_select_option_fro
     out, chosen = with_page(NATIVE_COMBO, run)
     assert chosen == ["India", "I consent to receive text messages"] and len(out) == 2
 
+
+
+ICIMS_DROPDOWN = """<!doctype html><html><head><meta charset="utf-8"></head><body>
+<label id="lbl" for="c">Country</label>
+<select id="c" name="c" class="dropdown-hide" role="combobox" aria-controls="c_listbox" style="display:none"><option value="1" selected>United States</option></select>
+<a id="c_icimsDropdown" class="dropdown-select" tabindex="0" role="combobox" aria-labelledby="lbl" aria-label="Country" aria-expanded="false"
+   style="display:inline-block;border:1px solid #888;width:220px;height:28px"><span id="c_fake" class="dropdown-text">— Make a Selection —</span></a>
+<div id="c_listbox" style="display:none;border:1px solid #888;width:220px"><input type="text" id="q" aria-label="Search">
+<ul id="items" style="margin:0;padding:0;list-style:none"></ul></div>
+<script>
+const ALL=["— Make a Selection —","United States","Canada","India","Åland Islands"], ul=document.getElementById('items'), q=document.getElementById('q'),
+ a=document.getElementById('c_icimsDropdown'), box=document.getElementById('c_listbox');
+function draw(){ul.innerHTML='';ALL.filter(x=>!q.value||x.toLowerCase().includes(q.value.toLowerCase())).forEach(x=>{const li=document.createElement('li');li.textContent=x;li.style.padding='4px';
+  li.onclick=()=>{document.getElementById('c_fake').textContent=x;box.style.display='none'};ul.appendChild(li)})}
+a.onclick=()=>{box.style.display='block';draw()}; q.oninput=draw;
+</script></body></html>"""
+
+
+def test_the_icims_dropdown_widget_is_opened_searched_and_read_back_from_its_own_value_span():
+    from jobagent.tools import forms
+    def run(page):
+        v = forms.read_page(page)
+        f = next(x for x in v.fields if x.kind == "combobox")
+        before = f.value
+        got = forms.fill_field(page, v, f, "India", {}, strict=True)
+        after = next(x for x in forms.read_page(page).fields if x.kind == "combobox").value
+        return before, got, after
+    before, got, after = with_page(ICIMS_DROPDOWN, run)
+    assert before == "" and got == "India" and after == "India"
