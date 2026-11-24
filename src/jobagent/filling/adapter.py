@@ -364,6 +364,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                     e.get('field_key')==key(f)),None)
         if entry is None:entry={}
         proof=filler.upload_proofs.get((page_no,key(f))) if f.kind=='file' else None
+        if f.kind=='file' and proof is None:proof=filler.uploaded_labels.get((page_no,f.label))      # a same-label input satisfied by a verified upload
         success=entry.get('outcome')=='verified' and not f.invalid and (proof.verify() if proof else forms.same_value(entry.get('readback',''),f.value,f.kind,f.label))
         value=entry.get('answer','')
         known_blank=success and value=='' and not f.required
@@ -386,6 +387,11 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         role=doc['role'];label=doc['label']
         matches=[done[key(f)] for f in view.fields if f.kind=='file' and f.identity==doc['identity']]
         row=matches[0] if len(matches)==1 else {}
+        # Two inputs of one page can carry one label (Dayforce: one HTML id twice). When every one of them holds the verified upload the
+        # document is not ambiguous.
+        same_label=[done[key(f)] for f in view.fields if f.kind=='file' and f.label==label]
+        duplicates_ok=len(same_label)>1 and all(r.get('verified') and r.get('answer')==role for r in same_label)
+        if not row and duplicates_ok:row=same_label[0]
         proof=filler.upload_proofs.get((page_no,doc['field_key']))
         if not matches and not doc['ambiguous'] and proof and proof.verify():
             entry=next((e for e in reversed(history) if e.get('step')==page_no and e.get('identity')==doc['identity'] and e.get('outcome')=='verified'),{})
@@ -393,7 +399,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                 row={**entry,'page':page_no,'verified':True,'filled':files[role],'answered':True,
                      'options':[],'why':'matched dispatched bytes and acknowledgement in the same widget','source':'document role','flag':'','error':''}
                 record.append(row)
-        if not (not doc['ambiguous'] and row.get('verified') and row.get('answer')==role and
+        if not ((not doc['ambiguous'] or duplicates_ok) and row.get('verified') and row.get('answer')==role and
                 proof and proof.verify() and
                 row.get('held_file_sha256')==hashlib.sha256(Path(files[role]).read_bytes()).hexdigest()):
             document_blockers.append(f'{label}: provided {role} upload is not verified')
