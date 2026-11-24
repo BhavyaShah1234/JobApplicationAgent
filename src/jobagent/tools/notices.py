@@ -13,7 +13,11 @@ _BLOCKING=r'''e=>{
 def dismiss_cookie_overlay(page,frames=None):
     """Handle only TrustArc's native forwarding overlay; never remove DOM or solve a challenge."""
     for frame in (frames if frames is not None else getattr(page,'frames',())):
-        for overlay in frame.locator('#consent_blackbar[role=dialog][aria-label="consent banner"] #trustarc-banner-overlay[onclick]').all():
+        try:
+            overlays=frame.locator('#consent_blackbar[role=dialog][aria-label="consent banner"] #trustarc-banner-overlay[onclick]').all()
+        except Exception:
+            continue          # a frame that detaches while the page navigates (a sign-up's Continue) is not an error worth stopping a run
+        for overlay in overlays:
             if not _FORWARD.fullmatch(overlay.get_attribute('onclick') or ''):continue
             root=overlay.locator('xpath=ancestor::*[@id="consent_blackbar"][1]')
             button=root.locator('#truste-consent-button')

@@ -311,3 +311,16 @@ def test_register_only_goes_to_the_general_agent_even_for_a_platform_with_an_ada
     assert pa.platform_of(url) in pa.ADAPTERS
     assert pa.ensure_account(None, url, None, None, None, "e@example.com", register_only=True) == "agent" and calls == [True]
     assert pa.ensure_account(None, url, None, None, None, "e@example.com") == "adapter"
+
+
+def test_a_frame_that_detaches_while_the_page_navigates_does_not_stop_the_cookie_notice_scan():
+    from jobagent.tools.notices import dismiss_cookie_overlay
+
+    class Detached:
+        def locator(self, selector):
+            raise RuntimeError("Locator.all: Frame was detached")
+
+    class Page:
+        frames = [Detached(), Detached()]
+
+    assert dismiss_cookie_overlay(Page()) is False
