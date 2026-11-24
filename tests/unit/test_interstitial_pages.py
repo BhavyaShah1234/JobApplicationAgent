@@ -84,3 +84,16 @@ def test_a_sign_in_form_is_a_credentials_page_but_an_application_page_with_accou
     assert credentials_only_page([F("email", "Email"), F("password", "Password"), F("password", "Password (Re-enter)")])
     page = [F("text", "Login"), F("password", "Password"), F("password", "Password (Re-enter)"), F("text", "First Name"), F("text", "Phone")]
     assert not credentials_only_page(page)
+
+
+def test_a_bare_city_in_a_sentence_style_education_or_employer_section_never_takes_the_current_or_job_address():
+    """Garmin's iCIMS profile asked for the school's city and got the job's Olathe: the current address is not a school's or employer's."""
+    from jobagent.filling.facts import Fact, scope_allows, loose_entity_scope
+    address = Fact(id="applicant/address/Current address/answer/city", aliases=["City", "Current address"], value="Olathe", source="job lookup")
+    edu = forms.Field(id=1, kind="text", label="City", section="Please enter the highest level of education you have attained")
+    emp = forms.Field(id=2, kind="text", label="State", section="Please enter your last three (3) employers")
+    contact = forms.Field(id=3, kind="text", label="City", section="Enter your information")
+    assert loose_entity_scope(edu.section) == "education" and loose_entity_scope(emp.section) == "employment"
+    assert loose_entity_scope("Enter your information") is None and loose_entity_scope("Education 2") is None
+    assert not scope_allows(edu, address) and not scope_allows(emp, address)
+    assert scope_allows(contact, address)         # the contact section still takes the current address

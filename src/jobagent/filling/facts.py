@@ -87,6 +87,21 @@ def entity_scope(section):
     return group, int(match[2]) if match[2] else None
 
 
+LOOSE_EDUCATION=re.compile(r'\b(education|school|university|degree|academic)\b')
+LOOSE_EMPLOYMENT=re.compile(r'\b(employers?|employment|work history|work experience|previous jobs?)\b')
+ADDRESS_PARTS={'city','state','country','zip','zip code','postal code','county','province','address','street address'}
+
+
+def loose_entity_scope(section):
+    """The school or employer a sentence-style section heading is about ("Please enter the highest level of education you have attained",
+    "Please enter your last three employers"), where there is no numbered "Education 2" to read a row from; None for any other section."""
+    q=norm(section or '')
+    if entity_scope(section):return None
+    if LOOSE_EDUCATION.search(q):return 'education'
+    if LOOSE_EMPLOYMENT.search(q):return 'employment'
+    return None
+
+
 def scope_allows(f, fact):
     if fact.target_key is not None and fact.target_key!=key(f):return False
     target=entity_scope(f.section)
@@ -102,6 +117,10 @@ def scope_allows(f, fact):
         return norm(f.section)==norm(fact.section)
     # A general contact answer is not evidence for an employer, school or reference's contact details.
     if target and (norm(f.label) in ENTITY_COMPONENTS or any(norm(a) in ENTITY_COMPONENTS for a in fact.aliases)):
+        return False
+    # The same holds in a sentence-style education or employer section: the candidate's current address (or the job's city that
+    # replaces it for this application) is not the school's or the employer's city, state or country.
+    if loose_entity_scope(f.section) and (norm(f.label) in ADDRESS_PARTS or any(norm(a) in ADDRESS_PARTS for a in fact.aliases)):
         return False
     return True
 
