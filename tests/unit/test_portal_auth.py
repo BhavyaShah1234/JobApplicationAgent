@@ -223,3 +223,18 @@ def test_a_nationality_list_takes_the_single_entry_that_is_the_country_plus_a_sh
     finally:
         browser.close()
         pw.stop()
+
+
+def test_continue_with_google_is_refused_on_ukg_ultipro_as_on_icims_and_allowed_elsewhere():
+    from jobagent.tools.portal_agent import social_login_refusal as r
+    assert r("https://signin-us.ultipro.com/u/login?state=x", "Continue with Google") is not None
+    assert r("https://careers-peraton.icims.com/x", "Continue with Google") is not None
+    assert r("https://www.amazon.jobs/x", "Continue with Google") is None
+    assert r("https://signin-us.ultipro.com/u/login", "Sign up") is None
+
+
+def test_the_agent_prompt_tells_it_to_use_sign_up_when_invalid_credentials_is_all_the_site_says():
+    from jobagent.tools import portal_agent as pa
+    import inspect
+    src = inspect.getsource(pa)
+    assert "Invalid credentials" in src and "use that route once" in src and "Never use \"Continue with Google\" on ultipro.com" in src

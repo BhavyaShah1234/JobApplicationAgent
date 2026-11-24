@@ -89,6 +89,9 @@ ONE action. Rules:
   account with {EMAIL}, {PASSWORD} (and confirm-password {PASSWORD}), {FIRST_NAME}, {LAST_NAME}, {PHONE} where asked
   ({LEGAL_FIRST_NAME} when the field asks for the legal first name);
   tick only checkboxes that accept terms or privacy needed to continue. Set registered=true when you submit it.
+- Some portals (UKG / UltiPro) answer "Invalid credentials" both for a wrong password and for an email that has no account. When that
+  is ALL the page says and it offers "Sign up" / "Create an account", use that route once (register with {EMAIL}, {PASSWORD}, names,
+  phone); if the site then says the account already exists, answer failed. Never use "Continue with Google" on ultipro.com or icims.com.
 - Never use "forgot / reset password". If {PASSWORD} is rejected ("wrong username or password") and the site offers
   "Continue / Sign in with Google", click that instead: the browser is signed in to Google as {EMAIL}, and an account
   made with Google has no password. Otherwise, if {PASSWORD} is rejected for an existing account, answer failed.
@@ -619,9 +622,9 @@ def social_login_refusal(url: str, label: str) -> str | None:
     """
     if not SOCIAL_LOGIN.search(label or ""):
         return None
-    if "icims.com" not in (url or "").lower():
+    if not any(h in (url or "").lower() for h in ("icims.com", "ultipro.com")):
         return None
-    return ("refused: a social or corporate login only works on iCIMS for an account already linked to it, and this email has no "
+    return ("refused: a social or corporate login only works here for an account already linked to it, and this email has no "
             "such link; use the email field (sign in, or the sign-up and verification-link route) or answer failed")
 
 
