@@ -53,6 +53,8 @@ def family(text):
       ('arbitration',r'arbitration'),
       ('read_ack',r'confirm i have read the above|^i (?:understand|acknowledge) (?:that|the|this|these|how)\b'),
       ('ai_consent',r'ai (?:notetaker|transcri)|use ai.*transcri'),
+      ('ai_policy_ack',r'\bai (?:use |usage )?polic(?:y|ies)\b'),
+      ('demographic_consent',r'demographic (?:data )?survey|voluntary (?:demographic|self identification)'),
       ('sms_consent',r'sms|whatsapp|text messages'),
       ('future_contact',r'future (?:job |employment )?opportunit|talent community'),
       ('privacy_consent',r'privacy|data processing'),
@@ -362,7 +364,7 @@ def route(field,facts):
     elif kind in ('why_company','project','technical_experience','technical_interests'):
         sources=['owner_rules','resume','jd','company']
     elif kind in ('start_date','signature_date'):sources=['owner_rules','clock']
-    elif kind in PURPOSE_BOUND or kind in ('external_sharing','privacy_consent','future_contact','ai_consent','sms_consent','arbitration','read_ack','event_history','account_status','clearance_eligibility','clearance_held','sponsorship','work_authorization','residency'):
+    elif kind in PURPOSE_BOUND or kind in ('external_sharing','privacy_consent','future_contact','ai_consent','demographic_consent','ai_policy_ack','sms_consent','arbitration','read_ack','event_history','account_status','clearance_eligibility','clearance_held','sponsorship','work_authorization','residency'):
         # A different owner's answer with the same boolean value is not evidence.
         found=[x for x in found if fact_family(x)==kind or (kind in ('arbitration','read_ack') and x.id.startswith('application.answer.'))]
         sources=['owner']
@@ -427,7 +429,7 @@ def resolve_routed(field,facts,route_info=None):
     if r.family in ('email','phone','preferred_name','legal_name','work_authorization','portfolio_link','pronouns','gender','race','veteran','disability','hispanic'):selected=owner
     if r.family=='external_sharing' and not owner:
         return Decision(choice(field,['No']),'policy:external-sharing-opt-out',reason='No purpose-specific permission; do not opt in to external sharing')
-    if r.family in ('government_referral','government_relationship','ethics_ack','clearance_eligibility','arbitration','read_ack','event_history','account_status','privacy_consent','future_contact','sms_consent','ai_consent') and not owner:
+    if r.family in ('government_referral','government_relationship','ethics_ack','clearance_eligibility','arbitration','read_ack','event_history','account_status','privacy_consent','future_contact','sms_consent','ai_consent','demographic_consent','ai_policy_ack') and not owner:
         return Decision(None,reason='explicit owner evidence missing')
     if r.family=='clearance_held' and len(selected)==1 and norm(selected[0].value) in ('none','no','false'):
         return Decision(choice(field,['No']),selected[0].source,selected[0].id)
@@ -490,7 +492,7 @@ def resolve_routed(field,facts,route_info=None):
             if whole in field.options:return Decision(whole,fact.source,fact.id,'completed whole years')
         if re.search(r'\byear\b',norm(field.label)) and entity_scope(field.section):
             return from_fact(replace(field,format='YYYY'),fact)
-        if r.family in ('government_referral','government_relationship','ethics_ack','school','degree','discipline','current_employer','current_title','country','on_site','offer_deadline','portfolio_link','pronouns','languages','gender','race','veteran','disability','hispanic','experience_years','clearance_eligibility','clearance_held','start_date','signature_date','email','phone','preferred_name','legal_name','location','gpa','work_authorization','external_sharing','privacy_consent','future_contact','sms_consent','ai_consent','arbitration','read_ack'):
+        if r.family in ('government_referral','government_relationship','ethics_ack','school','degree','discipline','current_employer','current_title','country','on_site','offer_deadline','portfolio_link','pronouns','languages','gender','race','veteran','disability','hispanic','experience_years','clearance_eligibility','clearance_held','start_date','signature_date','email','phone','preferred_name','legal_name','location','gpa','work_authorization','external_sharing','privacy_consent','future_contact','sms_consent','ai_consent','demographic_consent','ai_policy_ack','arbitration','read_ack'):
             return from_fact(field,fact)
     return None
 
@@ -507,7 +509,7 @@ def evidence_allows(field,fact,route_info):
 def binding_valid(field,bound,value,route_info):
     if any(x.id not in route_info.fact_ids for x in bound):return False
     if not all(evidence_allows(field,x,route_info) for x in bound):return False
-    protected=PURPOSE_BOUND | {'external_sharing','clearance_eligibility','clearance_held','arbitration','read_ack','privacy_consent','future_contact','sms_consent','ai_consent','sponsorship','work_authorization','residency'}
+    protected=PURPOSE_BOUND | {'external_sharing','clearance_eligibility','clearance_held','arbitration','read_ack','privacy_consent','future_contact','sms_consent','ai_consent','demographic_consent','ai_policy_ack','sponsorship','work_authorization','residency'}
     if route_info.family in protected:
         if not bound or any(fact_family(x)!=route_info.family for x in bound):return False
         if any(x.authority!='owner' for x in bound):return False
