@@ -204,3 +204,12 @@ def test_apply_re_resolves_locations_that_an_older_parser_resolved(tmp_path, mon
     ctx = A.context(job, "acme")
     assert ctx["_jd"]["locations_resolved"][0]["city"] == "New York"
     assert ctx["_jd"]["locations_resolver_version"] == places.RESOLVER_VERSION
+
+
+def test_new_york_ny_selects_the_city_new_york_not_the_state_code():
+    from jobagent.tools import application_address as AA
+    t = AA._target(["New York, NY"], lambda m: None, allow_geocode=False)
+    assert t["city"] == "New York" and t["state_code"] == "NY"
+    assert AA._target(["Washington, WA"], lambda m: None, allow_geocode=False)["city"] == "Washington"
+    assert AA._target(["NY, Albany"], lambda m: None, allow_geocode=False)["city"] == "Albany"      # state-first order still works
+    assert AA._target(["Austin, TX"], lambda m: None, allow_geocode=False)["city"] == "Austin"

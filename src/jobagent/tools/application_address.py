@@ -171,7 +171,10 @@ def _explicit_city(location: str, code: str) -> str:
     text = re.sub(r"(?i)\b(?:united states(?: of america)?|usa|us)\b", "", location).strip(" ,")
     state = STATE_CITIES[code][0]
     head, separator, tail = text.partition(",")
-    if separator and (head.strip() == code or _key(head) == _key(state)):
+    tail_is_state = tail.strip(" ,").upper() == code or _key(tail) == _key(state)
+    if separator and tail_is_state and _key(head) == _key(state):
+        city = head.strip()                       # "New York, NY": a city that shares its state's name, in city/state order
+    elif separator and (head.strip() == code or _key(head) == _key(state)):
         city = tail.strip(" ,")
     else:
         city = re.sub(r"(?i)(?:^|[,\s]+)(?:" + re.escape(state) + "|" + code + r")\s*$", "", text).strip(" ,")
