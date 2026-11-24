@@ -1785,7 +1785,14 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 page.keyboard.press('Escape')
                 return fill_field(page,view,f,fallback,files,strict=True)
         if opt is None and (strict or close):
-            _save_combobox_failure(loc, f, answer, f"combobox: no match among {list(opts or [])[:25]}")
+            try:      # the listbox the input owns, found through shadow roots too (web-component menus)
+                menu = loc.evaluate("""e => { const id = e.getAttribute('aria-controls'); if (!id) return 'no aria-controls';
+                    const find = (root) => { const hit = root.getElementById ? root.getElementById(id) : null; if (hit) return hit;
+                        for (const el of root.querySelectorAll('*')) { if (el.shadowRoot) { const r = find(el.shadowRoot); if (r) return r; } } return null; };
+                    const m = find(document); return m ? m.outerHTML.slice(0, 1500) : 'menu ' + id + ' not found'; }""")
+            except Exception as exc:
+                menu = f"menu lookup failed: {type(exc).__name__}"
+            _save_combobox_failure(loc, f, answer, f"combobox: no match among {list(opts or [])[:25]} | menu: {menu}")
             page.keyboard.press("Escape")
             raise UnavailableOption(f"{answer!r} isn't offered as such")
         if opt is None:
