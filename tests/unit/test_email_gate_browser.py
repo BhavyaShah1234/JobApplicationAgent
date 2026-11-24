@@ -175,3 +175,25 @@ def test_candidate_start_is_refused_for_the_docker_browser():
     from jobagent.main import app
     out = CliRunner().invoke(app, ["apply", "outputs/none/0", "none", "--candidate-start"])
     assert out.exit_code != 0 and "--browser-mode desktop" in out.output
+
+
+def test_an_early_done_does_not_end_the_candidate_hand_off():
+    """Answering `done` before the profile page is on screen only asks for a check: the agent asks again and keeps waiting."""
+    from jobagent.steps import apply as A
+    pw, browser, page = _chrome_page(POSTING_PAGE)
+    try:
+        class Candidate:
+            def __init__(self): self.asked = []
+            def ask(self, prompt, done_when=None, timeout_s=None, **kw):
+                self.asked.append(prompt)
+                if len(self.asked) == 1:
+                    return ""                                    # `done` answered too early: the page is still the posting
+                page.set_content(PROFILE_PAGE)                   # then the candidate gets there
+                assert done_when() is True
+                return ""
+        c = Candidate()
+        A._candidate_start(page, c, lambda m: None, timeout_s=10)
+        assert len(c.asked) == 2 and "not showing yet" in c.asked[1]
+        assert A._application_page_showing(page) is True
+    finally:
+        browser.close(); pw.stop()

@@ -1172,14 +1172,22 @@ def _candidate_start(page: Page, hitl, log, timeout_s: float = 1800) -> None:
     if _application_page_showing(page):
         return
     log("apply: waiting for the candidate to reach the application page in the desktop window (the agent clicks nothing until then)")
-    try:
-        hitl.ask("In the agent's desktop Chrome window (Alt+Tab to the one whose page is the job posting): click Apply, enter your email, "
-                 "press Next, pass any check, and stop on the application's profile page (the page with your name, phone and resume "
-                 "fields; if the portal wants a password for a new account, set it there yourself). The agent continues by itself "
-                 "when that page is showing; answer `done` to make it check now.", done_when=lambda: _application_page_showing(page),
-                 timeout_s=timeout_s)
-    except Exception as exc:
-        log(f"apply: the candidate hand-off ended ({type(exc).__name__}): {str(exc)[:100]}")
+    deadline = time.monotonic() + timeout_s
+    first = True
+    while not _application_page_showing(page) and time.monotonic() < deadline:
+        # An answer (`done`) only asks for a check: when the page is not there yet the agent keeps waiting and asks again.
+        try:
+            hitl.ask(("In the agent's desktop Chrome window (Alt+Tab to the one whose page is the job posting): click Apply, enter your "
+                      "email, press Next, pass any check, and stop on the application's profile page (the page with your name, phone and "
+                      "resume fields; if the portal wants a password for a new account, set it there yourself). The agent continues by "
+                      "itself when that page is showing; you do not need to answer anything." if first else
+                      "The application page is not showing yet in the agent's desktop window. Keep going (Apply, email, Next, any check) "
+                      "until the profile page with your name, phone and resume fields is on screen; the agent continues by itself."),
+                     done_when=lambda: _application_page_showing(page), timeout_s=max(5.0, deadline - time.monotonic()))
+        except Exception as exc:
+            log(f"apply: the candidate hand-off ended ({type(exc).__name__}): {str(exc)[:100]}")
+            break
+        first = False
     if not _application_page_showing(page):
         raise challenge.Blocked("The application page was not reached in the desktop window; run again with --candidate-start and "
                                 "stop on the profile page")
