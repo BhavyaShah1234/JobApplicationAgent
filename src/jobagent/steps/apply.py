@@ -1142,6 +1142,38 @@ def exit_code(result: dict) -> int:
     return EXIT_FAILED
 
 
+def _candidate_types_passwords(page: Page, view, env: dict, log) -> bool:
+    """When the only thing left on a page is its empty password field(s), ask the candidate to type them and wait.
+
+    The agent never types or asks for a password: the question tells the candidate which fields to fill in the browser window
+    (noVNC), and the run goes on by itself when they hold a value. Returns True once they do; False when there is nobody to ask,
+    something else is also blocking, or the candidate does not answer in time.
+    """
+    blockers = env.get('_experimental_blockers') or []
+    hitl = env.get('hitl')
+    fields = [f for f in view.fields if f.kind == 'password']
+    if not hitl or not fields or not blockers or not all('password' in str(b).lower() for b in blockers):
+        return False
+    if env.get('_password_handoffs', 0) >= 2:
+        return False
+    env['_password_handoffs'] = env.get('_password_handoffs', 0) + 1
+
+    def filled() -> bool:
+        try:
+            return all(forms.has_value(f) for f in forms.read_page(page).fields if f.kind == 'password')
+        except Exception:
+            return False
+    labels = ", ".join(sorted({f.label for f in fields}))
+    log(f"apply: only the password field(s) are left ({labels}); waiting for the candidate to type them")
+    try:
+        hitl.ask(f"The page needs your account password typed into: {labels}. Type it yourself in the browser window "
+                 "(noVNC http://localhost:6080/vnc.html); the agent never types or asks for a password. It continues by itself when the "
+                 "field(s) hold a value; answer `done` to make it check now.", done_when=filled, timeout_s=env.get('ask_s') or 1500)
+    except Exception as exc:
+        log(f"apply: the password hand-off ended ({type(exc).__name__}): {str(exc)[:100]}")
+    return filled()
+
+
 def _email_gate(page: Page, env: dict, log, posting_url: str) -> bool:
     """A page with no fields that says a link was just emailed: fetch the portal's mail and open the link (at most twice a run)."""
     from jobagent.tools import email_gate
@@ -1796,6 +1828,9 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
             if strategy in ('experimental','adaptive'):
                 from jobagent.filling.adapter import fill_page as planned_page
                 view,done=planned_page(page,ctx,files,model,log,record,page_no,env,known,errors)
+                if env.get('_experimental_blockers') and _candidate_types_passwords(page, view, env, log):
+                    env['_experimental_blockers']=[];known, errors, same = None, [], 0
+                    continue        # the candidate typed the password field(s) in the browser window: read the page again
                 if env.get('_experimental_blockers') and not view.fields and _email_gate(page, env, log, ctx.get('_jd', {}).get('source_url') or url):
                     env['_experimental_blockers']=[];known, errors, same = None, [], 0
                     continue        # the portal's emailed link was opened: read the page it led to

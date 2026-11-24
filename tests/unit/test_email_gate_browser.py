@@ -73,3 +73,40 @@ def test_no_mail_in_time_means_the_run_stops_as_before():
     inbox = FakeInbox("no link in this mail at all")
     opened, text, seen, logs = run(inbox)
     assert not opened and any("no usable mail" in x for x in logs)
+
+
+PASSWORD_PAGE = """<!doctype html><html><body><h1>Create a login</h1>
+<label>Password <input type="password" name="pw" required></label><label>Password (Re-enter) <input type="password" name="pw2" required></label></body></html>"""
+
+
+def test_empty_required_passwords_are_handed_to_the_candidate_and_the_run_continues_when_they_are_filled():
+    from jobagent.steps import apply as A
+    from jobagent.tools import forms
+    class FakeHitl:
+        def __init__(self, page): self.page, self.prompts = page, []
+        def ask(self, prompt, done_when=None, timeout_s=None, **kw):
+            self.prompts.append(prompt)
+            assert done_when() is False               # still empty when asked
+            for box in self.page.query_selector_all("input[type=password]"):
+                box.fill("typed-by-the-candidate")      # the candidate types in the browser window
+            assert done_when() is True
+            return ""
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch(channel="chrome", headless=True)
+        except Exception:
+            pytest.skip("no Chrome here")
+        try:
+            page = browser.new_page()
+            page.route("**/*", lambda r: r.fulfill(status=200, content_type="text/html", body=PASSWORD_PAGE) if r.request.resource_type == "document" else r.abort())
+            page.goto("https://portal.test/apply")
+            view = forms.read_page(page)
+            hitl = FakeHitl(page)
+            env = {"hitl": hitl, "_experimental_blockers": ["Password", "Password (Re-enter)"], "ask_s": 5}
+            logs = []
+            assert A._candidate_types_passwords(page, view, env, logs.append) is True
+            assert "never types or asks for a password" in hitl.prompts[0] and any("only the password field" in x for x in logs)
+            env2 = {"hitl": hitl, "_experimental_blockers": ["Password", "Phone"], "ask_s": 5}       # something else is blocking too: not this hand-off
+            assert A._candidate_types_passwords(page, view, env2, logs.append) is False
+        finally:
+            browser.close()
