@@ -58,3 +58,35 @@ def test_an_unrelated_agreement_dialog_is_never_touched():
         assert page.locator("input[type=checkbox]").is_checked() is False
     finally:
         b.close(); pw.stop()
+
+
+SMS_DIALOG_HTML = """<html><body><h1>Application</h1>
+<div role=dialog id=sms style="position:fixed;inset:20px;background:#fff;z-index:999"><h2>Short Message Service (SMS) Consent</h2>
+<p>By selecting the "I consent to receive SMS messages" option and clicking "save", you consent to receive SMS messages.</p>
+<label><input type=radio name=sms id=no value=no> I do not consent to receive SMS messages</label>
+<label><input type=radio name=sms id=yes value=yes> I consent to receive SMS messages</label>
+<button onclick="window.smsChoice=document.querySelector('input[name=sms]:checked')?.value;document.getElementById('sms').remove()">Save</button></div>
+<input id=country></body></html>"""
+
+
+@pytest.mark.parametrize("recorded,expected", [(True, "yes"), (False, "no")])
+def test_an_sms_consent_dialog_gets_the_recorded_answer_and_covers_the_form_no_longer(recorded, expected):
+    pw, b, page = chrome()
+    try:
+        page.set_content(SMS_DIALOG_HTML)
+        logs=[]
+        assert notices.resolve_blocking_dialogs(page, sms_ok=recorded, log=logs.append) == 1, logs
+        assert page.evaluate("window.smsChoice") == expected
+        page.locator("#country").click(timeout=2000)          # the form is reachable again
+    finally:
+        b.close(); pw.stop()
+
+
+def test_an_sms_consent_with_no_recorded_answer_is_left_for_the_candidate():
+    pw, b, page = chrome()
+    try:
+        page.set_content(SMS_DIALOG_HTML)
+        assert notices.resolve_blocking_dialogs(page, sms_ok=None) == 0
+        assert page.evaluate("window.smsChoice") is None
+    finally:
+        b.close(); pw.stop()

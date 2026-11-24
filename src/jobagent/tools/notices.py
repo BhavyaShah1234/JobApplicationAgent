@@ -35,14 +35,19 @@ COOKIE_DIALOG = re.compile(r"(?i)cookie (?:preference|setting)s?|manage cookies"
 PRIVACY_DIALOG = re.compile(r"(?i)privacy (?:policy|statement|notice)")
 DISABLE_ALL = re.compile(r"^\s*(?:disable all|reject all|decline all|deny all|only (?:necessary|essential)|necessary only)\s*$", re.I)
 SAVE_BUTTON = re.compile(r"^\s*(?:save(?: (?:and )?(?:continue|preferences|settings))?|confirm(?: my choices)?|accept|agree|ok|done|continue)\s*$", re.I)
+SMS_DIALOG = re.compile(r"(?i)short message service|\bSMS\b.{0,40}consent|consent.{0,40}\bSMS\b")
+SMS_YES = re.compile(r"^\s*i consent\b", re.I)
+SMS_NO = re.compile(r"^\s*i do not consent\b", re.I)
 AGREE_BOX = re.compile(r"(?i)\b(?:i )?(?:agree|accept|acknowledge|have read)\b")
 
 
-def resolve_blocking_dialogs(page, privacy_ok: bool = False, log=lambda m: None) -> int:
+def resolve_blocking_dialogs(page, privacy_ok: bool = False, log=lambda m: None, sms_ok: bool | None = None) -> int:
     """Open dialogs that sit over an application form and gate it (Dayforce: a Cookie Preferences dialog under an Amphenol Privacy
     Policy dialog). A cookie dialog gets its most private choice (Disable All, then Save). A privacy-policy dialog with an 'I agree'
     box is agreed to ONLY when `privacy_ok` (the candidate's profile says yes to privacy-notice acknowledgements); any other agreement
-    is left for a person. Never clicks Submit or Apply. Returns how many dialogs were closed."""
+    is left for a person. An SMS-consent dialog (Dayforce, FinThrive: it covers the whole form until answered) gets the candidate's recorded
+    answer: `sms_ok` True -> "I consent", False -> "I do not consent", None (no recorded answer) -> left for a person. Never clicks Submit
+    or Apply. Returns how many dialogs were closed."""
     done = 0
     for _ in range(4):
         progressed = False
@@ -61,6 +66,19 @@ def resolve_blocking_dialogs(page, privacy_ok: bool = False, log=lambda m: None)
                         box.check(timeout=3000)
                     d.get_by_role("button", name=SAVE_BUTTON).filter(visible=True).first.click(timeout=3000)
                     log("dialog: agreed to the privacy statement (owner's standing yes) and saved")
+                elif SMS_DIALOG.search(text[:300]):
+                    if sms_ok is None:
+                        log("dialog: an SMS consent is open and the profile records no answer: left for the candidate")
+                        continue
+                    choice = d.get_by_role("radio").filter(visible=True)
+                    want = SMS_YES if sms_ok else SMS_NO
+                    target = d.get_by_label(want).filter(visible=True)
+                    if not target.count():
+                        log("dialog: the SMS consent offers no matching choice: left for the candidate")
+                        continue
+                    target.first.check(timeout=3000)
+                    d.get_by_role("button", name=SAVE_BUTTON).filter(visible=True).first.click(timeout=3000)
+                    log(f"dialog: SMS consent {'given (owner standing yes)' if sms_ok else 'declined (owner standing no)'} and saved")
                 elif COOKIE_DIALOG.search(text[:200]):
                     off = d.get_by_role("button", name=DISABLE_ALL).filter(visible=True)
                     if off.count():
