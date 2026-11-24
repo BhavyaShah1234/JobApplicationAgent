@@ -405,6 +405,10 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             history.append(why)
             log(f"portal {host}: {why}")
             continue
+        if a.action == "fill" and (why := literal_fill_refusal(a.value, _label(frames, a))):
+            history.append(why)
+            log(f"portal {host}: {why}")
+            continue
         value = re.sub(r"\{CODE\[(\d+)\]\}", lambda m: code[int(m.group(1))] if int(m.group(1)) < len(code) else "",
                        a.value)  # one digit of a code split over several boxes (0-based)
         for k, v in {**values, "CODE": code}.items():
@@ -513,6 +517,19 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
 
 
 SOCIAL_LOGIN = re.compile(r"(?i)\b(?:continue|sign\s*in|log\s*in|login|sign\s*up)\s+with\s+(?:google|microsoft|apple|facebook|linkedin|indeed|github)\b|corporate login|single sign[- ]on")
+
+
+PLACEHOLDER = re.compile(r"\{[A-Z_]+(?:\[\d+\])?\}")
+
+
+def literal_fill_refusal(value: str, label: str) -> str | None:
+    """Why a typed value is refused (None when allowed). The sign-in agent may type only the approved placeholders (email, password,
+    names, phone, code). A literal it composed itself is a made-up fact: on the Ericsson SuccessFactors registration the model typed
+    'New York', '10001' and 'United States' (as the citizenship), none of which came from the candidate."""
+    if value and not PLACEHOLDER.search(value):
+        return (f"refused: \"{label}\" needs a fact about the candidate that was not given to you; never invent a value "
+                "(address, citizenship, dates, anything). If the form cannot be completed with the given placeholders answer need_human")
+    return None
 
 
 def social_login_refusal(url: str, label: str) -> str | None:

@@ -88,3 +88,11 @@ def test_a_social_login_button_is_refused_on_icims_so_the_agent_cannot_loop_on_i
 def test_other_buttons_and_other_sites_are_not_affected(url, label):
     from jobagent.tools.portal_agent import social_login_refusal
     assert social_login_refusal(url, label) is None
+
+
+def test_the_sign_in_agent_may_type_only_approved_placeholders_never_a_value_it_composed():
+    from jobagent.tools.portal_agent import literal_fill_refusal as r
+    for ok in ("{EMAIL}", "{PASSWORD}", "{FIRST_NAME}", "{LAST_NAME}", "{PHONE}", "{CODE}", "{CODE[3]}", "{LEGAL_FIRST_NAME}", ""):
+        assert r(ok, "x") is None, ok
+    for bad in ("New York", "10001", "United States", "India", "1990-01-01"):
+        assert "never invent" in (r(bad, "Citizenship 1") or ""), bad
