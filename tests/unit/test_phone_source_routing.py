@@ -69,3 +69,10 @@ def test_conflicting_phone_codes_remain_unresolved():
     field = Field(9, 'combobox', 'Country/Region Phone Code *',
                   options=['United States of America (+1)', 'India (+91)'], options_state='complete')
     assert PlannedFiller(facts, no_human).plan([field], allow_human=False)[9].value is None
+
+
+def test_a_number_box_that_normalises_what_was_typed_still_reads_back_as_the_same_number():
+    from jobagent.tools.forms import same_value
+    assert same_value("4.0", "4", "spin") and same_value("4", "4.0", "number") and same_value("1,000", "1000", "spin")
+    assert not same_value("4.0", "3", "spin") and not same_value("4.0", "", "spin")
+    assert same_value("abc", "abc", "spin")                        # non-numeric text falls through to the ordinary comparison

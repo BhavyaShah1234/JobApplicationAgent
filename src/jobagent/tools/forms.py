@@ -1061,6 +1061,11 @@ def same_value(want: str, got: str, kind: str, question: str = "", multiple: boo
         return {_norm(x) for x in want.split(";") if x.strip()} == {_norm(x) for x in got.split(";") if x.strip()}
     if kind == "file":  # the attached file's name
         return bool(got) and _norm(want.rsplit("/", 1)[-1]) in g
+    if kind in ("spin", "number"):                   # a number box normalises what is typed: 4.0 reads back as 4 (Dayforce's G.P.A.)
+        try:
+            return abs(float(want.replace(",", "").strip()) - float(got.replace(",", "").strip())) < 1e-9
+        except ValueError:
+            pass
     if w == g:
         return True
     if kind == "date_parts":
@@ -1076,7 +1081,8 @@ def same_value(want: str, got: str, kind: str, question: str = "", multiple: boo
 
 OPTIONS_JS = r"""() => [...new Set([...(window.__jobagentAll ? window.__jobagentAll('[role=option], [role=menuitem], [data-automation-id=promptOption]') : document.querySelectorAll('[role=option], [role=menuitem], [data-automation-id=promptOption]'))]
   .filter(e => { const r = e.getBoundingClientRect(); return r.width > 1 && r.height > 1
-                 && !e.closest('[data-automation-id=selectedItemList], [data-automation-id=selectedItem]'); })
+                 && !e.closest('[data-automation-id=selectedItemList], [data-automation-id=selectedItem]')
+                 && !e.closest('header, nav, footer, [role=navigation], [role=banner], [role=contentinfo]'); })   // the site's own menus are never options
   .map(e => (e.innerText || e.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean))]"""
 
 _NO_OPTIONS = re.compile(r"(?i)^(no (options|results|items|matches)( found)?\.?|loading\.*|type to search|start typing.*|"
@@ -1208,7 +1214,22 @@ def _open_options(frame: Frame, loc, page: Page) -> list[str]:
         frame.wait_for_function("pattern => {const skip=new RegExp(pattern,'i');return ("+OPTIONS_JS+")().some(t=>!skip.test(t));}",
                                 arg=_NO_OPTIONS.pattern.removeprefix('(?i)'),timeout=1500)
     except Exception:pass
+    owned = _owned_options(loc)
+    if owned:
+        return [o for o in owned if not _NO_OPTIONS.match(o)]          # the list THIS control owns, not whatever else the page shows
     return [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
+
+
+def _owned_options(loc) -> list[str]:
+    """The options of the list a combobox names with aria-controls / aria-owns (Ant Design, react-select, ...), or [] when it names none
+    or the list holds no options. Reading only this list keeps unrelated menus (a header's links, another open picker) out."""
+    try:
+        return loc.evaluate("""e => { const id = e.getAttribute('aria-controls') || e.getAttribute('aria-owns'); if (!id) return [];
+            const root = e.getRootNode(); const list = (root.getElementById ? root.getElementById(id) : null) || document.getElementById(id);
+            if (!list) return [];
+            return [...new Set([...list.querySelectorAll('[role=option]')].map(o => (o.innerText || o.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean))]; }""") or []
+    except Exception:
+        return []
 
 
 def discover_options(page: Page, view: PageView, log=print, *, fields=None) -> None:

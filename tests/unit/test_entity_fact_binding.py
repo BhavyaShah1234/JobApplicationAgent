@@ -40,3 +40,37 @@ def test_section_headings_are_scoped_to_their_fact_rows_including_education_hist
     """Dayforce: 'Education History' was unknown, so no education fact could bind and every school field was asked."""
     from jobagent.filling.facts import entity_scope
     assert entity_scope(heading)==expected
+
+
+class _NoModel:
+    model_name='fixture'
+    def with_structured_output(self,schema,**kwargs):
+        return SimpleNamespace(invoke=lambda _:schema.model_validate({'mappings':[]}) if hasattr(schema,'model_validate') else None)
+
+
+REFS={'references':[{'question':'References','answer':[
+    {'first_name':'Nakul','last_name':'Gopalan','prefix':'Dr.','title':'Assistant Professor','company':'Logos Robotics Lab',
+     'email':'nakul.gopalan@asu.edu','phone':'6233329509'},
+    {'first_name':'Apurva','last_name':'Patel','title':'VP','company':'TGen','email':'apatel@tgen.org','phone':'6233329509'}]}],
+    'education':[{'question':'Degrees','answer':[{'school':['Arizona State University'],'degree':['Master of Science'],'gpa':'4.0'}]}]}
+
+
+@pytest.mark.parametrize('label,expected',[('First Name','Nakul'),('Last Name','Gopalan'),('Position Title','Assistant Professor'),
+                                           ('Email','nakul.gopalan@asu.edu'),('Business Phone','6233329509'),('Mobile Phone','6233329509'),
+                                           ('Company','Logos Robotics Lab')])
+def test_a_single_reference_row_takes_the_first_reference_from_the_profile(label,expected):
+    """Dayforce shows one 'References' row (no number): its fields are the first reference's."""
+    facts=compile_facts(REFS,'')
+    field=Field(id=1,kind='text',label=label,section='References')
+    from jobagent.filling.routing import candidates
+    found=candidates(field,facts)
+    values={x.value for x in found}
+    assert expected in values, (label,[(x.id,x.value,x.section) for x in found])
+    assert 'Apurva' not in values and 'Patel' not in values            # never the second reference's details in the first row
+
+
+def test_the_gpa_label_with_dots_binds_to_the_education_gpa():
+    facts=compile_facts(REFS,'')
+    from jobagent.filling.routing import candidates
+    found=candidates(Field(id=2,kind='spin',label='G.P.A.',section='Education History'),facts)
+    assert '4.0' in {x.value for x in found}

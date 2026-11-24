@@ -405,8 +405,10 @@ def compile_facts(data, raw_jd, reference_date=''):
                          'from':['From Date','Start Date'], 'start':['From Date','Start Date'],
                          'end':['End Date'], 'to':['End Date'], 'company':['Company','Company Name','Employer','Employer Name'], 'title':['Job Title','Position Title'],
                          'current':['Current','Currently work here','I currently work here','Current position'],
-                         'description':['Description','Responsibilities','Role Description'], 'gpa':['GPA','Grade Point Average'],
-                         'city':['City'], 'state':['State','Province'], 'country':['Country'], 'region':['Region','World region']}
+                         'description':['Description','Responsibilities','Role Description'], 'gpa':['GPA','G.P.A.','Grade Point Average'],
+                         'city':['City'], 'state':['State','Province'], 'country':['Country'], 'region':['Region','World region'],
+                         'first_name':['First Name','Given Name'], 'last_name':['Last Name','Family Name','Surname'], 'prefix':['Prefix','Title'],
+                         'phone':['Phone','Phone Number','Business Phone','Mobile Phone','Work Phone'], 'email':['Email','Email Address']}
                 import json
                 facts.append(Fact(source+f'/{i-1}',[q],json.dumps(row,ensure_ascii=False),source+f'/{i-1}',row_section,
                                   instructions=entry.get('instructions',''),record=True,tools=tools))
