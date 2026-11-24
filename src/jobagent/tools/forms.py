@@ -1374,15 +1374,16 @@ def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
     current = loc.evaluate(WIDGET_VALUE_JS)
     if current and _norm(current) == _norm(answer):
         return current
-    panel = frame.locator(f'[id="{base}_listbox"]')
+    panel = frame.locator(f'[id="{base}_icimsDropdown_ctnr"]')      # the open panel: a search box and the results list
+    results = frame.locator(f'[id="{base}_dropdown-results"]')
     try:
         loc.click(timeout=5000)
         panel.wait_for(state="visible", timeout=5000)
-        search = panel.locator("input[type=text], input[type=search], input:not([type])").first
+        search = panel.locator("input.dropdown-search, input[type=text], input[type=search]").first
         if search.count():
             search.fill(str(answer))
-            page.wait_for_timeout(900)
-        items = panel.locator("li, [role=option]")
+            page.wait_for_timeout(1200)
+        items = (results if results.count() else panel).locator("li, [role=option]")
         texts = [t.strip() for t in items.all_inner_texts() if t.strip() and not re.match(r"(?i)^[—–-]*\s*(make a selection|select)", t.strip())]
         opt = strict_option(answer, texts) if strict else close_option(answer, texts)
         if opt is None:

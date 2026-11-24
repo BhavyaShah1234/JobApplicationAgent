@@ -132,12 +132,12 @@ ICIMS_DROPDOWN = """<!doctype html><html><head><meta charset="utf-8"></head><bod
 <select id="c" name="c" class="dropdown-hide" role="combobox" aria-controls="c_listbox" style="display:none"><option value="1" selected>United States</option></select>
 <a id="c_icimsDropdown" class="dropdown-select" tabindex="0" role="combobox" aria-labelledby="lbl" aria-label="Country" aria-expanded="false"
    style="display:inline-block;border:1px solid #888;width:220px;height:28px"><span id="c_fake" class="dropdown-text">— Make a Selection —</span></a>
-<div id="c_listbox" style="display:none;border:1px solid #888;width:220px"><input type="text" id="q" aria-label="Search">
-<ul id="items" style="margin:0;padding:0;list-style:none"></ul></div>
+<div id="c_icimsDropdown_ctnr" class="dropdown-container" aria-owns="c_dropdown-results" style="display:none;border:1px solid #888;width:220px"><input type="text" class="dropdown-search" id="q" aria-label="Search">
+<ul id="c_dropdown-results" role="listbox" style="margin:0;padding:0;list-style:none"></ul></div>
 <script>
-const ALL=["— Make a Selection —","United States","Canada","India","Åland Islands"], ul=document.getElementById('items'), q=document.getElementById('q'),
- a=document.getElementById('c_icimsDropdown'), box=document.getElementById('c_listbox');
-function draw(){ul.innerHTML='';ALL.filter(x=>!q.value||x.toLowerCase().includes(q.value.toLowerCase())).forEach(x=>{const li=document.createElement('li');li.textContent=x;li.style.padding='4px';
+const ALL=["— Make a Selection —","United States","Canada","India","Åland Islands"], ul=document.getElementById('c_dropdown-results'), q=document.getElementById('q'),
+ a=document.getElementById('c_icimsDropdown'), box=document.getElementById('c_icimsDropdown_ctnr');
+function draw(){ul.innerHTML='';ALL.filter(x=>!q.value||x.toLowerCase().includes(q.value.toLowerCase())).forEach(x=>{const li=document.createElement('li');li.setAttribute('role','option');li.textContent=x;li.style.padding='4px';
   li.onclick=()=>{document.getElementById('c_fake').textContent=x;box.style.display='none'};ul.appendChild(li)})}
 a.onclick=()=>{box.style.display='block';draw()}; q.oninput=draw;
 </script></body></html>"""
