@@ -244,6 +244,14 @@ def _sms_consent_answer(ctx: dict):
     return None
 
 
+def _sms_phone(ctx: dict):
+    """The profile's own phone ({number, country_code, country}) for a dialog that asks for it, or None."""
+    for _, e in applicant.entries(ctx.get("_applicant") or {}):
+        if e.get("question") == "Phone" and isinstance(e.get("answer"), dict):
+            return e["answer"]
+    return None
+
+
 def registration_profile(job_dir: Path, company: str, model, log=print, docs_dir: Path | None = None):
     """The provider the sign-in agent calls when a REGISTRATION form requires more than identity: citizenship from the applicant
     file and the address this application uses for the job (the existing job-city logic and its cache), nothing invented."""
@@ -1888,7 +1896,7 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         log(f"apply: page {page_no}{' (again: ' + '; '.join(errors)[:120] + ')' if known else ''}: {heads[:100]} "
             f"({len(view.fields)} fields)")
         from jobagent.tools import notices            # dialogs that gate the form, whichever filler runs (Dayforce: cookie + privacy dialogs)
-        if notices.resolve_blocking_dialogs(page, privacy_ok=_privacy_acknowledgement_allowed(ctx), log=log, sms_ok=_sms_consent_answer(ctx)):
+        if notices.resolve_blocking_dialogs(page, privacy_ok=_privacy_acknowledgement_allowed(ctx), log=log, sms_ok=_sms_consent_answer(ctx), sms_phone=_sms_phone(ctx)):
             view = forms.read_page(page)
         try:
             if strategy in ('experimental','adaptive'):

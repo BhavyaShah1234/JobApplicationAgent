@@ -90,3 +90,41 @@ def test_an_sms_consent_with_no_recorded_answer_is_left_for_the_candidate():
         assert page.evaluate("window.smsChoice") is None
     finally:
         b.close(); pw.stop()
+
+
+SMS_WITH_PHONE = """<html><body><h1>Application</h1>
+<div role=dialog id=sms style="position:fixed;inset:20px;background:#fff;z-index:999"><h2>Short Message Service (SMS) Consent</h2>
+<label><input type=radio name=sms value=no checked onclick="document.getElementById('more').hidden=true"> I do not consent to receive SMS messages</label>
+<label><input type=radio name=sms value=yes onclick="document.getElementById('more').hidden=false"> I consent to receive SMS messages</label>
+<div id=more hidden><label for=pn>Phone Number</label><input id=pn type=text>
+<input role=combobox id=cc aria-label="Country code" list=ccl><datalist id=ccl></datalist>
+<div id=opts></div><p id=err hidden>Phone number is required</p></div>
+<script>
+const countries=['\U0001F1E6\U0001F1EC +1 Antigua and Barbuda','\U0001F1FA\U0001F1F8 +1 United States of America'];
+cc.addEventListener('input',()=>{opts.innerHTML='';countries.filter(c=>c.toLowerCase().includes(cc.value.toLowerCase())).forEach(c=>{
+  const o=document.createElement('div');o.setAttribute('role','option');o.textContent=c;o.onclick=()=>{window.dial=c;cc.value=c;opts.innerHTML=''};opts.appendChild(o)})});
+</script>
+<button onclick="if(!pn.value||!window.dial){err.hidden=false;return}window.saved={phone:pn.value,dial:window.dial};document.getElementById('sms').remove()">Save</button></div></body></html>"""
+
+
+def test_consenting_to_sms_enters_the_profiles_own_phone_and_the_right_dial_code():
+    pw, b, page = chrome()
+    try:
+        page.set_content(SMS_WITH_PHONE)
+        logs = []
+        phone = {"number": "(623) 332-9509", "country_code": "+1", "country": "United States"}
+        assert notices.resolve_blocking_dialogs(page, sms_ok=True, sms_phone=phone, log=logs.append) == 1, logs
+        saved = page.evaluate("window.saved")
+        assert saved["phone"] == "6233329509" and "United States" in saved["dial"]      # not the first +1 country
+    finally:
+        b.close(); pw.stop()
+
+
+def test_consenting_to_sms_without_a_profile_phone_is_left_for_the_candidate():
+    pw, b, page = chrome()
+    try:
+        page.set_content(SMS_WITH_PHONE)
+        assert notices.resolve_blocking_dialogs(page, sms_ok=True, sms_phone=None) == 0
+        assert page.evaluate("window.saved") is None
+    finally:
+        b.close(); pw.stop()

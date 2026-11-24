@@ -41,13 +41,15 @@ SMS_NO = re.compile(r"^\s*i do not consent\b", re.I)
 AGREE_BOX = re.compile(r"(?i)\b(?:i )?(?:agree|accept|acknowledge|have read)\b")
 
 
-def resolve_blocking_dialogs(page, privacy_ok: bool = False, log=lambda m: None, sms_ok: bool | None = None) -> int:
+def resolve_blocking_dialogs(page, privacy_ok: bool = False, log=lambda m: None, sms_ok: bool | None = None,
+                            sms_phone: dict | None = None) -> int:
     """Open dialogs that sit over an application form and gate it (Dayforce: a Cookie Preferences dialog under an Amphenol Privacy
     Policy dialog). A cookie dialog gets its most private choice (Disable All, then Save). A privacy-policy dialog with an 'I agree'
     box is agreed to ONLY when `privacy_ok` (the candidate's profile says yes to privacy-notice acknowledgements); any other agreement
     is left for a person. An SMS-consent dialog (Dayforce, FinThrive: it covers the whole form until answered) gets the candidate's recorded
     answer: `sms_ok` True -> "I consent", False -> "I do not consent", None (no recorded answer) -> left for a person. Never clicks Submit
-    or Apply. Returns how many dialogs were closed."""
+    or Apply. Consenting reveals a required phone number and dial code in the dialog: they come from `sms_phone` ({number, country_code,
+    country}, the profile's own phone), never invented; without it the dialog is left for a person. Returns how many dialogs were closed."""
     done = 0
     for _ in range(4):
         progressed = False
@@ -77,6 +79,21 @@ def resolve_blocking_dialogs(page, privacy_ok: bool = False, log=lambda m: None,
                         log("dialog: the SMS consent offers no matching choice: left for the candidate")
                         continue
                     target.first.check(timeout=3000)
+                    if sms_ok:
+                        number = d.get_by_role("textbox", name=re.compile(r"phone number", re.I)).filter(visible=True)
+                        if number.count():
+                            if not (sms_phone or {}).get("number"):
+                                log("dialog: the SMS consent asks for a phone number and the profile has none: left for the candidate")
+                                continue
+                            code = d.get_by_role("combobox").filter(visible=True)
+                            if code.count():
+                                code.first.click(timeout=3000)
+                                code.first.fill(str(sms_phone.get("country") or sms_phone.get("country_code") or ""))
+                                page.wait_for_timeout(600)
+                                dial = re.escape(str(sms_phone.get("country_code") or ""))
+                                page.get_by_role("option").filter(has_text=re.compile(dial + r"\b.*" + re.escape(str(sms_phone.get("country") or "")), re.I)
+                                                                 ).filter(visible=True).first.click(timeout=3000)
+                            number.first.fill(re.sub(r"\D", "", str(sms_phone["number"])))
                     d.get_by_role("button", name=SAVE_BUTTON).filter(visible=True).first.click(timeout=3000)
                     log(f"dialog: SMS consent {'given (owner standing yes)' if sms_ok else 'declined (owner standing no)'} and saved")
                 elif COOKIE_DIALOG.search(text[:200]):
