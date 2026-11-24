@@ -235,3 +235,21 @@ def test_a_blank_page_with_a_datadome_frame_is_that_challenge_for_the_human_not_
 def test_a_blank_page_without_a_verification_frame_stays_unknown_and_a_tracking_frame_is_not_a_challenge():
     assert challenge.detect(_BlankPage([])).kind == "unknown"
     assert challenge.detect(_BlankPage(["about:blank", "https://www.googletagmanager.com/ns.html"])).kind == "unknown"
+
+
+def test_access_temporarily_restricted_is_a_stop_not_a_puzzle_and_is_never_waited_on(monkeypatch, tmp_path):
+    class RestrictedPage(Page):
+        pass
+    asked = []
+    page, controller = setup(monkeypatch, tmp_path, lambda p: None, SimpleNamespace(ask=lambda *a, **kw: asked.append(1)))
+    block = challenge.Challenge("access-restricted", page.url, "Verification detected")
+    with pytest.raises(challenge.Blocked) as e:
+        controller.wait(page, block)
+    assert "Do not retry now" in str(e.value) and not asked          # no human request is raised for it
+
+
+def test_the_restriction_page_text_is_recognised():
+    text = ("Access is temporarily restricted\\nWe detected unusual activity from your device or network.\\nReasons may include:\\n"
+            "Rapid taps or clicks\\nAutomated (bot) activity on your network")
+    assert any(kind == "access-restricted" and pat.search(text) for kind, pat in challenge._TEXT_SIGNS)
+    assert not any(kind == "access-restricted" and pat.search("Apply now. Access to benefits is restricted to employees.") for kind, pat in challenge._TEXT_SIGNS)

@@ -48,6 +48,9 @@ def safe_url(url):
 _TEXT_SIGNS = [
     ("cloudflare", re.compile(r"(?i)just a moment\.\.\.|checking (if the site connection is secure|your browser)|"
                               r"verify(ing)? you are (a )?human|performing security verification|cf-chl|ray id:.*cloudflare|performance & security by cloudflare")),
+    # The portal has restricted this network for a while ("Access is temporarily restricted", DataDome / SmartRecruiters): there is
+    # nothing to solve; further attempts only extend it. The run stops and the candidate waits.
+    ("access-restricted", re.compile(r"(?i)access is temporarily restricted|temporarily (?:restricted|blocked) (?:your )?access")),
     ("google-unusual-traffic", re.compile(r"(?i)our systems have detected unusual traffic|/sorry/index")),
     ("human-verification", re.compile(r"(?is)\bverification required\b.{0,1800}\b(?:slide right to secure your access|"
                                        r"we detected unusual activity from your (?:device|network))\b")),
@@ -162,6 +165,9 @@ class Controller:
 
     def wait(self, page, block, timeout_s=900):
         from jobagent.tools.hitl import HitlTimeout
+        if block.kind == 'access-restricted':
+            raise Blocked(f"{block.url}: the portal has temporarily restricted this network ('Access is temporarily restricted'). "
+                          "Do not retry now: wait (usually an hour or more), then run the application once.")
         if self.desktop_fallback and block.kind != 'unknown':
             raise DesktopFallback(f'{block.kind} detected in Docker; opening the desktop application')
         if self.cycles >= 2 or self.hitl is None:
