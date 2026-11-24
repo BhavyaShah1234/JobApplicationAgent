@@ -34,9 +34,9 @@ So it is not the email's account state, not the agent's clicking, and not stale 
 agent's Chrome is started with a remote-debugging port (so it can be attached to), an ordinary Chrome is not. iCIMS appears to treat a
 remote-controlled browser as automated and withholds registration from it. Still an inference; it fits every row above.
 
-**Consequence: a person must register in an ordinary browser window, not in a window the agent controls.** That rules out "option B" (the
-candidate clicking through in the agent's own desktop window) for iCIMS registration. The flag `--candidate-start` stays available (opt-in) for
-portals where the first steps are the problem, not the browser; it does not fix iCIMS.
+**Consequence: a person must register in an ordinary browser window, not in a window the agent controls.** That ruled out "option B" (the
+candidate clicking through in the agent's own desktop window); it was built, tried on Peraton, shown not to help, and **reverted on 2026-11-24**
+(the `--candidate-start` flag no longer exists).
 
 ## 2. A second, separate defect (fixed): the Google detour
 
@@ -90,9 +90,4 @@ forgot-password route and never a social login; an authoritative rule was added 
   iCIMS portal, because Peraton's registration path (section 1) shows no verification email at all.
 - **Hand-off windows hide.** The desktop Chrome for a CAPTCHA can sit behind other windows; there is no window-raising tool installed.
 - **The agent calls the Identity-verification stop "stuck"** on Amazon-style portals; it is actually waiting for the candidate.
-- **Option B (built 2026-11-24, opt-in; tried on Peraton, did not help for iCIMS registration, see 1a):** `jobagent apply <job dir> <company> --no-submit --browser-mode desktop --candidate-start
-  --desktop-allow-origin https://login.icims.com`. The agent opens the posting in its own desktop Chrome window and clicks nothing. The person
-  clicks Apply, enters the email, presses Next, passes any check, and stops on the application's profile page (several fields, not a sign-in);
-  the agent then fills the page as usual and asks the person to type any password field. The person, not the agent, passes iCIMS's checks.
-  Default behavior is unchanged without the flag; to go back, simply do not pass it (or revert the commit that added `_candidate_start`).
 - **Peraton end-to-end validation** is blocked until a person creates the account (section 3, step 1).

@@ -1142,57 +1142,6 @@ def exit_code(result: dict) -> int:
     return EXIT_FAILED
 
 
-CANDIDATE_START_MIN_FIELDS = 6       # a profile or application page has many fields; a sign-in or email step has one to three
-
-
-def _application_page_showing(page: Page) -> bool:
-    """Whether the page is an application form (several real fields, not just a sign-in or an email step)."""
-    try:
-        view = forms.read_page(page)
-    except Exception:
-        return False
-    from jobagent.filling.planned import credentials_only_page
-    real = [f for f in view.fields if f.kind not in ('file', 'password')]
-    return len(real) >= CANDIDATE_START_MIN_FIELDS and not credentials_only_page(view.fields)
-
-
-def _candidate_start(page: Page, hitl, log, timeout_s: float = 1800) -> None:
-    """The candidate drives the first steps; the agent takes over at the application page.
-
-    For portals that withhold sign-up from an automated browser (iCIMS: a person gets the registration form, the agent a puzzle and a
-    login-only page), the candidate clicks Apply, enters the email, presses Next and passes any check in the agent's own desktop window.
-    The agent clicks nothing until an application page (several fields) is showing, then fills it as usual. Nothing is bypassed: the
-    person, not the agent, passes the portal's checks.
-
-    Raises:
-        challenge.Blocked: There is nobody to ask, or the candidate did not reach the application page in time.
-    """
-    if hitl is None:
-        raise challenge.Blocked("--candidate-start needs someone to answer: run it from a terminal with the agent's hand-off enabled")
-    if _application_page_showing(page):
-        return
-    log("apply: waiting for the candidate to reach the application page in the desktop window (the agent clicks nothing until then)")
-    deadline = time.monotonic() + timeout_s
-    first = True
-    while not _application_page_showing(page) and time.monotonic() < deadline:
-        # An answer (`done`) only asks for a check: when the page is not there yet the agent keeps waiting and asks again.
-        try:
-            hitl.ask(("In the agent's desktop Chrome window (Alt+Tab to the one whose page is the job posting): click Apply, enter your "
-                      "email, press Next, pass any check, and stop on the application's profile page (the page with your name, phone and "
-                      "resume fields; if the portal wants a password for a new account, set it there yourself). The agent continues by "
-                      "itself when that page is showing; you do not need to answer anything." if first else
-                      "The application page is not showing yet in the agent's desktop window. Keep going (Apply, email, Next, any check) "
-                      "until the profile page with your name, phone and resume fields is on screen; the agent continues by itself."),
-                     done_when=lambda: _application_page_showing(page), timeout_s=max(5.0, deadline - time.monotonic()))
-        except Exception as exc:
-            log(f"apply: the candidate hand-off ended ({type(exc).__name__}): {str(exc)[:100]}")
-            break
-        first = False
-    if not _application_page_showing(page):
-        raise challenge.Blocked("The application page was not reached in the desktop window; run again with --candidate-start and "
-                                "stop on the profile page")
-
-
 def _candidate_types_passwords(page: Page, view, env: dict, log) -> bool:
     """When the only thing left on a page is its empty password field(s), ask the candidate to type them and wait.
 
@@ -1803,7 +1752,7 @@ def recover_desktop_form(page, log=print):
 def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, log=print, model=None,
         hitl=None, ask_s: float = 1800, model_name: str | None = None, at_review=None,
         already_open: bool = False, observe_s: float = 0, filling_strategy: str | None = None,
-        _filling_metrics=None, candidate_start: bool = False) -> dict:
+        _filling_metrics=None) -> dict:
     """Fill the application to its review screen. Never clicks Submit itself: `at_review(page, view, result)` (step 13's
     approval and submission) is called there, in the same browser session, when given."""
     job_dir = Path(job_dir)
@@ -1821,19 +1770,14 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         model.callbacks = list(model.callbacks or []) + [PlannerAudit(audit, getattr(model, 'model_name', 'configured writer'))]
         if _filling_metrics is not None:model.callbacks.append(_filling_metrics)
     if already_open:
-        if candidate_start:
-            # First: the candidate drives the early steps on a page the generic checks cannot judge (an iCIMS posting is a blank frame
-            # until it is opened); the checks below run on the application page they leave behind.
-            _candidate_start(page, hitl, log, timeout_s=ask_s)
         recover_desktop_form(page, log)
         challenge.guard(page)
         if gone := availability.check_page(page):
             raise gone
         # Listing pages can have utility controls (for example a language picker).
         # Use the same guarded navigation as Docker, even when those fields exist.
-        if not candidate_start:
-            _start(page, url, ensure_signed_in or (lambda u: None), log,
-                   fallback=ctx['_jd'].get('source_url'), hitl=hitl, already_open=True)
+        _start(page, url, ensure_signed_in or (lambda u: None), log,
+               fallback=ctx['_jd'].get('source_url'), hitl=hitl, already_open=True)
         if not forms.read_page(page).fields:
             challenge.wait_for_user(page, challenge.Challenge('unknown', challenge.safe_url(page.url),
                                     'Desktop application has not loaded'), hitl, log, timeout_s=900)
