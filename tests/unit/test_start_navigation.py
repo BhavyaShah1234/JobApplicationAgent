@@ -551,3 +551,27 @@ def test_an_apply_button_that_opens_the_application_in_a_new_tab_is_followed_in_
             f"<button type=button onclick=\"window.open('{app}','_blank')\">Apply Now</button>")
     state, view = start(html, routes={app: f"<html><body><h1>Application</h1>{FORM3}</body></html>"}, url=job)
     assert state["url"] == app and len([f for f in view.fields if f.kind != "file"]) >= 3
+
+
+def _fields(*specs):
+    return type("V", (), {"fields": [forms.Field(i, k, label) for i, (k, label) in enumerate(specs)]})()
+
+
+def test_one_page_with_the_account_fields_and_the_whole_application_is_the_application_not_a_sign_in():
+    """SuccessFactors (Ericsson): email, password, address, citizenship, six eligibility questions, terms, Apply on ONE page."""
+    page = _fields(("email", "Email Address"), ("password", "Choose Password"), ("password", "Retype Password"),
+                   ("text", "First Name"), ("text", "Last Name"), ("text", "Phone Number"), ("text", "City"), ("text", "Postal Code"),
+                   ("combobox", "Citizenship 1"), ("select", "Country/Region of Residence"),
+                   ("combobox", "Do you have a potential Conflict of Interest?"), ("combobox", "Have you previously been employed by Ericsson?"),
+                   ("combobox", "Are you currently eligible to work in the United States?"), ("combobox", "Do you require sponsorship?"))
+    assert A._account_with_application(page) is True
+
+
+def test_a_plain_registration_or_sign_in_page_stays_with_the_sign_in_agent():
+    registration = _fields(("email", "Email Address"), ("password", "Password"), ("password", "Retype Password"),
+                           ("text", "First Name"), ("text", "Last Name"), ("text", "Phone Number"), ("checkbox", "I accept the terms"))
+    signin = _fields(("email", "Email"), ("password", "Password"))
+    nopass = _fields(*[("text", f"Question {i}") for i in range(12)])
+    assert A._account_with_application(registration) is False
+    assert A._account_with_application(signin) is False
+    assert A._account_with_application(nopass) is False                    # no password: not an account page at all

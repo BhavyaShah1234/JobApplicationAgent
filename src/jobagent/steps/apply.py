@@ -1557,6 +1557,18 @@ def _require_application_page(view: forms.PageView) -> None:
                            "no application questions were planned or answered. Verify the posting's application link.")
 
 
+IDENTITY_FIELD = re.compile(r"(?i)e-?mail|password|first name|last name|middle name|given name|family name|surname|phone|user\s*name|retype|confirm")
+
+
+def _account_with_application(view: forms.PageView) -> bool:
+    """One page that holds the account fields AND the application (SuccessFactors: email, password, address, citizenship,
+    conflict-of-interest and eligibility questions, terms, then 'Apply'). It is the application form, filled like any other
+    (the candidate types the password; nothing is sent without their approval), not a sign-in for the sign-in agent."""
+    if not any(f.kind == "password" for f in view.fields):
+        return False
+    return len([f for f in view.fields if f.kind not in ("password", "file") and not IDENTITY_FIELD.search(f.label)]) >= 8
+
+
 def _authentication_page(view: forms.PageView) -> bool:
     """Recognize credentials before the application planner sees them, including email-first sign-in."""
     if any(f.kind == "password" for f in view.fields):
@@ -1606,7 +1618,7 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
             raise gone
         response = None  # the status only describes the first load of a URL
         pw = any(f.kind == "password" for f in view.fields)
-        if _authentication_page(view) and not signed:
+        if _authentication_page(view) and not signed and not _account_with_application(view):
             if not pw and any(any(p.fullmatch(b.strip()) for p in START) or
                               re.search(r"(?i)^(submit|send|finish|complete)\s+((my|your|this)\s+)?application\b", b.strip())
                               for b in view.buttons):
@@ -1637,7 +1649,7 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
                 re.fullmatch(r'(?i)(?:(?:job|your|my) )?application(?: progress)?|apply|my progress',h.strip())
                 for h in view.headings):
             return view  # Resume an optional application step; startup never clicks its navigation.
-        if len([f for f in view.fields if f.kind != "file"]) >= 3 and not pw:
+        if len([f for f in view.fields if f.kind != "file"]) >= 3 and (not pw or _account_with_application(view)):
             return view
         if forms.decline_cookies(page, view, log):          # a consent banner can sit over the Apply button (Ericsson)
             view = forms.read_page(page)
