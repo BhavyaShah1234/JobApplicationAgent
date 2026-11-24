@@ -412,3 +412,25 @@ def test_footer_location_does_not_hide_a_real_applicant_language_question(page, 
     page.set_content('<footer><'+wrapper+'><label for=language>'+label+'</label><select id=language '+required+'><option>English</option><option>Deutsch</option><option>Français</option></select></'+wrapper+'></footer>')
     fields = forms.read_page(page).fields
     assert len(fields) == 1 and fields[0].label == label
+
+
+def test_documents_are_uploaded_first_and_values_typed_are_not_lost_to_a_resume_parser(page,tmp_path):
+    """Dayforce (Amphenol): ~3 s after the resume upload the portal rewrites the name and wipes address/city; the filler used to type first."""
+    from jobagent.filling.facts import Fact
+    from jobagent.filling.planned import PlannedFiller
+    pdf=tmp_path/'resume.pdf';pdf.write_bytes(b'%PDF-1.4 resume fixture')
+    page.set_content('''<h1>Application</h1>
+      <label for=fn>First Name</label><input id=fn>
+      <label for=city>City</label><input id=city>
+      <label for=resume>Resume</label><input id=resume type=file>
+      <script>window.order=[];
+        for (const id of ['fn','city']) document.getElementById(id).addEventListener('input',()=>{window.order.push(id)});
+        document.getElementById('resume').addEventListener('change',()=>{window.order.push('upload');setTimeout(()=>{
+        document.getElementById('fn').value='Parsed';document.getElementById('city').value=''},2500)})</script>''')
+    facts=[Fact('fn',['First Name'],'Ada','applicant/identity/first'),Fact('city',['City'],'Mesa','applicant/address/city')]
+    filler=PlannedFiller(facts,lambda _:pytest.fail('nothing here needs the candidate'))
+    result=filler.fill(page,files={'resume':str(pdf)},advance_pages=False)
+    assert page.locator('#fn').input_value()=='Ada' and page.locator('#city').input_value()=='Mesa'      # typed AFTER the parser had its say
+    assert result['state']=='page_complete'
+    order=page.evaluate('window.order')
+    assert order[0]=='upload' and order.count('upload')==1          # the document goes first; nothing typed before the parser has had its say

@@ -87,6 +87,24 @@ class Supported(BaseModel):
     supported_ids: list[int] = Field(default_factory=list)
 
 
+def settle_after_upload(page,min_s=6.0,max_s=25.0,log=None):
+    """After a document upload: wait until the form's values stop changing. A portal that parses the resume fills and clears fields a few
+    seconds after the upload; filling before that is lost. Waits at least `min_s` (the parse starts late), then until the values have been
+    unchanged for two consecutive seconds, at most `max_s`."""
+    import time as _t
+    snapshot="() => JSON.stringify([...document.querySelectorAll('input:not([type=file]):not([type=hidden]), textarea, select')].map(e => e.type==='checkbox'||e.type==='radio' ? e.checked : e.value))"
+    start=_t.monotonic();last=None;stable=0
+    while _t.monotonic()-start<max_s:
+        page.wait_for_timeout(1000)
+        try:current=page.evaluate(snapshot)
+        except Exception:continue
+        stable=stable+1 if current==last else 0
+        last=current
+        if _t.monotonic()-start>=min_s and stable>=2:
+            break
+    if log:log(f'apply: the form settled {_t.monotonic()-start:.0f}s after the upload')
+
+
 class PlannedFiller:
     engine_name = 'experimental'
     ROW_ADD_TIMEOUT_S = 8.0
@@ -557,7 +575,9 @@ class PlannedFiller:
                             decisions[f.id]=Decision(role,'document role')
                     # Parent controls first; always refresh the inventory after each mutation.
                     conditionals={f.id for f in todo if unlisted_school(f,view,self.facts) is not None}
-                    order=sorted(todo,key=lambda f:(2 if f.id in conditionals else 0 if norm(f.label) in ('country','how did you hear about this position') else 1,f.id))
+                    # Documents FIRST: a portal that parses an uploaded resume rewrites the personal fields a few seconds later (Dayforce
+                    # replaced the name and wiped the address, LinkedIn and city), so everything typed before the upload was lost and re-typed.
+                    order=sorted(todo,key=lambda f:(-1 if f.kind=='file' else 2 if f.id in conditionals else 0 if norm(f.label) in ('country','how did you hear about this position') else 1,f.id))
                     changed=False;attempted=set()
                     for old in order:
                         fresh=live.current()
@@ -592,6 +612,7 @@ class PlannedFiller:
                             chosen=forms.fill_field(page,fresh,f,value,files,strict=f.kind in ('select','combobox'),
                                 **({'alternatives':alternatives} if alternatives and f.kind=='combobox' else {}),
                                 **({'before_upload':proof.bind,'upload_confirmation':proof.verify} if proof else {}))
+                            if f.kind=='file':settle_after_upload(page,log=getattr(self,'log',None))
                             if live.changed():
                                 after=live.capture();actual=next((x for x in after.fields if key(x)==key(f)),None)
                             else:
