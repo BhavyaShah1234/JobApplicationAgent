@@ -74,3 +74,19 @@ def test_the_gpa_label_with_dots_binds_to_the_education_gpa():
     from jobagent.filling.routing import candidates
     found=candidates(Field(id=2,kind='spin',label='G.P.A.',section='Education History'),facts)
     assert '4.0' in {x.value for x in found}
+
+
+def test_a_form_with_its_own_middle_name_field_gets_the_legal_first_name_split_into_first_and_middle():
+    """Dayforce splits 'Bhavya Minesh' itself: First Name read back 'Bhavya' while the fact said 'Bhavya Minesh'."""
+    from jobagent.filling.adapter import _split_name_for_middle_field
+    from jobagent.filling.routing import candidates
+    data={'identity':[{'question':'Legal name','answer':{'first':'Ada Marie','middle':'','last':'Lovelace'}}]}
+    facts=compile_facts(data,'')
+    with_middle=[Field(id=1,kind='text',label='First Name'),Field(id=2,kind='text',label='Middle Name'),Field(id=3,kind='text',label='Last Name')]
+    split=_split_name_for_middle_field(facts,with_middle)
+    vals=lambda label:{x.value for x in candidates(Field(id=9,kind='text',label=label),split)}
+    assert vals('First Name')=={'Ada'} and vals('Middle Name')=={'Marie'} and vals('Last Name')=={'Lovelace'}
+    # no Middle Name field on the form: the first name stays whole; a recorded middle name is never overridden
+    assert _split_name_for_middle_field(facts,[Field(id=1,kind='text',label='First Name')])==facts
+    recorded=compile_facts({'identity':[{'question':'Legal name','answer':{'first':'Ada Marie','middle':'Q','last':'L'}}]},'')
+    assert _split_name_for_middle_field(recorded,with_middle)==recorded

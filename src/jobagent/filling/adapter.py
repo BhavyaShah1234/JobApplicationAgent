@@ -6,6 +6,27 @@ from .facts import compile_facts,Decision,Fact,key,norm,entity_scope
 from .planned import PlannedFiller,read_view
 
 
+def _split_name_for_middle_field(facts, fields):
+    """A form with its own Middle Name field (Dayforce) splits a multi-word first name itself, so the First Name box read back different from
+    what was typed. When the legal first name has several words and no middle name is recorded, the first word is the First Name and
+    the rest the Middle Name, both derived from the one recorded legal first name (same fact id, so the provenance stays)."""
+    import re
+    from dataclasses import replace
+    from .facts import Fact,entity_scope
+    if not any(re.fullmatch(r'(?i)\s*middle\s*(?:name|initial)?\s*\*?\s*',f.label or '') and not entity_scope(f.section) for f in fields):
+        return facts
+    first=[x for x in facts if x.authority=='owner' and not x.record and not x.section and x.id.endswith('/Legal name/answer/first')]
+    middle=[x for x in facts if x.id.endswith('/Legal name/answer/middle') and (x.value or '').strip()]
+    if len(first)!=1 or middle:return facts
+    words=first[0].value.split()
+    if len(words)<2:return facts
+    out=[replace(first[0],value=words[0],source=first[0].source+'; first word of the legal first name (the form has a Middle Name field)') if x is first[0] else x
+         for x in facts if not (x.id.endswith('/Legal name/answer/middle') and not (x.value or '').strip())]     # the empty placeholder gives way to the real value
+    out.append(Fact(first[0].id+'.rest',['Middle Name','Middle Initial'],' '.join(words[1:]),first[0].source+'; rest of the legal first name (the form has a Middle Name field)',
+                    authority='owner'))
+    return out
+
+
 def _portal_education_facts(facts, view):
     """Apply an explicit one-school instruction while preserving original source IDs."""
     import re
@@ -232,6 +253,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                     facts.append(Fact('condition:'+str(field.id),[field.label],conditional.value,conditional.source,field.section,
                         instructions='Leave blank' if conditional.value=='' else ''))
         from .education import selection_context
+        facts=_split_name_for_middle_field(facts,fields)
         return selection_context(_portal_education_facts(facts+list(ctx.get('_experimental_learned_facts',{}).values()),
                                  live.view if live else None),live.view if live else None)
 
