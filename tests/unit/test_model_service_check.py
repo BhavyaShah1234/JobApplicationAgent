@@ -20,7 +20,8 @@ def serve(status):
 
 
 def settings(base):
-    return SimpleNamespace(openai_base_url=base, openai_api_key="k")
+    from pydantic import SecretStr
+    return SimpleNamespace(openai_base_url=base, openai_api_key=SecretStr("k"))        # the real Settings holds a SecretStr
 
 
 @pytest.mark.parametrize("status", [200, 401])

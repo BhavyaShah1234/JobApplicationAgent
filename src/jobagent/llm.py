@@ -416,7 +416,9 @@ def endpoint_status(settings: Settings | None = None, timeout: float = 6.0) -> d
     base = (s.openai_base_url or "").rstrip("/")
     if not base:
         return {"ok": True, "seconds": 0.0, "detail": "no hosted model service configured"}
-    request = urllib.request.Request(base + "/models", headers={"Authorization": "Bearer " + (s.openai_api_key or "")})
+    key = s.openai_api_key
+    key = key.get_secret_value() if hasattr(key, "get_secret_value") else (key or "")      # the real setting is a SecretStr
+    request = urllib.request.Request(base + "/models", headers={"Authorization": "Bearer " + key})
     started = time.monotonic()
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
