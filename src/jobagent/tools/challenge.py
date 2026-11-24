@@ -195,6 +195,9 @@ class Controller:
                 )
                 if answer.strip().lower() == "skip":
                     raise Blocked("Human skipped verification")
+                # A person who answered 'done' just before the shared deadline still gets time for the three spaced readiness
+                # checks (SAP: 'done' came 30 s before expiry, the re-ask had 23 s left and the run ended blocked).
+                deadline = max(deadline, time.monotonic() + 90)
                 for _ in range(3):
                     if resolved():
                         diagnostic['state'] = 'ready'

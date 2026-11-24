@@ -192,3 +192,16 @@ def test_fieldless_startup_preserves_checkpoint_without_inventing_a_bot_challeng
     assert apply.exit_code(result) == apply.EXIT_BLOCKED
     assert 'secret' not in (out / 'application.json').read_text()
     assert 'Nothing was submitted' in (out / 'application.md').read_text()
+
+
+def test_a_done_answered_just_before_the_deadline_still_gets_its_readiness_checks(monkeypatch, tmp_path):
+    holder = {}
+
+    def ask(*a, **kw):
+        holder["page"].clock = 899          # the person answered 'done' one second before the 15-minute deadline
+        return 'done'
+
+    page, controller = setup(monkeypatch, tmp_path, lambda p: None, SimpleNamespace(ask=ask))
+    holder["page"] = page
+    controller.wait(page, challenge.Challenge('unknown', page.url, ''))     # must not raise Blocked
+    assert page.clock >= 899
