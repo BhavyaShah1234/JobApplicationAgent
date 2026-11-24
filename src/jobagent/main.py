@@ -879,6 +879,9 @@ def apply_cmd(
     filling_strategy: str = typer.Option(None, help="original, experimental or adaptive; default FILLING_STRATEGY/experimental."),
     desktop_allow_origin: list[str] = typer.Option(None, "--desktop-allow-origin",
         help="Additional trusted application/login HTTPS origin; repeat for extra origins."),
+    candidate_start: bool = typer.Option(False, "--candidate-start",
+        help="Desktop only: you click through the first steps (Apply, email, Next, any check) in the agent's desktop window; the agent takes "
+             "over at the application page. For portals that withhold sign-up from an automated browser (iCIMS)."),
 ) -> None:
     """Step 12: fill the job's application up to its review screen and read every field back (never submits)."""
     from jobagent.steps.apply import run
@@ -899,6 +902,8 @@ def apply_cmd(
         check_mode(browser_mode, submitting=False)
     except ValueError as e:
         raise typer.BadParameter(str(e)) from e
+    if candidate_start and browser_mode == 'docker':
+        raise typer.BadParameter("--candidate-start needs the desktop window: use --browser-mode desktop (or auto)")
     _stop_if_unavailable(job_dir, "apply")
     _stop_if_documents_invalid(job_dir, "apply")
     _, wf = _lock_job(ctx, job_dir, "apply")
@@ -912,7 +917,7 @@ def apply_cmd(
     jd = json.loads((Path(job_dir) / 'jd.json').read_text())
     url = jd.get('apply_url') or jd.get('source_url')
     try:
-        modes = ('docker','desktop') if browser_mode == 'auto' else (browser_mode,)
+        modes = ('desktop',) if candidate_start else ('docker','desktop') if browser_mode == 'auto' else (browser_mode,)
         for mode in modes:
             from jobagent.progress import update
             from jobagent.log import progress
@@ -924,7 +929,7 @@ def apply_cmd(
                 page = sess.page
                 sign_in = lambda url: ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log, already_open=True)
                 res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
-                          ask_s=ask_minutes * 60, model_name=model, filling_strategy=strategy,
+                          ask_s=ask_minutes * 60, model_name=model, filling_strategy=strategy, candidate_start=candidate_start,
                           **sess.run_options(observe_s=30, auto_fallback=browser_mode == 'auto'))
             if not (res.get('state')=='blocked' and res.get('blocked_by')=='challenge'
                     and res.get('resumable') and mode=='docker' and browser_mode=='auto'):

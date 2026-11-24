@@ -110,3 +110,68 @@ def test_empty_required_passwords_are_handed_to_the_candidate_and_the_run_contin
             assert A._candidate_types_passwords(page, view, env2, logs.append) is False
         finally:
             browser.close()
+
+
+POSTING_PAGE = """<!doctype html><html><body><h1>Software Engineer (AWS Cloud Services)</h1><button>Apply for this job online</button></body></html>"""
+PROFILE_PAGE = """<!doctype html><html><body><h1>Candidate profile</h1>""" + "".join(
+    f'<label>Field {i} <input name="f{i}" type="text"></label>' for i in range(12)) + """<label>Password <input type="password"></label></body></html>"""
+SIGN_IN_PAGE = """<!doctype html><html><body><h1>Welcome</h1><label>Username or email address <input name="u" type="text"></label>
+<label>Password <input type="password"></label></body></html>"""
+
+
+def _chrome_page(html):
+    pw = sync_playwright().start()
+    try:
+        browser = pw.chromium.launch(channel="chrome", headless=True)
+    except Exception:
+        pw.stop()
+        pytest.skip("no Chrome here")
+    page = browser.new_page()
+    page.route("**/*", lambda r: r.fulfill(status=200, content_type="text/html", body=html) if r.request.resource_type == "document" else r.abort())
+    page.goto("https://portal.test/apply")
+    return pw, browser, page
+
+
+def test_candidate_start_waits_without_clicking_and_takes_over_when_the_application_page_shows():
+    from jobagent.steps import apply as A
+    pw, browser, page = _chrome_page(POSTING_PAGE)
+    try:
+        assert A._application_page_showing(page) is False
+        class Candidate:
+            prompts = []
+            def ask(self, prompt, done_when=None, timeout_s=None, **kw):
+                Candidate.prompts.append(prompt)
+                assert done_when() is False                      # the agent has clicked nothing: still the posting page
+                assert page.query_selector("button").inner_text() == "Apply for this job online"
+                page.set_content(PROFILE_PAGE)                   # the candidate clicks through to the profile page
+                assert done_when() is True
+                return ""
+        logs = []
+        A._candidate_start(page, Candidate(), logs.append, timeout_s=5)
+        assert "profile page" in Candidate.prompts[0] and any("clicks nothing" in x for x in logs)
+        assert A._application_page_showing(page) is True
+    finally:
+        browser.close(); pw.stop()
+
+
+def test_a_sign_in_page_is_not_the_application_page_and_a_missing_candidate_stops_the_run():
+    from jobagent.steps import apply as A
+    from jobagent.tools import challenge
+    pw, browser, page = _chrome_page(SIGN_IN_PAGE)
+    try:
+        assert A._application_page_showing(page) is False
+        with pytest.raises(challenge.Blocked, match="needs someone to answer"):
+            A._candidate_start(page, None, print)
+        class Silent:
+            def ask(self, *a, **k): return ""
+        with pytest.raises(challenge.Blocked, match="not reached"):
+            A._candidate_start(page, Silent(), print, timeout_s=1)
+    finally:
+        browser.close(); pw.stop()
+
+
+def test_candidate_start_is_refused_for_the_docker_browser():
+    from typer.testing import CliRunner
+    from jobagent.main import app
+    out = CliRunner().invoke(app, ["apply", "outputs/none/0", "none", "--candidate-start"])
+    assert out.exit_code != 0 and "--browser-mode desktop" in out.output

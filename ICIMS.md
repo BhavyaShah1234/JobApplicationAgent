@@ -73,6 +73,9 @@ forgot-password route and never a social login; an authoritative rule was added 
   iCIMS portal, because Peraton's registration path (section 1) shows no verification email at all.
 - **Hand-off windows hide.** The desktop Chrome for a CAPTCHA can sit behind other windows; there is no window-raising tool installed.
 - **The agent calls the Identity-verification stop "stuck"** on Amazon-style portals; it is actually waiting for the candidate.
-- **Option B (not built):** let the person drive the first steps (Apply, email, Next, puzzle) in the agent's own desktop window and hand over
-  at the "Candidate profile" page. This would remove the manual account creation, with the person, not the agent, passing iCIMS's checks.
+- **Option B (built 2026-11-24, opt-in, being tried):** `jobagent apply <job dir> <company> --no-submit --browser-mode desktop --candidate-start
+  --desktop-allow-origin https://login.icims.com`. The agent opens the posting in its own desktop Chrome window and clicks nothing. The person
+  clicks Apply, enters the email, presses Next, passes any check, and stops on the application's profile page (several fields, not a sign-in);
+  the agent then fills the page as usual and asks the person to type any password field. The person, not the agent, passes iCIMS's checks.
+  Default behavior is unchanged without the flag; to go back, simply do not pass it (or revert the commit that added `_candidate_start`).
 - **Peraton end-to-end validation** is blocked until a person creates the account (section 3, step 1).
