@@ -196,3 +196,15 @@ def test_the_inventory_ignores_the_native_select_behind_an_icims_dropdown_widget
         return [x["label"] for x in page.evaluate(INVENTORY)]
     labels = with_page(ICIMS_DROPDOWN, run)
     assert [x for x in labels if x.strip().lower().startswith("country")] == ["Country"]      # the widget once, not also the select behind it
+
+
+DISABLED = """<!doctype html><html><head><meta charset="utf-8"></head><body>
+<label for="t">Please specify</label><input id="t" type="text" required>
+<select id="s" aria-label="Please specify" required disabled style="display:none"><option value="-999">No additional source details needed.</option></select>
+</body></html>"""
+
+
+def test_a_disabled_control_is_not_a_missing_required_field():
+    from jobagent.filling.discovery import INVENTORY
+    labels = with_page(DISABLED, lambda page: [(x["label"], x["type"]) for x in page.evaluate(INVENTORY)])
+    assert labels == [("Please specify", "text")]

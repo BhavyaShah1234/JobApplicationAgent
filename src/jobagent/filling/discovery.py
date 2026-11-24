@@ -8,6 +8,8 @@ const roots=[document], out=[];
 for(let i=0;i<roots.length;i++) for(const e of roots[i].querySelectorAll('*')) {
  const r=e.shadowRoot || window.__jobagentClosedRoots?.get(e); if(r) roots.push(r);
  if(!e.matches('input:not([type=hidden]),select,textarea,[role=combobox]'))continue;
+ // a disabled control cannot be answered, so it is not a missing field of the page
+ if(e.disabled)continue;
  // the real <select> behind an iCIMS dropdown widget: the widget (an <a role=combobox>) is the control that is read and filled
  if(e.tagName==='SELECT'&&e.id&&roots[i].getElementById&&roots[i].getElementById(e.id+'_icimsDropdown'))continue;
  const rect=e.getBoundingClientRect(), s=getComputedStyle(e);
