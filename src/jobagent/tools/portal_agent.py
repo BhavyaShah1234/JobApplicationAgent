@@ -202,7 +202,6 @@ def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, m
     against a real credential submission."""
     posts: list[dict] = []
     secrets = [s for s in (values.get("PASSWORD"), values.get("ALT_PASSWORD")) if s]
-    _extras = None                   # the registration profile, loaded the first time a form asks for it
 
     def listener(r) -> None:
         """Remember data-sending requests and ONLY whether each carried the password (never the password or the body)."""
@@ -234,6 +233,7 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
     since = datetime.now(UTC)
     code, challenges, repeats, last_action, pw_submitted, wrong_pw = "", 0, 0, None, False, 0
     state["alt_password_used"] = False
+    _extras = None           # the registration profile, loaded the first time a form asks for it
     login_candidate, register_attempted, toggles, last_nav = None, False, 0, None
     unconfirmed_claims: dict[str, int] = {}
     unchanged_waits,last_wait_view=0,None

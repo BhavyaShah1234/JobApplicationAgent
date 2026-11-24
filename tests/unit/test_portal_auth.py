@@ -139,3 +139,11 @@ def test_a_posting_with_no_us_location_gives_citizenship_only_and_no_address(tmp
     monkeypatch.setattr(application_address, "prepare", lambda *a, **k: (_ for _ in ()).throw(application_address.NoUsLocation("no")))
     got = A.registration_profile(job, "acme", None)()
     assert got == {"CITIZENSHIP": "India"}
+
+
+def test_the_registration_placeholder_substitution_lives_in_the_function_that_initialises_its_cache():
+    """A scoping slip (cache set in run, used in _run) crashed the live Ericsson registration with UnboundLocalError."""
+    import inspect
+    from jobagent.tools import portal_agent as pa
+    src = inspect.getsource(pa._run)
+    assert "_extras = None" in src and "registration_extras(log)" in src
