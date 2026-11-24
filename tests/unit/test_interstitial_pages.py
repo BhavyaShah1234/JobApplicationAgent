@@ -136,3 +136,21 @@ def test_an_empty_required_password_is_reported_as_the_candidates_to_type():
     out = A.blockers_of([{"label": "Password", "page": 1, "required": True, "kind": "password", "outcome": "unanswered (required)"},
                          {"label": "Phone", "page": 1, "required": True, "kind": "text", "outcome": "unanswered (required)"}])
     assert "never types" in out[0] and "left empty" in out[1]
+
+
+def test_a_borrowed_documents_run_is_never_ready_to_submit_and_says_so_in_the_report():
+    from jobagent.steps import apply as A
+    result = {"url": "https://x", "state": "review", "ready_to_submit": False, "blockers": [], "fields": [], "verified": 0, "flags": [], "outcomes": {},
+              "borrowed_documents": "outputs/zoox/abc"}
+    assert "TEST RUN" in A.report(result, {"company": "Acme", "title": "Engineer"}) and "outputs/zoox/abc" in A.report(result, {"company": "Acme", "title": "Engineer"})
+
+
+def test_context_reads_the_resume_and_cover_letter_from_the_borrowed_folder(tmp_path):
+    from pathlib import Path
+    from jobagent.steps import apply as A
+    job, docs = tmp_path / "job", tmp_path / "docs"
+    job.mkdir(); docs.mkdir()
+    (job / "jd.json").write_text('{"company": "Acme", "title": "Engineer", "locations_resolved": []}')
+    (docs / "resume.tex").write_text("\\\\documentclass{article}")
+    ctx = A.context(job, "acme", docs)
+    assert ctx["_jd"]["company"] == "Acme" and ctx["COVER_LETTER"] == "(none)"          # nothing in the job folder was needed

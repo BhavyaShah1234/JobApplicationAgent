@@ -879,6 +879,9 @@ def apply_cmd(
     filling_strategy: str = typer.Option(None, help="original, experimental or adaptive; default FILLING_STRATEGY/experimental."),
     desktop_allow_origin: list[str] = typer.Option(None, "--desktop-allow-origin",
         help="Additional trusted application/login HTTPS origin; repeat for extra origins."),
+    documents_from: str = typer.Option(None, "--documents-from",
+        help="A TEST option: use another job's valid resume and cover letter instead of this job's (no regeneration). The run is not "
+             "recorded as an application and cannot be submitted."),
 ) -> None:
     """Step 12: fill the job's application up to its review screen and read every field back (never submits)."""
     from jobagent.steps.apply import run
@@ -900,7 +903,11 @@ def apply_cmd(
     except ValueError as e:
         raise typer.BadParameter(str(e)) from e
     _stop_if_unavailable(job_dir, "apply")
-    _stop_if_documents_invalid(job_dir, "apply")
+    if documents_from:
+        _stop_if_documents_invalid(documents_from, "apply (borrowed documents)")
+        console.print(f"[yellow]apply: TEST RUN with {documents_from}'s resume and cover letter: not recorded, not submittable[/]", highlight=False)
+    else:
+        _stop_if_documents_invalid(job_dir, "apply")
     _, wf = _lock_job(ctx, job_dir, "apply")
     log = runlog("apply", str(job_dir).rstrip("/").rsplit("/", 1)[-1])
     if (wf.stage("apply") or {}).get("status") == "interrupted":
@@ -924,7 +931,7 @@ def apply_cmd(
                 page = sess.page
                 sign_in = lambda url: ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log, already_open=True)
                 res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
-                          ask_s=ask_minutes * 60, model_name=model, filling_strategy=strategy,
+                          ask_s=ask_minutes * 60, model_name=model, filling_strategy=strategy, documents_from=documents_from,
                           **sess.run_options(observe_s=30, auto_fallback=browser_mode == 'auto'))
             if not (res.get('state')=='blocked' and res.get('blocked_by')=='challenge'
                     and res.get('resumable') and mode=='docker' and browser_mode=='auto'):
@@ -932,7 +939,7 @@ def apply_cmd(
     except Unavailable as gone:
         wf.mark("apply", "failed", error=f"unavailable: {gone.kind}")
         _stopped(job_dir, gone, "apply")
-    if res["state"] == "review":
+    if res["state"] == "review" and not res.get("borrowed_documents"):
         from datetime import UTC, datetime
 
         from jobagent import db
@@ -947,7 +954,10 @@ def apply_cmd(
                    filled_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
         finally:
             conn.close()
-    wf.mark("apply", "done" if res["state"] == "review" else "failed", result={"state": res["state"], "ready": bool(res.get("ready_to_submit"))})
+    if res.get("borrowed_documents"):          # a form test with borrowed documents is not this job's application
+        wf.mark("apply", "failed", error=f"form test with documents borrowed from {res['borrowed_documents']}: not an application")
+    else:
+        wf.mark("apply", "done" if res["state"] == "review" else "failed", result={"state": res["state"], "ready": bool(res.get("ready_to_submit"))})
     console.print(f"apply: {res['state']}; {res['verified']}/{len(res['fields'])} fields verified; "
                   f"{len(res['flags'])} for review -> {job_dir}/application/application.md", highlight=False)
     from jobagent.steps.apply import exit_code

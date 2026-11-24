@@ -226,12 +226,13 @@ def jd_passages(text: str, fields: list[forms.Field], limit: int = 6000) -> str:
     return "\n".join(out)
 
 
-def context(job_dir: Path, company: str) -> dict:
-    """The candidate's files, as the planner sees them."""
+def context(job_dir: Path, company: str, docs_dir: Path | None = None) -> dict:
+    """The candidate's files, as the planner sees them. `docs_dir` holds the resume and cover letter when they are borrowed from another job."""
     from jobagent.config import get_settings
+    docs = docs_dir or job_dir
     resume = ""
-    if (job_dir / "resume.pdf").exists():
-        resume = subprocess.run(["pdftotext", "-layout", str(job_dir / "resume.pdf"), "-"], capture_output=True,
+    if (docs / "resume.pdf").exists():
+        resume = subprocess.run(["pdftotext", "-layout", str(docs / "resume.pdf"), "-"], capture_output=True,
                                 text=True).stdout
     jd = json.loads((job_dir / "jd.json").read_text()) if (job_dir / "jd.json").exists() else {}
     if jd and "locations_resolved" not in jd:  # "Corporate Headquarters" -> the city it means (once per job)
@@ -242,7 +243,7 @@ def context(job_dir: Path, company: str) -> dict:
         except Exception:
             pass
     comp = get_settings().state_dir / 'companies' / f'{company}.md'
-    tex = (job_dir / "resume.tex").read_text() if (job_dir / "resume.tex").exists() else ""
+    tex = (docs / "resume.tex").read_text() if (docs / "resume.tex").exists() else ""
     data = applicant.with_resume(applicant.load(), applicant.resume_experience(tex))
     forms.set_approved_aliases(applicant.identity_aliases(data))        # the only forms of a school / employer treated as the same one (F29)
     return {
@@ -252,7 +253,7 @@ def context(job_dir: Path, company: str) -> dict:
         "JD": jd_for_planning(*posting_text(job_dir)),
         "_jd_text": posting_text(job_dir)[0],
         "COMPANY": (comp.read_text() if comp.exists() else "")[:3000],
-        "COVER_LETTER": cover_letter_text(job_dir),
+        "COVER_LETTER": cover_letter_text(docs),
         # the candidate's own answers for THIS application (application/answers.md, written or edited by them)
         "ANSWERS_FOR_THIS_APPLICATION": (job_dir / "application" / "answers.md").read_text()[:6000]
         if (job_dir / "application" / "answers.md").exists() else "(none)",
@@ -1752,16 +1753,17 @@ def recover_desktop_form(page, log=print):
 def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, log=print, model=None,
         hitl=None, ask_s: float = 1800, model_name: str | None = None, at_review=None,
         already_open: bool = False, observe_s: float = 0, filling_strategy: str | None = None,
-        _filling_metrics=None) -> dict:
+        _filling_metrics=None, documents_from: str | Path | None = None) -> dict:
     """Fill the application to its review screen. Never clicks Submit itself: `at_review(page, view, result)` (step 13's
     approval and submission) is called there, in the same browser session, when given."""
     job_dir = Path(job_dir)
     from jobagent.filling import select_strategy
     strategy=select_strategy(filling_strategy,resume_job=job_dir)
-    ctx = context(job_dir, company)
+    docs_dir = Path(documents_from) if documents_from else job_dir     # borrowed documents: a form test, never a submittable application
+    ctx = context(job_dir, company, docs_dir)
     url = ctx["_jd"].get("apply_url") or ctx["_jd"].get("source_url")
     model = model or llm.writer(8000, timeout=300, model=model_name)
-    files = {k: str(job_dir / f"{k}.pdf") for k in ("resume", "cover_letter") if (job_dir / f"{k}.pdf").exists()}
+    files = {k: str(docs_dir / f"{k}.pdf") for k in ("resume", "cover_letter") if (docs_dir / f"{k}.pdf").exists()}
     out_dir = job_dir / "application"
     out_dir.mkdir(exist_ok=True)
     if hasattr(model, 'callbacks'):
@@ -1785,6 +1787,8 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
             raise challenge.Blocked('The desktop application form is not usable yet')
     record: list[dict] = []
     result = {"url": url, "started": datetime.now().isoformat(timespec="seconds"), "pages": [], "state": "failed"}
+    if documents_from:
+        result["borrowed_documents"] = str(docs_dir)
     result['planner'] = {'provider': 'Voyager', 'model': getattr(model, 'model_name', model_name or 'configured writer')}
     result['browser_mode'] = 'desktop' if already_open else 'docker'
     result['filling_strategy']=strategy
@@ -1921,6 +1925,8 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         blockers.insert(0, result.get("reason", "the run is blocked"))
     if result["state"] == "review" and view.errors:
         blockers.append("the page shows errors: " + "; ".join(view.errors[:3])[:200])
+    if result.get("borrowed_documents"):
+        blockers.append(f"test run with the resume and cover letter of {result['borrowed_documents']}: not this posting's documents, never submittable")
     result["blockers"] = blockers
     result["ready_to_submit"] = result["state"] == "review" and not blockers
     (out_dir / "application.json").write_text(json.dumps(result, indent=2))
@@ -1936,6 +1942,8 @@ def report(result: dict, jd: dict) -> str:
              f"- URL: {result['url']}", f"- State: **{result['state']}** (never submitted)"]
     if result["state"] == "blocked":
         lines.append(f"- **Blocked** ({result.get('blocked_by', '')}): {result.get('reason', '')}")
+    if result.get("borrowed_documents"):
+        lines.append(f"- **TEST RUN**: the resume and cover letter come from `{result['borrowed_documents']}`; this is not an application and cannot be submitted")
     eligibility_info=result.get('eligibility') or {}
     if eligibility_info.get('level','ok')!='ok':
         lines += ['', '## Eligibility', '',
