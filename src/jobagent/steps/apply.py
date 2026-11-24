@@ -1189,6 +1189,8 @@ def blockers_of(record: list[dict]) -> list[str]:
     out = []
     for e in record:
         reason = BLOCKING.get(e.get("outcome", ""))
+        if reason and e.get("required") and e.get("kind") == "password":
+            reason = "left to the candidate: the agent never types or asks for a password; type it in the browser window, then run again"
         if reason and e.get("required"):
             detail = f": {e['error']}" if e.get("error") else ""
             out.append(f"{e['label'][:60]} (page {e['page']}): required, {reason}{detail}")

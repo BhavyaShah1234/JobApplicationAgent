@@ -119,3 +119,20 @@ def test_a_bare_repo_title_is_replaced_by_the_repo_name_with_its_words_split_and
     card2 = {"full_name": "someone/hiring", "title": "hiring"}
     monkeypatch.setattr(M.P, "saved_evidence", lambda st: {"someone/hiring": card2})
     assert M._readable_titles({"kept": 1, "ranked": [{"repo": "someone/hiring"}]}, [1]) is None       # a one-word slug has no better title
+
+
+def test_a_resume_upload_whose_help_text_mentions_cover_letters_is_still_the_resume():
+    """Garmin's iCIMS: 'Please upload your resume ... Cover letters ... can be added to Additional Attachments' put cover_letter.pdf in the resume field."""
+    from jobagent.steps.apply import upload_role
+    caption = ("My Computer (Opens new window) Please upload your resume (max size: 5MB). Cover letters or other attachments can be added to the "
+               '"Additional Attachments" field at the bottom of this application. / PortalProfileFields.Resume_File')
+    assert upload_role(caption) == "resume"
+    assert upload_role("Cover Letter / PortalProfileFields.CoverLetter_File") == "cover_letter"
+    assert upload_role("Attach Additional Documents / PortalProfileFields.Additional_File") == ""
+
+
+def test_an_empty_required_password_is_reported_as_the_candidates_to_type():
+    from jobagent.steps import apply as A
+    out = A.blockers_of([{"label": "Password", "page": 1, "required": True, "kind": "password", "outcome": "unanswered (required)"},
+                         {"label": "Phone", "page": 1, "required": True, "kind": "text", "outcome": "unanswered (required)"}])
+    assert "never types" in out[0] and "left empty" in out[1]

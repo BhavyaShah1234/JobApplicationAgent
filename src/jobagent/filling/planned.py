@@ -540,7 +540,10 @@ class PlannedFiller:
                             caption=getattr(f,'upload_caption',f.label).lower()
                             if not re.search(r'resume|\bcv\b|cover|passport|certificate|transcript',caption):
                                 caption+=' '+f.section.lower()
-                            role='cover_letter' if 'cover' in caption else 'resume' if any(x in caption for x in ('resume','cv')) else None
+                            # the role comes from the upload's OWN caption, part by part (a Resume field whose help text also says
+                            # "Cover letters can be added below" is still the resume): the shared rule of the original filler
+                            from jobagent.steps.apply import upload_role
+                            role=upload_role(f.label) or ('cover_letter' if 'cover' in caption and 'resume' not in caption else 'resume' if any(x in caption for x in ('resume','cv')) and 'cover' not in caption else None)
                             # The same context used to infer a role must also exclude
                             # a resume parser. Its generic "Upload file" trigger is
                             # not the separately labelled Resume attachment.
