@@ -231,7 +231,7 @@ def candidate_values(email: str, password: str) -> dict:
 
 
 def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print,
-                      fresh: bool = False, already_open: bool = False) -> PortalLogin:
+                      fresh: bool = False, already_open: bool = False, register_only: bool = False) -> PortalLogin:
     """Any portal without an adapter: the general agent (tools/portal_agent.py) signs in or registers."""
     from jobagent.tools import portal_agent
     if already_open and not fresh and page.url != url:
@@ -257,7 +257,8 @@ def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, ema
     alt = (vault.get(key) or {}).get("alt_password") or new_password()
     vault.set(key, **{**(vault.get(key) or {}), "alt_password": alt})
     values = {**candidate_values(email, password), "ALT_PASSWORD": alt}
-    out = portal_agent.run(page, url, values, inbox, hitl, host, log=log, notes=mem.data.get("notes", []))
+    out = portal_agent.run(page, url, values, inbox, hitl, host, log=log, notes=mem.data.get("notes", []),
+                           goal="register" if register_only else "sign_in")
     if out.get("alt_password_used"):
         old = vault.get(key) or {}
         vault.set(key, **{**old, "password": alt, "note": "this portal rejected the shared password; its own "
@@ -281,13 +282,14 @@ def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, ema
 
 
 def ensure_account(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print,
-                   fresh: bool = False, already_open: bool = False) -> PortalLogin:
+                   fresh: bool = False, already_open: bool = False, register_only: bool = False) -> PortalLogin:
     """Signed in to the portal of `url` with the agent's account: sign in first (stored or shared password); register
     only when the portal has no account for the email; never a password reset. Workday has its own adapter; every
     other portal goes to the general agent."""
     platform = platform_of(url)
-    if platform not in ADAPTERS:
-        return ensure_with_agent(page, url, vault, inbox, hitl, email, log=log, fresh=fresh, already_open=already_open)
+    if register_only or platform not in ADAPTERS:
+        return ensure_with_agent(page, url, vault, inbox, hitl, email, log=log, fresh=fresh, already_open=already_open,
+                                 register_only=register_only)
     try:
         return _ensure_with_adapter(page, url, vault, inbox, hitl, email, log=log, fresh=fresh)
     except PortalError:

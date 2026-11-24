@@ -879,6 +879,9 @@ def apply_cmd(
     filling_strategy: str = typer.Option(None, help="original, experimental or adaptive; default FILLING_STRATEGY/experimental."),
     desktop_allow_origin: list[str] = typer.Option(None, "--desktop-allow-origin",
         help="Additional trusted application/login HTTPS origin; repeat for extra origins."),
+    register_account: bool = typer.Option(False, "--register-account",
+        help="The portal's sign-in step goes straight to its Sign up route (no login attempt) and completes the registration, "
+             "including email verification. Use it when you know no account exists for the agent's email there."),
     documents_from: str = typer.Option(None, "--documents-from",
         help="A TEST option: use another job's valid resume and cover letter instead of this job's (no regeneration). The run is not "
              "recorded as an application and cannot be submitted."),
@@ -929,7 +932,8 @@ def apply_cmd(
             related = [u for u in (jd.get('source_url'), *(desktop_allow_origin or [])) if u]
             with open_inbox() as inbox, open_session(mode, url, related) as sess:
                 page = sess.page
-                sign_in = lambda url: ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log, already_open=True)
+                sign_in = lambda url: ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log, already_open=True,
+                                                     register_only=register_account)
                 from jobagent.steps.apply import registration_profile
                 from jobagent.tools import portal_agent
                 portal_agent.set_registration_profile(registration_profile(Path(job_dir), company, model, log))

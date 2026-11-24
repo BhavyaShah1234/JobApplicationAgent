@@ -117,6 +117,15 @@ ONE action. Rules:
   and contact (no answers, no resumes)."""
 
 
+REGISTER_PROMPT = PROMPT + """
+
+THIS RUN'S GOAL OVERRIDES THE SIGN-IN-FIRST RULE: the candidate established that NO account exists for this email here, so CREATE it now.
+Never try to sign in and never type a password into a login form. Go straight to the page's own Sign up / Create account route and
+register with {EMAIL}, {PASSWORD} (and a confirm field if shown), then any names/phone it asks. COMPLETE every step the site requires
+after that: a verification code sent by email (answer code_sent), a confirmation link (answer link_sent), terms it needs accepted to
+continue. If the site says the account already exists, answer failed and say so (never reset the password). Answer signed_in only when
+the page shows the candidate signed in or the application form itself."""
+
 SIGN_OUT_PROMPT = """You operate a job portal in a browser for the candidate, to SIGN THEM OUT of their account on
 this careers site. Each turn you see the visible fields and buttons (by frame and index) and the page text; choose ONE
 action. Open the account / profile / "My career" menu if needed, then click "Sign out" / "Log out". Answer
@@ -395,7 +404,7 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
         if "NEW_PASSWORD_FORM" in view and typed and not state["alt_password_used"] and \
                 any(h.startswith(("click", "press_enter")) for h in recent[typed[-1] + 1:]):
             pw_submitted = True
-        msgs = [SystemMessage({"sign_in": PROMPT, "sign_out": SIGN_OUT_PROMPT, "reset_password": RESET_PROMPT}[goal]),
+        msgs = [SystemMessage({"sign_in": PROMPT, "register": REGISTER_PROMPT, "sign_out": SIGN_OUT_PROMPT, "reset_password": RESET_PROMPT}[goal]),
                 HumanMessage(f"PORTAL: {host}\nURL: {page.url[:150]}\n"
                              + (f"NOTES FROM EARLIER VISITS: {list(notes)[-6:]}\n" if notes else "")
                              + (f"A verification code is available as {{CODE}}.\n" if code else "")

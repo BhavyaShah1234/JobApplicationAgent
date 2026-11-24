@@ -293,3 +293,21 @@ def test_other_hosts_are_not_affected_by_one_hosts_rejections(tmp_path, monkeypa
     pa.record_rejection("a.example.com", now=1.0)
     pa.record_rejection("a.example.com", now=2.0)
     assert pa.recent_rejections("b.example.com", now=3.0) == []
+
+
+def test_register_goal_has_its_own_prompt_that_never_tries_a_login_and_stops_if_the_account_exists():
+    from jobagent.tools import portal_agent as pa
+    assert "CREATE it now" in pa.REGISTER_PROMPT and "Never try to sign in" in pa.REGISTER_PROMPT
+    assert "the account already exists, answer failed" in pa.REGISTER_PROMPT and "never reset" in pa.REGISTER_PROMPT
+    assert pa.REGISTER_PROMPT.startswith(pa.PROMPT)                      # all the sign-in agent's safety rules still apply
+
+
+def test_register_only_goes_to_the_general_agent_even_for_a_platform_with_an_adapter(monkeypatch):
+    from jobagent.tools import portal_auth as pa
+    calls = []
+    monkeypatch.setattr(pa, "ensure_with_agent", lambda *a, **k: calls.append(k.get("register_only")) or "agent")
+    monkeypatch.setattr(pa, "_ensure_with_adapter", lambda *a, **k: "adapter")
+    url = "https://example.wd5.myworkdayjobs.com/en-US/x/job/y"
+    assert pa.platform_of(url) in pa.ADAPTERS
+    assert pa.ensure_account(None, url, None, None, None, "e@example.com", register_only=True) == "agent" and calls == [True]
+    assert pa.ensure_account(None, url, None, None, None, "e@example.com") == "adapter"
