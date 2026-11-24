@@ -405,3 +405,23 @@ def embeddings(settings: Settings | None = None) -> FallbackEmbeddings:
         check_embedding_ctx_length=False,
     )
     return FallbackEmbeddings(primary, OllamaEmbeddings(model=s.fallback_embed, base_url=s.ollama_base_url))
+
+
+def endpoint_status(settings: Settings | None = None, timeout: float = 6.0) -> dict:
+    """Is the model service (Voyager) reachable right now? `{"ok", "seconds", "detail"}`. It needs the university VPN: without it every
+    model call waits for a timeout or falls back to the far slower local model, and a run only looks slow and stuck."""
+    import time
+    import urllib.request
+    s = settings or get_settings()
+    base = (s.openai_base_url or "").rstrip("/")
+    if not base:
+        return {"ok": True, "seconds": 0.0, "detail": "no hosted model service configured"}
+    request = urllib.request.Request(base + "/models", headers={"Authorization": "Bearer " + (s.openai_api_key or "")})
+    started = time.monotonic()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return {"ok": 200 <= response.status < 500, "seconds": time.monotonic() - started, "detail": f"HTTP {response.status}"}
+    except urllib.error.HTTPError as exc:                      # the service answered: reachable (a bad key is a different problem)
+        return {"ok": True, "seconds": time.monotonic() - started, "detail": f"HTTP {exc.code}"}
+    except Exception as exc:
+        return {"ok": False, "seconds": time.monotonic() - started, "detail": f"{type(exc).__name__}: {str(exc)[:80]}"}

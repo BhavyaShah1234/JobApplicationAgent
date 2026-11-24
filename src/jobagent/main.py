@@ -322,6 +322,22 @@ def _lock_job(ctx: typer.Context, job_dir, what: str):
     return d, W.Workflow(d)
 
 
+def _require_model_service(step: str, skip: bool = False) -> None:
+    """Stop before a run starts when the model service cannot be reached (the VPN is off): say so, instead of crawling."""
+    if skip:
+        return
+    from jobagent import llm
+    from jobagent.steps.apply import EXIT_BLOCKED
+
+    status = llm.endpoint_status()
+    if status["ok"]:
+        console.print(f"{step}: model service reachable ({status['seconds']:.1f}s)", highlight=False)
+        return
+    console.print(f"[red]{step}: the model service is not reachable ({status['detail']}). Connect the university VPN and run again: "
+                  "without it every model call waits for a timeout or falls back to the slow local model.[/]", highlight=False)
+    raise typer.Exit(EXIT_BLOCKED)
+
+
 def _stop_if_documents_invalid(job_dir, step: str) -> None:
     """F05: exit 4 (blocked) before a browser opens when the job's resume / cover letter are not a current, valid build."""
     from pathlib import Path
@@ -909,6 +925,7 @@ def apply_cmd(
     register_account: bool = typer.Option(False, "--register-account",
         help="The portal's sign-in step goes straight to its Sign up route (no login attempt) and completes the registration, "
              "including email verification. Use it when you know no account exists for the agent's email there."),
+    skip_model_check: bool = typer.Option(False, "--skip-model-check", help="Do not test the model service (VPN) before starting."),
     documents_from: str = typer.Option(None, "--documents-from",
         help="A TEST option: use another job's valid resume and cover letter instead of this job's (no regeneration). The run is not "
              "recorded as an application and cannot be submitted."),
@@ -933,6 +950,7 @@ def apply_cmd(
     except ValueError as e:
         raise typer.BadParameter(str(e)) from e
     _stop_if_unavailable(job_dir, "apply")
+    _require_model_service("apply", skip_model_check)
     if documents_from:
         _stop_if_documents_invalid(documents_from, "apply (borrowed documents)")
         console.print(f"[yellow]apply: TEST RUN with {documents_from}'s resume and cover letter: not recorded, not submittable[/]", highlight=False)
