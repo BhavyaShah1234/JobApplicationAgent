@@ -645,3 +645,22 @@ def test_create_account_is_a_step_forward_never_a_submission():
     for text in ("Create account", "Create an account", "Create your account"):
         assert NEXT.search(text) and not SUBMIT.search(text), text
     assert not NEXT.search("Create a job alert")
+
+
+def test_a_plain_accept_reject_banner_is_recognised_and_rejected_not_accepted():
+    from jobagent.tools.forms import COOKIE_DECLINE, COOKIE_ACCEPT_ALL
+    assert COOKIE_ACCEPT_ALL.search("Accept") and COOKIE_DECLINE.search("Reject")
+    assert not COOKIE_DECLINE.search("Accept") and not COOKIE_DECLINE.search("Cookie Settings")
+    html = ("<div style=\"position:fixed;inset:0;background:#fff8;z-index:9\"><p>Cookie Preferences</p>"
+            "<button onclick=\"window.accepted=true;this.parentNode.remove()\">Accept</button>"
+            "<button onclick=\"window.rejected=true;this.parentNode.remove()\">Reject</button><a href=\"#\">Cookie Settings</a></div>"
+            f"<h1>Job</h1><button type=button onclick=\"{OPEN_ON_CLICK}\">Apply now</button>")
+    state, view = start(html)
+    assert state["opened"] is True and len([f for f in view.fields if f.kind != "file"]) >= 3
+
+
+def test_apply_without_an_account_is_a_start_button_and_sign_in_or_create_account_are_not():
+    from jobagent.steps.apply import START
+    assert any(p.search("Apply without an Account") for p in START)
+    assert any(p.search("Continue as guest") for p in START)
+    assert not any(p.search("Sign In") or p.search("Create one now.") for p in START)

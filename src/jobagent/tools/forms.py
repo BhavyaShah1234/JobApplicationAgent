@@ -2377,7 +2377,7 @@ COOKIE_DECLINE = re.compile(
     r"(?i)^\s*(?:accept\s+(?:only\s+)?(?:strictly\s+)?(?:necessary|essential|required)(?:\s+cookies)?(?:\s+only)?|"
     r"(?:only\s+)?(?:necessary|essential|required)(?:\s+cookies)?(?:\s+only)?|"
     r"(?:reject|decline|deny|refuse)(?:\s+(?:all|non[- ]essential|optional|additional))?(?:\s+cookies)?)\s*$")
-COOKIE_ACCEPT_ALL = re.compile(r"(?i)^\s*(?:accept|allow|agree\s+to)\s+all(?:\s+cookies)?\s*$")
+COOKIE_ACCEPT_ALL = re.compile(r"(?i)^\s*(?:accept|allow|agree\s+to)(?:\s+all(?:\s+cookies)?)?\s*$")
 
 
 def decline_cookies(page: Page, view: PageView, log=lambda m: None) -> str | None:

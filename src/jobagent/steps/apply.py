@@ -41,6 +41,8 @@ MAX_PAGES = 15
 START = [re.compile(p, re.I) for p in (r"^apply manually$", r"^apply now(?:\s*[»›→])?$", r"^apply( for this (job|position|role))?( online)?$",
                                        r"^(i'?m interested|start (your |my )?application|begin application)$",
                                        r"^apply to (this )?job$",
+                                       # a guest route that needs no account (Dayforce): preferred over creating one
+                                       r"^(apply|continue) (without (an? )?(account|signing in|signin|logging in)|as (a )?guest)$",
                                        # a posting already started (signed in): Workday offers to continue it
                                        r"^(continue|resume)( my| your)?( job)? application$")]
 
