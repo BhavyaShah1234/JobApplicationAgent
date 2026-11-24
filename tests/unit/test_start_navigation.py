@@ -575,3 +575,13 @@ def test_a_plain_registration_or_sign_in_page_stays_with_the_sign_in_agent():
     assert A._account_with_application(registration) is False
     assert A._account_with_application(signin) is False
     assert A._account_with_application(nopass) is False                    # no password: not an account page at all
+
+
+def test_a_bare_city_takes_the_one_united_states_suggestion_and_never_guesses_between_places():
+    from jobagent.tools.forms import strict_place
+    assert strict_place("San Ramon", ["San Ramon, CA, USA", "San Ramon, Philippines"]) == "San Ramon, CA, USA"
+    assert strict_place("San Ramon", ["San Ramon, California, United States"]) == "San Ramon, California, United States"
+    assert strict_place("Austin", ["Austin, TX, USA", "Austin, MN, USA"]) is None                 # two US places: never guess
+    assert strict_place("San Ramon", ["Ramona, CA, USA", "San Ramon Valley, CA, USA"]) is None    # a different place that contains it
+    assert strict_place("San Ramon", ["San Ramon, Philippines"]) is None                         # not a US place
+    assert strict_place("San Ramon, CA", ["San Ramon, CA, USA"]) == "San Ramon, CA, USA"         # the existing City, State rule still works

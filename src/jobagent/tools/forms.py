@@ -1118,8 +1118,19 @@ def best_place(answer: str, suggestions: list[str]) -> str | None:
 def strict_place(answer: str, suggestions: list[str]) -> str | None:
     """Render one known city/state; never choose a nearest or different place."""
     bits=[_norm(x) for x in answer.split(',') if x.strip()]
-    if len(bits)<2:return None
     codes=set(US_STATES.values())
+    if len(bits)==1:
+        # A bare city (SmartRecruiters' "City *" for the job's city): the ONE United States suggestion whose first part is that city.
+        us=[]
+        for item in suggestions:
+            parts=[_norm(x) for x in item.split(',') if x.strip()]
+            if len(parts)<2 or parts[0]!=bits[0]:continue
+            rest=parts[1:]
+            if any(x in US_STATES or x in codes for x in rest) and all(
+                    x in US_STATES or x in codes or x in ('us','usa','united states','united states of america') for x in rest):
+                us.append(item)
+        return us[0] if len(us)==1 else None
+    if len(bits)<2:return None
     states={US_STATES.get(x,x) for x in bits[1:] if x in US_STATES or x in codes}
     if len(states)!=1:return None
     hits=[]
