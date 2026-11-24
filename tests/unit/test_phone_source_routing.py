@@ -76,3 +76,37 @@ def test_a_number_box_that_normalises_what_was_typed_still_reads_back_as_the_sam
     assert same_value("4.0", "4", "spin") and same_value("4", "4.0", "number") and same_value("1,000", "1000", "spin")
     assert not same_value("4.0", "3", "spin") and not same_value("4.0", "", "spin")
     assert same_value("abc", "abc", "spin")                        # non-numeric text falls through to the ordinary comparison
+
+
+def test_a_dial_code_list_written_flag_code_country_is_matched_by_code_and_country():
+    from jobagent.tools.forms import phone_code_option
+    options=['🇦🇬 +1 Antigua and Barbuda','🇨🇦 +1 Canada','🇺🇸 +1 United States','🇬🇧 +44 United Kingdom']
+    assert phone_code_option('United States (+1)',options)=='🇺🇸 +1 United States'
+    assert phone_code_option('+44',options)=='🇬🇧 +44 United Kingdom'
+    assert phone_code_option('+1',options) is None                    # +1 alone is ambiguous: never guessed
+    assert phone_code_option('United States (+1)',['United States (+1)','Canada (+1)'])=='United States (+1)'      # the older shape still works
+
+
+ANT_SELECT = """<html><body><label for=pm>Preferred Contact Method</label>
+<div class="ant-select ant-select-single"><div class="ant-select-selector"><span class="ant-select-selection-search">
+<input id=pm role=combobox readonly aria-haspopup=listbox aria-expanded=false class="ant-select-selection-search-input"></span>
+<span class="ant-select-selection-item" title="Email">Email</span></div></div></body></html>"""
+
+
+def test_an_ant_design_select_reads_back_the_shown_choice_not_its_empty_search_input():
+    import pytest
+    from playwright.sync_api import sync_playwright
+    from jobagent.tools import forms
+    with sync_playwright() as pw:
+        try:
+            b = pw.chromium.launch(channel="chrome", headless=True)
+        except Exception:
+            pytest.skip("no Chrome here")
+        try:
+            page = b.new_page(); page.set_content(ANT_SELECT)
+            field = next(f for f in forms.read_page(page).fields if f.label == "Preferred Contact Method")
+            assert field.kind == "combobox" and field.value == "Email"        # not ''
+            page.locator(".ant-select-selection-item").evaluate("e => e.remove()")
+            assert next(f for f in forms.read_page(page).fields if f.label == "Preferred Contact Method").value == ""     # nothing chosen: empty
+        finally:
+            b.close()

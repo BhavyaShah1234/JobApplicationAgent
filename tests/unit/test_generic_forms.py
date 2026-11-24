@@ -450,3 +450,21 @@ def test_every_round_and_field_attempt_is_traced_with_timing_and_the_exact_failu
     ok=[l for l in lines if l['ev']=='field' and l['ok']];bad=[l for l in lines if l['ev']=='field' and not l['ok']]
     assert any(l['label']=='First Name' and l['secs']>=0 for l in ok)
     assert any(l['label']=='Nickname' and 'the page shows' in l['error'] and "'Countess'" in l['error'] for l in bad)
+
+
+def test_an_ant_design_upload_that_clears_its_input_and_shows_the_file_name_is_accepted_on_the_first_attempt(page,tmp_path):
+    """Dayforce (Amphenol): the page empties the file input after an upload and shows 'resume.pdf' in the widget; the agent saw
+    'attached but the page never showed it', retried every round (31 s each) and re-triggered the resume parser every time."""
+    from jobagent.filling.uploads import UploadProof
+    pdf=tmp_path/'resume.pdf';pdf.write_bytes(b'%PDF-1.4 source-bound resume fixture')
+    page.set_content('''<div class="ant-form-item"><div class="ant-row"><div class="ant-col"><span class="ant-upload-wrapper"><div class="ant-upload ant-upload-select">
+      <span class="ant-upload"><input id=jobPostingApplication_files_resume type=file name=file style="display:none"
+        onchange="const n=this.files[0].name;this.value='';setTimeout(()=>{document.getElementById('shown').textContent=n},300)">
+      <button type=button onclick="document.getElementById('jobPostingApplication_files_resume').click()">Import Resume</button></span></div>
+      <span id=shown></span></span></div></div></div>''')
+    view=forms.read_page(page);f=next(x for x in view.fields if x.kind=='file');proof=UploadProof(pdf,forms.locate(view,f))
+    try:
+        forms.fill_field(page,view,f,'resume',{'resume':str(pdf)},before_upload=proof.bind,upload_confirmation=proof.verify)
+        assert page.locator('input[type=file]').evaluate('e=>e.files.length')==0              # the page really emptied the input
+        assert proof.verify() and proof.method=='dispatched bytes and widget acknowledgement'
+    finally:proof.close()

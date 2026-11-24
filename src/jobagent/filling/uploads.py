@@ -27,7 +27,7 @@ class UploadProof:
             if(match && attachment?.id===match[1]+':_attach' &&
                attachment.querySelectorAll('[id$=":_attachIcon"]').length===1 &&
                !attachment.querySelector('input:not([type=hidden]):not([type=file]),select,textarea,[role=combobox]'))return attachment;
-            const field=e.parentElement?.closest('fieldset,[data-field-path],[data-field-entry-id],[data-automation-id^=formField-],.file-upload,.document-upload,.form-field,.form-group');
+            const field=e.parentElement?.closest('fieldset,.ant-form-item,[data-field-path],[data-field-entry-id],[data-automation-id^=formField-],.file-upload,.document-upload,.form-field,.form-group');
             if(field && field.querySelectorAll('input[type=file]').length<=1 &&
                ![...field.querySelectorAll('input:not([type=file]):not([type=hidden]),select,textarea,[role=combobox]')].some(c=>c!==e))return field;
             let candidate=null;

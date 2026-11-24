@@ -46,6 +46,11 @@ WIDGET_VALUE_JS = r"""e => {
     if (e.querySelector('.select2-selection__placeholder')) return '';
     return clean(e.querySelector('.select2-selection__rendered')?.innerText);
   }
+  const ant = e.closest('.ant-select');                       // Ant Design (Dayforce): the input holds only search text; the choice is shown beside it
+  if (ant) {
+    const items = [...ant.querySelectorAll('.ant-select-selection-item')].map(i => clean(i.getAttribute('title') || i.innerText)).filter(Boolean);
+    return ant.matches('.ant-select-multiple') ? items.join('; ') : (items[0] || '');
+  }
   if (e.matches('a.dropdown-select[role=combobox]')) {      // iCIMS: the shown value is in a span; the real <select> behind it holds only the loaded options
     const shown = clean(e.querySelector('.dropdown-text')?.innerText);
     return /^[—–-]*\s*(make a selection|select)/i.test(shown) ? '' : shown;
@@ -1005,6 +1010,9 @@ def phone_code_option(answer: str, options: list[str]) -> str | None:
         value = value.strip()
         if re.fullmatch(r"\+?\d{1,4}", value):
             return "", value.lstrip("+")
+        lead = re.match(r"^[^\w+]*\+(\d{1,4})\s+(\S.*)$", value)        # '🇺🇸 +1 United States' (Dayforce): a flag, the code, then the country
+        if lead:
+            return lead[2].strip(), lead[1]
         match = re.search(r"\+(\d{1,4})\)?\s*$", value)
         return (value[:match.start()].rstrip(" ("), match[1]) if match else (value, "")
     country, code = parts(answer)
