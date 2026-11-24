@@ -230,6 +230,15 @@ def too_many_recent_rejections(host: str) -> str | None:
 TOO_MANY = re.compile(r"(?i)too many (?:incorrect |failed |login |sign[- ]?in )?attempts|try again later|account (?:is|has been) locked|temporarily (?:locked|blocked)")
 
 
+def notes_for_prompt(notes, url: str) -> list[str]:
+    """The portal notes the model gets: every standing RULE, plus the last few visits. A failed visit that went through Google is left out
+    where Google is a dead end (the model read 'chose <account> in Google' as the way in and repeated it)."""
+    dead_google = social_login_refusal(url, "Continue with Google") is not None
+    rules = [n for n in notes if "RULE:" in n]
+    visits = [n for n in notes if "RULE:" not in n and not (dead_google and re.search(r"(?i)\bgoogle\b", n))]
+    return [*rules[-3:], *visits[-4:]]
+
+
 def lockout_in_view(view: str) -> bool:
     """The portal itself says the network or account has made too many attempts or is locked: nothing the agent can do helps."""
     return bool(TOO_MANY.search(view.split("ELEMENTS:", 1)[0]))
@@ -420,7 +429,7 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             pw_submitted = True
         msgs = [SystemMessage({"sign_in": PROMPT, "register": REGISTER_PROMPT, "sign_out": SIGN_OUT_PROMPT, "reset_password": RESET_PROMPT}[goal]),
                 HumanMessage(f"PORTAL: {host}\nURL: {page.url[:150]}\n"
-                             + (f"NOTES FROM EARLIER VISITS: {list(notes)[-6:]}\n" if notes else "")
+                             + (f"NOTES FROM EARLIER VISITS: {notes_for_prompt(notes, page.url)}\n" if notes else "")
                              + (f"A verification code is available as {{CODE}}.\n" if code else "")
                              + "DONE SO FAR:\n" + ("\n".join(history[-12:]) or "(nothing)") + "\n\n" + view)]
         try:

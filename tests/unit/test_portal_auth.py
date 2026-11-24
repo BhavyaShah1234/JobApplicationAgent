@@ -331,3 +331,13 @@ def test_a_too_many_attempts_or_locked_page_is_recognised_and_a_plain_login_page
     assert lk("FRAME 0 x\nTEXT: Too many attempts were detected from this network. Please try again later.\nELEMENTS:\n")
     assert lk("FRAME 0 x\nTEXT: The account is locked due to too many incorrect login attempts\nELEMENTS:\n")
     assert not lk("FRAME 0 x\nTEXT: Welcome, come on in! | Create or reset your password | Sign up\nELEMENTS:\n  [0] input/text \"Email\"")
+
+
+def test_failed_google_visits_are_hidden_where_google_is_a_dead_end_but_rules_always_show():
+    from jobagent.tools.portal_agent import notes_for_prompt as n
+    notes = ["2026-11-24: failed: chose x@y in Google > chose x@y in Google", "2026-11-23: job description lives in `main`",
+             "2026-11-24: RULE: use Sign up, never Google"]
+    ukg = n(notes, "https://signin-us.ultipro.com/u/login")
+    assert all("chose x@y" not in s for s in ukg) and any("RULE:" in s for s in ukg)
+    elsewhere = n(notes, "https://www.amazon.jobs/x")
+    assert any("chose x@y" in s for s in elsewhere)                      # where Google can work the history is kept
