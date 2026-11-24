@@ -1879,6 +1879,9 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         heads = " / ".join(view.headings[:3])
         log(f"apply: page {page_no}{' (again: ' + '; '.join(errors)[:120] + ')' if known else ''}: {heads[:100]} "
             f"({len(view.fields)} fields)")
+        from jobagent.tools import notices            # dialogs that gate the form, whichever filler runs (Dayforce: cookie + privacy dialogs)
+        if notices.resolve_blocking_dialogs(page, privacy_ok=_privacy_acknowledgement_allowed(ctx), log=log):
+            view = forms.read_page(page)
         try:
             if strategy in ('experimental','adaptive'):
                 from jobagent.filling.adapter import fill_page as planned_page
@@ -1895,9 +1898,6 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
                                             'buttons':view.buttons,'extraction':view.coverage.summary()})
                     checkpoint();break
             else:
-                from jobagent.tools import notices
-                if notices.resolve_blocking_dialogs(page, privacy_ok=_privacy_acknowledgement_allowed(ctx), log=log):
-                    view = forms.read_page(page)
                 view, done = fill_page(page, ctx, files, model, log, record, page_no, env, known, errors)
         except PlannerFailed as exc:
             # the fields found are recorded (outcome unplanned); the form is not advanced, and no review is offered
