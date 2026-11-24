@@ -124,3 +124,4 @@ def test_a_native_select_reported_as_a_combobox_is_chosen_with_select_option_fro
         return out, page.evaluate("[...document.querySelectorAll('select')].map(s => s.options[s.selectedIndex].text)")
     out, chosen = with_page(NATIVE_COMBO, run)
     assert chosen == ["India", "I consent to receive text messages"] and len(out) == 2
+

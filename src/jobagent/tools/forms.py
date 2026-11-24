@@ -1344,6 +1344,22 @@ def _clear_search_picker(page, loc) -> None:
     if pills.count():raise FillError('The old search-picker selection could not be cleared')
 
 
+def _save_combobox_failure(loc, f, opt, exc) -> None:
+    """Keep the HTML around a dropdown that could not be chosen (state/logs/combobox-failures.jsonl) so the next fix is built on the real page."""
+    try:
+        import json
+        from pathlib import Path
+        from jobagent.config import get_settings
+        html = loc.evaluate("""e => { const up = e.closest('div,td,li,fieldset') || e; return {tag: e.tagName, role: e.getAttribute('role'), id: e.id, cls: String(e.className).slice(0, 120),
+            html: (up.parentElement || up).outerHTML.slice(0, 2500)}; }""")
+        path = Path(get_settings().state_dir) / "logs" / "combobox-failures.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as fh:
+            fh.write(json.dumps({"label": f.label, "option": opt, "error": str(exc)[:200], **html}) + "\n")
+    except Exception:
+        pass
+
+
 def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[str, str], tie_break=None,
                strict: bool = False, close: bool = False, before_upload=None, upload_confirmation=None, alternatives=()) -> str:
     """Put `answer` into the field. Returns what was chosen (the option text for choice fields)."""
@@ -1687,7 +1703,17 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             option = shadow_locator(frame, "[role=option], [role=menuitem], [data-automation-id=promptOption]").filter(
                 has_text=re.compile(rf"^\s*{re.escape(opt)}\s*$"))
         try:
-            option.first.click(timeout=8000)
+            try:
+                native = option.first.evaluate("o => o.tagName === 'OPTION' && !!o.closest('select')", timeout=3000)
+            except Exception:
+                native = False
+            if native:      # the list is a native <select> behind the widget: options of a closed select cannot be clicked, select the value
+                option.first.evaluate_handle("o => o.closest('select')").as_element().select_option(label=opt, force=True, timeout=8000)
+            else:
+                option.first.click(timeout=8000)
+        except Exception as exc:
+            _save_combobox_failure(loc, f, opt, exc)
+            raise
         finally:
             page.wait_for_timeout(1200 if workday_picker else 50)
             if single_select2:
