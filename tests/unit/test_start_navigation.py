@@ -523,3 +523,21 @@ def test_a_required_upload_is_still_a_field_of_a_real_form_and_apply_is_left_alo
             "<button type=submit>Apply</button></form>")
     state, view = start(html)
     assert state["sent"] is False
+
+
+def test_a_cookie_banner_over_the_apply_button_is_declined_not_accepted_and_the_application_opens():
+    html = ("<div id=cmp style=\"position:fixed;inset:0;background:#fff8;z-index:9\"><p>We use cookies</p>"
+            "<button onclick=\"window.accepted=true;this.parentNode.remove()\">Accept all</button>"
+            "<button onclick=\"window.declined=true;this.parentNode.remove()\">Accept necessary only</button></div>"
+            f"<h1>Job</h1><button type=button onclick=\"{OPEN_ON_CLICK}\">Apply Now</button>")
+    state, view = start(html)
+    assert state["opened"] is True and len([f for f in view.fields if f.kind != "file"]) >= 3
+
+
+def test_cookie_decline_patterns_never_match_accept_all():
+    from jobagent.tools.forms import COOKIE_DECLINE, COOKIE_ACCEPT_ALL
+    for ok in ("Accept necessary only", "Necessary only", "Reject all", "Decline", "Only essential cookies", "Reject non-essential cookies"):
+        assert COOKIE_DECLINE.search(ok), ok
+    for no in ("Accept all", "Accept all cookies", "Allow all", "View options", "I Agree", "Cookie settings"):
+        assert not COOKIE_DECLINE.search(no), no
+    assert COOKIE_ACCEPT_ALL.search("Accept all") and not COOKIE_ACCEPT_ALL.search("Accept necessary only")

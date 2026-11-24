@@ -2288,6 +2288,31 @@ def _workday_listing_entry(view: PageView, button) -> bool:
     }"""))
 
 
+COOKIE_DECLINE = re.compile(
+    r"(?i)^\s*(?:accept\s+(?:only\s+)?(?:strictly\s+)?(?:necessary|essential|required)(?:\s+cookies)?(?:\s+only)?|"
+    r"(?:only\s+)?(?:necessary|essential|required)(?:\s+cookies)?(?:\s+only)?|"
+    r"(?:reject|decline|deny|refuse)(?:\s+(?:all|non[- ]essential|optional|additional))?(?:\s+cookies)?)\s*$")
+COOKIE_ACCEPT_ALL = re.compile(r"(?i)^\s*(?:accept|allow|agree\s+to)\s+all(?:\s+cookies)?\s*$")
+
+
+def decline_cookies(page: Page, view: PageView, log=lambda m: None) -> str | None:
+    """A cookie-consent banner that covers the page: choose the most privacy-preserving button it offers (necessary only /
+    reject / decline), never 'Accept all'. Only acts when the banner is recognised by an accept-all button beside it."""
+    if not any(COOKIE_ACCEPT_ALL.search(b) for b in view.buttons):
+        return None
+    for text in view.buttons:
+        if not COOKIE_DECLINE.search(text):
+            continue
+        try:
+            page.get_by_role("button", name=re.compile(r"^\s*" + re.escape(text.strip()) + r"\s*$", re.I)).first.click(timeout=4000)
+        except Exception:
+            continue
+        log(f"apply: cookie banner: chose {text.strip()!r}")
+        page.wait_for_timeout(600)
+        return text
+    return None
+
+
 def click_open_application(page: Page, view: PageView, pattern: re.Pattern, *, expected_url: str | None = None,
                            navigation_only: bool = False) -> str | None:
     """Startup: open the application (Apply, Apply Manually, Continue application). Navigation only, and only what can be

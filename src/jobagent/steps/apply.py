@@ -1613,6 +1613,8 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
             return view  # Resume an optional application step; startup never clicks its navigation.
         if len([f for f in view.fields if f.kind != "file"]) >= 3 and not pw:
             return view
+        if forms.decline_cookies(page, view, log):          # a consent banner can sit over the Apply button (Ericsson)
+            view = forms.read_page(page)
         for pat in START:
             # navigation only: a bare "Apply" that is the final button of a form with fields is never clicked here
             if (t := forms.click_open_application(page, view, pat, expected_url=url)):
