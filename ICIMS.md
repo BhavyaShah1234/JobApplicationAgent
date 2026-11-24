@@ -21,6 +21,23 @@ automated Chrome. That is an inference, not something the logs prove.
 **The agent must not work around it.** Disguising the browser or solving the puzzle itself is outside the project rules (no fingerprint
 masking, no CAPTCHA solving). A person creates the account; the agent signs in afterwards and does the rest.
 
+### 1a. Experiments that narrowed the cause (2026-11-24)
+
+| Who clicks | Browser | Result after Next |
+|---|---|---|
+| Candidate | their normal Chrome, incognito window | no puzzle; registration form |
+| Candidate | the agent's own desktop Chrome, **fresh empty profile** | puzzle, then the universal login page (`login.icims.com/u/login/identifier`) |
+| Candidate | the agent's own desktop Chrome, profile that had visited iCIMS before | the login page |
+| Agent | Docker Chromium | puzzle, then the login page |
+
+So it is not the email's account state, not the agent's clicking, and not stale cookies in the agent's profile. What differs is the browser itself: the
+agent's Chrome is started with a remote-debugging port (so it can be attached to), an ordinary Chrome is not. iCIMS appears to treat a
+remote-controlled browser as automated and withholds registration from it. Still an inference; it fits every row above.
+
+**Consequence: a person must register in an ordinary browser window, not in a window the agent controls.** That rules out "option B" (the
+candidate clicking through in the agent's own desktop window) for iCIMS registration. The flag `--candidate-start` stays available (opt-in) for
+portals where the first steps are the problem, not the browser; it does not fix iCIMS.
+
 ## 2. A second, separate defect (fixed): the Google detour
 
 After the puzzle the agent landed on the login page, then clicked **Continue with Google**. iCIMS answers "Unable to log in with the social
@@ -73,7 +90,7 @@ forgot-password route and never a social login; an authoritative rule was added 
   iCIMS portal, because Peraton's registration path (section 1) shows no verification email at all.
 - **Hand-off windows hide.** The desktop Chrome for a CAPTCHA can sit behind other windows; there is no window-raising tool installed.
 - **The agent calls the Identity-verification stop "stuck"** on Amazon-style portals; it is actually waiting for the candidate.
-- **Option B (built 2026-11-24, opt-in, being tried):** `jobagent apply <job dir> <company> --no-submit --browser-mode desktop --candidate-start
+- **Option B (built 2026-11-24, opt-in; tried on Peraton, did not help for iCIMS registration, see 1a):** `jobagent apply <job dir> <company> --no-submit --browser-mode desktop --candidate-start
   --desktop-allow-origin https://login.icims.com`. The agent opens the posting in its own desktop Chrome window and clicks nothing. The person
   clicks Apply, enters the email, presses Next, passes any check, and stops on the application's profile page (several fields, not a sign-in);
   the agent then fills the page as usual and asks the person to type any password field. The person, not the agent, passes iCIMS's checks.
