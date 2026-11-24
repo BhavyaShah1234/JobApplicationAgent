@@ -33,7 +33,7 @@ def start(html: str, routes: dict | None = None, allow_error: bool = False, url:
                     r.fulfill(status=200, content_type="text/html", body=served[r.request.url])
                 else:
                     r.abort()
-            page.route("**/*", answer)
+            page.context.route("**/*", answer)      # on the context, so a tab the page opens is served (and blocked) the same way
             if url:
                 page.goto(url)
             else:
@@ -541,3 +541,13 @@ def test_cookie_decline_patterns_never_match_accept_all():
     for no in ("Accept all", "Accept all cookies", "Allow all", "View options", "I Agree", "Cookie settings"):
         assert not COOKIE_DECLINE.search(no), no
     assert COOKIE_ACCEPT_ALL.search("Accept all") and not COOKIE_ACCEPT_ALL.search("Accept necessary only")
+
+
+def test_an_apply_button_that_opens_the_application_in_a_new_tab_is_followed_in_the_working_tab():
+    """Eightfold: 'Apply Now' is a button whose handler calls window.open on the real (SuccessFactors) application."""
+    job = "https://example.com/job"
+    app = "https://apply.example.org/form"
+    html = ("<h1>Job</h1><label>Use AI to find out how well you match<input type=file></label>"
+            f"<button type=button onclick=\"window.open('{app}','_blank')\">Apply Now</button>")
+    state, view = start(html, routes={app: f"<html><body><h1>Application</h1>{FORM3}</body></html>"}, url=job)
+    assert state["url"] == app and len([f for f in view.fields if f.kind != "file"]) >= 3

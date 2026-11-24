@@ -2162,7 +2162,32 @@ def _press(page: Page, btn) -> None:
         btn.evaluate("e=>{if(e.tagName==='A'&&e.target==='_blank')e.target='_self'}")
     # don't wait for the navigation here (Lever's apply page can take longer than the click timeout);
     # the next read of the page waits for it
+    before = set(page.context.pages)
     btn.click(timeout=10000, no_wait_after=True)
+    _follow_new_tab(page, before)
+
+
+def _follow_new_tab(page: Page, before: set) -> str | None:
+    """An Apply button that opens the application in a NEW tab (Ericsson on Eightfold opens a SuccessFactors form): the agent works
+    in one tab, so the new tab's address is loaded here and the extra tab closed. Only an https address is followed."""
+    try:
+        page.wait_for_timeout(1500)
+        for tab in [p for p in page.context.pages if p not in before and p is not page]:
+            for _ in range(10):                        # a new tab starts as about:blank
+                if tab.url and tab.url != "about:blank":
+                    break
+                page.wait_for_timeout(500)
+            url = tab.url
+            try:
+                tab.close()
+            except Exception:
+                pass
+            if url.startswith("https://"):
+                page.goto(url, wait_until="domcontentloaded")
+                return url
+    except Exception:
+        return None
+    return None
 
 
 def click_button(page: Page, view: PageView, pattern: re.Pattern) -> str | None:
