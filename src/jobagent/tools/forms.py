@@ -10,6 +10,7 @@ filling. Submit buttons are never clicked here.
 
 import json
 import re
+import time
 from datetime import datetime
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -1362,6 +1363,37 @@ def _clear_search_picker(page, loc) -> None:
     if pills.count():raise FillError('The old search-picker selection could not be cleared')
 
 
+class _NetTrace:
+    """A bounded record of the requests a page makes (method, URL without its query, resource type, status or failure): what a typed
+    place search actually asked the network, and what came back. Attached once per page; never keeps bodies, headers or query values."""
+    def __init__(self, page):
+        from collections import deque
+        self.rows = deque(maxlen=250)
+        self.t0 = time.monotonic()
+        page.on("request", lambda r: self.rows.append({"t": round(time.monotonic() - self.t0, 1), "ev": "request", "m": r.method,
+                                                       "url": r.url.split("?")[0][:140], "type": r.resource_type}))
+        page.on("response", lambda r: self.rows.append({"t": round(time.monotonic() - self.t0, 1), "ev": "response", "status": r.status,
+                                                        "url": r.url.split("?")[0][:140]}))
+        page.on("requestfailed", lambda r: self.rows.append({"t": round(time.monotonic() - self.t0, 1), "ev": "FAILED",
+                                                             "url": r.url.split("?")[0][:140], "why": str(r.failure)[:80]}))
+        page.on("console", lambda m: self.rows.append({"t": round(time.monotonic() - self.t0, 1), "ev": "console." + m.type,
+                                                       "text": m.text[:140]}) if m.type in ("error", "warning") else None)
+
+    def since(self, t):
+        return [r for r in self.rows if r["t"] >= t]
+
+
+def _net_trace(page):
+    t = getattr(page, "_jf_net_trace", None)
+    if t is None:
+        t = _NetTrace(page)
+        try:
+            page._jf_net_trace = t
+        except Exception:
+            pass
+    return t
+
+
 def _save_combobox_failure(loc, f, opt, exc) -> None:
     """Keep the HTML around a dropdown that could not be chosen (state/logs/combobox-failures.jsonl) so the next fix is built on the real page."""
     try:
@@ -1710,6 +1742,8 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         loc.select_option(**({"value": values[0]} if len(set(values)) == 1 else {"label": opt}), timeout=8000)
         return opt
     if f.kind == "combobox":
+        _trace = _net_trace(page)
+        _trace_from = round(time.monotonic() - _trace.t0, 1)
         single_select2 = loc.evaluate("e => e.matches('.select2-selection--single[role=combobox]')")
         workday_picker = loc.get_attribute("data-uxi-widget-type") == "selectinput"
         if single_select2 and loc.get_attribute("aria-expanded") == "true":
@@ -1792,7 +1826,12 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                     const m = find(document); return m ? m.outerHTML.slice(0, 1500) : 'menu ' + id + ' not found'; }""")
             except Exception as exc:
                 menu = f"menu lookup failed: {type(exc).__name__}"
-            _save_combobox_failure(loc, f, answer, f"combobox: no match among {list(opts or [])[:25]} | menu: {menu}")
+            try:      # what the typing did: the value that landed, where focus is, and what the page asked the network
+                state = loc.evaluate("e => ({value: e.value, focused: document.activeElement === e, expanded: e.getAttribute('aria-expanded')})")
+            except Exception as exc:
+                state = f"state lookup failed: {type(exc).__name__}"
+            _save_combobox_failure(loc, f, answer, f"combobox: no match among {list(opts or [])[:25]} | menu: {menu} | input: {state} | "
+                                   f"network since typing: {json.dumps(_trace.since(_trace_from))[:2500]}")
             page.keyboard.press("Escape")
             raise UnavailableOption(f"{answer!r} isn't offered as such")
         if opt is None:

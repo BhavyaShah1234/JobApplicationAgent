@@ -1,4 +1,5 @@
 """F01: startup may open an application, never send one. A bare "Apply" on a short form is the form's final button."""
+import json
 import re
 from pathlib import Path
 
@@ -585,3 +586,39 @@ def test_a_bare_city_takes_the_one_united_states_suggestion_and_never_guesses_be
     assert strict_place("San Ramon", ["Ramona, CA, USA", "San Ramon Valley, CA, USA"]) is None    # a different place that contains it
     assert strict_place("San Ramon", ["San Ramon, Philippines"]) is None                         # not a US place
     assert strict_place("San Ramon, CA", ["San Ramon, CA, USA"]) == "San Ramon, CA, USA"         # the existing City, State rule still works
+
+
+def test_the_network_trace_records_what_a_search_box_asked_and_what_came_back_without_query_values():
+    from playwright.sync_api import sync_playwright as _pw
+    from jobagent.tools import forms as F
+    with _pw() as pw:
+        try:
+            browser = pw.chromium.launch(channel="chrome", headless=True)
+        except Exception:
+            pytest.skip("no Chrome here")
+        try:
+            page = browser.new_page()
+
+            def answer(route):
+                u = route.request.url
+                if "/places" in u:
+                    route.fulfill(status=200, content_type="application/json", body="[]")
+                elif "/blocked" in u:
+                    route.abort()
+                else:
+                    route.fulfill(status=200, content_type="text/html", body="<html><body>x</body></html>")
+            page.context.route("**/*", answer)
+            page.goto("https://example.com/form")
+            trace = F._net_trace(page)
+            t0 = round(__import__("time").monotonic() - trace.t0, 1)
+            page.evaluate("fetch('https://api.example.com/places?q=SECRETVALUE')")
+            page.evaluate("fetch('https://api.example.com/blocked?q=SECRETVALUE').catch(()=>0)")
+            page.wait_for_timeout(600)
+            rows = trace.since(t0)
+            dump = json.dumps(rows)
+            assert any(r["ev"] == "response" and r["status"] == 200 and r["url"].endswith("/places") for r in rows)
+            assert any(r["ev"] == "FAILED" and r["url"].endswith("/blocked") for r in rows)
+            assert "SECRETVALUE" not in dump                                  # query values are never kept
+            assert F._net_trace(page) is trace                                 # attached once per page
+        finally:
+            browser.close()
