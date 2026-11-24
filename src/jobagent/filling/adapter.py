@@ -76,6 +76,16 @@ def _saved_matches(fields, eligible, company):
 MAX_INTERSTITIAL_STREAK=3     # the same kind of field-less page this many times in a row means the click is not moving it on
 
 
+def _save_planner_failure(exc,out_dir,page_no,log):
+    """Keep what the planner crashed on: the message and traceback go to the job folder (a bare class name such as RuntimeError diagnoses nothing)."""
+    import traceback
+    text=''.join(traceback.format_exception(type(exc),exc,exc.__traceback__))
+    try:
+        log(f'planner crashed on page {page_no}: {type(exc).__name__}: {str(exc)[:300]}')
+        if out_dir:(Path(out_dir)/f'planner-failure-page{page_no}.txt').write_text(text[-6000:])
+    except Exception:pass
+
+
 def fieldless_page(view,env,page_no,log):
     """What to do with a page that has no application fields.
 
@@ -317,6 +327,7 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
     except Exception as exc:
         from jobagent.tools.challenge import Blocked
         if isinstance(exc,Blocked):raise
+        _save_planner_failure(exc,env.get('out_dir'),page_no,log)
         for field in read_view(page).fields:
             row=A._blank_entry(field,page_no,f'experimental planner failed: {type(exc).__name__}')
             row.update(outcome='unplanned',verified=False,readback=field.value);record.append(row)
