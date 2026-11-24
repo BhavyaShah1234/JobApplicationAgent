@@ -379,7 +379,10 @@ FIELDS_JS = r"""(start) => {
       continue; }
     if (t === 'file') {
       // file inputs are often hidden behind an "Attach" button: count them when their container shows
-      const box = e.closest('div, section, fieldset') || e.parentElement;
+      let box = e.closest('div, section, fieldset') || e.parentElement;
+      // the input's own wrapper can be a zero-size box (iCIMS hides the real input there behind a styled button): use the first
+      // visible container above it
+      for (let k = 0; box && !vis(box) && k < 4; k++) box = box.parentElement && box.parentElement.closest('div, section, fieldset');
       if (!box || !vis(box) || !shown(box)) continue;
       // The caption is the upload's OWN explicit label first (`label[for]`, aria, a wrapping label), then the text of the nearest
       // container that holds THIS upload alone and is short (usually the wrapping label itself). A container that also holds another

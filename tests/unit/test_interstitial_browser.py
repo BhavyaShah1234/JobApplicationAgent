@@ -170,3 +170,29 @@ def test_a_country_with_no_states_leaves_the_state_dropdown_as_it_is_and_an_addr
         f = next(x for x in v.fields if x.kind == "combobox")
         return forms.fill_field(page, v, f, "100 East Santa Fe Street", {}, strict=True)
     assert "Enter Manually" in with_page(html_addr, run2)
+
+
+HIDDEN_FILE = """<!doctype html><html><head><meta charset="utf-8"></head><body>
+<div class="row"><label id="l" for="PortalProfileFields.Resume_File">Please upload your resume (max size: 5MB).</label><span class="req">* required</span>
+<div class="iCIMS_FileUploadButtonBlock"><div tabindex="0" class="iCIMS_FileFieldButton" style="border:1px solid #888;width:140px;height:28px"
+ onclick="document.getElementById('PortalProfileFields.Resume_File').click()">My Computer</div>
+<div style="position:absolute;width:0;height:0;overflow:hidden;opacity:0"><input type="file" id="PortalProfileFields.Resume_File" name="resume"></div></div></div>
+</body></html>"""
+
+
+def test_a_file_input_hidden_in_a_zero_size_wrapper_behind_a_styled_button_is_an_upload_field():
+    from jobagent.tools import forms
+    def run(page):
+        v = forms.read_page(page)
+        return [(f.kind, f.label, f.required) for f in v.fields]
+    fields = with_page(HIDDEN_FILE, run)
+    files = [f for f in fields if f[0] == "file"]
+    assert len(files) == 1 and "resume" in files[0][1].lower()
+
+
+def test_the_inventory_ignores_the_native_select_behind_an_icims_dropdown_widget():
+    from jobagent.filling.discovery import INVENTORY
+    def run(page):
+        return [x["label"] for x in page.evaluate(INVENTORY)]
+    labels = with_page(ICIMS_DROPDOWN, run)
+    assert [x for x in labels if x.strip().lower().startswith("country")] == ["Country"]      # the widget once, not also the select behind it
