@@ -269,7 +269,11 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             try:
                 page.go_back(wait_until="domcontentloaded", timeout=15000)
             except Exception:
-                page.goto(came_from, wait_until="domcontentloaded")
+                try:
+                    page.goto(url, wait_until="domcontentloaded")          # the stored login link is single-use: start from the posting
+                except Exception as exc:
+                    state["state"], state["reason"] = "failed", f"could not return from Google ({type(exc).__name__})"
+                    break
             continue
         if urlparse(page.url).netloc != "accounts.google.com":
             came_from = page.url
@@ -303,6 +307,8 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             genuine = False
         if REJECTED.search(shown_text) and genuine:
             wrong_pw += 1
+            if (hint := signup_link_hint(frames)):
+                history.append(hint)
             if wrong_pw >= 2 and "PASSWORD REJECTED" not in " ".join(history[-2:]):
                 history.append("PASSWORD REJECTED twice: never type a password again here (lockout risk). If the "
                                "site has a create-account, sign-up or forgot-password route use that; do NOT use social logins "
@@ -612,6 +618,24 @@ def pick_combobox_option(page: Page, loc, value: str) -> str | None:
         loc.press("Escape")
     except Exception:
         pass
+    return None
+
+
+SIGNUP_LABEL = re.compile(r"(?i)^\s*(?:sign\s*up|create\s+(?:an?\s+|your\s+)?account|register|join now)\s*$")
+
+
+def signup_link_hint(frames: dict) -> str | None:
+    """After a rejected password: where the page's own Sign up / Create account control is, by NAME (the model's index choices drift when
+    an error banner shifts the list and one drifted pick landed on 'Continue with Google'). None when the page has no such control."""
+    for fid, frame in frames.items():
+        try:
+            items = frame.evaluate(SNAPSHOT_JS)["items"]
+        except Exception:
+            continue
+        for i, item in enumerate(items):
+            if SIGNUP_LABEL.search(item.get("label", "") or ""):
+                return (f"the page's own Sign up / Create account control is F{fid}[{i}] ('{item['label'][:30]}'): if a rejected password may "
+                        "only mean there is no account, use THAT element (never Continue with Google)")
     return None
 
 

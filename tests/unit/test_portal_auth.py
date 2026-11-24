@@ -245,3 +245,15 @@ def test_a_click_that_lands_on_google_from_a_refusing_portal_is_sent_back():
     # the loop asks exactly this question about the page it came from when it finds itself on accounts.google.com
     assert r("https://signin-us.ultipro.com/u/login", "Continue with Google")
     assert r("https://www.amazon.jobs/en/x", "Continue with Google") is None     # elsewhere the Google route is still allowed
+
+
+def test_the_sign_up_link_is_found_by_name_with_its_index_after_a_rejected_password():
+    from jobagent.tools.portal_agent import signup_link_hint
+    items = [{"label": "Email address *"}, {"label": "Password *"}, {"label": "Show password"}, {"label": "Create or reset your password"},
+             {"label": "Sign in"}, {"label": "Sign up"}, {"label": "Continue with Google"}]
+    frame = type("F", (), {"evaluate": lambda self, js: {"items": items}})()
+    hint = signup_link_hint({0: frame})
+    assert hint and "F0[5]" in hint and "never Continue with Google" in hint
+    no_signup = type("F", (), {"evaluate": lambda self, js: {"items": [{"label": "Email"}, {"label": "Sign in"}]}})()
+    assert signup_link_hint({0: no_signup}) is None
+    assert signup_link_hint({0: type("F", (), {"evaluate": lambda self, js: 1 / 0})()}) is None
