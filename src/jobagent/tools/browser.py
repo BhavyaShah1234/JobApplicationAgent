@@ -100,6 +100,41 @@ def persistent_context(settings: Settings | None = None) -> Iterator[BrowserCont
         yield ctx
 
 
+def handoff_tab_allowed(requested, page, related_urls=()):
+    """Bind initial attachment to the job or an explicitly trusted credential-only login.
+
+    A person can reach a shared identity service before enabling Chrome's connection.
+    Same-origin wrong-job tabs and mixed profile/application forms never get this exception.
+    Public DNS and the ordinary target/origin lease remain mandatory in Scope.
+    """
+    from jobagent.tools import desktop_browser as D, desktop_handoff as H
+    if not D.public_destination(page.url):
+        return False
+    if H.same_posting(requested, page.url):
+        return True
+    current = D.origin(page.url)
+    if (current == D.origin(requested) or
+            current not in {D.origin(u) for u in related_urls if D.public_destination(u)}):
+        return False
+    try:
+        return page.evaluate(r'''() => {
+          const shown=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);
+            return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';};
+          const forms=[...document.forms].filter(f=>[...f.elements].some(shown));
+          if(forms.length!==1)return false;
+          const form=forms[0], fields=[...form.elements].filter(e=>['INPUT','SELECT','TEXTAREA','BUTTON'].includes(e.tagName)).filter(shown)
+            .filter(e=>!['hidden','submit','button','reset'].includes(e.type));
+          if(form.querySelector('input[type=file],textarea,select,[contenteditable=true]') ||
+             fields.filter(e=>e.tagName==='INPUT'&&e.type==='password').length!==1 || fields.length>3)return false;
+          if(!fields.every(e=>e.tagName==='INPUT'&&(e.type==='password'||e.type==='email'||
+            e.type==='text'&&/^(?:username|email|login|identifier)$/i.test(e.name||e.autocomplete||''))))return false;
+          return [...document.querySelectorAll('h1,h2,legend')].filter(shown).some(e=>
+            /\b(?:sign\s*in|log\s*in|login|enter your password)\b/i.test(e.innerText));
+        }''') is True
+    except Exception:
+        return False
+
+
 @contextmanager
 def application_context(mode, url, settings=None, *, related_urls=()):
     """Docker by default; opt-in desktop uses the host broker and the same Voyager application code."""
@@ -164,8 +199,7 @@ def application_context(mode, url, settings=None, *, related_urls=()):
                 time.sleep(.25)
             page = pages[0]
             if handoff:
-                from jobagent.tools.desktop_handoff import same_posting
-                if not same_posting(url,page.url):
+                if not handoff_tab_allowed(url,page,related_urls):
                     raise RuntimeError('The handoff tab belongs to a different posting; return to the requested application')
             ctx = page.context
             if handoff:ctx.jobagent_background=True
