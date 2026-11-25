@@ -97,6 +97,23 @@ def _saved_matches(fields, eligible, company):
 MAX_INTERSTITIAL_STREAK=3     # the same kind of field-less page this many times in a row means the click is not moving it on
 
 
+def _parsed_upload_entry(filler, page_no, view, field, history):
+    """Carry an upload record across only its proven parser document replacement."""
+    from jobagent.tools import forms
+
+    element=forms.locate(view,field)
+    proofs={}
+    for (step,field_key),proof in filler.upload_proofs.items():
+        if step==page_no and proof.can_rebind(element):
+            proofs.setdefault(id(proof),(proof,set()))[1].add(field_key)
+    if len(proofs)!=1:return {},None
+    proof,keys=next(iter(proofs.values()))
+    entry=next((row for row in reversed(history) if row.get('step')==page_no and
+                row.get('field_key') in keys and row.get('kind')=='file' and
+                row.get('outcome')=='verified' and row.get('held_file_sha256')==proof.expected),{})
+    return (entry,proof) if entry else ({},None)
+
+
 def _save_planner_failure(exc,out_dir,page_no,log):
     """Keep what the planner crashed on: the message and traceback go to the job folder (a bare class name such as RuntimeError diagnoses nothing)."""
     import traceback
@@ -366,6 +383,9 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                     e.get('field_key')==key(f)),None)
         if entry is None:entry={}
         proof=filler.upload_proofs.get((page_no,key(f))) if f.kind=='file' else None
+        if f.kind=='file' and not entry:
+            entry,rebound=_parsed_upload_entry(filler,page_no,view,f,history)
+            if rebound is not None:proof=rebound
         if f.kind=='file' and proof is None:proof=filler.uploaded_labels.get((page_no,f.label))      # a same-label input satisfied by a verified upload
         success=entry.get('outcome')=='verified' and not f.invalid and (proof.verify() if proof else forms.same_value(entry.get('readback',''),f.value,f.kind,f.label))
         value=entry.get('answer','')

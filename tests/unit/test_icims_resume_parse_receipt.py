@@ -122,3 +122,46 @@ def test_filler_retains_receipt_and_binding_after_embedded_profile_parse(env,acc
 ])
 def test_parse_flag_is_unambiguous_even_after_repeated_entry(query,expected):
     assert resume_parse_request(URL+'?'+query) is expected
+
+
+@pytest.mark.parametrize('case',['success','later_navigation','wrong_record_digest'])
+def test_native_adapter_reconciles_only_receipt_owned_epoch_changes(env,monkeypatch,case):
+    from jobagent.filling import adapter
+    from jobagent.filling.facts import key
+    from jobagent.filling.planned import PlannedFiller,read_view
+
+    page,path=env
+    posts=[]
+    def route(r):
+        if r.request.url.endswith('/shell'):
+            r.fulfill(content_type='text/html',body=f'<iframe src="{URL}"></iframe>')
+        elif r.request.method=='POST':
+            posts.append(1);r.fulfill(content_type='text/html',body=profile())
+        else:r.fulfill(content_type='text/html',body=profile(initial=True))
+    page.route('https://icims.test/**',route);page.goto('https://icims.test/shell')
+    old_key=key(read_view(page).fields[0])
+    filler=PlannedFiller([],lambda _: {});filler.step=1
+    result=filler.fill(page,files={'resume':str(path)},max_rounds=3,advance_pages=False)
+    proof=next(iter(filler.upload_proofs.values()))
+    try:
+        assert result['state']=='page_complete' and len(posts)==1
+        assert key(read_view(page).fields[0])!=old_key
+        # Reproduce the live boundary: a successful dispatch record captured
+        # before the parser's new document epoch is read by the outer adapter.
+        for row in result['records']:
+            if row.get('kind')=='file':row['field_key']=old_key
+        filler.upload_proofs={(1,old_key):proof}
+        if case=='later_navigation':page.frames[1].goto(URL)
+        if case=='wrong_record_digest':
+            for row in result['records']:
+                if row.get('kind')=='file':row['held_file_sha256']='unrelated digest'
+        monkeypatch.setattr(filler,'fill',lambda *a,**k:result)
+        records=[];context={'_experimental_filler':filler}
+        adapter.fill_page(page,context,{'resume':str(path)},None,lambda _:None,records,1,{},known={})
+        assert records[0]['verified'] is (case=='success')
+        if case=='success':
+            assert records[0]['held_file_sha256']==proof.expected
+            assert records[0]['upload_verification']=='byte-verified dispatch and fresh resume-parse POST receipt'
+            assert records[0]['field_key']!=old_key
+        assert len(posts)==1
+    finally:proof.close()
