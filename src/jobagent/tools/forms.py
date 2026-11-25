@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import Frame, Page, Error as PlaywrightError
 from rapidfuzz import fuzz, process
 from jobagent.tools.shadow import locator as shadow_locator, field_element
-from jobagent.tools.form_scope import UTILITY_CONTROL_JS
+from jobagent.tools.form_scope import UTILITY_CONTROL_JS, FORM_OWNER_JS
 
 CAPTCHA_FRAME = re.compile(r"(?i)hcaptcha|recaptcha|google\.com/recaptcha|challenges\.cloudflare|arkoselabs|funcaptcha")
 
@@ -130,6 +130,43 @@ FIELDS_JS = r"""(start) => {
           && before(l, c) && before(c, e) && vis(c));
       return between ? '' : clean(l.innerText); }
     return ''; };
+  const generatedField = e => {
+    // Generated iForms expose database names as ARIA labels. Read the actual
+    // caption in this control's table cell, without borrowing a neighbour's.
+    if(!e.matches('.iCIMS_Forms_Global') || !/^icims_/.test(e.id))return null;
+    const cell=e.closest('td');
+    if(!cell)return null;
+    const date=e.closest('.iCIMS_Forms_DateOnlyField');
+    const staticText=n=>{
+      if(n.nodeType===Node.TEXT_NODE)return n.textContent;
+      if(n.nodeType!==Node.ELEMENT_NODE || n.matches('input,select,textarea,script,style,.iCIMS_Forms_DateOnlyField,.iCIMS_508_Label'))return '';
+      const s=getComputedStyle(n);
+      if(n.hidden || s.display==='none' || s.visibility==='hidden')return '';
+      return [...n.childNodes].map(staticText).join(' ');
+    };
+    let label='';
+    for(let box=e.parentElement;box;box=box.parentElement){
+      const units=[...box.querySelectorAll('input:not([type=hidden]),select,textarea')]
+        .map(c=>c.closest('.iCIMS_Forms_DateOnlyField')||c);
+      if(new Set(units).size>1)break;
+      const text=clean(staticText(box));
+      if(text)label=text;
+      if(box===cell)break;
+    }
+    if(!label || label.length>350)return null;
+    const part=date && clean(e.labels?.[0]?.textContent);
+    if(part && /^(month|day|year)$/i.test(part))label+=' '+part;
+    // The generated collection's explicit zero-based row ID binds the entity;
+    // the same vendor schema is used across employer-owned iForms.
+    const row=e.id.match(/^icims_(\d+)_(Emp\w*|Education\w*|School|Degree|Grad\w*|otherSchool_new)(?:_|$)/i);
+    let section=row ? (/^Emp/i.test(row[2])?'Work Experience':'Education')+' '+(Number(row[1])+1) : '';
+    if(!section){
+      const titles=[...e.getRootNode().querySelectorAll('strong,b')].filter(h=>before(h,e));
+      const heading=titles.reverse().find(h=>/^(?:Position Details|Personal Information|Current Address Information|Phone Number|Mutual Arbitration Agreement|Applicant Statement)$/i.test(clean(h.textContent)));
+      section=heading ? clean(heading.textContent) : '';
+    }
+    return {label,section,help:date?'':label};
+  };
   const question = e => {
     // the question a control belongs to: aria, label[for], wrapping label, legend, or the nearest container text
     // Workday: the form field's own label (a list button's aria-label holds its value: "Select One Required")
@@ -157,6 +194,8 @@ FIELDS_JS = r"""(start) => {
         (original?.matches('select.select2-hidden-accessible') && byIds(original.getAttribute('aria-labelledby'), original)) ||
         nearLabel(original?.matches('select.select2-hidden-accessible') ? original : e);
     }
+    const generated=generatedField(e);
+    if(generated)return generated.label;
     let t = byIds(e.getAttribute('aria-labelledby'), e);
     if (!t && e.id) { const l = e.getRootNode().querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) t = caption(l); }
     if (!t) t = clean(e.getAttribute('aria-label'));
@@ -206,6 +245,8 @@ FIELDS_JS = r"""(start) => {
       return l ? clean(l.innerText) : clean(b.value); });
     return around(e, labels) || question(e); };
   const section = e => {
+    const generated=generatedField(e);
+    if(generated?.section)return generated.section;
     const ae = anchor(e);
     // A repeating fieldset's own numbered legend identifies the row. Its
     // sentence-style outer heading must not collapse every employer into one.
@@ -2465,8 +2506,8 @@ def advance(page: Page, view: PageView) -> str | None:
 SENDS_FORM_JS = r"""e => {
   const shown = x => { const r = x.getBoundingClientRect(); const s = getComputedStyle(x);
     return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
-  const form = e.form || e.closest('form');
-  const fillable = form ? [...form.elements].filter(c => /^(INPUT|SELECT|TEXTAREA)$/.test(c.tagName)
+  const form = (__FORM_OWNER__)(e);
+  const fillable = form ? [...Object.getOwnPropertyDescriptor(HTMLFormElement.prototype,'elements').get.call(form)].filter(c => /^(INPUT|SELECT|TEXTAREA)$/.test(c.tagName)
       && !['hidden', 'submit', 'button', 'image', 'reset'].includes(c.type) && shown(c)).length : 0;
   let href = '';
   // A responsive dropdown may mirror a real (currently hidden) Apply anchor.
@@ -2495,7 +2536,7 @@ SENDS_FORM_JS = r"""e => {
   const menu = owner?.querySelector('[role=menu],.dropdown-menu');
   const menu_open = e.getAttribute('aria-expanded') === 'true' || !!menu && shown(menu);
   return {sends: !!(form && fillable > 0), fillable, href, mirrors, menu_open};
-}"""
+}""".replace('__FORM_OWNER__',FORM_OWNER_JS)
 
 
 def _successfactors_listing_entry(page: Page, view: PageView, button, expected_url: str | None = None) -> bool:

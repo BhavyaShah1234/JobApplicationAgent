@@ -127,9 +127,10 @@ def handoff_tab_allowed(requested, page, related_urls=(), *, lease=None, target_
         return page.evaluate(r'''() => {
           const shown=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);
             return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';};
-          const forms=[...document.forms].filter(f=>[...f.elements].some(shown));
+          const controls=f=>[...Object.getOwnPropertyDescriptor(HTMLFormElement.prototype,'elements').get.call(f)];
+          const forms=[...document.forms].filter(f=>controls(f).some(shown));
           if(forms.length!==1)return false;
-          const form=forms[0], fields=[...form.elements].filter(e=>['INPUT','SELECT','TEXTAREA','BUTTON'].includes(e.tagName)).filter(shown)
+          const form=forms[0], fields=controls(form).filter(e=>['INPUT','SELECT','TEXTAREA','BUTTON'].includes(e.tagName)).filter(shown)
             .filter(e=>!['hidden','submit','button','reset'].includes(e.type));
           if(form.querySelector('input[type=file],textarea,select,[contenteditable=true]') ||
              fields.filter(e=>e.tagName==='INPUT'&&e.type==='password').length!==1 || fields.length>3)return false;
