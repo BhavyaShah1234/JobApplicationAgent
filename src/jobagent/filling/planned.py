@@ -798,7 +798,7 @@ class PlannedFiller:
                     return self.result('blocked',records,started,['unresolved potential field: '+x for x in unknown])
                 if not advance_pages:return self.result('page_complete',records,started,[])
                 before=wizard.state_of(page,view)
-                if forms.click_button(page,view,forms.NEXT):
+                if forms.advance(page,view):
                     progressed,_,_,why=wizard.wait_for_progress(page,before)
                     if progressed!='advanced':return self.result('blocked',records,started,['Next refused: '+str(why)])
                     self.cache={};self.step+=1;continue

@@ -2439,9 +2439,15 @@ def interstitial_button(view: PageView) -> str | None:
 
 def advance(page: Page, view: PageView) -> str | None:
     """Move the wizard on: the Next button; on a page with no fields also the safe intermediate-screen buttons. Returns what was clicked."""
+    from jobagent.tools.wizard import icims_step, advance_icims_intermediate
+    stage = icims_step(page)
+    if stage and stage['current'] == stage['total'] and stage['final_confirmation']:
+        return None  # a final confirmation action can be captioned Continue rather than Submit
     clicked = click_button(page, view, NEXT)
     if clicked is None and not view.fields:
         clicked = click_button(page, view, INTERSTITIAL)
+    if clicked is None:
+        clicked = advance_icims_intermediate(page, view)
     return clicked
 
 

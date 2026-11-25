@@ -21,6 +21,65 @@ from jobagent.tools import forms
 # the share of the questions that were on the page before and are gone now above which the wizard has moved to a new step
 GONE_SHARE = 0.5
 
+ICIMS_STEP_JS = r"""() => {
+  const nodes=[...document.querySelectorAll('li[id^="Step_"]')];
+  const steps=nodes.map(e=>{
+    const text=e.innerText.replace(/\s+/g,' ').trim();
+    const m=text.match(/^Step\s+(\d+)\s+of\s+(\d+)\.\s*(.+?)\s*\(/i);
+    return m?{current:Number(m[1]),total:Number(m[2]),label:m[3].trim(),
+      active:e.classList.contains('iCIMS_Steps_Current')}:null;
+  });
+  if(!steps.length||steps.some(s=>!s)||steps.filter(s=>s.active).length!==1)return null;
+  const total=steps[0].total;
+  if(total<1||total>20||steps.length!==total||steps.some(s=>s.total!==total)||
+     new Set(steps.map(s=>s.current)).size!==total||steps.some(s=>s.current<1||s.current>total))return null;
+  const current=steps.find(s=>s.active),last=steps.find(s=>s.current===total);
+  return {...current,final_label:last.label,
+    final_confirmation:/^(?:confirm|review)(?: your| my| the)? application$/i.test(last.label)};
+}"""
+
+
+def icims_step(page):
+    """Read a consistent iCIMS wizard tracker from its own job document, including embedded forms."""
+    found=[]
+    for frame in getattr(page,'frames',()):
+        try:
+            if not re.match(r'^/jobs/\d+(?:/|$)', urlsplit(frame.url).path):continue
+            step=frame.evaluate(ICIMS_STEP_JS)
+            if step:found.append(step)
+        except Exception:continue
+    return found[0] if len(found)==1 else None
+
+
+def advance_icims_intermediate(page, view):
+    """Save an explicitly nonterminal iCIMS step; never click the final confirmation action.
+
+    The tracker must name a later Confirm/Review Application step. The selected
+    control must post its own form to this same job document, without overrides.
+    """
+    from jobagent.tools import challenge
+    challenge.guard(page)
+    for text in view.buttons:
+        if not re.fullmatch(r'(?:update profile|submit profile|submit(?: answers| questions)?)',text.strip(),re.I):continue
+        for button in forms._visible_buttons(view,text):
+            try:
+                safe=button.evaluate('(button)=>{const step=('+ICIMS_STEP_JS+r''')();
+                  if(!step||!step.final_confirmation||step.current>=step.total)return false;
+                  const form=button.form;
+                  if(!form||(form.getAttribute('method')||'get').toLowerCase()!=='post'||button.hasAttribute('formaction')||
+                     button.hasAttribute('formtarget')||button.hasAttribute('formmethod')||
+                     !['','_self'].includes(form.getAttribute('target')||''))return false;
+                  const action=new URL(form.getAttribute('action')||location.href,document.baseURI),here=new URL(location.href);
+                  return action.protocol==='https:'&&action.origin===here.origin&&
+                    action.pathname===here.pathname&&/^\/jobs\/\d+(?:\/|$)/.test(here.pathname);
+                }''')
+                if safe:
+                    forms._press(page,button)
+                    return text
+            except challenge.Blocked:raise
+            except Exception:continue
+    return None
+
 STEP_JS = """() => {
   const out = [], t = (e) => ((e.innerText || e.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ')).slice(0, 60);
   for (const e of document.querySelectorAll('[aria-current]:not([aria-current=false])')) {

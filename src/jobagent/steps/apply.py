@@ -2003,6 +2003,9 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         result["pages"].append({"page": page_no, "headings": view.headings[:4], "screenshot": shot.name,
                                 "errors": view.errors, "buttons": view.buttons,
                                 "extraction": view.coverage.summary()})           # F17: what the reader could and could not see
+        if portal_step := wizard.icims_step(page):
+            result['portal_stage'] = portal_step
+            result['pages'][-1]['portal_stage'] = portal_step
         env['_advance_at'] = datetime.now(timezone.utc)      # an emailed link must be newer than this click
         if forms.advance(page, view) is None:
             if _email_gate(page, env, log, ctx.get('_jd', {}).get('source_url') or url):
@@ -2014,7 +2017,13 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
             human = forms.human_check(page)
             if human:
                 result["human_check"] = human  # the candidate ticks it in noVNC; then Submit shows
-            if any(forms.SUBMIT.search(b) for b in view.buttons) or human or forms.has_submit_input(page):
+            pending_step = wizard.icims_step(page)
+            if pending_step and pending_step['current'] < pending_step['total']:
+                result.update(state='blocked', blocked_by='page', resumable=True,
+                    reason=f"Nonterminal wizard step {pending_step['current']}/{pending_step['total']} "
+                           f"({pending_step['label']}) has no verified continuation; not the final application review")
+                log('apply: ' + result['reason'])
+            elif any(forms.SUBMIT.search(b) for b in view.buttons) or human or forms.has_submit_input(page):
                 result["state"] = "review"  # only Submit is left: the review screen; the user submits (step 13)
                 log("apply: reached the review screen (Submit not clicked)")
             else:
