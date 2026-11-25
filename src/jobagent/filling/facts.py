@@ -69,6 +69,9 @@ def owner_only(f):
 
 ENTITY_HEADER = re.compile(r'^(?:(?:previous|prior|past)\s*)?(work\s*experience|employment(?:\s*history)?|professional\s*experience|education(?:\s*(?:history|details|information))?|academic(?:\s*(?:history|qualifications))?|references?|referrals?)\s*(?:entry\s*)?(\d+)?$')
 ENTITY_COMPONENTS = {
+    'employer','employer name','company','company name','title','job title','position title',
+    'school','university','institute','degree','major','field of study',
+    'from date','start date','end date','from year','start year','end year',
     'first name','given name','middle name','last name','family name','surname','full name','name',
     'email','email address','phone','phone number','primary phone','telephone','mobile',
     'phone country','phone country code','country phone code','dial code','phone device type','phone extension',
@@ -120,7 +123,7 @@ def scope_allows(f, fact):
         return False
     # The same holds in a sentence-style education or employer section: the candidate's current address (or the job's city that
     # replaces it for this application) is not the school's or the employer's city, state or country.
-    if loose_entity_scope(f.section) and (norm(f.label) in ADDRESS_PARTS or any(norm(a) in ADDRESS_PARTS for a in fact.aliases)):
+    if loose_entity_scope(f.section) and (norm(f.label) in ENTITY_COMPONENTS or any(norm(a) in ENTITY_COMPONENTS for a in fact.aliases)):
         return False
     return True
 
@@ -250,6 +253,12 @@ def declaration_notes_only(instructions):
                for x in clauses)
 
 
+def date_component(f):
+    label = norm(re.sub(r'\([^)]*\)', '', f.label))
+    match = re.fullmatch(r'(start|from|end|to)(?: date)? (month|day|year)', label)
+    return ('end' if match[1] in ('end', 'to') else 'start', match[2]) if match else None
+
+
 def from_fact(f, fact):
     if declaration_notes_only(fact.instructions):
         from dataclasses import replace
@@ -278,6 +287,32 @@ def from_fact(f, fact):
         if not (quoted or numeric or text==fact.value or forms.strict_option(text,f.options) is not None):
             return Decision(None,fact.source,fact.id,'source rule requires validation')
         fact=Fact(fact.id,fact.aliases,text,fact.source,fact.section,fact.variants)
+    component = date_component(f)
+    if component:
+        boundary, part = component
+        aliases = {'End Date'} if boundary == 'end' else {'Start Date', 'From Date'}
+        if not aliases.intersection(fact.aliases):
+            return Decision(None, reason='wrong source date boundary')
+        if boundary == 'end' and norm(fact.value) in ('present','current','ongoing'):
+            return Decision('' if not f.required else None, fact.source, fact.id, 'ongoing employment has no end date')
+        parsed, precision = None, ''
+        for fmt, granularity in [('%Y-%m-%d','day'),('%m/%d/%Y','day'),('%B %d, %Y','day'),
+                                 ('%B %Y','month'),('%b %Y','month'),('%Y-%m','month'),('%m/%Y','month'),('%Y','year')]:
+            try:
+                parsed, precision = datetime.strptime(fact.value,fmt), granularity
+                break
+            except ValueError:pass
+        if parsed is None or part == 'month' and precision == 'year':
+            return Decision(None, fact.source, fact.id, 'date component missing from source')
+        source, ident = fact.source, fact.id
+        if part == 'day' and precision != 'day':
+            if precision != 'month' or fact.date_policy != FIRST_DAY_POLICY or not fact.policy_fact_id:
+                return Decision(None, source, ident, 'exact day missing from source')
+            source += '; owner-approved first-day approximation: ' + fact.policy_fact_id
+            ident += ',' + fact.policy_fact_id
+        values = ([parsed.strftime('%B'), parsed.strftime('%b'), str(parsed.month), f'{parsed.month:02d}'] if part == 'month'
+                  else [str(parsed.day), f'{parsed.day:02d}'] if part == 'day' else [str(parsed.year)])
+        return Decision(choice(f,values), source, ident, 'date component from the same source role')
     value=choice(f,[fact.value,*fact.variants])
     rendered_source,rendered_ids=fact.source,fact.id
     format_hint=(f.format or '').upper()
@@ -313,6 +348,12 @@ def from_fact(f, fact):
 
 
 def resolve(f, facts):
+    if component := date_component(f):
+        aliases = {'End Date'} if component[0] == 'end' else {'Start Date','From Date'}
+        dates = [fact for fact in facts if not fact.record and aliases.intersection(fact.aliases) and scope_allows(f,fact)]
+        if len(dates) == 1:
+            return from_fact(f,dates[0])
+        return Decision(None, reason='no unique source date for this row')
     label=re.sub(r'(?i)\((?:optional|if applicable)\)', '', f.label).strip()
     suffix=' '.join(f.options)
     if suffix and label.endswith(suffix):label=label[:-len(suffix)].strip()
@@ -407,7 +448,7 @@ def compile_facts(data, raw_jd, reference_date=''):
                 row_section=f'{group} {i}' if group else ''
                 aliases={'school':['School','University','Institute'], 'degree':['Degree'], 'field':['Field of Study','Major'],
                          'from':['From Date','Start Date'], 'start':['From Date','Start Date'],
-                         'end':['End Date'], 'to':['End Date'], 'company':['Company','Company Name','Employer','Employer Name'], 'title':['Job Title','Position Title'],
+                         'end':['End Date'], 'to':['End Date'], 'company':['Company','Company Name','Employer','Employer Name'], 'title':['Job Title','Position Title','Title'],
                          'current':['Current','Currently work here','I currently work here','Current position'],
                          'description':['Description','Responsibilities','Role Description'], 'gpa':['GPA','G.P.A.','Grade Point Average'],
                          'city':['City'], 'state':['State','Province'], 'country':['Country'], 'region':['Region','World region'],

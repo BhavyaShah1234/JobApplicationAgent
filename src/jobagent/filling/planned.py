@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, SystemMessage
 from jobagent import llm
 from jobagent.tools import forms, wizard
-from .facts import Decision, Fact, choice, key, norm, resolve, from_fact, scope_allows, owner_only, entity_scope
+from .facts import Decision, Fact, choice, key, norm, resolve, from_fact, date_component, scope_allows, owner_only, entity_scope
 from .discovery import Discovery
 from .uploads import UploadProof
 from .live_view import LiveView
@@ -423,7 +423,7 @@ class PlannedFiller:
                     decision.value=rendered
                 if forms.is_identity(f.label) and m.value is not None and not any(
                         norm(m.value)==norm(v) for x in bound for v in [x.value,*x.variants]):continue
-                if 'DD' in (f.format or '').upper() or f.kind=='date':
+                if 'DD' in (f.format or '').upper() or f.kind=='date' or date_component(f):
                     if not any(from_fact(f,x).value==decision.value for x in bound):continue
                 proposals.append((f,bound,m,decision))
             if proposals:

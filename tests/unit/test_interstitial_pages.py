@@ -135,7 +135,7 @@ def test_an_empty_required_password_is_reported_as_the_candidates_to_type():
     from jobagent.steps import apply as A
     out = A.blockers_of([{"label": "Password", "page": 1, "required": True, "kind": "password", "outcome": "unanswered (required)"},
                          {"label": "Phone", "page": 1, "required": True, "kind": "text", "outcome": "unanswered (required)"}])
-    assert "never types" in out[0] and "left empty" in out[1]
+    assert "from the vault" in out[0] and "only in the browser window" in out[0] and "left empty" in out[1]
 
 
 def test_a_borrowed_documents_run_is_never_ready_to_submit_and_says_so_in_the_report():

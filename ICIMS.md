@@ -1,5 +1,16 @@
 # iCIMS portals: everything learned, what the agent does, what it cannot, and why
 
+## Latest live check — 2026-11-25: one corrected Garmin case, matrix incomplete
+
+The native Voyager agent signed in to Garmin with the employer-scoped saved credentials after a later password screen. The observed shared login origin (`https://login.icims.com`) was explicitly trusted for this test; the global desktop origin guard was not relaxed.
+
+Watching the 68-field profile exposed errors hidden by the old verification count: all three work-history rows reused a generic saved employer/title; after that was fixed, split end-date month/day controls still retained incorrect prefills. The reader now recognizes the form's own numbered fieldset legends. Entity guards reject unscoped employer/title/date facts in role rows; an explicit last-three-employers instruction selects roles by their own source dates. Split date parts are rendered from the corresponding source date, with first-day approximations only under the saved owner policy. Optional ongoing end dates are cleared through the real blank select option. Writer proposals for date parts must match that rendering.
+
+A corrected native run on Garmin18475 reached Review: **65 source-verified answers plus two portal-held credential presence checks out of68 fields**, with the optional suffix blank. Direct DOM and final-artifact checks verified distinct Logos/Anton/TGen roles, matching titles and dates, blank current-role end date, August2026 for Anton, job-city address and EmployeeReferral. Known locations and owner-confirmed leaving reasons were forwarded through one HITL batch; this was not an unassisted run. The only blocker is the intentional borrowed-document guard. Nothing was submitted and no documents or ATS scores were generated.
+
+The earlier66/68 Garmin baseline had duplicated employer/title answers and is **not semantic proof of correctness**. Latest source snapshots, failed artifacts, corrected artifacts and test logs are under `outputs/verification/portal-acceptance-20261125T003317Z/`. Tests:117 filling/date/entity cases passed109.76s; nine focused split-date/no-writer cases passed3.80s;32 date-policy/education/predicate cases passed1.30s (overlapping groups). A second Garmin opening and another iCIMS employer remain pending. Peraton registration is still unconfirmed; no recovery email was used or password changed.
+
+
 ## Update — 2026-11-25: agent-owned registration requested; validation pending
 
 The owner now requests registration by the job agent using the normal signup path and vault-backed credentials; visible human challenges still go to the owner. The older conclusion below that all iCIMS registration must be manual is not a proved platform capability limit.

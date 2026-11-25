@@ -7,7 +7,7 @@ from dataclasses import dataclass,asdict,replace
 import json,re
 from rapidfuzz import fuzz
 from jobagent.tools import forms
-from .facts import norm,Decision,Fact,from_fact,choice,entity_scope,scope_allows,owner_only,expanded_immigration_support,key
+from .facts import norm,Decision,Fact,from_fact,choice,entity_scope,loose_entity_scope,ENTITY_COMPONENTS,scope_allows,owner_only,expanded_immigration_support,key
 from .education import STUDY_COMPONENTS
 
 DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_ack',
@@ -277,7 +277,8 @@ def needs_entity_binding(label,section='',help_text='',kind=''):
     if not entity_scope(section) and kind in ('select','combobox','radio','buttons','checkbox','checkboxes') and \
             family(label) in DECLARATIONS:
         return False  # the candidate's declaration, not an officer/relative/manager's contact component
-    return bool(entity_scope(section) or contact_party(label+' '+section+' '+help_text)!='applicant' or
+    return bool(entity_scope(section) or (loose_entity_scope(section) and norm(label) in ENTITY_COMPONENTS) or
+                contact_party(label+' '+section+' '+help_text)!='applicant' or
                 (is_identity(label) and family(label) not in ('current_employer','current_title')))
 
 

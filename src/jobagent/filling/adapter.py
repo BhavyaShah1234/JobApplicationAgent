@@ -253,9 +253,11 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                     facts.append(Fact('condition:'+str(field.id),[field.label],conditional.value,conditional.source,field.section,
                         instructions='Leave blank' if conditional.value=='' else ''))
         from .education import selection_context
+        from .employment import recent_employment_facts
         facts=_split_name_for_middle_field(facts,fields)
-        return selection_context(_portal_education_facts(facts+list(ctx.get('_experimental_learned_facts',{}).values()),
-                                 live.view if live else None),live.view if live else None)
+        view = live.view if live else None
+        facts = facts+list(ctx.get('_experimental_learned_facts',{}).values())
+        return selection_context(_portal_education_facts(recent_employment_facts(facts, view), view), view)
 
     def sources(fields,decisions):
         if not fields:return {}

@@ -207,6 +207,15 @@ FIELDS_JS = r"""(start) => {
     return around(e, labels) || question(e); };
   const section = e => {
     const ae = anchor(e);
+    // A repeating fieldset's own numbered legend identifies the row. Its
+    // sentence-style outer heading must not collapse every employer into one.
+    for (let fs = ae.closest('fieldset'); fs; fs = fs.parentElement?.closest('fieldset')) {
+      const legend = fs.querySelector(':scope > legend');
+      const name = legend && clean(caption(legend)).replace(/\s*\*?\s*required\.?\s*$/i, '').replace(/\s*\*\s*$/, '');
+      const row = name && name.match(/^(Education|Work Experience|Employment History|Professional Experience)\s*\((\d+)\)$/i);
+      if (row && Number(row[2]) > 0)
+        return (/^Education$/i.test(row[1]) ? 'Education' : 'Work Experience') + ' ' + Number(row[2]);
+    }
     // Legacy repeating sections expose a real row number beside each row,
     // and name the owning group through aria-labelledby rather than h-tags.
     const row=ae.closest('.rcmSectionComponent[id$=":_sectionComponent"]');
@@ -1773,6 +1782,13 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         page.keyboard.type(answer, delay=60)
         return answer
     if f.kind == "select":
+        if answer == '':
+            empty = loc.evaluate('''e=>[...e.options].map((o,index)=>({index,text:o.text.trim(),value:o.value,disabled:o.disabled}))
+                .filter(o=>!o.disabled && !o.text && ['', '-1', '0'].includes(o.value))''')
+            if len(empty) != 1:
+                raise UnavailableOption('The select has no unique selectable empty option; not retaining an incorrect value')
+            loc.select_option(index=empty[0]['index'],timeout=8000)
+            return ''
         opt = (literal_identity_option(answer,f.options,person=bool(PERSON_Q.search(f.label))) if is_identity(f.label) else strict_option(answer,f.options)) if strict else close_option(answer, f.options) if close and not is_identity(f.label) else _choose(f.label, answer, f.options, tie_break)
         if opt is None:
             raise UnavailableOption(f"{answer!r} isn't offered as such")
