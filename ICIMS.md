@@ -1,6 +1,12 @@
 # iCIMS portals: everything learned, what the agent does, what it cannot, and why
 
-## Latest live check — 2026-11-25: one corrected Garmin case, matrix incomplete
+## Latest live check — 2026-11-25: two corrected Garmin cases, matrix incomplete
+
+Garmin19098 also reached Review with distinct, source-bound employment rows and correct split dates: 67 source-verified answers plus two portal-held credential presence checks out of70 records. The owner reports solving one CAPTCHA during login; this is an assisted result. No submission. Another employer is still required before iCIMS is resolved.
+
+SAS45908 reached the shared password-only page with no signup route. The owner's requested registration-only restart stopped before a proposed password-reset action; it made no additional password attempt or reset request. An earlier explicitly approved recovery requested one email, but none was found in INBOX or Spam. No SAS account creation or password change is confirmed. Commit6a405d9 preserves the recovery browser and existing credentials, records completion only after signed-in success, ends a reset after one missing-email wait, and redacts auth URL queries. The older blanket conclusions below about registration capability and candidate-only password entry are historical observations, superseded by the guarded native account flow described in these updates.
+
+The alternate-employer Hyland14564 test also ended at the shared password-only page without a signup route. Native apply automatically switched Docker to desktop and verified three entry/privacy/email records, then handed authentication to the account agent. Registration-only recovery protection stopped the proposed reset before dispatch. No password attempt, recovery request, account creation or submission occurred. This is a blocked cross-company test, not Review or a third acceptance pass. Proof and final artifacts: `outputs/verification/portal-acceptance-20261125T003317Z/icims-hyland-1-proof.json` and `icims-hyland-1-artifacts/`.
 
 The native Voyager agent signed in to Garmin with the employer-scoped saved credentials after a later password screen. The observed shared login origin (`https://login.icims.com`) was explicitly trusted for this test; the global desktop origin guard was not relaxed.
 
