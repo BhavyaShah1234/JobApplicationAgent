@@ -273,12 +273,13 @@ class PlannedFiller:
         if field.options_state != 'complete':
             return None
         company=norm((self.referral_context or {}).get('company','')).replace(' ','')
+        company_name=(self.referral_context or {}).get('company','')
         matches={}
         for fact in self.facts:
             source=fact.source.split(':',2)
             if len(source)!=3 or source[0]!='learned' or norm(source[1]).replace(' ','')!=company or source[1]=='any':continue
             if (fact.authority!='owner' or fact.instructions or fact.policy_context != referrals.SOURCE_POLICY or
-                    not any(referrals.SOURCE.search(a) for a in fact.aliases)):continue
+                    not any(referrals.SOURCE.search(re.sub(re.escape(company_name),'company',a,flags=re.I) if company_name else a) for a in fact.aliases)):continue
             offered=next((o for o in field.options if norm(o)==norm(fact.value)),None)
             if offered is not None:matches[offered]=fact
         if len(matches)>1:return Decision(None,reason='conflicting company-specific source answers')
@@ -302,9 +303,9 @@ class PlannedFiller:
                     d=Decision(policy.get('value') or None,'saved referral policy',reason=policy.get('flag',''))
                     label=re.sub(re.escape(company),'company',f.label,flags=re.I) if company else f.label
                     unavailable_contact = bool(getattr(f,'referrer_details_requested',False) and policy.get('ask_human'))
+                    saved=self._saved_source_fallback(f) if referrals.SOURCE.search(label) else None
                     if referrals.SOURCE.search(label) and f.options and (not referrals._referral_option(f.options,company) or unavailable_contact):
                         source_fallback.add(f.id)
-                        saved=self._saved_source_fallback(f)
                         if saved is not None:d=saved
                     referral_policy[f.id]=d
             if d.value is not None and d.source!='human' and owner_only(f):

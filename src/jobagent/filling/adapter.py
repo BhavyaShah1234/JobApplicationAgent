@@ -328,8 +328,13 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                 from .routing import needs_entity_binding
                 if not needs_entity_binding(q['label'],q.get('section',''),q.get('help',''),q.get('kind','')):
                     from jobagent.tools import referrals
-                    confirmation = ({'policy_context': referrals.SOURCE_POLICY} if referrals.SOURCE.search(q['label'])
-                                    and text in q['options'] and not referrals._referral_option(q['options']) else {})
+                    import re
+                    company=ctx.get('_jd',{}).get('company','') or env.get('company','')
+                    label=re.sub(re.escape(company),'company',q['label'],flags=re.I) if company else q['label']
+                    contact=ctx.get('REFERRAL') or {}
+                    confirmation = ({'policy_context': referrals.SOURCE_POLICY} if referrals.SOURCE.search(label)
+                                    and text in q['options'] and (not referrals._referral_option(q['options']) or
+                                    not (contact.get('name') and contact.get('email'))) else {})
                     learned.add(q['label'],q['options'],text,env.get('company',''),env.get('host',''),**confirmation)
                 values[str(q['id'])]=text
             ctx.pop('_experimental_learned_entries',None)

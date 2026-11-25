@@ -139,6 +139,32 @@ def test_named_company_source_specify_uses_referrer_details_not_other_source(sel
     assert referrals.answer_for(parent,contact,'SAS')['value']=='SAS Employee Referral'
 
 
+@pytest.mark.parametrize('has_contact',[False,True])
+def test_confirmed_company_source_survives_a_fresh_run_when_referrer_is_unavailable(has_contact):
+    question='How did you hear about SAS?'
+    approved=saved('sas','University Outreach or Emerging Careers Events')
+    approved.aliases=[question]
+    f=Field(id=0,kind='select',label=question,required=True,options_state='complete',
+            options=['SAS Employee Referral','University Outreach or Emerging Careers Events'],value='University Outreach or Emerging Careers Events')
+    from jobagent.tools import referrals
+    referrals.contextualize([f,Field(id=1,kind='select',label='Please specify',options=['Career Fair'])])
+    contact={'name':'Casey Morgan','email':'casey@example.test'} if has_contact else {}
+    agent=PlannedFiller([approved],lambda _:pytest.fail('Confirmed source should be reusable'),
+                        referral_context={'company':'SAS','contact':contact})
+    expected='SAS Employee Referral' if has_contact else 'University Outreach or Emerging Careers Events'
+    assert agent.plan([f],allow_human=False)[0].value==expected
+
+
+def test_existing_nonemployee_source_detail_select_cannot_silently_switch_to_employee():
+    from jobagent.tools import referrals
+    parent=Field(id=0,kind='select',label='How did you hear about SAS?',
+                 options=['SAS Employee Referral','University Outreach'],value='University Outreach')
+    child=Field(id=1,kind='select',label='Please specify',options=['Career Fair'],value='Career Fair')
+    referrals.contextualize([parent,child])
+    assert parent.referrer_details_requested
+    assert referrals.answer_for(parent,{},'SAS')['ask_human']
+
+
 @pytest.mark.parametrize('boundary', ['frame','section','unrelated','unbound','salary'])
 def test_generic_followup_cannot_borrow_a_source_across_a_boundary(boundary):
     from jobagent.tools import referrals

@@ -62,6 +62,7 @@ def contextualize(fields) -> None:
               and field.section == parent.section
               and (SOURCE_FOLLOWUP.fullmatch(field.label) or contact_followup)):
             field.source_followup = True
+            if _referral_option(parent.options):parent.referrer_details_requested = True
             if contact_followup or (field.kind in ('text','textarea') and
                     (_referral_option([parent.value]) or (not parent.value and _referral_option(parent.options)))):
                 parent.referrer_details_requested = True
