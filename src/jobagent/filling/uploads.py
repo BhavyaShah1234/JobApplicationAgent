@@ -18,7 +18,7 @@ class ResumeParseReceipt:
         self.page=self.frame.page
         self.field_id=native.get_attribute('id') or ''
         if self.field_id!='PortalProfileFields.Resume_File' or not self.frame.evaluate(
-                "() => window.icimsAllowResumeAutosubmit === true"):
+                "() => typeof icimsAllowResumeAutosubmit !== 'undefined' && Boolean(icimsAllowResumeAutosubmit)"):
             raise ValueError('Not a declared iCIMS resume parser')
         self.origin=urlsplit(self.frame.url)
         if not self.origin.path.rstrip('/').endswith('/candidate'):
@@ -26,6 +26,7 @@ class ResumeParseReceipt:
         self.original=self.frame.evaluate_handle('document')
         self.accepted_document=None
         self.request=None;self.response_ok=False;self.requests=0
+        self.observed_parse_posts=[];self.failure_reason='no fresh parse receipt'
         self.page.on('request',self.requested)
         self.page.on('response',self.responded)
 
@@ -35,6 +36,9 @@ class ResumeParseReceipt:
 
     def requested(self, request):
         try:
+            if request.method=='POST' and parse_qs(urlsplit(request.url).query).get('uploadResume')==['1']:
+                self.observed_parse_posts.append({'same_frame':request.frame==self.frame,
+                    'same_route':self.same_document_route(request.url),'navigation':request.is_navigation_request()})
             if (request.frame==self.frame and request.is_navigation_request() and request.method=='POST'
                     and self.same_document_route(request.url) and parse_qs(urlsplit(request.url).query).get('uploadResume')==['1']):
                 self.requests+=1
@@ -54,16 +58,17 @@ class ResumeParseReceipt:
         except Exception:pass
 
     def verify(self, name, dispatched_bytes_verified):
-        if not dispatched_bytes_verified or not self.response_ok or self.requests!=1:return False
+        if not dispatched_bytes_verified:self.failure_reason='dispatched source bytes not verified';return False
+        if not self.response_ok or self.requests!=1:self.failure_reason='no unique successful parse POST';return False
         try:
-            if not self.same_document_route(self.frame.url):return False
+            if not self.same_document_route(self.frame.url):self.failure_reason='current route differs';return False
             try:
-                if self.frame.evaluate('old=>document===old',self.original):return False
+                if self.frame.evaluate('old=>document===old',self.original):self.failure_reason='original document still open';return False
             except Exception:pass  # a replaced execution context is expected after the parse POST
             if self.accepted_document is not None:
                 try:
-                    if not self.frame.evaluate('accepted=>document===accepted',self.accepted_document):return False
-                except Exception:return False
+                    if not self.frame.evaluate('accepted=>document===accepted',self.accepted_document):self.failure_reason='accepted document replaced again';return False
+                except Exception:self.failure_reason='accepted document no longer available';return False
             accepted=self.frame.evaluate('''name=>{
                 const get=id=>{const es=[...document.querySelectorAll('[id]')].filter(e=>e.id===id);return es.length===1?es[0]:null;};
                 const base='PortalProfileFields.Resume',input=get(base+'_File'),stored=get(base),filename=get(base+'_FileName'),url=get(base+'_URL'),box=get(base+'_Content');
@@ -78,8 +83,9 @@ class ResumeParseReceipt:
                     /^replace resume$/i.test((e.innerText||e.value||'').trim()));
             }''',name)
             if accepted and self.accepted_document is None:self.accepted_document=self.frame.evaluate_handle('document')
+            self.failure_reason='' if accepted else 'fresh document lacks completed owned resume metadata'
             return bool(accepted)
-        except Exception:return False
+        except Exception as exc:self.failure_reason='receipt inspection '+type(exc).__name__;return False
 
     def close(self):
         self.page.remove_listener('request',self.requested)
@@ -105,7 +111,7 @@ class UploadProof:
         self.native=None;self.widget=None;self.token=None;self.form=None
         self.method='';self.replaced_count=0
         self.server_failures={}
-        self.parse_receipt=None;self.dispatched_bytes_verified=False
+        self.parse_receipt=None;self.dispatched_bytes_verified=False;self.parse_receipt_disabled_reason=''
         if trigger:
             self.widget=self.widget_for(trigger)
             self.form=trigger.evaluate_handle('e=>e.form||e.closest("form")').as_element()
@@ -173,7 +179,7 @@ class UploadProof:
     def bind(self, native):
         self.native=native.element_handle() if hasattr(native,'element_handle') else native
         try:self.parse_receipt=ResumeParseReceipt(self.native)
-        except ValueError:pass
+        except ValueError as exc:self.parse_receipt_disabled_reason=str(exc)
         self.portaled=self.native.get_attribute('data-jf-upload-portaled')=='1'
         if self.portaled and not self.widget:
             raise ValueError('A portaled upload requires its original attachment widget')
@@ -218,6 +224,13 @@ class UploadProof:
         """Only a verified parse receipt can bridge a replaced document's upload control."""
         return bool(self.parse_receipt and self.parse_receipt.verify(self.name,self.dispatched_bytes_verified)
                     and self.parse_receipt.owns(element))
+
+    def diagnostic(self):
+        receipt=self.parse_receipt
+        return {'parse_receipt_enabled':receipt is not None,'disabled_reason':self.parse_receipt_disabled_reason,
+                'dispatched_bytes_verified':self.dispatched_bytes_verified,
+                **({'parse_posts':receipt.requests,'response_ok':receipt.response_ok,
+                    'observed_parse_posts':receipt.observed_parse_posts[:3],'failure_reason':receipt.failure_reason} if receipt else {})}
 
     def server_bytes_match(self):
         """Read this widget's current same-origin download, never infer bytes from its filename."""

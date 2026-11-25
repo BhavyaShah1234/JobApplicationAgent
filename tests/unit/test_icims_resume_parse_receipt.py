@@ -18,7 +18,7 @@ def profile(name='resume.pdf', *, initial=False, flag=True, error=False):
             '<input type=hidden id="PortalProfileFields.Resume_URL" value="">'
             '<div id="PortalProfileFields.Resume_Content"><span>'+name+'</span>'
             '<label for="PortalProfileFields.Resume_File">Resume</label>'
-            '<input type=file name="PortalProfileFields.Resume_File" id="PortalProfileFields.Resume_File">'
+            '<input type=file aria-required=true name="PortalProfileFields.Resume_File" id="PortalProfileFields.Resume_File">'
             '<button type=button>Replace Resume</button></div>'
             + ('<div role=alert>Upload failed</div>' if error else '') + '</form>'
             '<script>window.icimsAllowResumeAutosubmit=true;'
@@ -36,7 +36,7 @@ def env(tmp_path):
         browser.close()
 
 
-@pytest.mark.parametrize('case',['success','wrong_bytes','wrong_filename','http_error','other_route','no_parse_flag','visible_error'])
+@pytest.mark.parametrize('case',['success','lexical_flag','wrong_bytes','wrong_filename','http_error','other_route','no_parse_flag','visible_error'])
 def test_parse_receipt_is_bound_to_dispatched_bytes_frame_route_and_server_result(env,case):
     page,path=env
     def route(r):
@@ -46,7 +46,9 @@ def test_parse_receipt_is_bound_to_dispatched_bytes_frame_route_and_server_resul
             r.fulfill(status=500 if case=='http_error' else 200,content_type='text/html',
                       body=profile('different.pdf' if case=='wrong_filename' else 'resume.pdf',error=case=='visible_error'))
         else:
-            r.fulfill(content_type='text/html',body=profile(initial=True,flag=case!='no_parse_flag'))
+            body=profile(initial=True,flag=case!='no_parse_flag')
+            if case=='lexical_flag':body=body.replace('window.icimsAllowResumeAutosubmit=true','const icimsAllowResumeAutosubmit=true')
+            r.fulfill(content_type='text/html',body=body)
     page.route('https://icims.test/**',route)
     page.goto('https://icims.test/shell')
     frame=page.frames[1];frame.wait_for_load_state('domcontentloaded')
@@ -60,8 +62,8 @@ def test_parse_receipt_is_bound_to_dispatched_bytes_frame_route_and_server_resul
         with frame.expect_navigation(wait_until='domcontentloaded'):
             native.set_input_files(str(actual))
             assert proof.verify() is (case!='wrong_bytes')
-        assert proof.verify() is (case=='success')
-        if case=='success':
+        assert proof.verify() is (case in ('success','lexical_flag'))
+        if case in ('success','lexical_flag'):
             assert proof.method=='byte-verified dispatch and fresh resume-parse POST receipt'
             assert frame.locator('[id="PortalProfileFields.Resume_File"]').evaluate('e=>e.files.length')==0
             assert proof.can_rebind(frame.locator('[id="PortalProfileFields.Resume_File"]'))
@@ -84,7 +86,8 @@ def test_unchanged_old_filename_without_a_parse_response_is_not_a_receipt(env):
     finally:proof.close()
 
 
-def test_filler_retains_receipt_and_binding_after_embedded_profile_parse(env):
+@pytest.mark.parametrize('accepted',[True,False])
+def test_filler_retains_receipt_and_binding_after_embedded_profile_parse(env,accepted):
     from jobagent.filling.planned import PlannedFiller
     page,path=env
     posts=[]
@@ -92,16 +95,19 @@ def test_filler_retains_receipt_and_binding_after_embedded_profile_parse(env):
         if r.request.url.endswith('/shell'):
             r.fulfill(content_type='text/html',body=f'<iframe src="{URL}"></iframe>')
         elif r.request.method=='POST':
-            posts.append(1);r.fulfill(content_type='text/html',body=profile())
+            posts.append(1);r.fulfill(content_type='text/html',body=profile('resume.pdf' if accepted else 'wrong.pdf'))
         else:r.fulfill(content_type='text/html',body=profile(initial=True))
     page.route('https://icims.test/**',route);page.goto('https://icims.test/shell')
     filler=PlannedFiller([],lambda _: {})
     result=filler.fill(page,files={'resume':str(path)},max_rounds=3,advance_pages=False)
     try:
-        assert result['state']=='page_complete',result['blockers']
         assert len(posts)==1
         rows=[r for r in result['records'] if r.get('kind')=='file' and r.get('outcome')=='verified']
-        assert rows and rows[-1]['readback']=='resume.pdf'
-        assert rows[-1]['upload_verification']=='byte-verified dispatch and fresh resume-parse POST receipt'
+        if accepted:
+            assert result['state']=='page_complete',result['blockers']
+            assert rows and rows[-1]['readback']=='resume.pdf'
+            assert rows[-1]['upload_verification']=='byte-verified dispatch and fresh resume-parse POST receipt'
+        else:
+            assert result['state']=='blocked' and not rows
     finally:
         for proof in filler.upload_proofs.values():proof.close()

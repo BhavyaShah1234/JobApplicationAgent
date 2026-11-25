@@ -657,7 +657,7 @@ class PlannedFiller:
                             proof=None
                             if f.kind=='file':
                                 if value not in files:raise ValueError('no role-specific file provided')
-                                prior=self.uploaded_labels.get((self.step,f.label))
+                                prior=self.uploaded.get((self.step,f.identity)) or self.uploaded_labels.get((self.step,f.label))
                                 if prior is not None and prior.verify():
                                     # the same document was just verified on an input carrying this very label: not sent a second time
                                     self.cache[key(f)]=d;self.rendered[key(f)]=Path(files[value]).name;changed=True
@@ -686,6 +686,12 @@ class PlannedFiller:
                                 **({'option_resolver': lambda options: choice(replace(f, options=options, options_state='complete'),
                                                                             [value, *alternatives])} if f.kind=='combobox' else {}),
                                 **({'before_upload':proof.bind,'upload_confirmation':proof.verify} if proof else {}))
+                            if f.kind=='file':
+                                # fill_field returned only after byte-backed
+                                # dispatch verification. Preserve that attempt
+                                # even if the later parser invalidates its input.
+                                self.uploaded_labels[(self.step,f.label)]=proof
+                                if f.identity:self.uploaded[(self.step,f.identity)]=proof
                             if f.kind=='file':settle_after_upload(page,log=getattr(self,'log',None))
                             if f.kind=='file' or live.changed():
                                 after=live.capture();actual=next((x for x in after.fields if key(x)==key(f)),None)
@@ -705,6 +711,7 @@ class PlannedFiller:
                             if f.kind=='file':
                                 valid=bool(proof and proof.verify()) and (actual is None or not actual.invalid)
                                 held_sha=proof.expected if valid else None
+                                self.trace(ev='upload_proof',ok=valid,**proof.diagnostic())
                             if not valid:
                                 if f.kind=='combobox':      # keep the real control's HTML for the next fix (state/logs/combobox-failures.jsonl)
                                     try:forms._save_combobox_failure(forms.locate(fresh,f),f,chosen,f"readback: chosen={chosen!r} actual={getattr(actual,'value',None)!r} invalid={getattr(actual,'invalid',None)}")
