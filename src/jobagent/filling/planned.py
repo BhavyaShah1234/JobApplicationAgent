@@ -301,7 +301,8 @@ class PlannedFiller:
                 if policy is not None:
                     d=Decision(policy.get('value') or None,'saved referral policy',reason=policy.get('flag',''))
                     label=re.sub(re.escape(company),'company',f.label,flags=re.I) if company else f.label
-                    if referrals.SOURCE.search(label) and f.options and not referrals._referral_option(f.options,company):
+                    unavailable_contact = bool(getattr(f,'referrer_details_requested',False) and policy.get('ask_human'))
+                    if referrals.SOURCE.search(label) and f.options and (not referrals._referral_option(f.options,company) or unavailable_contact):
                         source_fallback.add(f.id)
                         saved=self._saved_source_fallback(f)
                         if saved is not None:d=saved

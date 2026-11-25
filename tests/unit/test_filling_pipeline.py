@@ -190,6 +190,19 @@ def test_inapplicable_unlisted_school_field_is_not_a_missing_owner_answer():
     assert unlisted_school(field,SimpleNamespace(fields=[selected]),facts).value=='Example University'
 
 
+def test_unlisted_major_text_depends_on_the_selected_major_of_the_same_school():
+    from types import SimpleNamespace
+    from jobagent.filling.routing import unlisted_school
+    field=forms.Field(id=1,kind='text',label='If your field of study is not listed, please enter your field of study here',section='Education 1')
+    selected=forms.Field(id=0,kind='combobox',label='Field of Study',section='Education 1',value='Artificial Intelligence and Robotics')
+    facts=[Fact('major',['Field of Study'],'Artificial Intelligence and Robotics','applicant/education',section='Education 1')]
+    assert unlisted_school(field,SimpleNamespace(fields=[selected]),facts).value==''
+    selected.value='Other'
+    assert unlisted_school(field,SimpleNamespace(fields=[selected]),facts).value=='Artificial Intelligence and Robotics'
+    selected.section='Education 2'
+    assert unlisted_school(field,SimpleNamespace(fields=[selected]),facts).value==''
+
+
 @pytest.mark.parametrize('state',['busy','error'])
 def test_native_bytes_do_not_override_upload_widget_busy_or_error(world,state):
     from jobagent.filling.uploads import UploadProof

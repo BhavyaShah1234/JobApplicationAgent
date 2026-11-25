@@ -158,6 +158,37 @@ def test_the_icims_dropdown_widget_is_opened_searched_and_read_back_from_its_own
     assert before == "" and got == "India" and after == "India"      # not British Indian Ocean Territory, whose highlighted fragment is also "India"
 
 
+def test_icims_nonsearchable_menu_does_not_click_its_hidden_search_input():
+    from jobagent.tools import forms
+    html=ICIMS_DROPDOWN.replace('id="q" aria-label="Search"','id="q" style="display:none" aria-hidden="true" aria-label="Search"')
+    def run(page):
+        view=forms.read_page(page);field=next(f for f in view.fields if f.kind=='combobox')
+        return forms.fill_field(page,view,field,'India',{},strict=True)
+    assert with_page(html,run)=='India'
+
+
+def test_icims_search_retries_only_explicit_source_variants_and_clears_old_query():
+    from jobagent.tools import forms
+    html=ICIMS_DROPDOWN.replace('q.onkeyup=draw;', '''q.onkeyup=()=>{draw();if(!ul.children.length){
+        const li=document.createElement('li');li.textContent='No results found';ul.appendChild(li)}};q.value='Canada';''')
+    def run(page):
+        view=forms.read_page(page);field=next(f for f in view.fields if f.kind=='combobox')
+        return forms.fill_field(page,view,field,'Republic of India',{},strict=True,alternatives=['India'])
+    assert with_page(html,run)=='India'
+
+
+def test_icims_missing_choice_is_an_unavailable_option_not_a_successful_blank():
+    from jobagent.tools import forms
+    html=ICIMS_DROPDOWN.replace('q.onkeyup=draw;', '''q.onkeyup=()=>{draw();if(!ul.children.length){
+        const li=document.createElement('li');li.textContent='No results found';ul.appendChild(li)}};''')
+    def run(page):
+        view=forms.read_page(page);field=next(f for f in view.fields if f.kind=='combobox')
+        with pytest.raises(forms.UnavailableOption):
+            forms.fill_field(page,view,field,'Unlisted university',{},strict=True)
+        assert next(f for f in forms.read_page(page).fields if f.kind=='combobox').value==''
+    with_page(html,run)
+
+
 def test_a_country_with_no_states_leaves_the_state_dropdown_as_it_is_and_an_address_list_with_only_enter_manually_takes_that_entry():
     from jobagent.tools import forms
     html_states = ICIMS_DROPDOWN.replace('— Make a Selection —</span>', 'No states available</span>')

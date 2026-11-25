@@ -1536,9 +1536,10 @@ def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
         loc.click(timeout=5000)
         panel.wait_for(state="visible", timeout=5000)
         search = panel.locator("input.dropdown-search, input[type=text], input[type=search]").first
-        if search.count():
+        if search.count() and search.is_visible():
             # the widget filters on key events, which fill() does not send: type the characters
             search.click(timeout=3000)
+            search.fill("")
             search.press_sequentially(str(answer), delay=45)
             page.wait_for_timeout(1200)
         area = results if results.count() else panel
@@ -1556,7 +1557,7 @@ def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
             texts = [t.strip() for t in area.evaluate("e => [...e.querySelectorAll('*')].filter(n => !n.children.length).map(n => (n.textContent || '').replace(/\\s+/g, ' '))")
                      if t.strip() and not re.match(r"(?i)^[—–-]*\s*(make a selection|select)", t.strip())]
         opt = strict_option(answer, texts) if strict else close_option(answer, texts)
-        if opt is None and texts and all(re.search(r"(?i)^no (results|states?|matches)\b", t) for t in texts):
+        if opt is None and texts and all(re.search(r"(?i)^no (states?|provinces?|regions?) (available|found)\b", t) for t in texts):
             page.keyboard.press("Escape")
             return current or ""      # the list is empty for this value (a country with no states)
         if opt is None and any(re.search(r"(?i)enter manually", t) for t in texts):
@@ -1845,7 +1846,15 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                     lab.get_by_text(re.compile(r"\S")).first.click(timeout=8000)
         return "; ".join(chosen)
     if f.kind == "combobox" and loc.evaluate("e => e.matches('a.dropdown-select[role=combobox]')"):
-        return _fill_icims_dropdown(page, frame, loc, f, answer, strict, close)
+        # These are explicitly sourced variants (for example a school's long
+        # and short names), never guessed menu entries. Retry only a genuine
+        # unavailable option; transport/action failures keep their own error.
+        candidates=list(dict.fromkeys([answer,*[str(a) for a in alternatives if a]]))
+        for candidate in candidates:
+            try:
+                return _fill_icims_dropdown(page, frame, loc, f, candidate, strict, close)
+            except UnavailableOption:
+                if candidate==candidates[-1]:raise
     if f.kind == "combobox" and loc.evaluate("e => e.tagName === 'SELECT'"):
         # A native <select> the page reports as a combobox (iCIMS): its options cannot be clicked like a custom list; read the live
         # options (the reader may have seen only the first screenful) and select one.

@@ -125,6 +125,20 @@ def test_adjacent_source_category_child_selects_an_offered_employee_answer():
     assert referrals.answer_for(child,{})['value']=='Employee Referral'
 
 
+@pytest.mark.parametrize('selected',['','SAS Employee Referral'])
+def test_named_company_source_specify_uses_referrer_details_not_other_source(selected):
+    from jobagent.tools import referrals
+    parent=Field(id=0,kind='select',label='How did you hear about SAS?',
+                 options=['SAS Employee Referral','Job Advertisement'],value=selected)
+    child=Field(id=1,kind='text',label='Please specify',required=True)
+    referrals.contextualize([parent,child])
+    contact={'name':'Casey Morgan','email':'casey@example.test'}
+    assert referrals.answer_for(child,contact,'SAS')['value']=='Referred by employee: Casey Morgan (casey@example.test)'
+    assert referrals.answer_for(child,{},'SAS')['ask_human']
+    assert referrals.answer_for(parent,{},'SAS')['ask_human']
+    assert referrals.answer_for(parent,contact,'SAS')['value']=='SAS Employee Referral'
+
+
 @pytest.mark.parametrize('boundary', ['frame','section','unrelated','unbound','salary'])
 def test_generic_followup_cannot_borrow_a_source_across_a_boundary(boundary):
     from jobagent.tools import referrals

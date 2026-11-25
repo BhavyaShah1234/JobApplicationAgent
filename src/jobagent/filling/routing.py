@@ -550,12 +550,15 @@ def personal_facts(ctx):
 
 
 def unlisted_school(field,view,facts):
-    if not re.search(r'(?i)did not see.*(?:university|school)|school (?:is )?not listed',field.label):return None
+    target='school' if re.search(r'(?i)did not see.*(?:university|school)|school (?:is )?not listed',field.label) else (
+        'discipline' if re.search(r'(?i)(?:field of study|major) is not listed',field.label) else None)
+    if target is None:return None
     names=[];ids=[]
     for control in view.fields:
-        if family(control.label)!='school' or not entity_scope(control.section):continue
+        if family(control.label)!=target or control.kind not in ('select','combobox') or not entity_scope(control.section):continue
+        if entity_scope(field.section) and entity_scope(control.section)!=entity_scope(field.section):continue
         if not re.match(r'(?i)^other\b',control.value):continue
-        selected=[x for x in facts if x.section==control.section and not x.record and fact_family(x)=='school']
+        selected=[x for x in facts if x.section==control.section and not x.record and fact_family(x)==target]
         if len(selected)==1:names.append(selected[0].value);ids.append(selected[0].id)
     return Decision('; '.join(dict.fromkeys(names)),'form:unlisted-school',','.join(ids),'Unlisted-school condition evaluated against selected education controls')
 

@@ -48,16 +48,25 @@ def contextualize(fields) -> None:
     parent = None
     for field in fields:
         field.source_followup = False
+        field.referrer_details_requested = False
         conditional = SOURCE_CONTACT_FOLLOWUP.fullmatch(field.label)
         contact_followup = bool(conditional and REFERRAL.search(conditional.group(1)))
-        if SOURCE.search(field.label):
+        named_company_source = bool(
+            field.kind in ('select','combobox','radio','buttons')
+            and re.search(r'(?i)\b(?:how|where)\b.{0,50}\b(?:hear|heard|learn|find|found)\b.{0,30}\babout\b',field.label)
+            and _referral_option(field.options)
+        )
+        if SOURCE.search(field.label) or named_company_source:
             parent = field
         elif (parent is not None and field.frame == parent.frame
               and field.section == parent.section
               and (SOURCE_FOLLOWUP.fullmatch(field.label) or contact_followup)):
             field.source_followup = True
-            if contact_followup:
-                field.help = (field.help + ' Employee referrer contact details for the adjacent sourcing question.').strip()
+            if contact_followup or (field.kind in ('text','textarea') and
+                    (_referral_option([parent.value]) or (not parent.value and _referral_option(parent.options)))):
+                parent.referrer_details_requested = True
+                hint='Employee referrer contact details for the adjacent sourcing question.'
+                if hint not in field.help:field.help = (field.help + ' ' + hint).strip()
         elif (parent is not None and field.frame == parent.frame
               and field.section == parent.section and _referral_option([parent.value])
               and PRONOMINAL_CONTACT.search(field.label)):
@@ -255,6 +264,8 @@ def answer_for(field, contact: dict, company: str = "") -> dict | None:
     if source and field.kind in (
         "select", "combobox", "radio", "buttons", "checkboxes",
     ):
+        if getattr(field,'referrer_details_requested',False) and not (contact.get('name') and contact.get('email')):
+            return _answer('', 'employee-referral details are required but no complete company referrer is on file; choose a factual offered source')
         if getattr(field, 'options_state', '') == 'unreadable' and not (field.kind == 'combobox' and not field.options):
             return _answer('', 'source options could not be read; employee-referral availability is unknown')
         if field.options:
