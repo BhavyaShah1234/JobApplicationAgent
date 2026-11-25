@@ -73,7 +73,8 @@ def connection_reply(root, manifest, proxy_port):
     if not owned_loopback_listener(proc,port):
         raise RuntimeError('The loopback debugging listener is not owned by this Chrome process')
     return {'ok':True,'protocol':manifest['protocol'],'url':manifest['url'],'guarded':True,
-            'fresh':False,'handoff':True,'port':port,'websocket_path':path,'expires_at':time.time()+300}
+            'fresh':False,'handoff':True,'port':port,'websocket_path':path,'expires_at':time.time()+300,
+            'view_url':manifest.get('view_url','')}
 
 
 def prepare(root, url, proxy_port):
@@ -105,7 +106,8 @@ def prepare(root, url, proxy_port):
     with (root/'chrome.log').open('ab') as log:
         process=subprocess.Popen(command,stdout=log,stderr=log,start_new_session=True)
     manifest={'protocol':D.PROTOCOL,'kind':'consented','url':url,'pid':process.pid,
-              'profile':str(profile.resolve()),'proxy_port':proxy_port,'started_ns':started}
+              'profile':str(profile.resolve()),'proxy_port':proxy_port,'started_ns':started,
+              'view_url':os.environ.get('JOBAGENT_DESKTOP_VIEW_URL','')}
     store.write_text(json.dumps(manifest,indent=2));os.chmod(store,0o600)
     # A new process must not inherit the old process's tab approval. Site storage stays intact.
     (root/'approved.json').unlink(missing_ok=True)

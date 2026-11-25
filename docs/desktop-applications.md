@@ -101,6 +101,10 @@ permission dialogs and actions taken by the user are separate from this policy. 
 actual CAPTCHA still needs the person; the agent reports it through the normal HITL
 channel without automatically taking foreground focus.
 
+Avoiding explicit foreground calls proved insufficient in a live desktop test: native
+input could still restore a minimized Chrome window. Use the isolated GUI below when
+you need to keep working in other applications.
+
 This is an explicit preparation path, not an automatic replacement for managed Chrome.
 Live assisted tests filled Hyland's 15-control and SAS's 29-control profile pages without
 Submit Profile. Those are early profile pages in four-step flows; a native Review label
@@ -108,6 +112,47 @@ there is not proof of reaching the portal's final application review. Later step
 submissions through this transport remain unvalidated. For UI tests, `--documents-from`
 can reuse a valid existing packet; that deliberately prevents submission and avoids
 document generation.
+
+### Isolated GUI for background work
+
+Instead of the normal host `serve` command, start this from the canonical project:
+
+```bash
+python3 scripts/desktop_background.py
+```
+
+It checks or creates the agent's small GUI container and starts the **host** browser
+bridge with a separate authenticated X display. Ordinary Chrome still runs on the host
+with its dedicated profile and public-only proxy. Its windows belong to that display,
+viewable at **http://127.0.0.1:6083/vnc.html**, rather than your working desktop.
+The helper requires the existing harness image, Docker, `xauth` and `xdpyinfo` on the
+Linux host. It uses only Python's standard library. The display endpoints bind only
+to loopback; no application credentials are passed into the GUI container.
+
+Stop the previous bridge before switching modes; the launcher refuses to terminate or
+take over an existing bridge. Existing Chrome processes retain their original display;
+close an agent-owned foreground window before preparing its handoff on this display.
+Unrecognized containers are refused, not replaced. The GUI container and bridge must
+remain running while their Chrome windows are in use.
+
+Then use the same `handoff PUBLIC_POSTING_URL` and `apply --browser-mode desktop`
+commands above. Complete manual entry, Chrome's remote-debugging setup and Allow dialog
+inside noVNC. The connection stays open during filling and HITL waits. One live connection
+survived **390.5 seconds of deliberate idle time**, then verified a resume parse without
+reconnecting. This is an observed duration, not an unlimited-lifetime promise. Separate
+CLI runs still require new Chrome permission; there is no cross-process connection pool.
+
+The visible/minimized desktop tests had unwanted activations; the isolated-display
+check verifies that the agent Chrome has no windows on the main display. One possible
+interruption was reported around the transition to isolation, with timing/cause unclear;
+do not claim every host/browser notification has been eliminated.
+
+Claude Code's documented Chrome integration uses an extension and native messaging,
+with debugger/tab permissions. That differs from Chrome's inspect-page connection dialog;
+its behavior is not evidence that we can suppress Chrome's own per-connection approval.
+References: [Anthropic Chrome integration](https://code.claude.com/docs/en/chrome),
+[extension permissions](https://support.claude.com/en/articles/12012173-get-started-with-claude-in-chrome),
+[Chrome session connection](https://developer.chrome.com/blog/chrome-devtools-mcp-debug-your-browser-session).
 
 ## Temporary mailbox
 

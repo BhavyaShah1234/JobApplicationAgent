@@ -176,7 +176,7 @@ def open_request(root, request, proxy, launcher=None, alive=None, validate=None)
         manifest = (launcher or launch)(browser_root, request['url'], proxy.port)
         fresh = True
     return {'ok': True, 'protocol': PROTOCOL, 'port': manifest['port'], 'url': manifest['url'], 'fresh': fresh,
-            'guarded': manifest.get('proxy_port') == proxy.port}
+            'guarded': manifest.get('proxy_port') == proxy.port,'view_url':manifest.get('view_url','')}
 
 
 class _ProxyHandler(socketserver.StreamRequestHandler):
@@ -276,7 +276,8 @@ def launch(root, url, proxy_port):
     with (root / 'chrome.log').open('ab') as log:
         process = subprocess.Popen(command, stdout=log, stderr=log, start_new_session=True)
     # Persist ownership even if startup fails, so a later run cannot mistake this for a personal profile.
-    manifest = {'protocol': PROTOCOL, 'pid': process.pid, 'profile': str(profile), 'url': url, 'proxy_port': proxy_port}
+    manifest = {'protocol': PROTOCOL, 'pid': process.pid, 'profile': str(profile), 'url': url, 'proxy_port': proxy_port,
+                'view_url':os.environ.get('JOBAGENT_DESKTOP_VIEW_URL','')}
     manifest_path.write_text(json.dumps(manifest, indent=2))
     os.chmod(manifest_path, 0o600)
     for _ in range(60):

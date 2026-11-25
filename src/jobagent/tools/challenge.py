@@ -234,7 +234,8 @@ class Controller:
                                 if block.kind == 'application-email-code' else "Solve it in ")
                 answer = self.hitl.ask(
                     f"{block.kind} verification at {safe_url(page.url)}. " + instructions
-                    + ("the dedicated desktop Chrome window. " if self.policy else "http://localhost:6080/vnc.html. ")
+                    + ((getattr(getattr(page,'context',None),'jobagent_desktop_view_url','') or
+                        "the dedicated desktop Chrome window")+". " if self.policy else "http://localhost:6080/vnc.html. ")
                     + "'done' checks readiness; 'skip' stops safely.",
                     done_when=resolved, timeout_s=max(0, deadline-time.monotonic()), poll_s=2,
                 )

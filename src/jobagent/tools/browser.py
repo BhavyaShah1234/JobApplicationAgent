@@ -135,6 +135,8 @@ def application_context(mode, url, settings=None, *, related_urls=()):
                 type(reply.get('port')) is not int or not 1024 <= reply['port'] <= 65535 or reply.get('url') != url:
             raise RuntimeError(reply.get('error', 'Desktop bridge identity mismatch'))
         handoff=reply.get('handoff') is True
+        view_url=reply.get('view_url') if reply.get('view_url')=='http://127.0.0.1:6083/vnc.html' else ''
+        if view_url:print('Application browser: '+view_url)
         endpoint=f"http://127.0.0.1:{reply['port']}"
         if handoff:
             from jobagent.tools.desktop_handoff import endpoint as validate_endpoint
@@ -167,6 +169,7 @@ def application_context(mode, url, settings=None, *, related_urls=()):
                     raise RuntimeError('The handoff tab belongs to a different posting; return to the requested application')
             ctx = page.context
             if handoff:ctx.jobagent_background=True
+            if view_url:ctx.jobagent_desktop_view_url=view_url
             from jobagent.tools.shadow import install
             install(pw, ctx)
             from jobagent.tools.challenge import Blocked
