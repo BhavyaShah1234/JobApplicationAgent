@@ -1,5 +1,13 @@
 # iCIMS portals: everything learned, what the agent does, what it cannot, and why
 
+## Hyland session diagnosis — 2026-11-25
+
+The owner reached Hyland14637's candidate form in ordinary Chrome with the same agent email and without explicitly signing in. Repeating from the public posting in **Incognito asked for a password at login.icims.com**, matching the agent. An exact-posting native desktop test started with a previously nonexistent dedicated profile and no iCIMS login cookies. After the email/privacy POST, the server returned303 to the tenant login-only route, then302 through the shared identity service to its identifier/password pages. The agent did not discard a candidate form or replace the callback URL. No password was attempted and nothing was submitted.
+
+The captured cookie exclusions were ordinary DomainMismatch/NotOnPath cases; no other blocking reason appeared in this capture. This does not inspect every browser-internal decision or the owner's personal profile. The evidence supports a **difference in saved session state in the owner's regular browser**, rather than stale cookies inherited by the agent. The exact enabling cookie/token has not been identified. A valid working sign-in/session is needed; another registration retry or clearing the already-fresh profile is not supported by this result. Never reuse a token-bearing callback from another browser as an application URL.
+
+Evidence: `outputs/verification/portal-acceptance-20261125T003317Z/hyland-session-diagnosis.json`, `hyland-matched-redirects.jsonl` (origins/paths/query-key names only), and `icims-cookie-metadata-diagnosis.json` (metadata only, no values). **The earlier universal claim that remote-controlled Chrome explains the missing registration route is not established.** The historical Peraton observations below do not override this matched Hyland comparison.
+
 ## Latest live check — 2026-11-25: two corrected Garmin cases, matrix incomplete
 
 Garmin19098 also reached Review with distinct, source-bound employment rows and correct split dates: 67 source-verified answers plus two portal-held credential presence checks out of70 records. The owner reports solving one CAPTCHA during login; this is an assisted result. No submission. Another employer is still required before iCIMS is resolved.
@@ -36,9 +44,8 @@ and the screenshots listed in section 11. No emails or passwords are written in 
 ## 0. In one page
 
 - The agent can **fill an iCIMS application to the review screen** (Garmin: 66 of 68 fields verified, the other two are optional blanks) **once an account exists**.
-- The agent **cannot create an iCIMS account**. A person in an ordinary browser gets the registration form; the agent's remote-controlled Chrome gets a
-  puzzle and a login-only page, even when a person does the clicking in the agent's own window with a fresh profile (section 3).
-- The agent must not disguise its browser or solve puzzles itself (project rules). So registration stays a **one-time human step per company**.
+- Native account creation at a new iCIMS employer remains **unverified**. Missing registration on a password page does not establish that automation is the cause: Hyland's ordinary Incognito browser behaves the same way (latest diagnosis above).
+- The agent must not disguise its browser or solve puzzles itself (project rules). Working saved credentials/session state should be used through the normal login flow; a human-only registration requirement is not established for every employer.
 - Accounts are **per company (tenant)**: the same email is unknown at Peraton while it has an account at Garmin (section 2).
 - Open choices for making that step less tedious are in section 8.
 
@@ -63,7 +70,7 @@ Garmin accepted the agent's email (the account was created by the candidate); Pe
 **registration** form, so Peraton did not know the email. Therefore an iCIMS account is per tenant, not shared across iCIMS companies, and every
 new iCIMS company needs its own registration.
 
-## 3. Why the agent cannot register (the experiments)
+## 3. Historical Peraton registration experiments (cause not isolated)
 
 Same email, same clicks, different result depending only on the browser:
 
@@ -75,12 +82,10 @@ Same email, same clicks, different result depending only on the browser:
 | Agent | Docker Chromium | puzzle, then the login page |
 
 What this rules out: the account state (same email), the agent's clicking (a person clicked), and stale cookies (fresh profile gave the same result).
-What differs is the browser itself: the agent's Chrome is started with a remote-debugging port so it can be attached to; an ordinary Chrome is not.
-iCIMS appears to treat a remote-controlled browser as automated and withholds registration from it. This is an inference that fits every row; it is
-not proven.
+The agent's Chrome is started with a remote-debugging port so it can be attached to. That difference was previously proposed as the cause, but it was not isolated from identity/session/server differences. Hyland's newer exact-posting comparison reproduces the agent's password screen in ordinary Incognito Chrome. Do not generalize these older observations into a claim that iCIMS withholds registration from all controlled browsers.
 
 **Rule: the agent does not work around this.** No hiding of the debugging port or webdriver flag, no fingerprint masking, no automatic puzzle solving
-(project rules, `Spoofing and evasion code`). Registration is therefore done by a person in an ordinary browser window.
+(project rules, `Spoofing and evasion code`). If the normal account flow remains unavailable, report the actual blocker rather than treating evasion or a universal manual-registration rule as the remedy.
 
 "Option B" (the candidate clicking through in the agent's own desktop window, the agent taking over at the profile page) was built as an opt-in flag
 `--candidate-start`, tried on Peraton, shown not to help, and **reverted on 2026-11-24** (commit `893b033`).
@@ -138,7 +143,7 @@ Garmin progression on the profile page: 48, then 59, 61, 63, 64 and finally 66 o
 
 ## 7. Known limits and open items
 
-- **Registration is human** (sections 3 and 4). Peraton's end-to-end validation is blocked until a person registers and stores the password.
+- **New-employer registration remains unverified.** Peraton is blocked, while the matched Hyland test points to saved-session differences rather than proving an automation restriction. A working employer login is still needed for cross-company acceptance.
 - **The emailed-link feature has not been exercised live on iCIMS**: Peraton's ordinary-browser path shows no verification mail, and Garmin's mail arrived
   only during the candidate's own manual signup.
 - **Hand-off windows hide** behind larger windows; no window-raising tool is installed.
