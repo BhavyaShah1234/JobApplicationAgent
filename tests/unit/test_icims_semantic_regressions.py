@@ -91,6 +91,21 @@ def test_location_motivation_gets_owner_relocation_preferences_not_bare_residenc
     r=route(field,[city,preference])
     assert r.fact_ids==['relocate']
     assert resolve_routed(field,[city,preference],r).value is None
+    assert not binding_valid(field,[preference],'Olathe, Kansas',r)
+    assert binding_valid(field,[preference],'I am willing to relocate for this opportunity.',r)
+
+
+def test_source_refresh_cannot_restore_a_stale_salary_literal_over_the_owner_rule():
+    from jobagent.filling.planned import PlannedFiller
+    field=Field(id=1,kind='select',label='What is your expected annual salary range?',options=['$70,000 to $79,999/year'])
+    rule=Fact('rule',['Desired salary'],'','applicant',instructions='Use the JD salary range; otherwise research the local median.',tools=['web_search'])
+    old=Fact('learned:old',[field.label],'$70,000 to $79,999/year','learned:old')
+    asked=[]
+    def ask(fields):
+        asked.extend(fields);return {str(f['id']):None for f in fields}
+    filler=PlannedFiller([rule,old],ask,source_resolver=lambda *_:{})
+    result=filler.plan([field])
+    assert asked and result[field.id].value is None
 
 
 @pytest.mark.parametrize('job_city,expected',[('Olathe','Tempe, Arizona'),('Tempe','NA')])

@@ -585,6 +585,8 @@ def evidence_allows(field,fact,route_info):
 def binding_valid(field,bound,value,route_info):
     if any(x.id not in route_info.fact_ids for x in bound):return False
     if not all(evidence_allows(field,x,route_info) for x in bound):return False
+    if route_info.family=='why_company' and field.kind in ('text','textarea') and len(re.findall(r'\b\w+\b',value))<5:
+        return False
     if (route_info.family=='other' and norm(value) in ('yes','no','true','false') and
             not any(norm(field.label) in map(norm,x.aliases) for x in bound) and
             any(fact_family(x)!='other' for x in bound)):

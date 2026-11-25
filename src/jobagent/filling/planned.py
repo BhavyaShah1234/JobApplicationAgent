@@ -331,7 +331,7 @@ class PlannedFiller:
                     if saved is not None:answers[f.id]=saved;source_updates[f.id]=saved
                     continue
                 if f.id not in source_updates:
-                    resolved=resolve(f,self.facts)
+                    resolved=resolve_routed(f,self.facts) or resolve(f,self.facts)
                     if resolved.value is not None:answers[f.id]=resolved
         # Source-resolver and answer-sheet shortcuts must respect these same
         # purpose boundaries; a neighbouring boolean is never a substitute.
@@ -360,6 +360,7 @@ class PlannedFiller:
             mapped=self.invoke(Mappings,[SystemMessage(
                 'Resolve all questions in one batch using existing fact_id/fact_ids or a supplied document source and exact quote. '
                 'Use value only for applying explicit instructions, composing supported facts, truthful prose, or rendering an equivalent offered option. '
+                'A why/motivation text question requires an explanation in complete sentences; a bare city name or Yes/No does not answer why. '
                 'If a bound owner fact has tools allowing an external lookup, you may request lookup="web: query", "place: address" or "maps: origin | destination" instead of a value. '
                 'Respect section/entity, instructions, requested format and source date precision. Never invent days. '
                 'The current date is supplied in today/date_facts and fact.reference_date. For date/calendar controls apply date rules, not a rule\'s fallback for dropdown lists. '
