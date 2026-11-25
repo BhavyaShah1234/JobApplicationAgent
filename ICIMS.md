@@ -6,6 +6,20 @@ The owner reached Hyland14637's candidate form in ordinary Chrome with the same 
 
 The captured cookie exclusions were ordinary DomainMismatch/NotOnPath cases; no other blocking reason appeared in this capture. This does not inspect every browser-internal decision or the owner's personal profile. **The cause remains unconfirmed.** Old cookies inherited from another employer are unlikely in this fresh dedicated profile. Differences in browser configuration, page instrumentation, navigation/interaction or server-side decisions still need isolation. Do not infer a missing saved login, an existing account, or automation detection from the password page alone. Never reuse a token-bearing callback from another browser as an application URL.
 
+Further browser-mode comparisons narrowed the problem:
+
+| Hyland14637 test | Result | Evidence type |
+|---|---|---|
+| Owner's ordinary and Incognito Chrome, same email | Candidate/profile form | Owner report, corrected Incognito result |
+| Native Voyager in fresh managed desktop Chrome | Password-only login | Native artifacts and passive redirect capture |
+| Owner manually performs entry in that managed window | Same password-only login | Owner report and passive path/heading/screenshot observation |
+| Human-only Chrome, same agent-owned persistent profile and same public-only proxy; no automation/debugging connection | Candidate/profile form | Owner report |
+| Normal native restart on that retained profile after human-only success | Password-only login again | `icims-hyland-native-after-human-entry.log` and final artifacts |
+
+These results implicate the managed-browser setup rather than requiring native field-filling actions to reproduce the failure. They do not isolate a particular flag or prove deliberate automation blocking: process restarts also change in-memory/session state. The managed password page had cookies enabled and no installed shadow helper at the time inspected; its `attachShadow` function remained native. No browser-identification property was modified. Human-only Chrome was never automated. Only stale process-lock symlinks owned by its confirmed dead process were removed before the standard broker resumed; authentication cookies/storage were not cleared or copied. No password, reset, account submission or application submission occurred.
+
+The current startup/restart handoff is therefore **not a working solution**. A possible next investigation is Chrome's documented, user-approved connection to an already-running session, which could preserve the human-opened page without restarting Chrome. It has not been implemented or live-validated here, and would still need the owner's browser permission and the agent's profile/origin/submission safeguards. Official reference: [Chrome DevTools session connection](https://developer.chrome.com/blog/chrome-devtools-mcp-debug-your-browser-session).
+
 Evidence: `outputs/verification/portal-acceptance-20261125T003317Z/hyland-session-diagnosis.json`, `hyland-matched-redirects.jsonl` (origins/paths/query-key names only), and `icims-cookie-metadata-diagnosis.json` (metadata only, no values). **The earlier universal claim that remote-controlled Chrome explains the missing registration route is not established.** The historical Peraton observations below do not override this matched Hyland comparison.
 
 ## Latest live check — 2026-11-25: two corrected Garmin cases, matrix incomplete
@@ -43,7 +57,7 @@ and the screenshots listed in section 11. No emails or passwords are written in 
 
 ## 0. In one page
 
-- The agent can **fill an iCIMS application to the review screen** (Garmin: 66 of 68 fields verified, the other two are optional blanks) **once an account exists**.
+- The agent can **fill Garmin18475 and19098 to Review** with semantically checked employment rows and dates after signing in. Counts distinguish source-verified answers from portal-held credential presence checks (latest live check above).
 - Native account creation at a new iCIMS employer remains **unverified**. The owner reaches Hyland's candidate form in ordinary and Incognito Chrome, while the fresh agent profile reaches its password page. The cause has not been isolated (latest diagnosis above).
 - The agent must not disguise its browser or solve puzzles itself (project rules). Working saved credentials/session state should be used through the normal login flow; a human-only registration requirement is not established for every employer.
 - Accounts are **per company (tenant)**: the same email is unknown at Peraton while it has an account at Garmin (section 2).
