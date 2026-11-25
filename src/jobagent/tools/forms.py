@@ -1433,7 +1433,8 @@ def strict_option(answer: str, options: list[str]) -> str | None:
     a = _norm(answer)
     for o in options:
         n = _norm(o)
-        if n == a or n.startswith(a + " (") or o.lower().startswith(answer.lower() + " (") \
+        prefix = re.match(r'^(.*?)\s+\(', o)
+        if n == a or (prefix is not None and _norm(prefix[1]) == a) \
                 or n == a + " programming language":
             return o
     return None
@@ -1526,7 +1527,8 @@ def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
     """
     base = loc.evaluate("e => e.id.replace(/_icimsDropdown$/, '')")
     current = loc.evaluate(WIDGET_VALUE_JS)
-    if current and _norm(current) == _norm(answer):
+    if current and (_norm(current) == _norm(answer) or
+                    strict and not is_identity(f.label) and strict_option(answer,[current]) == current):
         return current
     if current and re.search(r"(?i)\bno (states?|provinces?|regions?|options?) (available|found)\b", current):
         return current        # the chosen country has no states in this list: there is nothing to select
@@ -1536,27 +1538,31 @@ def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
         loc.click(timeout=5000)
         panel.wait_for(state="visible", timeout=5000)
         search = panel.locator("input.dropdown-search, input[type=text], input[type=search]").first
-        if search.count() and search.is_visible():
-            # the widget filters on key events, which fill() does not send: type the characters
-            search.click(timeout=3000)
-            search.fill("")
-            search.press_sequentially(str(answer), delay=45)
-            page.wait_for_timeout(1200)
+        searchable=search.count() and search.is_visible()
         area = results if results.count() else panel
         # Match whole list entries, never fragments: the widget highlights the typed text inside each result, so "British <b>India</b>n
         # Ocean Territory" contains a bare "India" element that belongs to the wrong country.
         entries = area.locator("li, [role=option]")
-        texts = []
-        for _ in range(8):      # the ajax list fills a moment after typing
-            texts = [t.strip() for t in entries.all_inner_texts()]
-            texts = [t for t in texts if t and not re.match(r"(?i)^[—–-]*\s*(make a selection|select)", t)]
-            if texts:
-                break
-            page.wait_for_timeout(500)
-        if not texts:       # a list without li / option elements: fall back to the leaf texts
-            texts = [t.strip() for t in area.evaluate("e => [...e.querySelectorAll('*')].filter(n => !n.children.length).map(n => (n.textContent || '').replace(/\\s+/g, ' '))")
-                     if t.strip() and not re.match(r"(?i)^[—–-]*\s*(make a selection|select)", t.strip())]
-        opt = strict_option(answer, texts) if strict else close_option(answer, texts)
+        first_word=re.search(r'\w+',str(answer))
+        probes=list(dict.fromkeys([str(answer),first_word[0] if first_word else str(answer)])) if searchable else [None]
+        texts=[];opt=None
+        for probe in probes:
+            if searchable:
+                # A shorter SEARCH avoids literal punctuation differences in the
+                # site's filter. Selection still requires the full sourced answer.
+                search.click(timeout=3000);search.fill("")
+                search.press_sequentially(probe,delay=45)
+                page.wait_for_timeout(1200)
+            for _ in range(8):
+                texts=[t.strip() for t in entries.all_inner_texts()]
+                texts=[t for t in texts if t and not re.match(r"(?i)^[—–-]*\s*(make a selection|select)",t)]
+                if texts:break
+                page.wait_for_timeout(500)
+            if not texts:
+                texts=[t.strip() for t in area.evaluate("e => [...e.querySelectorAll('*')].filter(n => !n.children.length).map(n => (n.textContent || '').replace(/\\s+/g, ' '))")
+                       if t.strip() and not re.match(r"(?i)^[—–-]*\s*(make a selection|select)",t.strip())]
+            opt=strict_option(answer,texts) if strict else close_option(answer,texts)
+            if opt is not None:break
         if opt is None and texts and all(re.search(r"(?i)^no (states?|provinces?|regions?) (available|found)\b", t) for t in texts):
             page.keyboard.press("Escape")
             return current or ""      # the list is empty for this value (a country with no states)

@@ -189,6 +189,32 @@ def test_icims_missing_choice_is_an_unavailable_option_not_a_successful_blank():
     with_page(html,run)
 
 
+@pytest.mark.parametrize('prefilled',[False,True])
+def test_icims_degree_caption_preserves_sourced_meaning_across_curly_quote_search(prefilled):
+    caption='Master’s degree (MA, MS, MBA, MEd, etc.)'
+    html=ICIMS_DROPDOWN.replace('Country','Degree').replace(
+        '"United States","British Indian Ocean Territory","Canada","India","Åland Islands"',
+        '"'+caption+'","Doctorate degree"')
+    html=html.replace('q.onkeyup=draw;', '''q.onkeyup=()=>{draw();if(!ul.children.length){
+        const li=document.createElement('li');li.textContent='No Results';ul.appendChild(li)}};''')
+    if prefilled:html=html.replace('<span id="c_fake" class="dropdown-text">— Make a Selection —</span>',
+        '<span id="c_fake" class="dropdown-text">'+caption+'</span>')
+    def run(page):
+        view=forms.read_page(page);field=next(f for f in view.fields if f.kind=='combobox')
+        chosen=forms.fill_field(page,view,field,"Master's degree",{},strict=True)
+        assert chosen==caption
+        assert next(f for f in forms.read_page(page).fields if f.kind=='combobox').value==caption
+        assert page.locator('#q').input_value()==('' if prefilled else 'Master')
+    with_page(html,run)
+
+
+def test_strict_parenthetical_caption_matching_never_changes_the_base_qualification():
+    options=['Master’s degree (MA, MS, MBA, MEd, etc.)','Doctorate degree']
+    assert forms.strict_option("Master's degree",options)==options[0]
+    assert forms.strict_option("Bachelor's degree",options) is None
+    assert forms.strict_option('Degree',options) is None
+
+
 def test_a_country_with_no_states_leaves_the_state_dropdown_as_it_is_and_an_address_list_with_only_enter_manually_takes_that_entry():
     from jobagent.tools import forms
     html_states = ICIMS_DROPDOWN.replace('— Make a Selection —</span>', 'No states available</span>')
