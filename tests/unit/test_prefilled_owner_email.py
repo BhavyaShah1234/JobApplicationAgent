@@ -3,6 +3,21 @@ from jobagent.steps import apply as A
 from jobagent.tools import forms
 
 
+@pytest.mark.parametrize('prefill,expected', [
+    ('parser@example.test', 'owner@example.test'),
+    ('owner@example.test', 'owner@example.test'),
+    ('owner+jobs@example.test', 'owner@example.test'),
+    ('approved@example.test', 'approved@example.test'),
+])
+def test_routed_email_prefill_requires_an_explicit_owner_value(prefill, expected):
+    from jobagent.filling.facts import Fact
+    from jobagent.filling.routing import resolve_routed
+    fact=Fact('email',['Email'],'owner@example.test','applicant/contact',variants=['approved@example.test'],
+              instructions="On portals with an account the form shows the account's email (the agent's Gmail): keep that.")
+    field=forms.Field(0,'email','Email',value=prefill,section='Contact information')
+    assert resolve_routed(field,[fact]).value == expected
+
+
 @pytest.mark.parametrize('known,prefill,section,expected',[
  ('casey@example.test','casey@example.test','Contact information',True),
  ('casey@example.test','other@example.test','Contact information',False),

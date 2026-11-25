@@ -50,6 +50,15 @@ def test_new_account_pair_is_saved_then_filled_without_clicking_submit_or_leakin
     assert 'Synthetic-only' not in json.dumps([asdict(f) for f in fresh.fields]) + str(logs)
 
 
+@pytest.mark.parametrize('confirmation', ['Password (Re-enter)', 'Password (Confirm)', 'Password (Repeat)'])
+def test_suffix_confirmation_in_new_profile_is_filled_without_submitting(setup, confirmation):
+    page, vault, saved = setup
+    view = profile(page, 'Password', confirmation, 'Create a login')
+    assert portal_auth.fill_new_account_passwords(page, view, vault, 'candidate@example.test', page.url)
+    assert page.locator('#pw').input_value() == page.locator('#confirm').input_value() == saved['portal:recruit.test']['password']
+    assert not page.evaluate('window.sent === true')
+
+
 @pytest.mark.parametrize('first,second,heading', [('Current Password','New Password','Change Password'),
                                                 ('Password','Password','Candidate Profile'),
                                                 ('New Password','Confirm Password','Reset your password')])

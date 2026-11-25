@@ -208,7 +208,7 @@ def test_observable_email_and_plain_year_rules_do_not_need_the_writer():
     empty=forms.Field(id=0,kind='email',label='Email')
     assert resolve_routed(empty,[email]).value=='owner@example.test'
     empty.value='account@example.test'
-    assert resolve_routed(empty,[email]).value=='account@example.test'
+    assert resolve_routed(empty,[email]).value=='owner@example.test'  # a prefill is not account-identity evidence
     years=Fact('years',['Years of relevant experience'],'2.4','applicant/experience',instructions="For 'over N years' questions compare with it.",authority='resume')
     field=forms.Field(id=1,kind='text',label='How many years of industry experience do you have?')
     filler=PlannedFiller([years],no_questions)

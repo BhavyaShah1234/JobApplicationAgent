@@ -477,9 +477,13 @@ def resolve_routed(field,facts,route_info=None):
     if len(scalar)==1:
         fact=scalar[0]
         if r.family=='email' and re.fullmatch(r"On portals with an account the form shows the account's email \(the agent's Gmail\): keep that\.",fact.instructions):
-            # A prefilled account email takes precedence; otherwise use the
-            # saved address. This conditional has a directly observable input.
-            value=field.value.strip() or fact.value
+            # A resume parser can prefill an unrelated/stale email. Presence
+            # alone does not establish account identity or owner approval.
+            # Retain only an explicit owner email/variant; otherwise use the
+            # saved address rather than relabelling UI data as owner evidence.
+            prefill=field.value.strip()
+            approved=[fact.value,*fact.variants]
+            value=prefill if any(prefill.casefold()==str(v).strip().casefold() for v in approved) else fact.value
             if re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+',value):
                 return from_fact(field,replace(fact,value=value,instructions=''))
         if r.family=='experience_years' and fact.value.replace('.','',1).isdigit() and re.fullmatch(r"For 'over N years' questions compare with it\.",fact.instructions):

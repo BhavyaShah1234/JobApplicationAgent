@@ -253,7 +253,8 @@ def fill_new_account_passwords(page, view, vault, email: str, account_url: str, 
     labels = [re.sub(r'\s+', ' ', f.label).strip(' *:').lower() for f in fields]
     if any(re.search(r'\b(?:current|old|existing)\b', label) for label in labels):
         return False
-    confirm = [i for i, label in enumerate(labels) if re.search(r'(?:re[- ]?(?:enter|type)|confirm|repeat).{0,25}password', label)]
+    confirm = [i for i, label in enumerate(labels) if re.search(r'(?:re[- ]?(?:enter|type)|confirm|repeat).{0,25}password', label)
+               or re.fullmatch(r'(?:new )?password\s*\((?:re[- ]?(?:enter|type)|confirm|repeat)\)', label)]
     if len(confirm) != 1 or not re.fullmatch(r'(?:(?:choose|create|set|enter) (?:a |your )?)?(?:new )?password', labels[1-confirm[0]]):
         return False
     if portal_agent.recovery_refusal('register', ' '.join(view.headings), page.url):
