@@ -195,7 +195,7 @@ def snapshot(page: Page) -> tuple[str, dict]:
                           + (f" BLOCKED_BY={x['blocked_by']!r}" if x.get('blocked_by') else "")
                           + (f" CHOICES={x['options']} (use action select with one of them; now: {x['chosen']!r})" if x.get("options") else "")
                           for i, x in enumerate(snap["items"]))
-        parts.append(f"FRAME {n} {f.url[:100]}\nTEXT: {snap['text']}\nELEMENTS:\n{items}")
+        parts.append(f"FRAME {n} {challenge.safe_url(f.url)[:100]}\nTEXT: {snap['text']}\nELEMENTS:\n{items}")
         if snap.get("pw", 0) >= 2:
             parts.append("NEW_PASSWORD_FORM")  # marker for the code: a set/confirm-password form is showing
     return "\n\n".join(parts), kept
@@ -605,8 +605,7 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             state["state"] = a.action
             break
         if a.action in ("code_sent", "link_sent"):
-            page_text = view.split("ELEMENTS:")[0][-500:]
-            log(f"portal {host}: page before waiting for the mail: {' '.join(page_text.split())[:400]}")
+            log(f"portal {host}: waiting for the requested account email")
             if re.search(r'(?i)"(send|get|email|resend)( me)?( a| the)?( verification)? (code|otp)"|"send code"|'
                          r'"send verification', view) and not any("send-code button" in h for h in history[-3:]):
                 history.append("the page has a send-code button: click it so the code is actually sent, then "
@@ -617,6 +616,10 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
                 mail, v = inbox.wait_for_verification(f"https://{host}", since, kind="portal", timeout_s=300)
             except TimeoutError:
                 history.append("no verification mail arrived within 5 minutes")
+                if goal == 'reset_password':
+                    state['reason'] = 'No recovery email arrived within five minutes; reset is unconfirmed and no further request was made'
+                    log(f"portal {host}: {state['reason']}")
+                    break
                 continue
             if why := recovery_refusal(goal, label=mail.subject or '', url=v.link or ''):
                 state['reason'] = why

@@ -1195,20 +1195,33 @@ def learned_cmd(question: str = typer.Argument(None, help="Show the entries clos
 
 
 @app.command("portal-reset")
-def portal_reset_cmd(url: str = typer.Argument(..., help="A career-site URL on the portal.")) -> None:
+def portal_reset_cmd(
+    url: str = typer.Argument(..., help="A career-site login URL; for desktop, the posting that owns the current tab."),
+    browser_mode: str = typer.Option('docker', help="docker or desktop; use desktop to preserve the open recovery session."),
+    desktop_allow_origin: list[str] = typer.Option(None, '--desktop-allow-origin', help="Additional trusted login HTTPS origin."),
+) -> None:
     """One user-approved password reset of an existing portal account to the shared password, then sign in."""
-    from jobagent.tools.browser import persistent_context
+    from jobagent.tools.session import open_session
+    from jobagent.tools import challenge
     from jobagent.tools.hitl import open_hitl
     from jobagent.tools.inbox import open_inbox
     from jobagent.tools.portal_auth import reset_once
     from jobagent.tools.vault import open_vault
 
     log = runlog("portal-reset")
+    if browser_mode not in ('docker','desktop'):
+        raise typer.BadParameter('portal-reset supports docker or desktop; one recovery cannot switch browsers')
+    _require_model_service('portal-reset')
     vault = open_vault()
     email = (vault.get("gmail") or {})["email"]
-    with open_inbox() as inbox, persistent_context() as ctx:
-        res = reset_once(ctx.pages[0], url, vault, inbox, open_hitl(log), email, log=log)
+    hitl = open_hitl(log)
+    with open_inbox() as inbox, open_session(browser_mode, url, desktop_allow_origin or ()) as sess:
+        with challenge.session(sess.page, hitl, log=log, policy=sess.policy):
+            res = reset_once(sess.page, url, vault, inbox, hitl, email, log=log,
+                             already_open=sess.already_open, account_url=url)
     console.print(res, highlight=False)
+    if not res.signed_in:
+        raise typer.Exit(1)
 
 
 @app.command("research")

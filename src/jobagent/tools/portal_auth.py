@@ -296,7 +296,7 @@ def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, ema
     # passwords/rejection limits belong to the employer tenant, not every tenant.
     host = account_host(url, account_url)
     key = f"portal:{host}"
-    res = PortalLogin(host, platform_of(url))
+    res = PortalLogin(host, platform_of(account_url or url))
     mem = PortalMemory(portal_key(url))
     db.record_agent_domain(inbox.conn, f"https://{auth_host}", "portal")
     creds = vault.get(key) or {}
@@ -361,11 +361,12 @@ def ensure_account(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email:
         return ensure_with_agent(page, url, vault, inbox, hitl, email, log=log, fresh=False, account_url=account_url)
 
 
-def reset_once(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print) -> PortalLogin:
+def reset_once(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print,
+               *, already_open: bool = False, account_url: str | None = None) -> PortalLogin:
     """User-approved, one time: reset the existing account's unknown password to the shared one (or the portal's own
     strong one if it refuses that), then sign in. Recorded in the vault so it is never repeated."""
     from jobagent.tools import portal_agent
-    host = urlparse(url).netloc.lower()
+    host = account_host(url, account_url)
     key = f"portal:{host}"
     res = PortalLogin(host, platform_of(url))
     db.record_agent_domain(inbox.conn, f"https://{host}", "portal")
@@ -375,17 +376,26 @@ def reset_once(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str
         raise PortalError(f"{host}: the one approved reset was already done ({old['reset_done']})")
     password = portal_password(vault)
     alt = old.get("alt_password") or new_password()
-    vault.set(key, **{**old, "email": email, "password": password, "alt_password": alt, "platform": res.platform,
+    vault.set(key, **{**old, "email": email, "reset_candidate_password": password, "alt_password": alt, "platform": res.platform,
                       "reset_started": datetime.now(UTC).isoformat()})  # saved before anything is submitted
-    challenge.goto(page, url, hitl, log=log)
+    if already_open:
+        challenge.guard(page)
+    else:
+        challenge.goto(page, url, hitl, log=log)
     values = {**candidate_values(email, password), "ALT_PASSWORD": alt}
     out = portal_agent.run(page, url, values, inbox, hitl, host, log=log, goal="reset_password")
-    res.signed_in, res.reset, res.verified_mail = out["state"] == "signed_in", True, out["verified_mail"]
+    res.signed_in = out["state"] == "signed_in"
+    res.reset, res.verified_mail = res.signed_in, out["verified_mail"]
+    res.notes = out.get('steps', [])[-8:]
     final = alt if out.get("alt_password_used") else password
-    vault.set(key, **{**(vault.get(key) or {}), "password": final, "account": True, "verified": res.signed_in,
-                      "reset_done": datetime.now(UTC).isoformat(),
-                      **({"note": "this portal refused the shared password; its own password is stored here"}
-                         if out.get("alt_password_used") else {})})
+    if res.signed_in:
+        vault.set(key, **{**(vault.get(key) or {}), "password": final, "account": True, "verified": True,
+                          "reset_unconfirmed": None, "reset_candidate_password": None,
+                          "reset_done": datetime.now(UTC).isoformat(),
+                          **({"note": "this portal refused the shared password; its own password is stored here"}
+                             if out.get("alt_password_used") else {})})
+    else:
+        vault.set(key, reset_unconfirmed=datetime.now(UTC).isoformat(), reset_candidate_password=final)
     log(f"portal {host}: reset {out['state']}; signed in={res.signed_in}")
     return res
 
