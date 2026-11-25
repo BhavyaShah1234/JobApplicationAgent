@@ -118,7 +118,10 @@ class AdaptiveFiller(PlannedFiller):
     def evidence(self, decision):
         """Fingerprint bound facts, or conservatively the broader narrative/policy."""
         ids = [x for x in decision.fact_id.split(',') if x]
-        facts = {f.id: asdict(f) for f in self.facts}
+        # Fresh HITL facts are scoped before the next compiled-facts refresh.
+        # Include them now, so that refresh does not change their fingerprint
+        # from the broad fallback to the exact same newly supplied fact.
+        facts = {f.id: asdict(f) for f in [*self.facts,*self.session_facts.values()]}
         if ids and all(i in facts for i in ids):
             evidence = {'facts': {i: facts[i] for i in ids}}
             if 'document:' in decision.source:

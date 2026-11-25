@@ -37,6 +37,23 @@ def test_resume_rebinds_unique_semantics_but_does_not_claim_live_readback(tmp_pa
     assert (tmp_path/'decisions.json').stat().st_mode & 0o777 == 0o600
 
 
+def test_new_human_answer_survives_its_own_source_refresh(tmp_path):
+    field=Field(1,'select','Expected salary range?',options=['70-79k'],identity='salary',frame_identity='epoch')
+    filler,view=world(tmp_path,[field])
+    fact=Fact('human:salary',[field.label],'70-79k','human',target_key=key(field))
+    filler.session_facts[fact.id]=fact
+    decision=Decision(fact.value,'human',fact.id)
+    filler.human_answers[(filler.step,key(field))]=decision
+    accept(filler,view,field,decision)
+    fingerprint=filler.evidence(decision)
+    filler.facts=[*filler.facts,fact]  # the next normal prepared-facts refresh
+    filler.source_version='own-learned-answer-was-saved'
+    filler.observe_view(view)
+    assert filler.evidence(decision)==fingerprint
+    assert filler.cache[key(field)].value=='70-79k'
+    assert filler.human_answers[(filler.step,key(field))].value=='70-79k'
+
+
 def test_changed_fact_invalidates_only_its_dependents(tmp_path):
     a = Field(1,'text','Email',identity='email')
     b = Field(2,'text','Phone',identity='phone')
