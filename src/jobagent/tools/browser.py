@@ -124,7 +124,8 @@ def handoff_tab_allowed(requested, page, related_urls=(), *, lease=None, target_
             current not in {D.origin(u) for u in related_urls if D.public_destination(u)}):
         return False
     try:
-        return page.evaluate(r'''() => {
+        from jobagent.tools.portal_auth import icims_identifier_route
+        return page.evaluate(r'''allowIdentifier => {
           const shown=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);
             return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';};
           const controls=f=>[...Object.getOwnPropertyDescriptor(HTMLFormElement.prototype,'elements').get.call(f)];
@@ -132,13 +133,17 @@ def handoff_tab_allowed(requested, page, related_urls=(), *, lease=None, target_
           if(forms.length!==1)return false;
           const form=forms[0], fields=controls(form).filter(e=>['INPUT','SELECT','TEXTAREA','BUTTON'].includes(e.tagName)).filter(shown)
             .filter(e=>!['hidden','submit','button','reset'].includes(e.type));
+          const identifier=allowIdentifier && fields.length===1 && !form.querySelector('input[type=password]') &&
+            fields[0].tagName==='INPUT' && (fields[0].type==='email' ||
+              fields[0].type==='text' && /^(?:username|email|login|identifier)$/i.test(fields[0].name||fields[0].autocomplete||'')) &&
+            [...form.querySelectorAll('button,input[type=submit]')].filter(shown).some(e=>/^continue$/i.test((e.innerText||e.value||'').trim()));
           if(form.querySelector('input[type=file],textarea,select,[contenteditable=true]') ||
-             fields.filter(e=>e.tagName==='INPUT'&&e.type==='password').length!==1 || fields.length>3)return false;
+             (!identifier && fields.filter(e=>e.tagName==='INPUT'&&e.type==='password').length!==1) || fields.length>3)return false;
           if(!fields.every(e=>e.tagName==='INPUT'&&(e.type==='password'||e.type==='email'||
             e.type==='text'&&/^(?:username|email|login|identifier)$/i.test(e.name||e.autocomplete||''))))return false;
           return [...document.querySelectorAll('h1,h2,legend')].filter(shown).some(e=>
-            /\b(?:sign\s*in|log\s*in|login|enter your password)\b/i.test(e.innerText));
-        }''') is True
+            /\b(?:sign\s*in|log\s*in|login|enter your password)\b/i.test(e.innerText) || identifier && /^welcome$/i.test(e.innerText.trim()));
+        }''',icims_identifier_route(page.url)) is True
     except Exception:
         return False
 

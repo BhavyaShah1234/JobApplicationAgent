@@ -31,6 +31,16 @@ class PortalError(RuntimeError):
     pass
 
 
+def icims_identifier_route(url: str) -> bool:
+    """Recognize only the public iCIMS identity service's email-first route."""
+    try:
+        p=urlparse(url)
+        return (p.scheme=='https' and p.hostname=='login.icims.com' and p.port in (None,443)
+                and not p.username and not p.password and p.path.rstrip('/')=='/u/login/identifier')
+    except ValueError:
+        return False
+
+
 @dataclass
 class PortalLogin:
     host: str

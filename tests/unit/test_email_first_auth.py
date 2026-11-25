@@ -33,6 +33,23 @@ def test_a_username_text_control_can_start_auth_but_an_unrelated_control_cannot(
         assert apply._authentication_page(forms.PageView([forms.Field(0, "text", label)], [], [], ["Log in"], {})) is expected
 
 
+@pytest.mark.parametrize('url,expected',[
+    ('https://login.icims.com/u/login/identifier?state=opaque',True),
+    ('https://login.icims.com/u/login/unrelated',False),
+    ('https://login.icims.com.example.test/u/login/identifier',False),
+    ('https://careers.example.test/u/login/identifier',False),
+])
+def test_icims_welcome_identifier_requires_its_own_identity_route(url,expected):
+    view=forms.PageView([forms.Field(0,'text','Username or email address *')],['Continue'],[],['Welcome'],{0:SimpleNamespace(url=url)})
+    assert apply._authentication_page(view) is expected
+
+
+def test_welcome_identifier_cannot_borrow_the_identity_route_from_another_frame():
+    view=forms.PageView([forms.Field(0,'text','Username or email address *',frame=0)],['Continue'],[],['Welcome'],
+                        {0:SimpleNamespace(url='https://example.test/application'),1:SimpleNamespace(url='https://login.icims.com/u/login/identifier')})
+    assert not apply._authentication_page(view)
+
+
 def late_login_view():
     return forms.PageView([forms.Field(0, 'email', 'Email'), forms.Field(1, 'password', 'Password')],
                           ['Continue'], [], ['Enter Your Password'], {})

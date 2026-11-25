@@ -1608,6 +1608,12 @@ def _authentication_page(view: forms.PageView) -> bool:
         return False
     f = view.fields[0]
     credential = f.kind == "email" or (f.kind == "text" and re.search(r"(?i)\b(e-?mail|user\s*name)\b", f.label))
+    from jobagent.tools.portal_auth import icims_identifier_route
+    frame=view.frames.get(f.frame)
+    if (credential and icims_identifier_route(getattr(frame,'url','')) and
+            any(h.strip().casefold()=='welcome' for h in view.headings) and
+            any(b.strip().casefold()=='continue' for b in view.buttons)):
+        return True
     heading = r"\s*(?:(?:log|sign)[\s-]*in(?:\s+(?:or|to|with|using|and)\b.*)?|create\s+(?:(?:an?|your)\s+)?account)[\s.!:]*"
     return bool(credential and any(re.fullmatch(heading, h, re.I) for h in view.headings))
 

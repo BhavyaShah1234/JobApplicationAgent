@@ -54,6 +54,28 @@ def test_unreadable_login_never_gets_the_exception(monkeypatch):
     assert not browser.handoff_tab_allowed(POSTING,Page(),[LOGIN])
 
 
+@pytest.mark.parametrize('case,expected',[
+    ('identifier',True),('undeclared',False),('wrong_host',False),('wrong_path',False),
+    ('profile_heading',False),('extra_address',False),('hidden_password',False),('file',False),
+])
+def test_shared_identifier_handoff_stays_credential_only_and_explicitly_trusted(chrome,monkeypatch,case,expected):
+    monkeypatch.setattr(desktop_browser,'public_destination',lambda u:True)
+    url='https://login.icims.com/u/login/identifier';related=['https://login.icims.com']
+    html='<h1>Welcome</h1><form><label>Username or email address<input name=username></label><button>Continue</button></form>'
+    if case=='undeclared':related=[]
+    if case=='wrong_host':url=url.replace('login.icims.com','other.example.test');related=[url]
+    if case=='wrong_path':url=url.replace('/identifier','/newsletter')
+    if case=='profile_heading':html=html.replace('Welcome','Candidate Profile')
+    if case=='extra_address':html=html.replace('<button>','<input name=address><button>')
+    if case=='hidden_password':html=html.replace('<button>','<input type=password hidden><button>')
+    if case=='file':html=html.replace('<button>','<input type=file hidden><button>')
+    page=chrome.new_page()
+    try:
+        page.route('**/*',lambda r:r.fulfill(content_type='text/html',body=html));page.goto(url)
+        assert browser.handoff_tab_allowed(POSTING,page,related) is expected
+    finally:page.close()
+
+
 @pytest.mark.parametrize('change,expected',[
     ('none',True),('target',False),('missing_target',False),('task',False),
     ('origin',False),('job',False),('unbound',False),
