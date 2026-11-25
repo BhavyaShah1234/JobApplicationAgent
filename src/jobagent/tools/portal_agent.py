@@ -377,6 +377,21 @@ def credential_fill_refusal(value: str, field_type: str) -> str | None:
     return None
 
 
+def application_action_refusal(loc) -> str | None:
+    """Account setup has no authority to send an application or a combined profile."""
+    application = loc.evaluate(r'''e => {
+      const label = (e.innerText || e.getAttribute('aria-label') || e.value || '').trim();
+      const sendsApplication = text => /^(?:apply(?: now| for this (?:job|position))?|(?:submit|send|complete|finish)\s+(?:(?:your|my|the)\s+)?(?:application|profile))\s*[.!]*$/i.test(text);
+      if (sendsApplication(label)) return true;
+      const form = e.form || e.closest('form');
+      if (!form) return false;
+      return !!form.querySelector('input[type=file]') || [...form.querySelectorAll('button,input[type=submit]')]
+        .some(button => sendsApplication((button.innerText || button.value || button.getAttribute('aria-label') || '').trim()));
+    }''')
+    return ('Account setup reached an application/profile action; no application was sent. '
+            'Continue through the application filler with submission disabled.') if application is True else None
+
+
 def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, model: str | None = None,
         notes: list[str] = (), goal: str = "sign_in") -> dict:
     """Drive the portal until signed in (or no account needed). Returns {"state", "registered", "verified_mail",
@@ -645,6 +660,11 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
         if loc is None:
             history.append(f"{a.action} on F{a.frame}[{a.element}] discarded: the observed control is no longer available; read the page again")
             continue
+        if a.action in ('click', 'press_enter') and (why := application_action_refusal(loc)):
+            state['reason'] = why
+            history.append(why)
+            log(f'portal {host}: {why}')
+            break
         if a.action in ('click', 'press_enter') and (why := recovery_refusal(
                 goal, label=_label(frames, a), url=loc.get_attribute('href') or '')):
             state['reason'] = why
