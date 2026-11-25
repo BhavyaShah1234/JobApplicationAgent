@@ -525,6 +525,20 @@ class PlannedFiller:
                     continue  # opening a section changes neither facts nor answers
                 if self.prepare_sources:self.facts=self.prepare_sources(view.fields)
                 self.observe_view(view)
+                if self.referral_context is not None:
+                    from jobagent.tools import referrals
+                    contact=self.referral_context.get('contact',{})
+                    if not (contact.get('name') and contact.get('email')):
+                        for field in view.fields:
+                            cached=self.cache.get(key(field))
+                            # A chosen source can reveal a required referrer
+                            # field later. Reconsider only our policy choice;
+                            # do not overwrite an explicit human source answer.
+                            if (getattr(field,'referrer_details_requested',False) and cached and
+                                    cached.source=='saved referral policy' and
+                                    referrals._referral_option([cached.value or ''])):
+                                self.cache.pop(key(field),None)
+                                self.rendered.pop(key(field),None)
                 # Add missing source-backed entity rows using the existing discovered controls.
                 added=False
                 for button in view.adds:

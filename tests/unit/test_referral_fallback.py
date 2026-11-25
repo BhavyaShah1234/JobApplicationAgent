@@ -4,6 +4,7 @@ import pytest
 from jobagent.filling.facts import Fact
 from jobagent.filling.planned import PlannedFiller
 from jobagent.tools.forms import Field
+from test_filling_strategy import world
 
 
 QUESTION='How Did You Hear About Us? *'
@@ -163,6 +164,29 @@ def test_existing_nonemployee_source_detail_select_cannot_silently_switch_to_emp
     referrals.contextualize([parent,child])
     assert parent.referrer_details_requested
     assert referrals.answer_for(parent,{},'SAS')['ask_human']
+
+
+def test_newly_revealed_referrer_field_reconsiders_only_the_cached_policy_source(world):
+    world.setup('''<h1>Candidate Profile</h1><fieldset><legend>Contact Information</legend>
+      <label for=source>How did you hear about SAS?</label>
+      <select id=source required onchange="showDetail()"><option value=''>Choose</option>
+        <option>SAS Employee Referral</option><option>University Outreach</option></select>
+      <div id=details></div></fieldset><button>Submit Profile</button>
+      <script>function showDetail(){details.innerHTML=source.value==='SAS Employee Referral'
+        ? '<label for=referrer>Please specify</label><input id=referrer required>'
+        : '<label for=fair>Please specify</label><select id=fair required><option value="">Choose</option><option>Career Fair</option></select>'}</script>''')
+    world.page.goto('https://fixture.test/apply')
+    fact=saved('sas','University Outreach');fact.aliases=['How did you hear about SAS?']
+    requests=[]
+    def answer(questions):
+        requests.extend(questions)
+        return {str(q['id']):'Career Fair' if q['kind']=='select' and 'Career Fair' in q['options'] else None for q in questions}
+    agent=PlannedFiller([fact],answer,referral_context={'company':'SAS','contact':{}})
+    result=agent.fill(world.page,advance_pages=False,max_rounds=6)
+    assert result['state']=='page_complete',result['blockers']
+    assert world.page.locator('#source').input_value()=='University Outreach'
+    assert world.page.locator('#fair').input_value()=='Career Fair'
+    assert world.page.locator('#referrer').count()==0
 
 
 @pytest.mark.parametrize('boundary', ['frame','section','unrelated','unbound','salary'])
