@@ -134,8 +134,23 @@ def application_context(mode, url, settings=None, *, related_urls=()):
         if not reply.get('ok') or reply.get('protocol') != desktop_browser.PROTOCOL or \
                 type(reply.get('port')) is not int or not 1024 <= reply['port'] <= 65535 or reply.get('url') != url:
             raise RuntimeError(reply.get('error', 'Desktop bridge identity mismatch'))
+        handoff=reply.get('handoff') is True
+        endpoint=f"http://127.0.0.1:{reply['port']}"
+        if handoff:
+            from jobagent.tools.desktop_handoff import endpoint as validate_endpoint
+            expires=reply.get('expires_at')
+            if type(expires) not in (int,float) or not time.time()<=expires<=time.time()+300:
+                raise RuntimeError('The host handoff endpoint expired; retry apply')
+            _,path_component=validate_endpoint(str(reply['port'])+'\n'+str(reply.get('websocket_path','')))
+            endpoint=f"ws://127.0.0.1:{reply['port']}{path_component}"
+            print('Waiting for Chrome approval: click Allow in the dedicated application window. No browser restart.')
         with sync_playwright() as pw:
-            browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{reply['port']}")
+            if handoff:
+                try:browser=pw.chromium.connect_over_cdp(endpoint,timeout=180_000)
+                except Exception:
+                    # Playwright errors can contain the private endpoint. Never include them in logs.
+                    raise RuntimeError('Chrome handoff was not approved or could not connect; browser left open. Retry after checking Chrome permission.') from None
+            else:browser=pw.chromium.connect_over_cdp(endpoint)
             fresh = bool(reply.get('fresh', False))
             deadline = time.monotonic()+15
             while True:
@@ -146,6 +161,10 @@ def application_context(mode, url, settings=None, *, related_urls=()):
                     raise RuntimeError('Dedicated application tab missing or ambiguous')
                 time.sleep(.25)
             page = pages[0]
+            if handoff:
+                from jobagent.tools.desktop_handoff import same_posting
+                if not same_posting(url,page.url):
+                    raise RuntimeError('The handoff tab belongs to a different posting; return to the requested application')
             ctx = page.context
             from jobagent.tools.shadow import install
             install(pw, ctx)

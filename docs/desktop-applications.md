@@ -61,6 +61,47 @@ jobagent submit outputs/COMPANY/JOB_ID COMPANY --browser-mode desktop --allow-de
 The reviewed payload must still be approved at the final prompt. `auto` is a filling mode; a submission cannot silently
 switch browsers. Scraping and ATS scoring keep their own browser workflows.
 
+## Opt-in ordinary-Chrome handoff
+
+Some portals reach a usable profile in ordinary Chrome but redirect the managed browser
+to an unusable login flow. To preserve the ordinary browser's live session, use the
+consented handoff. Restart the host bridge after upgrading its code. From the project
+directory on the host, prepare the exact public posting URL stored as the job's apply URL:
+
+```bash
+PYTHONPATH=src python3 -m jobagent.tools.desktop_browser handoff 'PUBLIC_POSTING_URL'
+```
+
+This opens an isolated, agent-owned Chrome through the same public-only proxy, without
+debugging startup flags. An existing managed window for that posting must be closed first;
+the command refuses to take over another live profile. It never opens a personal profile.
+
+Reach the application/profile form manually, stopping before Submit. In a new tab open
+`chrome://inspect/#remote-debugging`, enable **Allow remote debugging for this browser
+instance**, then close that tab and leave only the application. Run the normal agent:
+
+```bash
+docker exec -it jobagent jobagent apply outputs/COMPANY/JOB_ID COMPANY \
+  --no-submit --browser-mode desktop --desktop-allow-origin https://login.icims.com
+```
+
+Chrome will ask you to **Allow** the connection. Every new connection needs Chrome's
+permission. The agent attaches to the existing tab without restarting or navigating it,
+then uses the ordinary Voyager filling, account, HITL and verification code. The broker
+checks the exact process/profile/lock, current network guard, fresh endpoint and owning
+loopback listener. iCIMS `/jobs/<id>/...` routes must still belong to the requested job;
+other URL shapes initially require the same path/query. The existing target/origin scope
+and submission approval rules continue to apply. A missing permission or ambiguous tab
+stops attachment rather than falling back to an unrelated browser.
+
+This is an explicit preparation path, not an automatic replacement for managed Chrome.
+Live assisted tests filled Hyland's 15-control and SAS's 29-control profile pages without
+Submit Profile. Those are early profile pages in four-step flows; a native Review label
+there is not proof of reaching the portal's final application review. Later steps and
+submissions through this transport remain unvalidated. For UI tests, `--documents-from`
+can reuse a valid existing packet; that deliberately prevents submission and avoids
+document generation.
+
 ## Temporary mailbox
 
 The same host bridge can open Temp-Mail in a dedicated desktop session:

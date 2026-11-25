@@ -151,11 +151,19 @@ def open_request(root, request, proxy, launcher=None, alive=None, validate=None)
     """The broker's reply to an `open` request. A browser that already runs is reused only if the proxy it was started with
     IS this broker's live proxy (same port, and its command line says so); a browser bound to a retired proxy is refused with
     the restart it needs, never reported as guarded. `launcher`, `alive`, `validate` are injectable for tests."""
-    if request.get('protocol') != PROTOCOL or request.get('action') != 'open' or not public_destination(request.get('url', '')):
+    if request.get('protocol') != PROTOCOL or request.get('action') not in ('open','handoff') or not public_destination(request.get('url', '')):
         raise ValueError('Expected a desktop application open request with a public HTTPS URL')
     browser_root = agent_profile_root(root, request['url'])
+    if request['action']=='handoff':
+        from .desktop_handoff import prepare
+        prepare(browser_root,request['url'],proxy.port)
+        return {'ok':True,'protocol':PROTOCOL,'url':request['url'],'prepared':True}
     path = browser_root / 'session.json'
     manifest = json.loads(path.read_text()) if path.exists() else None
+    if manifest and manifest.get('kind')=='consented':
+        if manifest.get('url')!=request['url']:raise RuntimeError('Another task owns this handoff')
+        from .desktop_handoff import connection_reply
+        return connection_reply(browser_root,manifest,proxy.port)
     fresh = False
     if manifest and (alive or process_alive)(manifest['pid']):
         (validate or validate_process)(browser_root, manifest)
@@ -402,9 +410,26 @@ def serve(root):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('stage', choices=['serve'])
-    parser.parse_args()
-    serve(Path.cwd() / 'state' / ROOT)
+    parser.add_argument('stage', choices=['serve','handoff'])
+    parser.add_argument('url',nargs='?',help='Public posting URL for an ordinary-Chrome handoff')
+    args=parser.parse_args()
+    # The host bridge intentionally requires only Python's standard library.
+    root=Path.cwd()/'state'/ROOT
+    if args.stage=='serve':
+        serve(root)
+        return
+    if not args.url or not public_destination(args.url):parser.error('handoff requires a public HTTPS posting URL')
+    import socket
+    with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as client:
+        client.settimeout(25);client.connect(str(root/'bridge.sock'))
+        client.sendall((json.dumps({'protocol':PROTOCOL,'action':'handoff','url':args.url})+'\n').encode())
+        reply=json.loads(client.makefile('rb').readline(8192))
+    if not reply.get('ok') or reply.get('protocol')!=PROTOCOL or reply.get('url')!=args.url or not reply.get('prepared'):
+        raise RuntimeError(reply.get('error','Handoff preparation failed; restart the updated host desktop bridge'))
+    print('Ordinary agent-owned Chrome is open. Reach the application/profile form manually.\n'
+          'In a new tab, open chrome://inspect/#remote-debugging and enable remote debugging; close that tab.\n'
+          'Then run jobagent apply with --browser-mode desktop, and click Allow when Chrome asks.\n'
+          'Do not submit during a filling-only test. Handoff never bypasses Chrome permission or human verification.')
 
 
 if __name__ == '__main__':

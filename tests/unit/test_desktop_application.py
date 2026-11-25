@@ -11,9 +11,10 @@ from page_fakes import EventPage
 
 
 @pytest.mark.parametrize('valid', [True, False])
+@pytest.mark.parametrize('handoff', [True, False])
 @pytest.mark.parametrize('url',['https://www.carvana.com/careers/apply?gh_jid=8188615',
                               'https://careers.unseen-example.com/openings/opaque-job'])
-def test_desktop_lease_is_validated_and_context_is_not_closed(tmp_path, monkeypatch, valid,url):
+def test_desktop_lease_is_validated_and_context_is_not_closed(tmp_path, monkeypatch, valid,url,handoff):
     page = SimpleNamespace(url=url, frames=[])
     ctx = SimpleNamespace(pages=[page], new_cdp_session=lambda p: SimpleNamespace(
         send=lambda *a, **k: {'targetInfo': {'targetId': 'T1'}}))
@@ -30,11 +31,13 @@ def test_desktop_lease_is_validated_and_context_is_not_closed(tmp_path, monkeypa
         def connect(self, path): assert path.endswith('desktop-browser/bridge.sock')
         def sendall(self, data): requests.append(json.loads(data))
         def makefile(self, *args):
-            return io.BytesIO(json.dumps({'ok':True,'protocol':2,'port':42115 if valid else 0,'url':url,'fresh':True,'guarded':True}).encode()+b'\n')
+            import time
+            return io.BytesIO(json.dumps({'ok':True,'protocol':2,'port':42115 if valid else 0,'url':url,'fresh':not handoff,'guarded':True,
+                                         **({'handoff':True,'websocket_path':'/devtools/browser/abc-123','expires_at':time.time()+60} if handoff else {})}).encode()+b'\n')
 
     monkeypatch.setattr(socket, 'socket', lambda *a: Client())
     monkeypatch.setattr(browser, 'sync_playwright', lambda: nullcontext(SimpleNamespace(
-        chromium=SimpleNamespace(connect_over_cdp=lambda endpoint: remote))))
+        chromium=SimpleNamespace(connect_over_cdp=lambda endpoint,**kwargs: remote))))
     settings = SimpleNamespace(state_dir=tmp_path)
     if valid:
         with browser.application_context('desktop',url,settings) as connected:
