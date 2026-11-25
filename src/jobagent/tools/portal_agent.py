@@ -22,22 +22,29 @@ from pydantic import BaseModel, Field
 from jobagent import db, llm
 from jobagent.tools import verification
 from jobagent.tools import challenge
+from jobagent.tools.form_scope import UTILITY_CONTROL_JS
 
 MAX_STEPS = 30
 MAX_UNCHANGED_WAITS = 4
 CAPTCHA_FRAME = re.compile(r"(?i)hcaptcha|recaptcha|google\.com/recaptcha|challenges\.cloudflare|arkoselabs|funcaptcha")
 
-SNAPSHOT_JS = r"""(epoch) => {
-  const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
-    return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
-  const label = e => {
+AUTH_LABEL_JS = r"""e => {
     if (e.id) { const l = document.querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) return l.innerText.trim(); }
     const l = e.closest('label'); if (l) return l.innerText.trim();
-    return (e.getAttribute('aria-label') || e.title || e.placeholder || e.name || e.innerText || e.value ||
+    const secret = e.type === 'password' || /password/i.test(e.getAttribute('autocomplete') || '');
+    return (e.getAttribute('aria-label') || e.title || e.placeholder || e.name || e.innerText || (!secret && e.value) ||
+            (secret ? 'Password' : '') ||
             e.querySelector('img[alt]')?.alt || e.id || '').trim(); };
+"""
+
+SNAPSHOT_JS = r"""(epoch) => {
+  const utility = (__JOBAGENT_UTILITY__);
+  const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
+    return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
+  const label = (__JOBAGENT_AUTH_LABEL__);
   const out = [];
   document.querySelectorAll('input, select, textarea, button, a[href], [role=button], [role=checkbox], [role=link]').forEach(e => {
-    if (!vis(e) || e.disabled) return;
+    if (!vis(e) || e.disabled || utility(e)) return;
     const t = (e.getAttribute('type') || '').toLowerCase();
     if (t === 'hidden') return;
     const r = e.getBoundingClientRect();
@@ -45,6 +52,7 @@ SNAPSHOT_JS = r"""(epoch) => {
     const blocked = top && !e.contains(top) ? (label(top) || top.id || top.tagName).slice(0, 100) : '';
     if (epoch) e.setAttribute('data-agent-auth-ref', epoch + ':' + out.length);
     out.push({tag: e.tagName.toLowerCase(), type: t, label: label(e).slice(0, 80), blocked_by: blocked,
+              id: e.id || '', name: e.name || '', href: e.getAttribute('href') || '',
               checked: e.checked === true, value_set: !!(e.value && t !== 'checkbox' && t !== 'radio' && t !== 'submit'),
               options: e.tagName === 'SELECT' ? [...e.options].map(o => o.text.trim()).filter(Boolean).slice(0, 40) : null,
               chosen: e.tagName === 'SELECT' && e.selectedIndex >= 0 ? e.options[e.selectedIndex].text.trim() : null});
@@ -54,17 +62,28 @@ SNAPSHOT_JS = r"""(epoch) => {
       .filter(vis).map(e => e.innerText.trim()).filter(Boolean).join(' | ').slice(0, 900);
   const pw = [...document.querySelectorAll('input[type=password]')].filter(vis).length;
   return {items: out.slice(0, 80), text, pw};
-}"""
+}""".replace('__JOBAGENT_UTILITY__', UTILITY_CONTROL_JS).replace('__JOBAGENT_AUTH_LABEL__', AUTH_LABEL_JS.rstrip(';\n'))
+
+TARGET_MATCH_JS = r"""(e, expected) => {
+  const utility = (__JOBAGENT_UTILITY__), label = (__JOBAGENT_AUTH_LABEL__);
+  if (utility(e) || e.tagName.toLowerCase() !== expected.tag ||
+      (e.getAttribute('type') || '').toLowerCase() !== expected.type || label(e).slice(0, 80) !== expected.label ||
+      (e.id || '') !== expected.id || (e.name || '') !== expected.name || (e.getAttribute('href') || '') !== expected.href)
+    return false;
+  e.setAttribute('data-agent-target', '1');
+  return true;
+}""".replace('__JOBAGENT_UTILITY__', UTILITY_CONTROL_JS).replace('__JOBAGENT_AUTH_LABEL__', AUTH_LABEL_JS.rstrip(';\n'))
 
 ACTION_JS = r"""([i, kind, value]) => {
+  const utility = (__JOBAGENT_UTILITY__);
   const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
     return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
   const els = [...document.querySelectorAll('input, select, textarea, button, a[href], [role=button], [role=checkbox], [role=link]')]
-      .filter(e => vis(e) && !e.disabled && (e.getAttribute('type') || '').toLowerCase() !== 'hidden');
+      .filter(e => vis(e) && !e.disabled && !utility(e) && (e.getAttribute('type') || '').toLowerCase() !== 'hidden');
   const e = els[i]; if (!e) return 'no such element';
   e.setAttribute('data-agent-target', '1');
   return 'ok';
-}"""
+}""".replace('__JOBAGENT_UTILITY__', UTILITY_CONTROL_JS)
 
 
 class AuthAction(BaseModel):
@@ -243,6 +262,38 @@ def too_many_recent_rejections(host: str) -> str | None:
     return None
 
 
+def _lockout_file(host: str):
+    from jobagent.config import get_settings
+    return get_settings().state_dir / 'portal-lockouts' / (re.sub(r'[^a-z0-9.-]', '_', host.lower()) + '.json')
+
+
+def record_lockout(host: str, now: float | None = None, seconds: float = REJECTION_WINDOW_S) -> None:
+    """Remember an explicit server restriction separately from a wrong-password count."""
+    import time
+    now = time.time() if now is None else now
+    path = _lockout_file(host)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix('.' + uuid4().hex + '.tmp')
+    try:
+        temporary.write_text(json.dumps({'observed': now, 'until': now + seconds}))
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def recent_lockout(host: str, now: float | None = None) -> str | None:
+    import time
+    now = time.time() if now is None else now
+    try:
+        until = float(json.loads(_lockout_file(host).read_text())['until'])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if now < until:
+        stamp = datetime.fromtimestamp(until, UTC).strftime('%Y-%m-%d %H:%M:%S UTC')
+        return f'{host}: the portal reported a lockout/restriction; no sign-in or registration retry before {stamp}'
+    return None
+
+
 TOO_MANY = re.compile(r"(?i)too many (?:incorrect |failed |login |sign[- ]?in )?attempts|try again later|account (?:is|has been) locked|temporarily (?:locked|blocked)")
 
 
@@ -293,7 +344,8 @@ def _target(frames: dict, a: AuthAction):
             loc = f.locator(f'[data-agent-auth-ref="{ref}"]')
             if loc.count() != 1 or not loc.is_visible() or loc.is_disabled():
                 return None
-            loc.evaluate("e => e.setAttribute('data-agent-target', '1')")
+            if not loc.evaluate(TARGET_MATCH_JS, frames.items_by_frame[a.frame][a.element]):
+                return None
             return loc
         if f.evaluate(ACTION_JS, [a.element, a.action, a.value]) != "ok":
             return None
@@ -314,6 +366,14 @@ def recovery_refusal(goal: str, label: str = '', url: str = '') -> str | None:
     recovery_label = re.search(r'(?i)\b(?:reset\b.{0,30}\bpassword|forgot(?:ten)?\b.{0,30}\bpassword|password\s+(?:reset|recovery)|recover\b.{0,30}\b(?:account|password))\b', label)
     if recovery_path or recovery_label:
         return 'Password recovery/reset is outside this registration/sign-in task; no recovery action was performed'
+    return None
+
+
+def credential_fill_refusal(value: str, field_type: str) -> str | None:
+    if field_type == 'password' and value not in ('{PASSWORD}', '{ALT_PASSWORD}'):
+        return 'refused: a password field requires an exact saved-password placeholder'
+    if 'PASSWORD}' in value and field_type != 'password':
+        return 'refused: saved-password placeholders may only go into masked password fields'
     return None
 
 
@@ -348,17 +408,23 @@ NOT_A_SUBMIT = re.compile(r"(?i)\b(show|hide|reveal|toggle|eye|visible|view|forg
 
 
 def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model, notes, goal, posts: list) -> dict:
-    agent = llm.writer(3000, timeout=240, model=model)
     history: list[str] = []
     state = {"state": "failed", "registered": False, "verified_mail": False, "steps": history}
     code_mail, accepted_mail = None, None      # the candidate whose code {CODE} holds / the one the site was seen to accept
     since = datetime.now(UTC)
     code, challenges, repeats, last_action, pw_submitted, wrong_pw = "", 0, 0, None, False, 0
     state["alt_password_used"] = False
+    if goal in ('sign_in', 'register'):
+        for scope in dict.fromkeys([host, urlparse(url).hostname, urlparse(page.url).hostname]):
+            if scope and (why := recent_lockout(scope)):
+                state['reason'] = why
+                log(f'portal {host}: {why}')
+                return state
     if goal == "sign_in" and (why := too_many_recent_rejections(host)):
         state["state"], state["reason"] = "failed", why          # never type a rejected password into the same site again and again
         log(f"portal {host}: {why}")
         return state
+    agent = llm.writer(3000, timeout=240, model=model)
     _extras = None           # the registration profile, loaded the first time a form asks for it
     came_from = url          # the last portal page before any Google page
     last_create_hint_url = ""
@@ -384,6 +450,8 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
                 state["state"] = "failed"
                 history.append(f"{c.kind} challenge came back {challenges} times")
                 break
+            if c.kind == 'access-restricted':
+                record_lockout(urlparse(page.url).hostname or host, seconds=3600)
             # Reuse application policy: hard restrictions STOP, desktop challenges
             # name the right window, and 'done' alone never proves resolution.
             challenge.wait_for_user(page, c, hitl, log=log)
@@ -413,6 +481,9 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             continue
         view, frames = snapshot(page)
         if goal in ("sign_in", "register") and lockout_in_view(view):
+            record_lockout(host)
+            if re.search(r'(?i)\bnetwork\b', view.split('ELEMENTS:', 1)[0]):
+                record_lockout(urlparse(page.url).hostname or host)
             record_rejection(host)
             record_rejection(host)         # two strikes at once: the next run is refused until the window passes
             state["state"], state["reason"] = "failed", "the portal says there were too many attempts or the account is locked; wait before trying again"
@@ -624,9 +695,8 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
         if a.action == "fill" and not a.value and (loc.input_value() if loc.evaluate("e => 'value' in e") else ""):
             history.append(f"refused: an empty fill would clear \"{_label(frames, a)}\"; click the button instead")
             continue
-        if a.action == "fill" and "PASSWORD}" in a.value and (loc.get_attribute("type") or "").lower() != "password":
-            history.append(f"refused: {a.value} may only go into a password field, not \"{_label(frames, a)}\"; "
-                           "submit the email first if no password field is shown")
+        if a.action == 'fill' and (why := credential_fill_refusal(a.value, (loc.get_attribute('type') or '').lower())):
+            history.append(why)
             continue
         if a.action == "click":
             nav_label = _label(frames, a)

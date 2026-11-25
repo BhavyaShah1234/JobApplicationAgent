@@ -8,6 +8,12 @@ import pytest
 from jobagent.tools import portal_auth as PA
 
 
+@pytest.fixture(autouse=True)
+def isolate_server_lockouts(tmp_path, monkeypatch):
+    from jobagent.tools import portal_agent
+    monkeypatch.setattr(portal_agent, '_lockout_file', lambda host: tmp_path / (host + '-lockout.json'))
+
+
 def test_password_meets_usual_portal_rules():
     for _ in range(50):
         p = PA.new_password()
@@ -427,6 +433,34 @@ def test_registration_stops_on_existing_account_before_the_model_can_retry(monke
                         None, [], 'register', [])
     assert result['state'] == 'failed' and 'existing account' in result['reason']
     assert not result['registered']
+
+
+def test_explicit_server_lockout_is_bounded_and_scoped_to_its_host():
+    from jobagent.tools import portal_agent as agent
+    agent.record_lockout('locked.example.test', now=100, seconds=60)
+    assert agent.recent_lockout('locked.example.test', now=159)
+    assert agent.recent_lockout('locked.example.test', now=160) is None
+    assert agent.recent_lockout('other.example.test', now=101) is None
+
+
+@pytest.mark.parametrize('goal', ['sign_in', 'register'])
+def test_registration_flag_cannot_bypass_an_explicit_server_lockout(monkeypatch, goal):
+    from jobagent.tools import portal_agent as agent
+    agent.record_lockout('signin.example.test')
+    page = SimpleNamespace(url='https://signin.example.test/signup')
+    monkeypatch.setattr(agent.llm, 'writer', lambda *a, **kw: pytest.fail('Do not call a model while the portal is locked'))
+    result = agent._run(page, page.url, {}, None, None, 'signin.example.test', lambda msg: None,
+                        None, [], goal, [])
+    assert result['state'] == 'failed' and 'no sign-in or registration retry before' in result['reason']
+
+
+@pytest.mark.parametrize('value,kind,allowed', [('{PASSWORD}', 'password', True), ('{ALT_PASSWORD}', 'password', True),
+                                              ('{PASSWORD}!', 'password', False), ('{FIRST_NAME}', 'password', False),
+                                              ('{EMAIL}', 'password', False), ('{PASSWORD}', 'text', False),
+                                              ('{FIRST_NAME}', 'text', True)])
+def test_auth_cannot_set_a_password_different_from_the_saved_credential(value, kind, allowed):
+    from jobagent.tools import portal_agent as agent
+    assert (agent.credential_fill_refusal(value, kind) is None) is allowed
 
 
 def test_a_frame_that_detaches_while_the_page_navigates_does_not_stop_the_cookie_notice_scan():

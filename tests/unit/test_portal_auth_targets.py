@@ -65,3 +65,23 @@ def test_action_cannot_target_an_element_outside_the_presented_inventory(page):
     assert len(frames.items_by_frame[0]) == 80
     assert agent._target(frames, action(80)) is None
     assert agent._target(frames, action(-1)) is None
+
+
+@pytest.mark.parametrize('mutation', [
+    "document.querySelector('label').firstChild.textContent = 'Phone number'",
+    "document.querySelector('input').type = 'password'",
+    "document.querySelector('input').name = 'verification-code'",
+])
+def test_reused_node_with_changed_question_or_type_is_not_the_observed_control(page, mutation):
+    page.set_content('<label>First name<input id="first"></label>')
+    _, frames = agent.snapshot(page)
+    page.evaluate(mutation)
+    assert agent._target(frames, action()) is None
+
+
+def test_unlabelled_password_value_never_becomes_the_auth_field_label(page):
+    page.set_content('<input type=password><button>Continue</button>')
+    page.locator('input').fill('Synthetic-secret-not-a-label')
+    view, frames = agent.snapshot(page)
+    assert 'Synthetic-secret' not in view
+    assert frames.items_by_frame[0][0]['label'] == 'Password'

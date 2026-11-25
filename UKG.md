@@ -1,5 +1,9 @@
 # UKG / UltiPro: what the agent found, what it fixed, and where it stopped
 
+## Latest attempt — 2026-11-25 01:42 UTC: explicit lockout, stopped
+
+A paced native-agent retry with the stale-control fix again reached signup step 2, then UKG explicitly reported too many attempts/account locked. No account creation or application submission is confirmed. Further server attempts are stopped. A separate persistent restriction record now blocks **both sign-in and registration** before contacting a model or submitting credentials; `--register-account` cannot bypass it. The local six-hour hold ends no earlier than 07:42:53 UTC; this is a minimum local hold, not evidence of UKG's expiry. Tests: 91 auth cases passed in 88.62s. No password reset, network change or cookie clearing was performed.
+
 ## Update — 2026-11-25: registration attempted by the agent; live validation pending
 
 The owner confirmed that setup/reset was not completed and asked the job agent to perform registration. One normal `apply --register-account --no-submit` reached the second UKG signup step, then crashed at `_target` when navigation destroyed the execution context during the model's decision. No account creation is confirmed.

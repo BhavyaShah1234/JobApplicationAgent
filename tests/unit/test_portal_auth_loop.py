@@ -46,6 +46,7 @@ VALUES = {"EMAIL": "jamie@example.org", "PASSWORD": "Shared-pw-1", "FIRST_NAME":
 def isolate_rejection_history(tmp_path, monkeypatch):
     """A scripted portal never reads or writes the live cross-run lockout ledger."""
     monkeypatch.setattr(PA, '_rejections_file', lambda host: tmp_path / (host + '.json'))
+    monkeypatch.setattr(PA, '_lockout_file', lambda host: tmp_path / (host + '-lockout.json'))
 
 
 def test_account_evidence_probe_stays_on_its_portal_and_restores_failed_probes(monkeypatch):

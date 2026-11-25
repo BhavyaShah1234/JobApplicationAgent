@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import Frame, Page, Error as PlaywrightError
 from rapidfuzz import fuzz, process
 from jobagent.tools.shadow import locator as shadow_locator, field_element
+from jobagent.tools.form_scope import UTILITY_CONTROL_JS
 
 CAPTCHA_FRAME = re.compile(r"(?i)hcaptcha|recaptcha|google\.com/recaptcha|challenges\.cloudflare|arkoselabs|funcaptcha")
 
@@ -76,6 +77,7 @@ CAPTION_JS = r"""e => {
   }"""
 
 FIELDS_JS = r"""(start) => {
+  const utility = (__JOBAGENT_UTILITY__);
   const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
     return r.width > 1 && r.height > 1 && s.visibility !== 'hidden' && s.display !== 'none'; };
   const shown = e => { for (let a = e; a && a !== document.body; a = a.parentElement) {
@@ -94,7 +96,7 @@ FIELDS_JS = r"""(start) => {
   const walk = r => { roots.push(r); for (const h of r.querySelectorAll('*')) {
     const s=h.shadowRoot || window.__jobagentClosedRoots?.get(h); if(s)walk(s); } };
   walk(document);
-  const all = sel => roots.flatMap(r => [...r.querySelectorAll(sel)]);
+  const all = sel => roots.flatMap(r => [...r.querySelectorAll(sel)]).filter(e => !utility(e));
   const anchor = e => { let x = e; while (x.getRootNode() instanceof ShadowRoot) x = x.getRootNode().host; return x; };
   const mediaControl = e => {
     // Media Chrome / native player controls remain media controls across their
@@ -557,7 +559,7 @@ FIELDS_JS = r"""(start) => {
     if (r.width >= 120 && r.height >= 24) opaque.push(h.tagName.toLowerCase());
   }
   return {shadowRoots: roots.length - 1, shadowFields, opaque: [...new Set(opaque)].slice(0, 10), fields: out, next: n, adds, buttons: [...new Set(buttons)].slice(0, 60), errors: [...new Set(errors)].slice(0, 20), headings};
-}""".replace('__JOBAGENT_WIDGET_VALUE__', WIDGET_VALUE_JS).replace('__JOBAGENT_CAPTION__', CAPTION_JS)
+}""".replace('__JOBAGENT_WIDGET_VALUE__', WIDGET_VALUE_JS).replace('__JOBAGENT_CAPTION__', CAPTION_JS).replace('__JOBAGENT_UTILITY__', UTILITY_CONTROL_JS)
 
 
 @dataclass
@@ -2306,7 +2308,7 @@ def upload_blockers(page: Page, view: PageView, records: list[dict], known: list
     return out
 
 
-def _visible_buttons(view: PageView, text: str):
+def _visible_buttons(view: PageView, text: str, *, include_links: bool = False):
     """Visible buttons / links named `text`, in every frame (innerText follows CSS text-transform: "APPLY", the
     accessible name doesn't: "Apply")."""
     name = re.compile(rf"^\s*{re.escape(text)}\s*$", re.I)
@@ -2314,9 +2316,16 @@ def _visible_buttons(view: PageView, text: str):
         try:
             if getattr(frame, 'is_detached', lambda: False)():
                 continue
-            btn = frame.get_by_role("button", name=name)
-            if not btn.count():
-                btn = frame.get_by_role("link", name=name)
+            btn = frame.get_by_role("button", name=name).filter(visible=True)
+            links = frame.get_by_role("link", name=name).filter(visible=True)
+            if include_links:
+                for candidates in (btn, links):
+                    for index in range(candidates.count()):
+                        yield candidates.nth(index)
+                if btn.count() or links.count():
+                    continue
+            elif not btn.count():
+                btn = links
             if not btn.count() and getattr(frame.page.context, 'jobagent_shadow_selectors', False):
                 btn = shadow_locator(frame, 'button, [role=button], a, [role=link]').filter(has_text=name)
             btn = btn.filter(visible=True)
@@ -2427,12 +2436,14 @@ SENDS_FORM_JS = r"""e => {
   // an arbitrary button href is still an inert, untrusted fallback.
   const rawHref = e.getAttribute('href');
   let published = e.tagName === 'A';
+  let mirrors = false;
   if (!published && e.tagName === 'BUTTON' && rawHref &&
       ['true', 'menu', 'listbox'].includes(e.getAttribute('aria-haspopup'))) {
     try {
       const target = new URL(rawHref, location.href).href;
       published = [...e.getRootNode().querySelectorAll('a[href]')].some(a => a.href === target &&
         /^\s*(?:apply\b|start (?:your |an? )?application\b)/i.test(a.textContent || a.getAttribute('aria-label') || ''));
+      mirrors = published;
     } catch (err) { published = false; }
   }
   if (published && rawHref) {
@@ -2442,7 +2453,10 @@ SENDS_FORM_JS = r"""e => {
         href = to.href;
     } catch (err) { href = ''; }
   }
-  return {sends: !!(form && fillable > 0), fillable, href};
+  const owner = e.closest('.dropdown') || e.parentElement;
+  const menu = owner?.querySelector('[role=menu],.dropdown-menu');
+  const menu_open = e.getAttribute('aria-expanded') === 'true' || !!menu && shown(menu);
+  return {sends: !!(form && fillable > 0), fillable, href, mirrors, menu_open};
 }"""
 
 
@@ -2543,7 +2557,7 @@ def click_open_application(page: Page, view: PageView, pattern: re.Pattern, *, e
     for text in view.buttons:
         if not pattern.search(text):
             continue
-        for btn in _visible_buttons(view, text):
+        for btn in _visible_buttons(view, text, include_links=True):
             try:
                 info = btn.evaluate(SENDS_FORM_JS)
             except Exception:
@@ -2551,6 +2565,11 @@ def click_open_application(page: Page, view: PageView, pattern: re.Pattern, *, e
             if info["sends"]:
                 continue
             if info["href"]:
+                if info.get('mirrors') and not fields_on_page:
+                    if navigation_only or info.get('menu_open'):
+                        continue
+                    _press(page, btn)  # a fieldless, published application chooser; retain the site's normal client state
+                    return text
                 if _workday_listing_entry(view, btn):
                     if navigation_only:
                         continue

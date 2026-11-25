@@ -2,12 +2,15 @@
 import json
 import re
 import time
+from jobagent.tools.form_scope import UTILITY_CONTROL_JS
 
 INVENTORY = r'''() => {
+const utility = (__JOBAGENT_UTILITY__);
 const roots=[document], out=[];
 for(let i=0;i<roots.length;i++) for(const e of roots[i].querySelectorAll('*')) {
  const r=e.shadowRoot || window.__jobagentClosedRoots?.get(e); if(r) roots.push(r);
  if(!e.matches('input:not([type=hidden]),select,textarea,[role=combobox]'))continue;
+ if(utility(e))continue;
  // a disabled control cannot be answered, so it is not a missing field of the page
  if(e.disabled)continue;
  // the real <select> behind an iCIMS dropdown widget: the widget (an <a role=combobox>) is the control that is read and filled
@@ -31,7 +34,7 @@ for(let i=0;i<roots.length;i++) for(const e of roots[i].querySelectorAll('*')) {
    required:e.required||e.getAttribute('aria-required')==='true',format:e.placeholder||'',source:'DOM',locator_ref:e.getAttribute('data-jf-ref')||'',native_id:e.id||'',frame_identity:window.__jobagentFieldNodes?.epoch||'',
    composite_ref:composite?.getAttribute('data-jf-ref')||''});
 } return out;
-}'''
+}'''.replace('__JOBAGENT_UTILITY__', UTILITY_CONTROL_JS)
 
 
 def extract(data, source, depth=0, inherited_condition=None, section=''):

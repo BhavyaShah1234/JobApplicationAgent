@@ -1,6 +1,8 @@
 """Discover and open form sections without selecting applicant answers."""
+from jobagent.tools.form_scope import UTILITY_CONTROL_JS
 
 INVENTORY = r'''() => {
+ const utility = (__JOBAGENT_UTILITY__);
  const roots=[document];
  for(let i=0;i<roots.length;i++)for(const e of roots[i].querySelectorAll('*')){
    const r=e.shadowRoot||window.__jobagentClosedRoots?.get(e);if(r)roots.push(r);
@@ -15,7 +17,7 @@ INVENTORY = r'''() => {
    !(e.tagName==='A'&&e.getAttribute('href')&&!/^#/.test(e.getAttribute('href')));
  const rows=[];
  for(const e of all('button[aria-expanded=false],[role=button][aria-expanded=false],details:not([open]) > summary')){
-   if(!visible(e)||e.hasAttribute('aria-haspopup'))continue;
+   if(!visible(e)||e.hasAttribute('aria-haspopup')||utility(e))continue;
    const root=e.getRootNode();
    const controlled=(e.getAttribute('aria-controls')||'').split(/\s+/).map(id=>root.getElementById(id)).filter(Boolean);
    const heading=e.closest('h1,h2,h3,h4,h5,h6,[role=heading]');
@@ -23,6 +25,7 @@ INVENTORY = r'''() => {
    if(!controlled.length&&parent&&!parent.matches('body,form'))
      controlled.push(...[...parent.children].filter(c=>c!==heading&&!visible(c)));
    if(e.tagName==='SUMMARY')controlled.push(e.parentElement);
+   if(controlled.length && controlled.every(r=>utility(r)))continue;
    if(!controlled.some(r=>(e.tagName==='SUMMARY'||!visible(r))&&(r.matches?.(controls)||r.querySelector(controls))))continue;
    const label=(e.getAttribute('aria-label')||e.innerText||'Unnamed form section').replace(/\s+/g,' ').trim().slice(0,160);
    if(/^(submit|send|apply|finish|save|continue|next)\b/i.test(label))continue;
@@ -36,7 +39,7 @@ INVENTORY = r'''() => {
  all('[data-jf-disclosure]').forEach(e=>e.removeAttribute('data-jf-disclosure'));
  return rows.map((r,i)=>{r.element.setAttribute('data-jf-disclosure',String(i));
    return {id:i,label:r.label,can_open:r.can_open};});
-}'''
+}'''.replace('__JOBAGENT_UTILITY__', UTILITY_CONTROL_JS)
 
 
 def inventory(frame) -> list[dict]:
