@@ -117,17 +117,39 @@ def settle_after_upload(page,min_s=6.0,max_s=25.0,log=None):
     seconds after the upload; filling before that is lost. Waits at least `min_s` (the parse starts late), then until the values have been
     unchanged for two consecutive seconds, at most `max_s`."""
     import time as _t
-    snapshot="() => JSON.stringify([...document.querySelectorAll('input:not([type=file]):not([type=hidden]), textarea, select')].map(e => e.type==='checkbox'||e.type==='radio' ? e.checked : e.value))"
-    start=_t.monotonic();last=None;stable=0
+    snapshot=r'''() => {
+      const roots=[document], values=[];let busy=false;
+      const visible=e=>!!(e.getBoundingClientRect().width&&e.getBoundingClientRect().height)&&getComputedStyle(e).visibility!=='hidden';
+      while(roots.length){const root=roots.pop();
+        for(const e of root.querySelectorAll('input:not([type=file]):not([type=hidden]):not([type=password]),textarea,select'))
+          values.push([e.id,e.name,e.type,e.type==='checkbox'||e.type==='radio'?e.checked:e.value]);
+        busy ||= [...root.querySelectorAll('[aria-busy=true],[role=progressbar],progress')].some(visible);
+        for(const e of root.querySelectorAll('*')){const s=e.shadowRoot||window.__jobagentRoot?.(e);if(s)roots.push(s);}
+      }
+      return {values,busy,ready:document.readyState!=='loading'};
+    }'''
+    start=_t.monotonic();last=None;stable=0;settled=False
     while _t.monotonic()-start<max_s:
         page.wait_for_timeout(1000)
-        try:current=page.evaluate(snapshot)
-        except Exception:continue
-        stable=stable+1 if current==last else 0
+        try:
+            # Parsers often run in an embedded ATS document, not the outer
+            # branded page. Never inspect human-verification frames.
+            frames=forms.frames_of(page)
+            observations=[frame.evaluate(snapshot) for frame in frames]
+            current=[(frame.url.split('?',1)[0],info) for frame,info in zip(frames,observations)]
+        except Exception:
+            last=None;stable=0
+            continue
+        quiet=bool(observations) and all(info['ready'] and not info['busy'] for info in observations)
+        stable=stable+1 if quiet and current==last else 0
         last=current
         if _t.monotonic()-start>=min_s and stable>=2:
+            settled=True
             break
-    if log:log(f'apply: the form settled {_t.monotonic()-start:.0f}s after the upload')
+    if log:
+        elapsed=_t.monotonic()-start
+        log(f'apply: the form settled {elapsed:.0f}s after the upload' if settled else
+            f'apply: the form was still changing after {elapsed:.0f}s; checking current controls before continuing')
 
 
 class PlannedFiller:
@@ -645,6 +667,8 @@ class PlannedFiller:
                                     records.append(row);self.record_state[(self.step,key(f))]=row
                                     self.trace(ev='field',ok=True,label=f.label[:40],kind='file',secs=0,note='same label as a verified upload')
                                     continue
+                                if prior is not None:
+                                    raise ValueError('A previously verified upload lost its current proof; not uploading it again automatically')
                                 if self.upload_observer:self.upload_observer(fresh,f,value)
                                 old_proof=self.upload_proofs.get((self.step,key(f)))
                                 if old_proof:old_proof.close()
@@ -662,7 +686,7 @@ class PlannedFiller:
                                                                             [value, *alternatives])} if f.kind=='combobox' else {}),
                                 **({'before_upload':proof.bind,'upload_confirmation':proof.verify} if proof else {}))
                             if f.kind=='file':settle_after_upload(page,log=getattr(self,'log',None))
-                            if live.changed():
+                            if f.kind=='file' or live.changed():
                                 after=live.capture();actual=next((x for x in after.fields if key(x)==key(f)),None)
                             else:
                                 actual=live.refresh(f);after=live.view
