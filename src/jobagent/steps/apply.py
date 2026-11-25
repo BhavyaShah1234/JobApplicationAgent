@@ -38,7 +38,7 @@ from jobagent.tools.browser import screenshot
 
 DATA = Path("/app/data")
 MAX_PAGES = 15
-START = [re.compile(p, re.I) for p in (r"^apply manually$", r"^apply now(?:\s*[»›→])?$", r"^apply( for this (job|position|role))?( online)?$",
+START = [re.compile(p, re.I) for p in (r"^apply manually$", r"^apply now(?:\s*[»›→!])?$", r"^apply( for this (job|position|role))?( online)?$",
                                        r"^(i'?m interested|start (your |my )?application|begin application)$",
                                        r"^apply to (this )?job$",
                                        # a guest route that needs no account (Dayforce): preferred over creating one
