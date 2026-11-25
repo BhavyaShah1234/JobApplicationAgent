@@ -166,6 +166,7 @@ def application_context(mode, url, settings=None, *, related_urls=()):
                 if not same_posting(url,page.url):
                     raise RuntimeError('The handoff tab belongs to a different posting; return to the requested application')
             ctx = page.context
+            if handoff:ctx.jobagent_background=True
             from jobagent.tools.shadow import install
             install(pw, ctx)
             from jobagent.tools.challenge import Blocked
@@ -281,10 +282,11 @@ def _plain_chrome(url: str, s: Settings) -> Iterator[subprocess.Popen]:
 
 
 def screenshot(page: Page, path: str, attempts: int = 3) -> None:
-    """Screenshot with a short retry for transient 'Unable to capture screenshot' errors."""
+    """Capture with retries, keeping a consented desktop window in the background."""
     for i in range(attempts):
         try:
-            page.bring_to_front()
+            if not getattr(getattr(page,'context',None),'jobagent_background',False):
+                page.bring_to_front()
             page.screenshot(path=path)
             return
         except PlaywrightError:

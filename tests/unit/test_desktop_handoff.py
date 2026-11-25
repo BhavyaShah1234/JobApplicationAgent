@@ -145,3 +145,14 @@ def test_connection_failure_does_not_leak_private_browser_endpoint(tmp_path,monk
     with pytest.raises(RuntimeError,match='Chrome handoff') as caught:
         with browser.application_context('desktop',url,SimpleNamespace(state_dir=tmp_path)):pytest.fail('No session')
     assert 'private-token' not in ''.join(traceback.format_exception(caught.value))
+
+
+@pytest.mark.parametrize('background',[False,True])
+def test_screenshot_respects_the_desktop_background_policy(background):
+    from jobagent.tools.browser import screenshot
+    seen=[]
+    page=SimpleNamespace(context=SimpleNamespace(jobagent_background=background),
+                         bring_to_front=lambda:seen.append('foreground'),
+                         screenshot=lambda **k:seen.append('screenshot'))
+    screenshot(page,'capture.png')
+    assert seen==(['screenshot'] if background else ['foreground','screenshot'])

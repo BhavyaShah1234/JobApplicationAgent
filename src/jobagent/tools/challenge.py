@@ -186,7 +186,8 @@ class Controller:
         out.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(UTC).strftime('%Y%m%d-%H%M%S-%f')
         shot = out / f"challenge-{stamp}.png"
-        page.bring_to_front()
+        if not getattr(getattr(page,'context',None),'jobagent_background',False):
+            page.bring_to_front()
         screenshot(page, str(shot))
         # Persist only diagnostic identifiers, never page bodies, tokens or cookie values.
         try:

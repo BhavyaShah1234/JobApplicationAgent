@@ -42,6 +42,7 @@ def test_desktop_lease_is_validated_and_context_is_not_closed(tmp_path, monkeypa
     if valid:
         with browser.application_context('desktop',url,settings) as connected:
             assert connected is ctx
+            assert bool(getattr(connected,'jobagent_background',False)) is handoff
             connected.jobagent_policy(page)
             page.url = 'https://unrelated.example.org/settings'
             with pytest.raises(challenge.Blocked): connected.jobagent_policy(page)

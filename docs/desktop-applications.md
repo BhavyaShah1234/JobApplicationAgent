@@ -86,13 +86,20 @@ docker exec -it jobagent jobagent apply outputs/COMPANY/JOB_ID COMPANY \
 ```
 
 Chrome will ask you to **Allow** the connection. Every new connection needs Chrome's
-permission. The agent attaches to the existing tab without restarting or navigating it,
+permission. The connection stays open for the apply run, including waits for answers;
+ending and starting another command requests a new connection. The agent attaches to the existing tab without restarting or navigating it,
 then uses the ordinary Voyager filling, account, HITL and verification code. The broker
 checks the exact process/profile/lock, current network guard, fresh endpoint and owning
 loopback listener. iCIMS `/jobs/<id>/...` routes must still belong to the requested job;
 other URL shapes initially require the same path/query. The existing target/origin scope
 and submission approval rules continue to apply. A missing permission or ambiguous tab
 stops attachment rather than falling back to an unrelated browser.
+
+Consented sessions mark their context for background work: application screenshots and
+verification waits do not explicitly bring that window to the front. Browser-generated
+permission dialogs and actions taken by the user are separate from this policy. An
+actual CAPTCHA still needs the person; the agent reports it through the normal HITL
+channel without automatically taking foreground focus.
 
 This is an explicit preparation path, not an automatic replacement for managed Chrome.
 Live assisted tests filled Hyland's 15-control and SAS's 29-control profile pages without

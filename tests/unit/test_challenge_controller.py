@@ -51,6 +51,15 @@ def test_readiness_requires_three_spaced_checks(monkeypatch, tmp_path):
     assert page.clock >= 4
 
 
+def test_background_desktop_verification_does_not_raise_the_window(monkeypatch,tmp_path):
+    page,controller=setup(monkeypatch,tmp_path,lambda p:None,
+                          SimpleNamespace(ask=lambda *a,**kw:'done'))
+    page.context=SimpleNamespace(jobagent_background=True)
+    page.bring_to_front=lambda:pytest.fail('Background verification must not steal focus')
+    controller.wait(page,challenge.Challenge('unknown',page.url,''))
+    assert page.clock>=4
+
+
 def test_transition_resets_readiness_streak(monkeypatch, tmp_path):
     page, controller = setup(monkeypatch, tmp_path, lambda p: None,
                              SimpleNamespace(ask=lambda *a, **kw: 'done'), ready=lambda p: p.clock != 4)
