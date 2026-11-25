@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from html import unescape
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from playwright.sync_api import Page
@@ -378,6 +379,26 @@ def save(jd: JobDescription, url: str, jd_text: str = "") -> tuple[str, Path]:
     return job_id, out
 
 
+def grounded_apply_url(page: Page, proposed: str | None, source_url: str) -> str:
+    """Retain a deep application URL only when the posting actually exposes it.
+
+    Extraction models can truncate a numeric requisition ID. The source posting
+    is always a valid navigation starting point; the apply harness follows its
+    real controls when no extracted link can be grounded.
+    """
+    base = getattr(page, 'url', '') or source_url
+    allowed = {source_url, base}
+    try:
+        allowed.update(page.eval_on_selector_all('a[href]', r'''els => els.filter(a =>
+          /^\s*(?:apply\b|start (?:your |an? )?application\b|i['’]?m interested\b)/i.test(
+            (a.innerText || a.getAttribute('aria-label') || a.title || '').trim())
+          ).map(a => a.href).filter(h => /^https:\/\//i.test(h))'''))
+    except Exception:
+        pass  # absent DOM evidence is not permission to trust a model's URL
+    candidate = urljoin(base, proposed or '')
+    return candidate if urlparse(candidate).scheme == 'https' and candidate in allowed else source_url
+
+
 def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
     portal = portal_key(url)
     memory = PortalMemory(portal)
@@ -439,7 +460,10 @@ def scrape(page: Page, url: str, hitl: Hitl, log=print) -> ScrapeResult:
         memory.note("fast model missed core fields; planner model used")
     _retain_heading_grade(jd,headings)
     jd.source_url, jd.portal = url, portal
-    jd.apply_url = jd.apply_url or (posting or {}).get("url") or url
+    proposed = jd.apply_url or (posting or {}).get('url') or url
+    jd.apply_url = grounded_apply_url(page, proposed, url)
+    if jd.apply_url != proposed:
+        log('scrape: extracted application URL was not exposed by the posting; using the original posting URL')
     # Sections of jd.txt, labelled by the fast model (content, not just heading wording), fill the lists verbatim.
     secs = jdtext.sections(blocks)
     labels = jdtext.classify_sections(secs, log) if secs else {}

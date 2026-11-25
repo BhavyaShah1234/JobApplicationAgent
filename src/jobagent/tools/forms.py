@@ -2415,16 +2415,27 @@ def advance(page: Page, view: PageView) -> str | None:
 # it (`form="id"`). So: (1) a control that belongs to a form with any visible fillable control (enumerated through
 # `form.elements`, which includes fields attached from outside) is that form's own control, whatever its type; (2) a real
 # link to another page is navigation, and is followed by loading its address, so no click handler runs.
-SENDS_FORM_JS = """e => {
+SENDS_FORM_JS = r"""e => {
   const shown = x => { const r = x.getBoundingClientRect(); const s = getComputedStyle(x);
     return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
   const form = e.form || e.closest('form');
   const fillable = form ? [...form.elements].filter(c => /^(INPUT|SELECT|TEXTAREA)$/.test(c.tagName)
       && !['hidden', 'submit', 'button', 'image', 'reset'].includes(c.type) && shown(c)).length : 0;
   let href = '';
-  // A button's nonstandard href can be an inert fallback for a scripted menu,
-  // rather than the actual application entry route. Only native links count.
-  if (e.tagName === 'A' && e.getAttribute('href')) {
+  // A responsive dropdown may mirror a real (currently hidden) Apply anchor.
+  // Its href is usable only with that independent published anchor evidence;
+  // an arbitrary button href is still an inert, untrusted fallback.
+  const rawHref = e.getAttribute('href');
+  let published = e.tagName === 'A';
+  if (!published && e.tagName === 'BUTTON' && rawHref &&
+      ['true', 'menu', 'listbox'].includes(e.getAttribute('aria-haspopup'))) {
+    try {
+      const target = new URL(rawHref, location.href).href;
+      published = [...e.getRootNode().querySelectorAll('a[href]')].some(a => a.href === target &&
+        /^\s*(?:apply\b|start (?:your |an? )?application\b)/i.test(a.textContent || a.getAttribute('aria-label') || ''));
+    } catch (err) { published = false; }
+  }
+  if (published && rawHref) {
     try {
       const to = new URL(e.getAttribute('href'), location.href), here = new URL(location.href);
       if (/^https?:$/.test(to.protocol) && to.origin + to.pathname + to.search !== here.origin + here.pathname + here.search)

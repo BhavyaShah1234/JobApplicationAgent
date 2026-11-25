@@ -1643,7 +1643,7 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
     while the posting's own Apply button still works (GoDaddy, 2026-11-07)."""
     response = None if already_open else page.goto(url, wait_until="domcontentloaded")
     signed, empty = False, 0
-    for _ in range(18):
+    for _ in range(28 if fallback and fallback != url else 18):
         page.wait_for_timeout(4000)
         view = forms.read_page(page)
         policy = getattr(page.context, 'jobagent_policy', None)
@@ -1716,6 +1716,11 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
                 return view
             empty += 1  # still loading (clicks don't wait for the next page), or really nothing here
             if empty >= 10:  # a slow portal can show its form's spinner for half a minute
+                if fallback and fallback != url:
+                    log('apply: the extracted application link exposed no form; trying the original posting once')
+                    url, fallback, empty = fallback, None, 0
+                    response = page.goto(url, wait_until='domcontentloaded')
+                    continue
                 screenshot(page, "/app/state/logs/apply-start.png")
                 raise FormNotReady(f"no application form and no Apply button on {challenge.safe_url(page.url)} (buttons: "
                                    f"{view.buttons[:12]}; an Apply control that belongs to a form with fields is never "
