@@ -314,3 +314,34 @@ def test_datadome_frame_with_posting_footer_needs_human_only_when_visible(hidden
             assert (result is not None and result.kind == 'datadome') if not hidden else result is None
         finally:
             browser.close()
+
+
+def test_visible_provider_frame_restriction_is_a_stop_even_with_a_real_posting_body():
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(channel='chrome', headless=True)
+        try:
+            page = browser.new_page()
+            source = 'https://jobs.example.test/application'
+            page.route('**/*', lambda route: route.fulfill(status=200, content_type='text/html',
+                body=('<h1>Developer</h1><button>Reload</button>'
+                      '<iframe src="https://geo.captcha-delivery.com/captcha/" style="width:360px;height:260px"></iframe>')
+                if route.request.url == source else '<h1>Access is temporarily restricted</h1>'))
+            page.goto(source)
+            assert challenge.detect(page).kind == 'access-restricted'
+        finally:
+            browser.close()
+
+
+def test_a_puzzle_becoming_a_restriction_stops_the_existing_human_wait(monkeypatch, tmp_path):
+    calls = []
+    def ask(*args, **kwargs):
+        calls.append(1)
+        kwargs['done_when']()
+        pytest.fail('A restriction must interrupt the wait, not request another puzzle answer')
+    page, controller = setup(monkeypatch, tmp_path,
+        lambda p: challenge.Challenge('access-restricted', p.url, ''), SimpleNamespace(ask=ask))
+    with pytest.raises(challenge.Blocked, match='temporarily restricted'):
+        controller.wait(page, challenge.Challenge('datadome', page.url, ''))
+    assert calls == [1]
+    assert 'blocked' in next(tmp_path.glob('*.json')).read_text()

@@ -1634,6 +1634,28 @@ def _resume_authentication(page, view, ensure_signed_in, log, attempted: set) ->
     return True
 
 
+def _temporary_form_error(page: Page, view: forms.PageView) -> bool:
+    """A fieldless application error offers a reload, distinct from a verification step."""
+    if view.fields or not view.coverage.complete or not any(
+            re.fullmatch(r'(?i)reload|try again|retry', b.strip()) for b in view.buttons):
+        return False
+    try:
+        text = page.evaluate(r'''() => {
+          const roots = [document];
+          for (let i = 0; i < roots.length; i++) for (const e of roots[i].querySelectorAll('*')) {
+            const root = e.shadowRoot || window.__jobagentClosedRoots?.get(e);
+            if (root) roots.push(root);
+          }
+          return roots.flatMap(root => [...root.children].filter(e => {
+            const box = e.getBoundingClientRect(), style = getComputedStyle(e);
+            return box.width && box.height && style.display !== 'none' && style.visibility !== 'hidden';
+          }).map(e => e.innerText || '')).join('\n');
+        }''')
+    except Exception:
+        return False
+    return bool(re.search(r'(?is)\bapplication form\b.{0,80}\btemporarily unavailable\b', text))
+
+
 def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = None, hitl=None,
            already_open: bool = False) -> forms.PageView:
     """Open the posting and get to the application form: click Apply / Apply Manually, sign in when asked.
@@ -1642,7 +1664,7 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
     that page is the scraped apply link, the posting itself (`fallback`) is tried first: an apply link can be stale
     while the posting's own Apply button still works (GoDaddy, 2026-11-07)."""
     response = None if already_open else page.goto(url, wait_until="domcontentloaded")
-    signed, empty = False, 0
+    signed, empty, reloaded_error = False, 0, False
     for _ in range(28 if fallback and fallback != url else 18):
         page.wait_for_timeout(4000)
         view = forms.read_page(page)
@@ -1660,6 +1682,15 @@ def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = N
             challenge.wait_for_user(page, block, hitl, log, timeout_s=900)
             empty = 0
             page.wait_for_timeout(5000)  # the page reloads after a passed check
+            continue
+        if _temporary_form_error(page, view):
+            _check_start_rate_limit(page, response)
+            if reloaded_error:
+                raise FormNotReady('The portal says its application form is temporarily unavailable after one reload; '
+                                   'no application fields were filled. Try later.')
+            log('apply: application form temporarily unavailable; reloading the fieldless page once')
+            response = page.reload(wait_until='domcontentloaded')
+            reloaded_error = True
             continue
         if len([f for f in view.fields if f.kind != "file"]) < 3 and (
                 gone := availability.check_page(page, response)):
@@ -1751,7 +1782,8 @@ def _guarded_run(page: Page, job_dir: str | Path, company: str, *args, **kwargs)
 
     def ready(p):
         view = forms.read_page(p)
-        return bool(view.fields or any(START_PATTERN.search(b) for START_PATTERN in START for b in view.buttons))
+        return bool(view.fields or any(START_PATTERN.search(b) for START_PATTERN in START for b in view.buttons)
+                    or _temporary_form_error(p, view))
 
     with challenge.session(page, kwargs.get('hitl'), ready, out, kwargs.get('log', print),
                            kwargs.pop('browser_policy', None), kwargs.pop('desktop_fallback', False)):

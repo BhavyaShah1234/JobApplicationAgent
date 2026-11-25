@@ -147,6 +147,14 @@ def detect(page: Page, *, include_application_email: bool = True) -> Challenge |
                     # full-size challenge frame kept hidden (opacity 0) until it's needed: neither is a challenge.
                     if box and box["width"] >= 100 and box["height"] >= 60 and el.is_visible() and \
                             el.evaluate(_SHOWN_JS) and box["y"] + box["height"] > 0:
+                        if kind == 'datadome':
+                            try:
+                                frame_text = el.content_frame.locator('body').inner_text(timeout=1500)
+                            except Exception:
+                                frame_text = ''
+                            if any(name == 'access-restricted' and pattern.search(frame_text)
+                                   for name, pattern in _TEXT_SIGNS):
+                                return Challenge('access-restricted', safe_url(page.url), 'Restriction in verification frame')
                         return Challenge(kind, safe_url(page.url), "Visible verification widget")
             except Exception:
                 return Challenge("unknown", safe_url(page.url), "Frame inspection failed")
@@ -207,7 +215,13 @@ class Controller:
             try:
                 if self.policy:
                     self.policy(page)
-                ok = detect(page) is None and self.ready(page)
+                current = detect(page)
+                if current is not None and current.kind == 'access-restricted':
+                    raise Blocked('The portal has temporarily restricted access while waiting for verification. '
+                                  'Do not retry now; wait before another attempt.')
+                ok = current is None and self.ready(page)
+            except Blocked:
+                raise
             except Exception:
                 ok = False
             stable = stable + 1 if ok else 0

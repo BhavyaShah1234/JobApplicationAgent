@@ -1,5 +1,12 @@
 # SAP: what the agent found, what it fixed, and where it stopped
 
+## Latest live check — 2026-11-25: human verification cleared, then service restriction
+
+The owner solved the visible DataDome challenge. SmartRecruiters then displayed its own **application form temporarily unavailable** error inside a web component. One normal reload of that fieldless error page triggered a new visible challenge; after the owner solved it, the service displayed **Access is temporarily restricted**. All SmartRecruiters attempts stopped, including other employers. No application was submitted and City was not reached in this revalidation.
+
+This exposed two additional shared defects: visible DataDome frames were missed when a real posting/footer remained in the parent document, and an active human wait did not stop if that frame changed into a restriction. Detection now covers visible provider widgets, reads explicit restriction wording inside that frame, and interrupts the wait. The bounded temporary-form recovery reads web-component text, never reloads a page containing applicant fields or a challenge, and stops after one failed reload. Local tests and exact source snapshots are under `outputs/verification/portal-acceptance-20261125T003317Z/`. These fixes do not establish a three-application SmartRecruiters pass; that remains unresolved. No further live attempt is planned while restricted.
+
+
 ## Update — 2026-11-25: City defect diagnosed in a live attempt
 
 One normal native-agent attempt reached the SmartRecruiters form without a restriction. The trace had been appending input/network evidence after menu HTML to an error string capped at 200 characters, discarding the evidence. Candidate code saves those fields separately.
