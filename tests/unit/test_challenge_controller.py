@@ -291,3 +291,26 @@ def test_a_turnstile_widget_in_an_iframe_is_detected_even_when_it_reports_verifi
             assert block is not None and block.kind == "turnstile"
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize('hidden', [False, True])
+def test_datadome_frame_with_posting_footer_needs_human_only_when_visible(hidden):
+    """A real posting body/footer does not make its visible verification iframe disappear."""
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(channel='chrome', headless=True)
+        try:
+            page = browser.new_page()
+            source = 'https://jobs.example.test/application'
+            frame = 'https://geo.captcha-delivery.com/captcha/?redacted=fixture'
+            style = 'display:none' if hidden else 'width:360px;height:260px'
+            page.route('**/*', lambda route: route.fulfill(status=200, content_type='text/html',
+                body=(f'<h1>Developer</h1><button>Reload</button><button>Cookie Settings</button>'
+                      '<textarea name=g-recaptcha-response hidden>unrelated completed widget</textarea>'
+                      f'<iframe title="Verification system" src="{frame}" style="{style}"></iframe>')
+                if route.request.url == source else '<h1>Human verification fixture</h1>'))
+            page.goto(source)
+            result = challenge.detect(page)
+            assert (result is not None and result.kind == 'datadome') if not hidden else result is None
+        finally:
+            browser.close()

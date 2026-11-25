@@ -61,6 +61,7 @@ _TEXT_SIGNS = [
 ]
 # (name, CSS selector for an embedded challenge widget)
 _WIDGET_SIGNS = [
+    ("datadome", 'iframe[src*="captcha-delivery.com/captcha"]'),
     ("recaptcha", 'iframe[src*="recaptcha/"], iframe[title*="reCAPTCHA" i]'),
     ("hcaptcha", 'iframe[src*="hcaptcha.com"]'),
     ("turnstile", 'iframe[src*="challenges.cloudflare.com"], .cf-turnstile'),
@@ -130,7 +131,7 @@ def detect(page: Page, *, include_application_email: bool = True) -> Challenge |
         for kind, selector in _WIDGET_SIGNS:
             try:
                 response = frame.locator('input[name="cf-turnstile-response"], textarea[name="g-recaptcha-response"], textarea[name="h-captcha-response"]')
-                if response.count() and any(response.nth(i).input_value() for i in range(response.count())):
+                if kind != 'datadome' and response.count() and any(response.nth(i).input_value() for i in range(response.count())):
                     continue  # presence only, never log or export the response token
                 widget = frame.locator(selector)
                 for i in range(min(widget.count(), 3)):
