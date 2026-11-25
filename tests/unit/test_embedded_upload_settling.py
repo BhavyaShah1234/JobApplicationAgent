@@ -36,8 +36,10 @@ def test_visible_parser_progress_prevents_premature_settled_result(page):
 
 
 def test_lost_upload_proof_blocks_redispatch_without_claiming_file_verified(page, tmp_path):
-    page.set_content('<form onsubmit="return false"><label for=resume>Resume</label>'
-                     '<input type=file id=resume required onchange="window.uploads++">'
+    page.set_content('<form onsubmit="return false"><div class=file-upload><label for=resume>Resume</label>'
+                     '<input type=file id=resume required onchange="window.uploads++"></div>'
+                     '<label>Password<input type=password value=fixture-only required></label>'
+                     '<label>Confirm password<input type=password value=fixture-only required></label>'
                      '<button>Submit application</button></form><script>window.uploads=0</script>')
     pdf = tmp_path / 'resume.pdf'
     pdf.write_bytes(b'%PDF-1.4 current expected bytes')
@@ -47,5 +49,6 @@ def test_lost_upload_proof_blocks_redispatch_without_claiming_file_verified(page
     result = filler.fill(page, files={'resume': str(pdf)}, max_rounds=2)
     assert page.evaluate('window.uploads') == 0
     assert result['state'] == 'blocked'
+    assert not any('password' in str(b).lower() for b in result['blockers'])
     assert not any(r.get('kind') == 'file' and r.get('outcome') == 'verified' for r in result['records'])
     assert any('not uploading it again automatically' in r.get('error', '') for r in result['records'])

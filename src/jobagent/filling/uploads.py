@@ -2,6 +2,99 @@
 import base64
 import hashlib
 from pathlib import Path
+from urllib.parse import urlsplit, parse_qs
+
+
+class ResumeParseReceipt:
+    """iCIMS' own resume-only POST can replace the document and clear FileList.
+
+    A filename is insufficient: require previously byte-verified dispatch,
+    the corresponding successful same-frame uploadResume POST response, a new
+    same-origin candidate document, and that field's completed server UI.
+    """
+    def __init__(self, native):
+        self.frame=native.owner_frame()
+        if self.frame is None:raise ValueError('Upload input lost its frame')
+        self.page=self.frame.page
+        self.field_id=native.get_attribute('id') or ''
+        if self.field_id!='PortalProfileFields.Resume_File' or not self.frame.evaluate(
+                "() => window.icimsAllowResumeAutosubmit === true"):
+            raise ValueError('Not a declared iCIMS resume parser')
+        self.origin=urlsplit(self.frame.url)
+        if not self.origin.path.rstrip('/').endswith('/candidate'):
+            raise ValueError('Not a candidate profile')
+        self.original=self.frame.evaluate_handle('document')
+        self.accepted_document=None
+        self.request=None;self.response_ok=False;self.requests=0
+        self.page.on('request',self.requested)
+        self.page.on('response',self.responded)
+
+    def same_document_route(self, url):
+        p=urlsplit(url)
+        return (p.scheme,p.netloc,p.path)==(self.origin.scheme,self.origin.netloc,self.origin.path)
+
+    def requested(self, request):
+        try:
+            if (request.frame==self.frame and request.is_navigation_request() and request.method=='POST'
+                    and self.same_document_route(request.url) and parse_qs(urlsplit(request.url).query).get('uploadResume')==['1']):
+                self.requests+=1
+                if self.requests==1:self.request=request
+                else:self.response_ok=False  # another upload invalidates the previous receipt
+        except Exception:pass
+
+    def responded(self, response):
+        try:
+            request=response.request
+            while request is not None:
+                if not self.same_document_route(request.url):return
+                if request==self.request:
+                    self.response_ok=self.requests==1 and 200<=response.status<300
+                    return
+                request=request.redirected_from
+        except Exception:pass
+
+    def verify(self, name, dispatched_bytes_verified):
+        if not dispatched_bytes_verified or not self.response_ok or self.requests!=1:return False
+        try:
+            if not self.same_document_route(self.frame.url):return False
+            try:
+                if self.frame.evaluate('old=>document===old',self.original):return False
+            except Exception:pass  # a replaced execution context is expected after the parse POST
+            if self.accepted_document is not None:
+                try:
+                    if not self.frame.evaluate('accepted=>document===accepted',self.accepted_document):return False
+                except Exception:return False
+            accepted=self.frame.evaluate('''name=>{
+                const get=id=>{const es=[...document.querySelectorAll('[id]')].filter(e=>e.id===id);return es.length===1?es[0]:null;};
+                const base='PortalProfileFields.Resume',input=get(base+'_File'),stored=get(base),filename=get(base+'_FileName'),url=get(base+'_URL'),box=get(base+'_Content');
+                const visible=e=>!!e&&e.getBoundingClientRect().width>2&&e.getBoundingClientRect().height>2&&getComputedStyle(e).visibility!=='hidden';
+                if(document.readyState==='loading'||!input||!input.form||!box?.contains(input)||!visible(box)||input.files?.length||
+                   !stored||!filename||!url||stored.form!==input.form||filename.form!==input.form||url.form!==input.form||
+                   stored.value!=='false'||url.value||visible(get(base+'_Loading')))return false;
+                let actual;try{actual=decodeURIComponent(filename.value)}catch{return false}
+                if(actual!==name||!box.innerText.includes(name))return false;
+                if([...document.querySelectorAll('[aria-invalid=true],[role=alert],.iCIMS_Error,.iCIMS_ErrorMessage')].some(visible))return false;
+                return [...box.querySelectorAll('button,input[type=button]')].some(e=>visible(e)&&
+                    /^replace resume$/i.test((e.innerText||e.value||'').trim()));
+            }''',name)
+            if accepted and self.accepted_document is None:self.accepted_document=self.frame.evaluate_handle('document')
+            return bool(accepted)
+        except Exception:return False
+
+    def close(self):
+        self.page.remove_listener('request',self.requested)
+        self.page.remove_listener('response',self.responded)
+        for handle in (self.original,self.accepted_document):
+            if handle:
+                try:handle.dispose()
+                except Exception:pass
+
+    def owns(self, element):
+        if self.accepted_document is None:return False
+        try:
+            return bool(element.evaluate('(e,a)=>e.ownerDocument===a.doc&&e.type==="file"&&e.id===a.id',
+                                         {'doc':self.accepted_document,'id':self.field_id}))
+        except Exception:return False
 
 
 class UploadProof:
@@ -12,6 +105,7 @@ class UploadProof:
         self.native=None;self.widget=None;self.token=None;self.form=None
         self.method='';self.replaced_count=0
         self.server_failures={}
+        self.parse_receipt=None;self.dispatched_bytes_verified=False
         if trigger:
             self.widget=self.widget_for(trigger)
             self.form=trigger.evaluate_handle('e=>e.form||e.closest("form")').as_element()
@@ -78,6 +172,8 @@ class UploadProof:
 
     def bind(self, native):
         self.native=native.element_handle() if hasattr(native,'element_handle') else native
+        try:self.parse_receipt=ResumeParseReceipt(self.native)
+        except ValueError:pass
         self.portaled=self.native.get_attribute('data-jf-upload-portaled')=='1'
         if self.portaled and not self.widget:
             raise ValueError('A portaled upload requires its original attachment widget')
@@ -112,10 +208,16 @@ class UploadProof:
             }''',{'token':self.token,'widget':self.widget})
 
     def owns(self, element):
+        if self.can_rebind(element):return True
         try:
             return bool(self.native and element.evaluate('(e,n)=>e===n',self.native) or
                         self.widget and element.evaluate('(e,box)=>box.isConnected && box.contains(e)',self.widget))
         except Exception:return False
+
+    def can_rebind(self, element):
+        """Only a verified parse receipt can bridge a replaced document's upload control."""
+        return bool(self.parse_receipt and self.parse_receipt.verify(self.name,self.dispatched_bytes_verified)
+                    and self.parse_receipt.owns(element))
 
     def server_bytes_match(self):
         """Read this widget's current same-origin download, never infer bytes from its filename."""
@@ -151,6 +253,9 @@ class UploadProof:
 
     def verify(self):
         if not self.native:return False
+        if self.parse_receipt and self.parse_receipt.verify(self.name,self.dispatched_bytes_verified):
+            self.method='byte-verified dispatch and fresh resume-parse POST receipt'
+            return True
         try:
             if self.widget and self.widget.evaluate('''(box,args)=>{
                 const visible=e=>!!(e.getBoundingClientRect().width&&e.getBoundingClientRect().height)&&getComputedStyle(e).visibility!=='hidden';
@@ -189,6 +294,7 @@ class UploadProof:
             self.name=evidence['name']
             form_owned=bool(getattr(self,'form_owned',False) and self.native.evaluate('(n,form)=>form.isConnected && n.form===form && !!n.name && !n.disabled',self.form))
             if evidence['retained'] and (not self.widget or getattr(self,'initially_inside',False) or form_owned):
+                self.dispatched_bytes_verified=True
                 self.method='native bytes';return True
             if getattr(self,'portaled',False) and evidence.get('acknowledged'):
                 self.method='dispatched bytes and fresh widget success';return True
@@ -208,6 +314,8 @@ class UploadProof:
         return False
 
     def close(self):
+        if self.parse_receipt:
+            self.parse_receipt.close();self.parse_receipt=None
         if self.native:
             try:self.native.evaluate('(e,t)=>{const m=e.ownerDocument.defaultView.__jobagentUploadProofs;m?.get(t)?.cleanup();m?.delete(t)}',self.token)
             except Exception:pass

@@ -26,7 +26,8 @@ def read_view(page):
         loc=forms.locate(view,f)
         if f.kind=='file':
             for proof in getattr(page,'_jobagent_upload_proofs',[]):
-                if getattr(proof,'frame',None)==f.frame_identity and proof.owns(loc):
+                if ((getattr(proof,'frame',None)==f.frame_identity and proof.owns(loc))
+                        or proof.can_rebind(loc)):
                     f.identity=proof.identity;break
             labels=loc.evaluate('e=>[...(e.labels||[])].map(x=>x.innerText.trim()).filter(Boolean)')
             if len(labels)==1 and not re.fullmatch(
@@ -123,7 +124,7 @@ def settle_after_upload(page,min_s=6.0,max_s=25.0,log=None):
       while(roots.length){const root=roots.pop();
         for(const e of root.querySelectorAll('input:not([type=file]):not([type=hidden]):not([type=password]),textarea,select'))
           values.push([e.id,e.name,e.type,e.type==='checkbox'||e.type==='radio'?e.checked:e.value]);
-        busy ||= [...root.querySelectorAll('[aria-busy=true],[role=progressbar],progress')].some(visible);
+        busy ||= [...root.querySelectorAll('[aria-busy=true],[role=progressbar],progress,[id="PortalProfileFields.Resume_Loading"]')].some(visible);
         for(const e of root.querySelectorAll('*')){const s=e.shadowRoot||window.__jobagentRoot?.(e);if(s)roots.push(s);}
       }
       return {values,busy,ready:document.readyState!=='loading'};
@@ -692,6 +693,12 @@ class PlannedFiller:
                                 actual=live.refresh(f);after=live.view
                             if actual is None and f.kind!='file':
                                 after=live.capture();actual=next((x for x in after.fields if key(x)==key(f)),None)
+                            if f.kind=='file' and actual is None and proof is not None:
+                                # A successful parse POST creates new locator/frame
+                                # identities. Rebind only its byte-backed receipt,
+                                # never a matching label or filename by itself.
+                                matches=[x for x in after.fields if x.kind=='file' and proof.can_rebind(forms.locate(after,x))]
+                                if len(matches)==1:actual=matches[0]
                             actual=self.settle(page,live,f,chosen,actual)
                             valid=actual is not None and forms.same_value(chosen,actual.value,f.kind,f.label,f.multiple)
                             if actual:valid=valid and not actual.invalid
@@ -703,7 +710,10 @@ class PlannedFiller:
                                     try:forms._save_combobox_failure(forms.locate(fresh,f),f,chosen,f"readback: chosen={chosen!r} actual={getattr(actual,'value',None)!r} invalid={getattr(actual,'invalid',None)}")
                                     except Exception:pass
                                 raise ValueError(f"control not accepted or exact readback unavailable (wanted {str(chosen)[:40]!r}, the page shows {str(getattr(actual,'value',None))[:40]!r})")
-                            readback=actual.value if actual else Path(files[value]).name
+                            if f.kind=='file' and actual is not None:
+                                f=actual
+                                proof.frame=f.frame_identity;proof.identity=f.identity
+                            readback=proof.name if f.kind=='file' and proof is not None else actual.value
                             if f.kind=='file' and proof is not None:
                                 if f.identity:self.uploaded[(self.step,f.identity)]=proof
                                 self.uploaded_labels[(self.step,f.label)]=proof
@@ -733,6 +743,7 @@ class PlannedFiller:
                     if changed or {key(f) for f in post.fields}!={key(f) for f in view.fields} or any(
                             key(f) in attempted and 0<self.failures.get(key(f),0)<2 for f in post.fields):continue
                     remaining=[f.label for f in post.fields if f.required and
+                               not (f.kind=='password' and forms.has_value(f)) and
                                (key(f) not in self.cache or self.cache[key(f)].value is None)]
                     if remaining:return self.result('blocked',records,started,remaining)
                 view=live.capture()

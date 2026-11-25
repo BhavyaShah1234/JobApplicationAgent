@@ -380,6 +380,8 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
              'upload_verification':entry.get('upload_verification'),
              'replaced_attachment_count':entry.get('replaced_attachment_count',0)}
         row['outcome']=A.outcome_of(row,f)
+        if f.kind=='password' and forms.has_value(f):
+            row['flag']=''  # presence only; never expose or claim source-verification of the secret
         record.append(row);done[key(f)]=row
     # A widget can disappear after dispatch, and its native required marker may
     # be absent even when the visible form requires a resume. Neither situation
