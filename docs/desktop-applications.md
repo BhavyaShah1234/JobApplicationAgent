@@ -91,7 +91,7 @@ ending and starting another command requests a new connection. The agent attache
 then uses the ordinary Voyager filling, account, HITL and verification code. The broker
 checks the exact process/profile/lock, current network guard, fresh endpoint and owning
 loopback listener. iCIMS `/jobs/<id>/...` routes must still belong to the requested job;
-other URL shapes initially require the same path/query. The existing target/origin scope
+other URL shapes initially require the same path/query. A reconnect can also resume a same-job redirect only when the existing task lease records that exact browser target and approved origin. An initial shared login requires an explicitly trusted public origin and a credential-only sign-in form; mixed profile/application forms do not receive that login exception. The existing target/origin scope
 and submission approval rules continue to apply. A missing permission or ambiguous tab
 stops attachment rather than falling back to an unrelated browser.
 
@@ -198,3 +198,18 @@ only when an actual candidate address/location question is encountered, before t
 answers are planned. Forms without address questions no longer require a US address lookup.
 Cloudflare can still challenge desktop Chrome; a successful navigation test cannot
 guarantee acceptance on every site.
+
+## iCIMS profile saves and final review
+
+The filler reads iCIMS' explicit step tracker, including trackers inside an embedded
+application. It can save an intermediate **Update Profile**, **Submit Profile** or
+question **Submit** only when a consistent tracker proves there is a later
+**Confirm Application** or **Review Application** step, and that control posts its
+own form to the same job document without action/method/target overrides.
+The final confirmation step is never advanced by filling, including when its
+action is captioned Continue. An unrecognized continuation on a known nonterminal
+step is blocked instead of being reported as final review.
+
+Garmin's observed flow is Candidate Profile → Job Specific Questions → Confirm
+Application. This continuation change is unit/browser tested and deployed; its
+final live acceptance is pending the owner's Chrome connection approval.
