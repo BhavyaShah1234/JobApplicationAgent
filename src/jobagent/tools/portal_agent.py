@@ -243,6 +243,7 @@ def recent_rejections(host: str, now: float | None = None) -> list[float]:
 
 
 def record_rejection(host: str, now: float | None = None) -> None:
+    """Persist a timestamp for a rejected credential attempt on this portal."""
     import time
     now = time.time() if now is None else now
     path = _rejections_file(host)
@@ -254,6 +255,7 @@ def record_rejection(host: str, now: float | None = None) -> None:
 
 
 def too_many_recent_rejections(host: str) -> str | None:
+    """Refuse additional password attempts after the portal rejection budget is exhausted."""
     n = len(recent_rejections(host))
     if n >= MAX_RECENT_REJECTIONS:
         return (f"{host}: the stored password was rejected {n} times in the last {REJECTION_WINDOW_S // 3600} hours; another attempt risks "
@@ -282,6 +284,7 @@ def record_lockout(host: str, now: float | None = None, seconds: float = REJECTI
 
 
 def recent_lockout(host: str, now: float | None = None) -> str | None:
+    """Return an active portal lockout without assuming its expiry proves server readiness."""
     import time
     now = time.time() if now is None else now
     try:
@@ -370,6 +373,7 @@ def recovery_refusal(goal: str, label: str = '', url: str = '') -> str | None:
 
 
 def credential_fill_refusal(value: str, field_type: str) -> str | None:
+    """Require saved-password placeholders only inside masked password controls."""
     if field_type == 'password' and value not in ('{PASSWORD}', '{ALT_PASSWORD}'):
         return 'refused: a password field requires an exact saved-password placeholder'
     if 'PASSWORD}' in value and field_type != 'password':
@@ -823,6 +827,7 @@ def set_registration_profile(provider) -> None:
 
 
 def registration_extras(log=print) -> dict:
+    """Read only supported, nonempty values from the registration profile provider."""
     if _REGISTRATION_PROFILE is None:
         return {}
     try:

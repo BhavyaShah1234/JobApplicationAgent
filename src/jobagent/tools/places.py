@@ -28,6 +28,7 @@ def written_place(text: str) -> dict | None:
     """A location that already names a US place: 'Austin, TX', 'Minneapolis, Minnesota', 'Remote - US'."""
     parts = [p.strip() for p in re.split(r"[,|/;-]", text) if p.strip()]
     def state_of(p: str) -> str:
+        """Resolve an explicitly written US state name or abbreviation."""
         return CODES.get(p.upper()) or (p.title() if p.lower() in US_STATES else "")
 
     for i, p in enumerate(parts):

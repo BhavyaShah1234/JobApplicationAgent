@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlsplit
 
 
 def endpoint(raw):
+    """Parse only a valid loopback debugging port and browser WebSocket path."""
     lines=raw.splitlines()
     if (len(lines)!=2 or not lines[0].isdigit() or not 1024<=int(lines[0])<=65535 or
             not re.fullmatch(r'/devtools/browser/[A-Za-z0-9-]+',lines[1])):
@@ -18,6 +19,7 @@ def endpoint(raw):
 
 
 def validate_identity(root, manifest, proxy_port):
+    """Verify the dedicated ordinary Chrome process, profile lock and public-only proxy."""
     from . import desktop_browser as D
     profile=root/'profile'
     if (manifest.get('protocol')!=D.PROTOCOL or manifest.get('kind')!='consented' or
@@ -40,6 +42,7 @@ def validate_identity(root, manifest, proxy_port):
 
 
 def owned_loopback_listener(proc, port):
+    """Check that the exact browser process owns the loopback listening socket."""
     inodes=set()
     try:fds=list((proc/'fd').iterdir())
     except OSError:return False

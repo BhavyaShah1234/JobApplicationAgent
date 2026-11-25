@@ -69,6 +69,7 @@ def classifier(allowed: set[str]):
     from jobagent.tools import inbox
 
     def classify(mail):
+        """Recognize a portal verification link while excluding protected application mail."""
         if inbox.is_protected(mail):
             return None
         link = pick_link(f"{mail.text}", allowed)

@@ -254,6 +254,7 @@ def declaration_notes_only(instructions):
 
 
 def date_component(f):
+    """Identify a split employment date part from its own control label."""
     label = norm(re.sub(r'\([^)]*\)', '', f.label))
     match = re.fullmatch(r'(start|from|end|to)(?: date)? (month|day|year)', label)
     return ('end' if match[1] in ('end', 'to') else 'start', match[2]) if match else None

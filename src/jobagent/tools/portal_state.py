@@ -77,6 +77,7 @@ def clear_attempts(host: str) -> bool:
 
 
 def describe(report: dict) -> str:
+    """Summarize the portal-state reset result and any errors."""
     if report.get("refused"):
         return f"refused: {report['refused']}"
     return (f"forgot {report['domain']}: {report['cookies_before']} cookies and the site storage of "

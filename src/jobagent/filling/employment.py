@@ -10,6 +10,7 @@ _LIMIT = re.compile(r'\b(?:last|most recent|latest)\s+(?:(one|two|three|four|fiv
 
 
 def recent_employment_facts(facts, view):
+    """Select source employment records using only an explicit last-N-employers instruction."""
     if view is None:return facts
     limits=set()
     for heading in view.headings:

@@ -8,6 +8,7 @@ from urllib.parse import urlsplit, parse_qs
 def resume_parse_request(url):
     # iCIMS appends this flag to an action that can already contain it after
     # a previous parse. Identical flags are unambiguous; conflicts are not.
+    """Require one or more identical resume-parser flags and reject conflicting values."""
     flags=parse_qs(urlsplit(url).query,keep_blank_values=True).get('uploadResume',[])
     return bool(flags) and all(value=='1' for value in flags)
 
@@ -38,10 +39,12 @@ class ResumeParseReceipt:
         self.page.on('response',self.responded)
 
     def same_document_route(self, url):
+        """Check that a response remains on the original candidate origin and path."""
         p=urlsplit(url)
         return (p.scheme,p.netloc,p.path)==(self.origin.scheme,self.origin.netloc,self.origin.path)
 
     def requested(self, request):
+        """Observe only this frame's fresh resume-parser navigation POST."""
         try:
             if request.method=='POST' and 'uploadResume' in parse_qs(urlsplit(request.url).query,keep_blank_values=True):
                 self.observed_parse_posts.append({'same_frame':request.frame==self.frame,
@@ -54,6 +57,7 @@ class ResumeParseReceipt:
         except Exception:pass
 
     def responded(self, response):
+        """Record a successful response chain only for the matched parser POST."""
         try:
             request=response.request
             while request is not None:
@@ -65,6 +69,7 @@ class ResumeParseReceipt:
         except Exception:pass
 
     def verify(self, name, dispatched_bytes_verified):
+        """Verify dispatched bytes, a fresh parser response and the current owned widget metadata."""
         if not dispatched_bytes_verified:self.failure_reason='dispatched source bytes not verified';return False
         if not self.response_ok or self.requests!=1:self.failure_reason='no unique successful parse POST';return False
         try:
@@ -95,6 +100,7 @@ class ResumeParseReceipt:
         except Exception as exc:self.failure_reason='receipt inspection '+type(exc).__name__;return False
 
     def close(self):
+        """Remove request observers and dispose retained document handles."""
         self.page.remove_listener('request',self.requested)
         self.page.remove_listener('response',self.responded)
         for handle in (self.original,self.accepted_document):
@@ -103,6 +109,7 @@ class ResumeParseReceipt:
                 except Exception:pass
 
     def owns(self, element):
+        """Check that an upload control belongs to the accepted parser document."""
         if self.accepted_document is None:return False
         try:
             return bool(element.evaluate('(e,a)=>e.ownerDocument===a.doc&&e.type==="file"&&e.id===a.id',
@@ -233,6 +240,7 @@ class UploadProof:
                     and self.parse_receipt.owns(element))
 
     def diagnostic(self):
+        """Return bounded upload-proof diagnostics without endpoint or authentication values."""
         receipt=self.parse_receipt
         return {'parse_receipt_enabled':receipt is not None,'disabled_reason':self.parse_receipt_disabled_reason,
                 'dispatched_bytes_verified':self.dispatched_bytes_verified,

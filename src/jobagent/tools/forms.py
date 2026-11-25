@@ -1893,6 +1893,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             (lambda ans, o: (close_option(ans, o), 0)) if close else match_option
         candidates=list(dict.fromkeys([answer,*[str(a) for a in alternatives if a and not OTHER_OPTION.match(str(a))]]))
         def offered(options):
+            """Resolve only an option actually offered by this picker using sourced answer variants."""
             if option_resolver is not None and options:
                 resolved = option_resolver(options)
                 if resolved in options:

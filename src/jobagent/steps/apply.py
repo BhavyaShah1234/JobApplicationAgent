@@ -838,6 +838,7 @@ def own_site_option(options: list[str], company: str) -> str:
 
 
 def enforce_selected_address(todo: list[forms.Field], answers: dict, ctx: dict) -> None:
+    """Apply the prepared address only to recognized applicant postal controls."""
     selected = ctx.get("_application_address")
     if not selected:
         return
@@ -1926,6 +1927,7 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
     ctx['_filling_strategy']=strategy
     result["address_lookup"] = None  # prepared before planning if an address field is actually encountered
     def checkpoint(current=None):
+        """Save partial application records and the current address selection for recovery."""
         result['address_lookup'] = ctx.get('_application_address')
         (out_dir / "checkpoint.json").write_text(json.dumps({**result, "fields": record + (current or [])}, indent=2))
     checkpoint()
