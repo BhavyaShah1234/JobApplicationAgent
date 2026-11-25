@@ -1,5 +1,17 @@
 # iCIMS portals: everything learned, what the agent does, what it cannot, and why
 
+## Update — 2026-11-25: agent-owned registration requested; validation pending
+
+The owner now requests registration by the job agent using the normal signup path and vault-backed credentials; visible human challenges still go to the owner. The older conclusion below that all iCIMS registration must be manual is not a proved platform capability limit.
+
+A new Peraton attempt found a late authentication defect: after the email/privacy page, the password page went to the application planner instead of the account agent. Candidate code adds a bounded handoff on later credential screens and scopes universal iCIMS credentials/rejection history to the employer's posting host.
+
+The resumed registration model clicked password reset despite its prompt forbidding it and requested a reset email. The run was stopped; no new-password entry or password change was observed. The recovery email is left untouched. Candidate code now blocks recovery controls, URLs and emails except under the explicit reset command, and refuses a registration-only password fill on a login form.
+
+A declared new-account password/confirmation pair in a combined application can be filled from the vault without clicking any account/application action. Full and incremental readers expose only a presence marker. Existing accounts and unknown prefilled credentials are not overwritten.
+
+**No Peraton account creation or three-application iCIMS acceptance has succeeded yet.** Evidence, source snapshots and deployment/validation status: `outputs/verification/portal-acceptance-20261125T003317Z/`. Local tests alone do not establish service resolution.
+
 Last updated 2026-11-24. Companies exercised: **Garmin** (reaches the review screen), **Peraton** (blocked at account creation).
 Evidence: `outputs/benchmarks/ten-portals-20261122T110915Z/BENCHMARK_LOG.md`, `state/portals/icims.md`, `state/logs/combobox-failures.jsonl`,
 and the screenshots listed in section 11. No emails or passwords are written in this file.

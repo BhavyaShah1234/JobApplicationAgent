@@ -1,5 +1,5 @@
 """Alternative form filler; no submission capability and no production monkey patches."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 import re
 import base64
@@ -658,6 +658,8 @@ class PlannedFiller:
                             alternatives=bound[0].variants if len(bound)==1 and not bound[0].record else ()
                             chosen=forms.fill_field(page,fresh,f,value,files,strict=f.kind in ('select','combobox'),
                                 **({'alternatives':alternatives} if alternatives and f.kind=='combobox' else {}),
+                                **({'option_resolver': lambda options: choice(replace(f, options=options, options_state='complete'),
+                                                                            [value, *alternatives])} if f.kind=='combobox' else {}),
                                 **({'before_upload':proof.bind,'upload_confirmation':proof.verify} if proof else {}))
                             if f.kind=='file':settle_after_upload(page,log=getattr(self,'log',None))
                             if live.changed():

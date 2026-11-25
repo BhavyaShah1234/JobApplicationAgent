@@ -105,7 +105,7 @@ def test_empty_required_passwords_are_handed_to_the_candidate_and_the_run_contin
             env = {"hitl": hitl, "_experimental_blockers": ["Password", "Password (Re-enter)"], "ask_s": 5}
             logs = []
             assert A._candidate_types_passwords(page, view, env, logs.append) is True
-            assert "never types or asks for a password" in hitl.prompts[0] and any("only the password field" in x for x in logs)
+            assert "never in chat" in hitl.prompts[0] and any("only the password field" in x for x in logs)
             env2 = {"hitl": hitl, "_experimental_blockers": ["Password", "Phone"], "ask_s": 5}       # something else is blocking too: not this hand-off
             assert A._candidate_types_passwords(page, view, env2, logs.append) is False
         finally:

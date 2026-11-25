@@ -40,6 +40,7 @@ READ = r'''(e,kind)=>{
   return byIds(x,'aria-labelledby')||clean(x.getAttribute('aria-label'))||caption(x);
  };
  let value=e.isContentEditable?clean(e.innerText):(e.value||'');
+ if(kind==='password')value=e.value?'[credential present]':'';
  if(kind==='select')value=[...e.selectedOptions].map(x=>clean(x.text)).join('; ');
  if(kind==='checkbox')value=e.checked||e.getAttribute('aria-checked')==='true'?'checked':'';
  if(kind==='buttons')value=clean(e.querySelector('button[aria-pressed=true]')?.innerText);

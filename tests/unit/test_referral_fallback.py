@@ -160,6 +160,14 @@ def test_unreadable_menu_is_not_treated_as_missing_employee_referral():
     assert referrals.answer_for(f, {})['ask_human']
 
 
+def test_a_lazy_empty_source_picker_can_search_the_referral_policy_without_inventing_a_fallback():
+    from jobagent.tools import referrals
+    f = field(); f.options = []; f.options_state = 'unreadable'
+    answer = referrals.answer_for(f, {})
+    assert not answer['ask_human'] and 'Employee Referral' in answer['value']
+    assert 'Recruiter' not in answer['value']
+
+
 def test_current_job_owner_source_answer_is_not_lost_on_restart():
     from jobagent.filling.routing import answer_sheet_facts
     f = field(['Career site', 'Employee Referral'])

@@ -1,5 +1,15 @@
 # SAP: what the agent found, what it fixed, and where it stopped
 
+## Update — 2026-11-25: City defect diagnosed in a live attempt
+
+One normal native-agent attempt reached the SmartRecruiters form without a restriction. The trace had been appending input/network evidence after menu HTML to an error string capped at 200 characters, discarding the evidence. Candidate code saves those fields separately.
+
+The new trace shows HTTP **200** autocomplete responses, a focused input containing `San`, and suggestions inside **`spl-select-option`** elements. The reader searched explicit DOM ARIA roles and missed these custom elements. This establishes a selector/ownership defect in this attempt; it does not show an autocomplete network refusal.
+
+Candidate changes add these hosts to option discovery/clicking, preserve an empty owned menu during search, and select within the control's own menu. Real-Chrome regressions cover a shadow-root City input plus an unrelated menu offering identical text. Live revalidation, the second SAP role, and another SmartRecruiters employer remain pending.
+
+SAP's Developer application is SmartRecruiters; Ericsson and Teradyne are separate SuccessFactors targets. Evidence: `outputs/verification/portal-acceptance-20261125T003317Z/smartrecruiters-city-evidence-1.json` and the matching log/screenshot. Nothing was submitted. Source snapshots and status are in the same directory; do not infer deployment or resolution from local tests.
+
 Written 2026-11-24. Status: **parked** by the owner until Codex's usage replenishes. Nothing was submitted and no account was created.
 Evidence: `outputs/sap/*/application/` (challenge screenshots and JSON, `application.json`), `state/logs/combobox-failures.jsonl`,
 `state/logs/apply-start.png`, `outputs/benchmarks/ten-portals-20261122T110915Z/BENCHMARK_LOG.md`.

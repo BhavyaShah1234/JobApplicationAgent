@@ -230,17 +230,75 @@ def candidate_values(email: str, password: str) -> dict:
             "PHONE": applicant.phone()}
 
 
+def account_host(url: str, account_url: str | None = None) -> str:
+    """Universal iCIMS/SuccessFactors login hosts serve separate employer accounts."""
+    host = (urlparse(url).hostname or '').lower()
+    account = urlparse(account_url or '')
+    shared = host == 'login.icims.com' or host.endswith(('.successfactors.com', '.successfactors.eu'))
+    if shared and account.scheme == 'https' and account.hostname and account.hostname != host:
+        return account.hostname.lower()
+    return host
+
+
+def fill_new_account_passwords(page, view, vault, email: str, account_url: str, log=print) -> bool:
+    """Fill a declared new-password/confirmation pair in a combined profile form; never submit it.
+
+    Credentials stay out of planning, records and prompts. Existing/current
+    password fields and recovery forms are outside this narrowly scoped helper.
+    """
+    from jobagent.tools import forms, portal_agent
+    fields = [f for f in view.fields if f.kind == 'password']
+    if len(fields) != 2 or any(forms.has_value(f) for f in fields):
+        return False
+    labels = [re.sub(r'\s+', ' ', f.label).strip(' *:').lower() for f in fields]
+    if any(re.search(r'\b(?:current|old|existing)\b', label) for label in labels):
+        return False
+    confirm = [i for i, label in enumerate(labels) if re.search(r'(?:re[- ]?(?:enter|type)|confirm|repeat).{0,25}password', label)]
+    if len(confirm) != 1 or not re.fullmatch(r'(?:(?:choose|create|set|enter) (?:a |your )?)?(?:new )?password', labels[1-confirm[0]]):
+        return False
+    if portal_agent.recovery_refusal('register', ' '.join(view.headings), page.url):
+        return False
+    host = account_host(page.url, account_url)
+    if urlparse(account_url).scheme != 'https' or not host:
+        return False
+    key = f'portal:{host}'
+    creds = vault.get(key) or {}
+    if creds.get('account'):
+        return False  # a new-password pair on an existing account could change its password
+    password = creds.get('password') or portal_password(vault)
+    if not creds:
+        vault.set(key, email=email, password=password, platform=platform_of(page.url), verified=False,
+                  attempted=datetime.now(UTC).isoformat())
+    # Save before filling, and revalidate each actual control's type. This does
+    # not mark the account created: only the portal can confirm registration.
+    for field in fields:
+        control = forms.locate(view, field)
+        if control.get_attribute('type') != 'password' or not control.is_visible() or control.is_disabled():
+            return False
+    for field in fields:
+        forms.locate(view, field).fill(password)
+    if not all(forms.locate(view, field).evaluate('(element, expected) => element.value === expected', password)
+               for field in fields):
+        raise PortalError('The registration fields did not retain the saved credential; application stopped without submitting')
+    log('portal: filled the new-account password and confirmation from the vault; no account/application action clicked')
+    return True
+
+
 def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print,
-                      fresh: bool = False, already_open: bool = False, register_only: bool = False) -> PortalLogin:
+                      fresh: bool = False, already_open: bool = False, register_only: bool = False,
+                      account_url: str | None = None) -> PortalLogin:
     """Any portal without an adapter: the general agent (tools/portal_agent.py) signs in or registers."""
     from jobagent.tools import portal_agent
     if already_open and not fresh and page.url != url:
         raise PortalError("The open sign-in page no longer matches the requested portal URL")
-    host = urlparse(url).netloc.lower()
+    auth_host = urlparse(url).netloc.lower()
+    # iCIMS authenticates through one universal host, but the accounts and their
+    # passwords/rejection limits belong to the employer tenant, not every tenant.
+    host = account_host(url, account_url)
     key = f"portal:{host}"
     res = PortalLogin(host, platform_of(url))
     mem = PortalMemory(portal_key(url))
-    db.record_agent_domain(inbox.conn, f"https://{host}", "portal")
+    db.record_agent_domain(inbox.conn, f"https://{auth_host}", "portal")
     creds = vault.get(key) or {}
     email = creds.get("email") or email
     password = creds.get("password") or portal_password(vault)
@@ -248,7 +306,7 @@ def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, ema
         vault.set(key, email=email, password=password, platform=res.platform,
                   attempted=datetime.now(UTC).isoformat(), verified=False)  # saved before anything is submitted
     if fresh:
-        _clear_site_cookies(page, host)
+        _clear_site_cookies(page, auth_host)
     if already_open and not fresh:
         challenge.guard(page)              # preserve POST-backed login state and the browser's current form
     else:
@@ -284,14 +342,15 @@ def ensure_with_agent(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, ema
 
 
 def ensure_account(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print,
-                   fresh: bool = False, already_open: bool = False, register_only: bool = False) -> PortalLogin:
+                   fresh: bool = False, already_open: bool = False, register_only: bool = False,
+                   account_url: str | None = None) -> PortalLogin:
     """Signed in to the portal of `url` with the agent's account: sign in first (stored or shared password); register
     only when the portal has no account for the email; never a password reset. Workday has its own adapter; every
     other portal goes to the general agent."""
     platform = platform_of(url)
     if register_only or platform not in ADAPTERS:
         return ensure_with_agent(page, url, vault, inbox, hitl, email, log=log, fresh=fresh, already_open=already_open,
-                                 register_only=register_only)
+                                 register_only=register_only, account_url=account_url)
     try:
         return _ensure_with_adapter(page, url, vault, inbox, hitl, email, log=log, fresh=fresh)
     except PortalError:
@@ -299,7 +358,7 @@ def ensure_account(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email:
     except Exception as e:  # the adapter's elements weren't there (a redesigned page): the general agent takes over
         log(f"portal {urlparse(url).netloc}: {platform} adapter failed ({type(e).__name__}: {str(e)[:100]}); "
             "handing over to the general agent")
-        return ensure_with_agent(page, url, vault, inbox, hitl, email, log=log, fresh=False)
+        return ensure_with_agent(page, url, vault, inbox, hitl, email, log=log, fresh=False, account_url=account_url)
 
 
 def reset_once(page: Page, url: str, vault: Vault, inbox, hitl: Hitl, email: str, log=print) -> PortalLogin:

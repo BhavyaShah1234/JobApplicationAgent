@@ -10,12 +10,13 @@ challenge (CAPTCHA, bot check) is handed to the user. What worked is kept in the
 
 import json
 import re
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from datetime import UTC, datetime
 from typing import Literal
+from uuid import uuid4
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from playwright.sync_api import Page
+from playwright.sync_api import Error as PlaywrightError, Page
 from pydantic import BaseModel, Field
 
 from jobagent import db, llm
@@ -26,7 +27,7 @@ MAX_STEPS = 30
 MAX_UNCHANGED_WAITS = 4
 CAPTCHA_FRAME = re.compile(r"(?i)hcaptcha|recaptcha|google\.com/recaptcha|challenges\.cloudflare|arkoselabs|funcaptcha")
 
-SNAPSHOT_JS = r"""() => {
+SNAPSHOT_JS = r"""(epoch) => {
   const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
     return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
   const label = e => {
@@ -42,6 +43,7 @@ SNAPSHOT_JS = r"""() => {
     const r = e.getBoundingClientRect();
     const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
     const blocked = top && !e.contains(top) ? (label(top) || top.id || top.tagName).slice(0, 100) : '';
+    if (epoch) e.setAttribute('data-agent-auth-ref', epoch + ':' + out.length);
     out.push({tag: e.tagName.toLowerCase(), type: t, label: label(e).slice(0, 80), blocked_by: blocked,
               checked: e.checked === true, value_set: !!(e.value && t !== 'checkbox' && t !== 'radio' && t !== 'submit'),
               options: e.tagName === 'SELECT' ? [...e.options].map(o => o.text.trim()).filter(Boolean).slice(0, 40) : null,
@@ -119,7 +121,7 @@ ONE action. Rules:
 
 REGISTER_PROMPT = PROMPT + """
 
-THIS RUN'S GOAL OVERRIDES THE SIGN-IN-FIRST RULE: the candidate established that NO account exists for this email here, so CREATE it now.
+THIS RUN'S GOAL OVERRIDES THE SIGN-IN-FIRST RULE: the candidate requested registration, so CREATE it now if no account exists.
 Never try to sign in and never type a password into a login form. Go straight to the page's own Sign up / Create account route and
 register with {EMAIL}, {PASSWORD} (and a confirm field if shown), then any names/phone it asks. COMPLETE every step the site requires
 after that: a verification code sent by email (answer code_sent), a confirmation link (answer link_sent), terms it needs accepted to
@@ -143,20 +145,32 @@ index) and the page text; choose ONE action:
 Never change anything else (profile, email, security settings); failed when stuck."""
 
 
-def snapshot(page: Page) -> tuple[str, list]:
+class _AuthFrames(dict):
+    """Frames and the control identities actually shown to the model on this turn."""
+
+    def __init__(self):
+        super().__init__()
+        self.epochs = {}
+        self.items_by_frame = {}
+
+
+def snapshot(page: Page) -> tuple[str, dict]:
     # CAPTCHA providers' frames are left out: invisible ones sit on many sign-in pages; a visible challenge is caught
     # by challenge.detect() and handed to the user before the model is asked anything
     frames = [page.main_frame] + [f for f in page.frames if f != page.main_frame and f.url.startswith("http")
                                   and not CAPTCHA_FRAME.search(f.url)]
-    parts, kept = [], []
+    parts, kept = [], _AuthFrames()
     for n, f in enumerate(frames):
+        epoch = uuid4().hex
         try:
-            snap = f.evaluate(SNAPSHOT_JS)
+            snap = f.evaluate(SNAPSHOT_JS, epoch)
         except Exception:
             continue
         if not snap["items"] and not snap["text"]:
             continue
-        kept.append((n, f))
+        kept[n] = f
+        kept.epochs[n] = epoch
+        kept.items_by_frame[n] = snap['items']
         items = "\n".join(f"  [{i}] {x['tag']}{'/' + x['type'] if x['type'] else ''} \"{x['label']}\""
                           f"{' (checked)' if x['checked'] else ''}{' (filled)' if x['value_set'] else ''}"
                           + (f" BLOCKED_BY={x['blocked_by']!r}" if x.get('blocked_by') else "")
@@ -165,13 +179,15 @@ def snapshot(page: Page) -> tuple[str, list]:
         parts.append(f"FRAME {n} {f.url[:100]}\nTEXT: {snap['text']}\nELEMENTS:\n{items}")
         if snap.get("pw", 0) >= 2:
             parts.append("NEW_PASSWORD_FORM")  # marker for the code: a set/confirm-password form is showing
-    return "\n\n".join(parts), dict(kept)
+    return "\n\n".join(parts), kept
 
 
 REJECTED = re.compile(r"(?i)wrong (username|email|e-mail) or password|incorrect (username|email|password)|"
                       r"invalid (username|email|credentials|password)|invalid email address or password")
 ACCOUNT_EXISTS = re.compile(r"(?i)already (exists?|registered|in use|have an account|been taken)|account (with this email )?exists|"
                             r"email (address )?(is )?(already )?(taken|in use|registered)")
+EXISTING_ACCOUNT_ERROR = re.compile(r'(?i)\b(?:account|user)\b.{0,100}\balready exists?\b|'
+                                    r'\be-?mail(?: address)?\b.{0,100}\balready (?:registered|in use|taken)\b')
 NAV_REGISTER = re.compile(r"(?i)create (an? )?(new )?account|new (user|account)|sign\s?up|register")
 NAV_LOGIN = re.compile(r"(?i)^(sign|log)\s?in$|already (have|registered)|existing (user|account)|back to (sign|log)\s?in")
 MAX_TOGGLES = 4
@@ -267,9 +283,38 @@ def _target(frames: dict, a: AuthAction):
     f = frames.get(a.frame)
     if f is None or a.element is None:
         return None
-    if f.evaluate(ACTION_JS, [a.element, a.action, a.value]) != "ok":
+    try:
+        if isinstance(frames, _AuthFrames):
+            # A redirect or SPA render while the model is thinking invalidates its
+            # old index. Never apply that index to the replacement page's controls.
+            if not 0 <= a.element < len(frames.items_by_frame[a.frame]):
+                return None
+            ref = f'{frames.epochs[a.frame]}:{a.element}'
+            loc = f.locator(f'[data-agent-auth-ref="{ref}"]')
+            if loc.count() != 1 or not loc.is_visible() or loc.is_disabled():
+                return None
+            loc.evaluate("e => e.setAttribute('data-agent-target', '1')")
+            return loc
+        if f.evaluate(ACTION_JS, [a.element, a.action, a.value]) != "ok":
+            return None
+        return f.locator('[data-agent-target="1"]').last
+    except PlaywrightError as exc:
+        if any(reason in str(exc).lower() for reason in
+               ('execution context was destroyed', 'frame was detached', 'frame has been detached')):
+            return None          # next turn reads the destination instead of crashing
+        raise
+
+
+def recovery_refusal(goal: str, label: str = '', url: str = '') -> str | None:
+    """Recovery changes an existing account; only the explicit reset command permits it."""
+    if goal == 'reset_password':
         return None
-    return f.locator('[data-agent-target="1"]').last
+    path = unquote(urlparse(url).path).lower()
+    recovery_path = re.search(r'(?:^|[/_-])(?:reset[-_]?password|password[-_]?reset|forgot[-_]?password|account[-_]?recovery)(?:[/_.-]|$)', path)
+    recovery_label = re.search(r'(?i)\b(?:reset\b.{0,30}\bpassword|forgot(?:ten)?\b.{0,30}\bpassword|password\s+(?:reset|recovery)|recover\b.{0,30}\b(?:account|password))\b', label)
+    if recovery_path or recovery_label:
+        return 'Password recovery/reset is outside this registration/sign-in task; no recovery action was performed'
+    return None
 
 
 def run(page: Page, url: str, values: dict, inbox, hitl, host: str, log=print, model: str | None = None,
@@ -322,6 +367,11 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
     unchanged_waits,last_wait_view=0,None
     for step in range(MAX_STEPS):
         page.wait_for_timeout(2500)
+        if why := recovery_refusal(goal, url=page.url):
+            state['reason'] = why
+            history.append(why)
+            log(f'portal {host}: {why}')
+            break
         from jobagent.tools.notices import dismiss_cookie_overlay
         if dismiss_cookie_overlay(page):
             history.append('dismissed the blocking cookie notice through its native control')
@@ -334,13 +384,10 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
                 state["state"] = "failed"
                 history.append(f"{c.kind} challenge came back {challenges} times")
                 break
-            shot = f"/app/state/logs/challenge-{host}-{challenges}.png"
-            from jobagent.tools.browser import screenshot
-            screenshot(page, shot)
-            log(f"portal {host}: {c.kind} challenge, handing it to the user ({shot})")
-            hitl.ask(f"{host}: a {c.kind} puzzle is on the page (screenshot {shot}). Solve it in noVNC "
-                     "(http://localhost:6080) and press its submit/verify button, then answer 'done'.")
-            history.append(f"the user solved a {c.kind} challenge")
+            # Reuse application policy: hard restrictions STOP, desktop challenges
+            # name the right window, and 'done' alone never proves resolution.
+            challenge.wait_for_user(page, c, hitl, log=log)
+            history.append(f"the {c.kind} challenge cleared and the destination was verified ready")
         if urlparse(page.url).netloc == "accounts.google.com" and (why := social_login_refusal(came_from, "Continue with Google")):
             # a click whose label gave nothing away still landed on Google, from a portal where that is a dead end: go back
             history.append(why)
@@ -369,6 +416,11 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             record_rejection(host)
             record_rejection(host)         # two strikes at once: the next run is refused until the window passes
             state["state"], state["reason"] = "failed", "the portal says there were too many attempts or the account is locked; wait before trying again"
+            log(f"portal {host}: {state['reason']}")
+            break
+        if goal == 'register' and EXISTING_ACCOUNT_ERROR.search(view.split('ELEMENTS:', 1)[0]):
+            state['reason'] = 'The portal reports an existing account; registration stopped without a login retry or password reset'
+            history.append(state['reason'])
             log(f"portal {host}: {state['reason']}")
             break
         if wrong_pw >= 1 and is_create_account_page(view) and page.url != last_create_hint_url:
@@ -480,6 +532,11 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             except TimeoutError:
                 history.append("no verification mail arrived within 5 minutes")
                 continue
+            if why := recovery_refusal(goal, label=mail.subject or '', url=v.link or ''):
+                state['reason'] = why
+                history.append(why + '; the recovery email was left untouched')
+                log(f'portal {host}: {why}; recovery email left untouched')
+                break
             if v.link and (a.action == "link_sent" or not v.code):
                 page.goto(v.link, wait_until="domcontentloaded")
                 history.append("opened the emailed confirmation link")
@@ -515,8 +572,14 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             a = a.model_copy(update={"action": "press_enter"})
         loc = _target(frames, a)
         if loc is None:
-            history.append(f"{a.action} on F{a.frame}[{a.element}] failed: no such element")
+            history.append(f"{a.action} on F{a.frame}[{a.element}] discarded: the observed control is no longer available; read the page again")
             continue
+        if a.action in ('click', 'press_enter') and (why := recovery_refusal(
+                goal, label=_label(frames, a), url=loc.get_attribute('href') or '')):
+            state['reason'] = why
+            history.append(why)
+            log(f'portal {host}: {why}')
+            break
         if a.action in ("click", "press_enter") and (why := social_login_refusal(page.url, _label(frames, a))):
             history.append(why)
             log(f"portal {host}: {why}")
@@ -542,6 +605,12 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
             history.append("refused: the password was already rejected twice on sign-in (lockout risk); on a create-account form "
                            "it may still be used to set a NEW password")
             continue
+        if a.action == 'fill' and 'PASSWORD}' in a.value and goal == 'register' and not (
+                is_registration(view) or is_create_account_page(view)):
+            state['reason'] = 'Registration reached an existing-account password screen without a create-account form; no login password was entered'
+            history.append(state['reason'])
+            log(f"portal {host}: {state['reason']}")
+            break
         if a.action == "fill" and loc.evaluate("e => e.tagName") == "SELECT":
             # a native list is chosen from, not typed into (e.g. a phone country code): pick the matching option
             from jobagent.tools import forms
@@ -872,6 +941,8 @@ def _shows_account(page: Page, values: dict) -> bool:
 
 def _label(frames: dict, a: AuthAction) -> str:
     try:
+        if isinstance(frames, _AuthFrames):
+            return frames.items_by_frame[a.frame][a.element]['label'][:40]
         return frames[a.frame].evaluate(SNAPSHOT_JS)["items"][a.element]["label"][:40]
     except Exception:
         return "?"

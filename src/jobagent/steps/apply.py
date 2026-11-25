@@ -1197,16 +1197,20 @@ def exit_code(result: dict) -> int:
 
 
 def _candidate_types_passwords(page: Page, view, env: dict, log) -> bool:
-    """When the only thing left on a page is its empty password field(s), ask the candidate to type them and wait.
+    """Complete a new-account pair through the vault callback, otherwise hand unknown credentials to the candidate.
 
-    The agent never types or asks for a password: the question tells the candidate which fields to fill in the browser window
-    (noVNC), and the run goes on by itself when they hold a value. Returns True once they do; False when there is nobody to ask,
-    something else is also blocking, or the candidate does not answer in time.
+    Passwords never enter planning or chat. Returns True once the fields hold a
+    value; False if another field blocks, no human channel exists or time expires.
     """
     blockers = env.get('_experimental_blockers') or []
     hitl = env.get('hitl')
     fields = [f for f in view.fields if f.kind == 'password']
-    if not hitl or not fields or not blockers or not all('password' in str(b).lower() for b in blockers):
+    if not fields or not blockers or not all('password' in str(b).lower() for b in blockers):
+        return False
+    credentials = env.get('registration_credentials')
+    if credentials is not None and credentials(view):
+        return True
+    if not hitl:
         return False
     if env.get('_password_handoffs', 0) >= 2:
         return False
@@ -1220,8 +1224,8 @@ def _candidate_types_passwords(page: Page, view, env: dict, log) -> bool:
     labels = ", ".join(sorted({f.label for f in fields}))
     log(f"apply: only the password field(s) are left ({labels}); waiting for the candidate to type them")
     try:
-        hitl.ask(f"The page needs your account password typed into: {labels}. Type it yourself in the browser window "
-                 "(noVNC http://localhost:6080/vnc.html); the agent never types or asks for a password. It continues by itself when the "
+        hitl.ask(f"The page needs account credentials that could not be completed from the vault: {labels}. Type them only in the browser window "
+                 "(noVNC http://localhost:6080/vnc.html), never in chat. It continues by itself when the "
                  "field(s) hold a value; answer `done` to make it check now.", done_when=filled, timeout_s=env.get('ask_s') or 1500)
     except Exception as exc:
         log(f"apply: the password hand-off ended ({type(exc).__name__}): {str(exc)[:100]}")
@@ -1258,7 +1262,7 @@ def outcome_of(e: dict, f) -> str:
     if e.get("clear"):
         return "verified" if e["verified"] else "failed"
     if getattr(f, "kind", "") == "password" and forms.has_value(f):
-        return "verified"        # the account's own password the portal already holds: never typed, read or judged by the agent
+        return "verified"        # presence only: readers never expose the credential itself
     if forms.has_value(f):
         return "verified" if e.get('verified') else "unverified prefill"
     if not e.get("answered", True):
@@ -1276,7 +1280,7 @@ def blockers_of(record: list[dict]) -> list[str]:
     for e in record:
         reason = BLOCKING.get(e.get("outcome", ""))
         if reason and e.get("required") and e.get("kind") == "password":
-            reason = "left to the candidate: the agent never types or asks for a password; type it in the browser window, then run again"
+            reason = "account credential could not be completed from the vault; type it only in the browser window"
         if reason and e.get("required"):
             detail = f": {e['error']}" if e.get("error") else ""
             out.append(f"{e['label'][:60]} (page {e['page']}): required, {reason}{detail}")
@@ -1607,6 +1611,29 @@ def _authentication_page(view: forms.PageView) -> bool:
     return bool(credential and any(re.fullmatch(heading, h, re.I) for h in view.headings))
 
 
+def _resume_authentication(page, view, ensure_signed_in, log, attempted: set) -> bool:
+    """Hand a later credential screen back to the same account agent used at startup.
+
+    A tenant can redirect to its identity service only AFTER the email/privacy
+    application page. Credentials must never enter the answer planner. Combined
+    registration/application forms remain with the filler and its submit guard.
+    """
+    if not _authentication_page(view) or _account_with_application(view):
+        return False
+    signature = (challenge.safe_url(page.url), tuple(view.headings),
+                 tuple((f.kind, f.label) for f in view.fields))
+    if signature in attempted or len(attempted) >= 3:
+        raise FormNotReady('The portal returned to an unresolved authentication screen; no further credential attempt was made')
+    if ensure_signed_in is None:
+        raise FormNotReady('The portal requires authentication but no account agent is available')
+    attempted.add(signature)
+    log('apply: a later page requires authentication; handing it to the account agent')
+    auth = ensure_signed_in(page.url)
+    if getattr(auth, 'signed_in', True) is False:
+        raise FormNotReady('Portal account setup/sign-in did not complete; application filling stopped')
+    return True
+
+
 def _start(page: Page, url: str, ensure_signed_in, log, fallback: str | None = None, hitl=None,
            already_open: bool = False) -> forms.PageView:
     """Open the posting and get to the application form: click Apply / Apply Manually, sign in when asked.
@@ -1820,7 +1847,7 @@ def recover_desktop_form(page, log=print):
 def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, log=print, model=None,
         hitl=None, ask_s: float = 1800, model_name: str | None = None, at_review=None,
         already_open: bool = False, observe_s: float = 0, filling_strategy: str | None = None,
-        _filling_metrics=None, documents_from: str | Path | None = None) -> dict:
+        _filling_metrics=None, documents_from: str | Path | None = None, registration_credentials=None) -> dict:
     """Fill the application to its review screen. Never clicks Submit itself: `at_review(page, view, result)` (step 13's
     approval and submission) is called there, in the same browser session, when given."""
     job_dir = Path(job_dir)
@@ -1872,13 +1899,18 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
         view = _start(page, url, ensure_signed_in or (lambda u: None), log, fallback=ctx["_jd"].get("source_url"), hitl=hitl)
     same = 0
     env = {"hitl": hitl, "company": company, "host": urlparse(url).netloc, "ask_s": ask_s,
-           "checkpoint": checkpoint, 'out_dir': out_dir}
+           "checkpoint": checkpoint, 'out_dir': out_dir, 'registration_credentials': registration_credentials}
     known, errors, page_no, start = None, [], 0, 0
+    auth_attempted = set()
     if _filling_metrics is not None:_filling_metrics.begin()
     from jobagent.config import get_settings
     for _ in range(get_settings().apply_max_pages + 3):
         challenge.guard(page)
         view = forms.read_page(page)
+        if _resume_authentication(page, view, ensure_signed_in, log, auth_attempted):
+            known, errors, same = None, [], 0
+            checkpoint()
+            continue
         from jobagent.tools import disclosures
         for _section in range(24):
             if not disclosures.expand(page, view, log):
@@ -1897,6 +1929,8 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
             f"({len(view.fields)} fields)")
         from jobagent.tools import notices            # dialogs that gate the form, whichever filler runs (Dayforce: cookie + privacy dialogs)
         if notices.resolve_blocking_dialogs(page, privacy_ok=_privacy_acknowledgement_allowed(ctx), log=log, sms_ok=_sms_consent_answer(ctx), sms_phone=_sms_phone(ctx)):
+            view = forms.read_page(page)
+        if registration_credentials is not None and _account_with_application(view) and registration_credentials(view):
             view = forms.read_page(page)
         try:
             if strategy in ('experimental','adaptive'):

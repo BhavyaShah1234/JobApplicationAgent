@@ -255,7 +255,7 @@ def answer_for(field, contact: dict, company: str = "") -> dict | None:
     if source and field.kind in (
         "select", "combobox", "radio", "buttons", "checkboxes",
     ):
-        if getattr(field, 'options_state', '') == 'unreadable':
+        if getattr(field, 'options_state', '') == 'unreadable' and not (field.kind == 'combobox' and not field.options):
             return _answer('', 'source options could not be read; employee-referral availability is unknown')
         if field.options:
             option = _referral_option(field.options, company) or next((x for x in field.options if x.strip().lower()=='other'),'')

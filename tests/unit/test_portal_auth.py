@@ -74,6 +74,27 @@ def test_rejected_registration_is_not_recorded_as_account_creation(live_login,mo
     assert 'created' not in saved and not saved['account']
 
 
+@pytest.mark.parametrize('tenant,auth_host', [('careers-peraton.icims.com','login.icims.com'),
+                                           ('careers.garmin.com','login.icims.com'),
+                                           ('jobs.ericsson.com','career2.successfactors.eu')])
+def test_universal_login_uses_the_employer_credentials_and_rejection_scope(live_login, monkeypatch, tenant, auth_host):
+    from jobagent.tools import portal_agent
+    page, _, vault, inbox, events = live_login
+    page.url = 'https://' + auth_host + '/u/login/password?state=live-session'
+    vault.set('portal:' + auth_host, email='different@example.com', password='unrelated-global-password')
+    vault.set('portal:' + tenant, email='tenant@example.com', password='tenant-specific-password')
+    def run(page, url, values, inbox, hitl, host, **kwargs):
+        assert host == tenant
+        assert values['EMAIL'] == 'tenant@example.com' and values['PASSWORD'] == 'tenant-specific-password'
+        return {'state': 'signed_in', 'registered': False, 'verified_mail': False, 'steps': []}
+    monkeypatch.setattr(portal_agent, 'run', run)
+    result = PA.ensure_account(page, page.url, vault, inbox, None, 'agent@example.com', log=lambda msg: None,
+                               already_open=True, account_url='https://' + tenant + '/jobs/123')
+    assert result.host == tenant and result.signed_in
+    assert vault.get('portal:' + auth_host)['password'] == 'unrelated-global-password'
+    assert vault.get('portal:' + tenant)['verified']
+
+
 @pytest.mark.parametrize("label", ["Continue with Google", "Continue with Microsoft", "Continue with Linkedin", "Continue with Indeed",
                                    "Continue with Corporate Login", "Sign in with Google", "Log in with Facebook"])
 def test_a_social_login_button_is_refused_on_icims_so_the_agent_cannot_loop_on_it(label):
@@ -311,6 +332,101 @@ def test_register_only_goes_to_the_general_agent_even_for_a_platform_with_an_ada
     assert pa.platform_of(url) in pa.ADAPTERS
     assert pa.ensure_account(None, url, None, None, None, "e@example.com", register_only=True) == "agent" and calls == [True]
     assert pa.ensure_account(None, url, None, None, None, "e@example.com") == "adapter"
+
+
+@pytest.mark.parametrize('message', ['Execution context was destroyed, most likely because of a navigation',
+                                   'Frame was detached'])
+def test_auth_target_discards_a_navigation_race(message):
+    from playwright.sync_api import Error
+    from jobagent.tools import portal_agent as agent
+    def evaluate(*args):
+        raise Error(message)
+    frames = {0: SimpleNamespace(evaluate=evaluate)}
+    assert agent._target(frames, agent.AuthAction(thought='Old page', action='click', element=0)) is None
+
+
+def test_auth_target_does_not_hide_unrelated_script_errors():
+    from playwright.sync_api import Error
+    from jobagent.tools import portal_agent as agent
+    def evaluate(*args):
+        raise Error('ReferenceError: broken script')
+    with pytest.raises(Error, match='broken script'):
+        agent._target({0: SimpleNamespace(evaluate=evaluate)},
+                      agent.AuthAction(thought='Old page', action='click', element=0))
+
+
+def test_auth_hard_restriction_stops_without_asking_for_a_puzzle(monkeypatch):
+    from jobagent.tools import portal_agent as agent, notices, challenge
+    page = type('Page', (), {'url': 'https://signin.example.test/signup',
+                            'wait_for_timeout': lambda self, ms: None})()
+    monkeypatch.setattr(agent.llm, 'writer', lambda *a, **kw: object())
+    monkeypatch.setattr(notices, 'dismiss_cookie_overlay', lambda page: False)
+    monkeypatch.setattr(agent, '_settle_unknown', lambda page:
+                        challenge.Challenge('access-restricted', page.url, 'Access is temporarily restricted'))
+    hitl = SimpleNamespace(ask=lambda *a, **kw: pytest.fail('A restriction is not a solvable puzzle'))
+    with pytest.raises(challenge.Blocked, match='temporarily restricted'):
+        agent._run(page, page.url, {}, None, hitl, 'signin.example.test', lambda msg: None,
+                   None, [], 'register', [])
+
+
+def test_auth_challenge_uses_the_shared_verified_handoff(monkeypatch):
+    from jobagent.tools import portal_agent as agent, notices, challenge
+    page = type('Page', (), {'url': 'https://signin.example.test/signup',
+                            'wait_for_timeout': lambda self, ms: None})()
+    block = challenge.Challenge('hcaptcha', page.url, 'Visible verification widget')
+    monkeypatch.setattr(agent.llm, 'writer', lambda *a, **kw: object())
+    monkeypatch.setattr(notices, 'dismiss_cookie_overlay', lambda page: False)
+    monkeypatch.setattr(agent, '_settle_unknown', lambda page: block)
+    hitl = object()
+    def handoff(actual_page, actual_block, actual_hitl, **kwargs):
+        assert actual_page is page and actual_block is block and actual_hitl is hitl
+        raise challenge.Blocked('Verification is still unresolved')
+    monkeypatch.setattr(challenge, 'wait_for_user', handoff)
+    with pytest.raises(challenge.Blocked, match='still unresolved'):
+        agent._run(page, page.url, {}, None, hitl, 'signin.example.test', lambda msg: None,
+                   None, [], 'register', [])
+
+
+@pytest.mark.parametrize('label,url', [
+    ('Reset your password', ''), ('Forgot password?', ''), ('Create or reset your password', ''),
+    ('Continue', 'https://login.icims.com/u/reset-password/request/tenant'),
+    ('', 'https://portal.test/password_reset/token'),
+    ('Password Reset Instructions', 'https://portal.test/verification-link'),
+])
+def test_only_the_explicit_reset_goal_can_enter_recovery(label, url):
+    from jobagent.tools import portal_agent as agent
+    assert agent.recovery_refusal('register', label, url)
+    assert agent.recovery_refusal('sign_in', label, url)
+    assert agent.recovery_refusal('reset_password', label, url) is None
+
+
+@pytest.mark.parametrize('label,url', [('Sign up', 'https://portal.test/u/signup'),
+                                     ('Create your account', ''), ('Show password', ''), ('Continue', '')])
+def test_normal_registration_controls_are_not_password_recovery(label, url):
+    from jobagent.tools import portal_agent as agent
+    assert agent.recovery_refusal('register', label, url) is None
+
+
+@pytest.mark.parametrize('text', ['An account with this email already exists.', 'The user already exists.',
+                                'Your email address is already registered.', 'This email is already in use.'])
+def test_existing_account_error_does_not_depend_on_a_previous_rejected_password(text):
+    from jobagent.tools import portal_agent as agent
+    assert agent.EXISTING_ACCOUNT_ERROR.search(text)
+    assert not agent.EXISTING_ACCOUNT_ERROR.search('Already have an account? Log in')
+
+
+def test_registration_stops_on_existing_account_before_the_model_can_retry(monkeypatch):
+    from jobagent.tools import portal_agent as agent, notices
+    page = SimpleNamespace(url='https://signup.example.test/signup', wait_for_timeout=lambda ms: None)
+    monkeypatch.setattr(agent.llm, 'writer', lambda *a, **kw: object())
+    monkeypatch.setattr(agent.llm, 'structured_invoke', lambda *a, **kw: pytest.fail('No more model action after existing-account error'))
+    monkeypatch.setattr(notices, 'dismiss_cookie_overlay', lambda page: False)
+    monkeypatch.setattr(agent, '_settle_unknown', lambda page: None)
+    monkeypatch.setattr(agent, 'snapshot', lambda page: ('FRAME 0 x\nTEXT: An account with this email already exists.\nELEMENTS:', {}))
+    result = agent._run(page, page.url, {}, None, None, 'signup.example.test', lambda msg: None,
+                        None, [], 'register', [])
+    assert result['state'] == 'failed' and 'existing account' in result['reason']
+    assert not result['registered']
 
 
 def test_a_frame_that_detaches_while_the_page_navigates_does_not_stop_the_cookie_notice_scan():

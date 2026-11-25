@@ -1,5 +1,15 @@
 # UKG / UltiPro: what the agent found, what it fixed, and where it stopped
 
+## Update — 2026-11-25: registration attempted by the agent; live validation pending
+
+The owner confirmed that setup/reset was not completed and asked the job agent to perform registration. One normal `apply --register-account --no-submit` reached the second UKG signup step, then crashed at `_target` when navigation destroyed the execution context during the model's decision. No account creation is confirmed.
+
+Candidate code binds actions to the actual controls captured for that turn. A redirect/re-render invalidates an old action instead of applying its numeric index to a replacement page. Navigation races trigger rediscovery; unrelated script errors still surface. Auth challenges use the shared verified handoff, including correct desktop/Docker instructions and an immediate stop for explicit access restrictions.
+
+Real-Chrome and auth-loop regressions pass, but a new live UKG registration and the required second DOWL role/other employer are still pending. The previous advice below to switch networks is not part of this test: wait out a restriction; do not attempt to lift it by clearing cookies or changing networks. No passwords, submissions, or account resets are authorized by a local test pass.
+
+Evidence and exact source/deployment status: `outputs/verification/portal-acceptance-20261125T003317Z/`.
+
 Written 2026-11-24. Status: **on hold** (UKG is rate-limiting this network). Nothing was submitted. The agent's email has a UKG sign-in
 account in an unknown, half-created state. No emails, passwords or tokens are written in this file.
 Evidence: `outputs/dowl/*/application/` (`page-1.png`, `application.json`), `state/logs/*apply-f8cc737a*.log`,

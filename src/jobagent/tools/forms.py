@@ -469,7 +469,7 @@ FIELDS_JS = r"""(start) => {
     if (role === 'spinbutton' || role === 'textbox' || e.isContentEditable || e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') {
       const kind = e.tagName === 'TEXTAREA' || e.getAttribute('aria-multiline') === 'true' ? 'textarea' : (role === 'spinbutton' ? 'spin' : (t || 'text'));
       if (/search/i.test(t) || /^search/i.test(q)) continue;
-      add(e, {kind, label: q, required: required(e, q), value: e.isContentEditable ? clean(e.innerText) : (e.value || ''), maxlength: e.maxLength > 0 ? e.maxLength : null});
+      add(e, {kind, label: q, required: required(e, q), value: t === 'password' ? (e.value ? '[credential present]' : '') : e.isContentEditable ? clean(e.innerText) : (e.value || ''), maxlength: e.maxLength > 0 ? e.maxLength : null});
     }
   }
   const buttons = all('button, [role=button], input[type=submit], a[href]')
@@ -1093,11 +1093,13 @@ def same_value(want: str, got: str, kind: str, question: str = "", multiple: boo
 
 # --- comboboxes ------------------------------------------------------------------------------------------------------
 
-OPTIONS_JS = r"""() => [...new Set([...(window.__jobagentAll ? window.__jobagentAll('[role=option], [role=menuitem], [data-automation-id=promptOption]') : document.querySelectorAll('[role=option], [role=menuitem], [data-automation-id=promptOption]'))]
+OPTION_SELECTOR = '[role=option], [role=menuitem], [data-automation-id=promptOption], spl-select-option'
+
+OPTIONS_JS = r"""() => [...new Set([...(window.__jobagentAll ? window.__jobagentAll('OPTION_SELECTOR') : document.querySelectorAll('OPTION_SELECTOR'))]
   .filter(e => { const r = e.getBoundingClientRect(); return r.width > 1 && r.height > 1
                  && !e.closest('[data-automation-id=selectedItemList], [data-automation-id=selectedItem]')
                  && !e.closest('header, nav, footer, [role=navigation], [role=banner], [role=contentinfo]'); })   // the site's own menus are never options
-  .map(e => (e.innerText || e.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean))]"""
+  .map(e => (e.innerText || e.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean))]""".replace('OPTION_SELECTOR', OPTION_SELECTOR)
 
 _NO_OPTIONS = re.compile(r"(?i)^(no (options|results|items|matches)( found)?\.?|loading\.*|type to search|start typing.*|"
                          r"select one)$")
@@ -1228,22 +1230,77 @@ def _open_options(frame: Frame, loc, page: Page) -> list[str]:
         frame.wait_for_function("pattern => {const skip=new RegExp(pattern,'i');return ("+OPTIONS_JS+")().some(t=>!skip.test(t));}",
                                 arg=_NO_OPTIONS.pattern.removeprefix('(?i)'),timeout=1500)
     except Exception:pass
-    owned = _owned_options(loc)
-    if owned:
-        return [o for o in owned if not _NO_OPTIONS.match(o)]          # the list THIS control owns, not whatever else the page shows
-    return [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
+    return _options_for_control(frame, loc)
+
+
+_OWNED_MENU_JS = r"""e => {
+    const ids = (e.getAttribute('aria-controls') || e.getAttribute('aria-owns') || '').split(/\s+/).filter(Boolean);
+    const root = e.getRootNode();
+    for (const id of ids) {
+        const local = (root.getElementById ? root.getElementById(id) : null) || document.getElementById(id);
+        if (local) return local;
+        if (window.__jobagentAll) {
+            const menu = window.__jobagentAll('[id="' + CSS.escape(id) + '"]')[0];
+            if (menu) return menu;
+        }
+    }
+    return null;
+}"""
+
+
+def _owned_menu(loc):
+    try:
+        handle = loc.evaluate_handle(_OWNED_MENU_JS)
+        menu = handle.as_element()
+        if menu is None:
+            handle.dispose()
+        return menu
+    except Exception:
+        return None
 
 
 def _owned_options(loc) -> list[str]:
     """The options of the list a combobox names with aria-controls / aria-owns (Ant Design, react-select, ...), or [] when it names none
     or the list holds no options. Reading only this list keeps unrelated menus (a header's links, another open picker) out."""
+    menu = None
     try:
-        return loc.evaluate("""e => { const id = e.getAttribute('aria-controls') || e.getAttribute('aria-owns'); if (!id) return [];
-            const root = e.getRootNode(); const list = (root.getElementById ? root.getElementById(id) : null) || document.getElementById(id);
-            if (!list) return [];
-            return [...new Set([...list.querySelectorAll('[role=option]')].map(o => (o.innerText || o.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean))]; }""") or []
+        menu = _owned_menu(loc)
+        if menu is None:
+            return []
+        return menu.evaluate("""(menu, selector) => [...new Set([...menu.querySelectorAll(selector)]
+            .filter(o => o.getClientRects().length && getComputedStyle(o).visibility !== 'hidden' && getComputedStyle(o).display !== 'none')
+            .map(o => (o.innerText || o.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean))]""", OPTION_SELECTOR) or []
     except Exception:
         return []
+    finally:
+        if menu is not None:
+            menu.dispose()
+
+
+def _options_for_control(frame, loc):
+    menu = _owned_menu(loc)
+    if menu is not None:
+        menu.dispose()
+        # An existing but empty owned menu is still authoritative. Another
+        # field's populated menu must not suppress typing into this search box.
+        return [o for o in _owned_options(loc) if not _NO_OPTIONS.match(o)]
+    return [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
+
+
+def _owned_option(loc, text):
+    menu = _owned_menu(loc)
+    if menu is None:
+        return None
+    try:
+        handle = menu.evaluate_handle("""(menu, [selector, text]) => [...menu.querySelectorAll(selector)].find(o =>
+            o.getClientRects().length && getComputedStyle(o).visibility !== 'hidden' &&
+            (o.innerText || o.textContent || '').replace(/\\s+/g, ' ').trim() === text) || null""", [OPTION_SELECTOR, text])
+        option = handle.as_element()
+        if option is None:
+            handle.dispose()
+        return option
+    finally:
+        menu.dispose()
 
 
 def discover_options(page: Page, view: PageView, log=print, *, fields=None) -> None:
@@ -1431,7 +1488,7 @@ def _net_trace(page):
     return t
 
 
-def _save_combobox_failure(loc, f, opt, exc) -> None:
+def _save_combobox_failure(loc, f, opt, exc, *, evidence=None) -> None:
     """Keep the HTML around a dropdown that could not be chosen (state/logs/combobox-failures.jsonl) so the next fix is built on the real page."""
     try:
         import json
@@ -1442,7 +1499,10 @@ def _save_combobox_failure(loc, f, opt, exc) -> None:
         path = Path(get_settings().state_dir) / "logs" / "combobox-failures.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a") as fh:
-            fh.write(json.dumps({"label": f.label, "option": opt, "error": str(exc)[:200], **html}) + "\n")
+            row = {"label": f.label, "option": opt, "error": str(exc)[:200], **html}
+            if evidence is not None:
+                row["evidence"] = evidence
+            fh.write(json.dumps(row) + "\n")
     except Exception:
         pass
 
@@ -1524,7 +1584,8 @@ def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
 
 
 def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[str, str], tie_break=None,
-               strict: bool = False, close: bool = False, before_upload=None, upload_confirmation=None, alternatives=()) -> str:
+               strict: bool = False, close: bool = False, before_upload=None, upload_confirmation=None, alternatives=(),
+               option_resolver=None) -> str:
     """Put `answer` into the field. Returns what was chosen (the option text for choice fields)."""
     from jobagent.tools import challenge
     if challenge.guard(page):
@@ -1805,6 +1866,10 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             (lambda ans, o: (close_option(ans, o), 0)) if close else match_option
         candidates=list(dict.fromkeys([answer,*[str(a) for a in alternatives if a and not OTHER_OPTION.match(str(a))]]))
         def offered(options):
+            if option_resolver is not None and options:
+                resolved = option_resolver(options)
+                if resolved in options:
+                    return resolved
             return next((hit for candidate in candidates if (hit:=pick(candidate,options)[0]) is not None
                          and (not PHONE_CODE_Q.search(f.label) or phone_code_option(answer, [hit]) is not None)),None)
         opt=offered(opts) if opts else None
@@ -1833,7 +1898,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                     frame.wait_for_function("before => {const choices=("+OPTIONS_JS+")();return choices.length && !choices.every(t=>/^loading/i.test(t)) && JSON.stringify(choices)!==JSON.stringify(before);}",
                                             arg=previous,timeout=1800)
                 except Exception:pass
-                opts = [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
+                opts = _options_for_control(frame, loc)
                 if not opts and loc.get_attribute("data-uxi-widget-type") == "selectinput":
                     # Workday picks a search's only result by itself: no list, just the new chip
                     chips = loc.evaluate("e => [...(e.closest('[data-automation-id=multiSelectContainer]') || "
@@ -1864,11 +1929,15 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             except Exception as exc:
                 menu = f"menu lookup failed: {type(exc).__name__}"
             try:      # what the typing did: the value that landed, where focus is, and what the page asked the network
-                state = loc.evaluate("e => ({value: e.value, focused: document.activeElement === e, expanded: e.getAttribute('aria-expanded')})")
+                state = loc.evaluate("e => ({value: e.value, focused: e.getRootNode().activeElement === e, "
+                                     "expanded: e.getAttribute('aria-expanded')})")
             except Exception as exc:
                 state = f"state lookup failed: {type(exc).__name__}"
-            _save_combobox_failure(loc, f, answer, f"combobox: no match among {list(opts or [])[:25]} | menu: {menu} | input: {state} | "
-                                   f"network since typing: {json.dumps(_trace.since(_trace_from))[:2500]}")
+            # Keep the evidence structured: the short error column is deliberately
+            # capped, and previously discarded the input/network details entirely.
+            _save_combobox_failure(loc, f, answer, f"combobox: no match among {list(opts or [])[:25]}",
+                                   evidence={"options": list(opts or [])[:60], "menu_html": menu,
+                                             "input": state, "network": _trace.since(_trace_from)[-100:]})
             page.keyboard.press("Escape")
             raise UnavailableOption(f"{answer!r} isn't offered as such")
         if opt is None:
@@ -1878,23 +1947,32 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 page.keyboard.press("Escape")
                 page.keyboard.press("Escape")
                 raise
+        owned_option = _owned_option(loc, opt)
+        owned_menu = _owned_menu(loc)
+        if owned_menu is not None:
+            owned_menu.dispose()
+            if owned_option is None:
+                raise FillError('The chosen option is no longer available in this control\'s own menu')
         option = frame.get_by_role("option", name=opt, exact=True)
         if not option.count():
-            option = shadow_locator(frame, "[role=option], [role=menuitem], [data-automation-id=promptOption]").filter(
-                has_text=re.compile(rf"^\s*{re.escape(opt)}\s*$"))
+            option = shadow_locator(frame, OPTION_SELECTOR).filter(has_text=re.compile(rf"^\s*{re.escape(opt)}\s*$"))
+        target_option = owned_option or option.first
         try:
             try:
-                native = option.first.evaluate("o => o.tagName === 'OPTION' && !!o.closest('select')", timeout=3000)
+                script = "o => o.tagName === 'OPTION' && !!o.closest('select')"
+                native = target_option.evaluate(script) if owned_option else target_option.evaluate(script, timeout=3000)
             except Exception:
                 native = False
             if native:      # the list is a native <select> behind the widget: options of a closed select cannot be clicked, select the value
-                option.first.evaluate_handle("o => o.closest('select')").as_element().select_option(label=opt, force=True, timeout=8000)
+                target_option.evaluate_handle("o => o.closest('select')").as_element().select_option(label=opt, force=True, timeout=8000)
             else:
-                option.first.click(timeout=8000)
+                target_option.click(timeout=8000)
         except Exception as exc:
             _save_combobox_failure(loc, f, opt, exc)
             raise
         finally:
+            if owned_option is not None:
+                owned_option.dispose()
             page.wait_for_timeout(1200 if workday_picker else 50)
             if single_select2:
                 # Some Select2 integrations retain the menu, or replace the

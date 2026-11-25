@@ -982,13 +982,16 @@ def apply_cmd(
                     from jobagent.tools.memory import PortalMemory, portal_key
                     log("apply: " + portal_state.describe(portal_state.forget_portal(page, url, PortalMemory(portal_key(url)).data.get("domains", []))))
                     page.goto(url, wait_until="domcontentloaded")
+                account_url = jd.get('source_url') or url
                 sign_in = lambda url: ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log, already_open=True,
-                                                     register_only=register_account)
+                                                     register_only=register_account, account_url=account_url)
                 from jobagent.steps.apply import registration_profile
+                from jobagent.tools.portal_auth import fill_new_account_passwords
                 from jobagent.tools import portal_agent
                 portal_agent.set_registration_profile(registration_profile(Path(job_dir), company, model, log))
                 res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
                           ask_s=ask_minutes * 60, model_name=model, filling_strategy=strategy, documents_from=documents_from,
+                          registration_credentials=lambda view: fill_new_account_passwords(page, view, vault, email, account_url, log),
                           **sess.run_options(observe_s=30, auto_fallback=browser_mode == 'auto'))
             if not (res.get('state')=='blocked' and res.get('blocked_by')=='challenge'
                     and res.get('resumable') and mode=='docker' and browser_mode=='auto'):
@@ -1090,11 +1093,19 @@ def submit_cmd(
         log(f"submit: browser={browser_mode}")
         with open_inbox() as inbox, open_session(browser_mode, url, related) as sess:
             page = sess.page
-            sign_in = lambda url: ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log, already_open=True)  # noqa: E731
+            account_url = jd.get('source_url') or url
+            sign_in = lambda url: ensure_account(page, url, vault, inbox, open_hitl(log), email, log=log,
+                                                 already_open=True, account_url=account_url)  # noqa: E731
+            from jobagent.steps.apply import registration_profile
+            from jobagent.tools import portal_agent
+            from jobagent.tools.portal_auth import fill_new_account_passwords
+            portal_agent.set_registration_profile(registration_profile(Path(job_dir), company, None, log))
             hook = make_at_review(Path(job_dir), jd, open_hitl(log), inbox, conn, log, ask_s=review_minutes * 60,
                                   mail_s=mail_minutes * 60)
             res = run(page, job_dir, company, ensure_signed_in=sign_in, log=log, hitl=open_hitl(log),
-                      ask_s=ask_minutes * 60, at_review=hook, filling_strategy=strategy, **sess.run_options())
+                      ask_s=ask_minutes * 60, at_review=hook, filling_strategy=strategy,
+                      registration_credentials=lambda view: fill_new_account_passwords(page, view, vault, email, account_url, log),
+                      **sess.run_options())
     except Unavailable as gone:
         wf.mark("submit", "failed", error=f"unavailable: {gone.kind}")
         _stopped(job_dir, gone, "submit")

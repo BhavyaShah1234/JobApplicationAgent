@@ -42,6 +42,12 @@ render();
 VALUES = {"EMAIL": "jamie@example.org", "PASSWORD": "Shared-pw-1", "FIRST_NAME": "Jamie", "LAST_NAME": "Lee", "PHONE": "5551234567"}
 
 
+@pytest.fixture(autouse=True)
+def isolate_rejection_history(tmp_path, monkeypatch):
+    """A scripted portal never reads or writes the live cross-run lockout ledger."""
+    monkeypatch.setattr(PA, '_rejections_file', lambda host: tmp_path / (host + '.json'))
+
+
 def test_account_evidence_probe_stays_on_its_portal_and_restores_failed_probes(monkeypatch):
     class Page:
         url = "https://recruit.test/application"
@@ -144,7 +150,10 @@ class Driver:
 
 def run_portal(script, account="false", monkeypatch=None, hitl=None):
     asked = []
-    hitl = hitl or SimpleNamespace(ask=lambda q, **k: asked.append(q) or "done")
+    def unexpected_handoff(question, **kwargs):
+        asked.append(question)
+        pytest.fail('The local auth fixture unexpectedly requested human verification: ' + question)
+    hitl = hitl or SimpleNamespace(ask=unexpected_handoff)
     with sync_playwright() as pw:
         try:
             browser = pw.chromium.launch(channel="chrome", headless=True)
@@ -152,10 +161,14 @@ def run_portal(script, account="false", monkeypatch=None, hitl=None):
             pytest.skip("no Chrome here")
         try:
             page = browser.new_page()
+            script_errors = []
+            page.on('pageerror', lambda error: script_errors.append(str(error)))
             page.route("**/*", lambda r: r.fulfill(status=200, content_type="text/html", body=PORTAL % {"account": account})
                        if r.request.resource_type == "document" else r.fulfill(status=401, body="no") if r.request.method == "POST"
                        else r.abort())
             page.goto("https://portal.test/")
+            assert not script_errors, script_errors
+            assert page.get_by_role('heading', name='Sign in', exact=True).is_visible()
             real = page.wait_for_timeout
             page.wait_for_timeout = lambda ms: real(min(ms, 60))
             driver = Driver(script)
@@ -200,7 +213,7 @@ def test_one_unchanged_rejection_read_many_times_counts_once_and_registration_ca
     script = LOGIN + [("wait", None, ""), ("wait", None, ""), ("wait", None, ""),      # the SAME error text, read three more times
                       ("click", "Create Account", ""),
                       ("fill", "First Name", "{FIRST_NAME}"), ("fill", "Last Name", "{LAST_NAME}"), ("fill", "Email", "{EMAIL}"),
-                      ("fill", "Country", "United States (+1)"),                       # a native list: filled as if it were a text box
+                      ("select", "Country", "United States (+1)"),                     # choose the offered dial code; invented literal fills are refused
                       ("fill", "Phone", "{PHONE}"), ("fill", "Password", "{PASSWORD}"), ("fill", "Confirm", "{PASSWORD}"),
                       ("click", "Create Account", ""), ("signed_in", None, "")]
     out, driver, _ = run_portal(script, monkeypatch=monkeypatch)
@@ -208,7 +221,7 @@ def test_one_unchanged_rejection_read_many_times_counts_once_and_registration_ca
     assert out["state"] == "signed_in", steps
     assert "refused: the password was already rejected" not in steps                    # the registration form could set its password
     assert "CHOICES=" in " ".join(driver.views)                                          # the snapshot showed the list's options
-    assert any(s.startswith("select United States (+1)") for s in out["steps"])         # and the fill became a select
+    assert any(s.startswith("select United States (+1)") for s in out["steps"])
 
 
 def test_two_real_rejected_login_submissions_stop_further_login_password_fills(monkeypatch):
@@ -233,7 +246,7 @@ def test_alternating_between_the_two_forms_is_bounded_and_ends_in_a_clear_handof
 
 def test_an_existing_account_with_unknown_credentials_is_not_silently_reset(monkeypatch):
     script = LOGIN + [("click", "Create Account", ""), ("fill", "First Name", "{FIRST_NAME}"), ("fill", "Last Name", "{LAST_NAME}"),
-                      ("fill", "Email", "{EMAIL}"), ("fill", "Country", "United States (+1)"), ("fill", "Password", "{PASSWORD}"),
+                      ("fill", "Email", "{EMAIL}"), ("select", "Country", "United States (+1)"), ("fill", "Password", "{PASSWORD}"),
                       ("fill", "Confirm", "{PASSWORD}"), ("click", "Create Account", ""), ("wait", None, "")]
     out, _, _ = run_portal(script, account="true", monkeypatch=monkeypatch)
     assert out["state"] == "failed" and "already exists" in out["reason"] and "not done automatically" in out["reason"]
@@ -275,7 +288,7 @@ def test_a_non_submit_click_after_a_password_fill_is_not_another_rejected_login(
     banner is still on the page and must not be counted again."""
     global PORTAL
     original = PORTAL
-    PORTAL = original.replace("<button id=go>Sign In</button>", "<button type=button id=show onclick=\"fetch('/analytics', {method: 'POST', body: 'clicked=show'})\">Show Password</button><button id=go>Sign In</button>")
+    PORTAL = original.replace("<button id=go>Sign In</button>", '<button type=button id=show onclick="fetch(&quot;/analytics&quot;, {method: &quot;POST&quot;, body: &quot;clicked=show&quot;})">Show Password</button><button id=go>Sign In</button>')
     try:
         script = LOGIN + [("fill", "Password", "{PASSWORD}"), ("click", "Show Password", ""), ("fill", "Password", "{PASSWORD}"),
                           ("failed", None, "")]
@@ -289,7 +302,7 @@ def test_unrelated_successful_page_traffic_is_not_a_second_login(monkeypatch):
     """Codex's round-4 case: Show Password sends only POST /analytics (HTTP 204); the old rejection banner is unchanged."""
     global PORTAL
     original = PORTAL
-    PORTAL = original.replace("<button id=go>Sign In</button>", "<button type=button id=show onclick=\"fetch('/analytics', {method: 'POST', body: 'x'})\">Show Password</button><button id=go>Sign In</button>")
+    PORTAL = original.replace("<button id=go>Sign In</button>", '<button type=button id=show onclick="fetch(&quot;/analytics&quot;, {method: &quot;POST&quot;, body: &quot;x&quot;})">Show Password</button><button id=go>Sign In</button>')
     try:
         script = LOGIN + [("fill", "Password", "{PASSWORD}"), ("click", "Show Password", ""), ("fill", "Password", "{PASSWORD}"), ("failed", None, "")]
         out, _, _ = run_portal(script, monkeypatch=monkeypatch)
@@ -301,7 +314,7 @@ def test_unrelated_successful_page_traffic_is_not_a_second_login(monkeypatch):
 def test_a_failed_unrelated_request_and_a_late_old_banner_are_not_a_second_login(monkeypatch):
     global PORTAL
     original = PORTAL
-    PORTAL = original.replace("<button id=go>Sign In</button>", "<button type=button id=show onclick=\"fetch('/beacon', {method: 'POST', body: 'x'}).catch(() => {})\">Show Password</button><button id=go>Sign In</button>")
+    PORTAL = original.replace("<button id=go>Sign In</button>", '<button type=button id=show onclick="fetch(&quot;/beacon&quot;, {method: &quot;POST&quot;, body: &quot;x&quot;}).catch(() => {})">Show Password</button><button id=go>Sign In</button>')
     try:
         script = LOGIN + [("fill", "Password", "{PASSWORD}"), ("click", "Show Password", ""), ("wait", None, ""), ("wait", None, ""),
                           ("fill", "Password", "{PASSWORD}"), ("failed", None, "")]
@@ -315,3 +328,17 @@ def test_the_listener_records_only_whether_credentials_were_sent_never_the_passw
     out, driver, _ = run_portal(LOGIN + [("failed", None, "")], monkeypatch=monkeypatch)
     assert not any(VALUES["PASSWORD"] in s for s in out["steps"])                     # masked: the history holds placeholders only
     assert not any(VALUES["PASSWORD"] in v for v in driver.views)
+
+
+def test_a_model_selected_reset_link_is_blocked_before_navigation(monkeypatch):
+    global PORTAL
+    original = PORTAL
+    PORTAL = original.replace('<button id=go>Sign In</button>',
+                             '<a href="/u/reset-password/request">Reset your password</a><button id=go>Sign In</button>')
+    try:
+        out, driver, _ = run_portal([('click', 'Reset your password', '')], monkeypatch=monkeypatch)
+    finally:
+        PORTAL = original
+    assert out['state'] == 'failed' and 'outside this' in out['reason']
+    assert driver.calls == 1
+    assert not any(s.startswith('click') for s in out['steps'])
