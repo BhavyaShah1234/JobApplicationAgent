@@ -100,7 +100,7 @@ def persistent_context(settings: Settings | None = None) -> Iterator[BrowserCont
         yield ctx
 
 
-def handoff_tab_allowed(requested, page, related_urls=()):
+def handoff_tab_allowed(requested, page, related_urls=(), *, lease=None, target_id=None):
     """Bind initial attachment to the job or an explicitly trusted credential-only login.
 
     A person can reach a shared identity service before enabling Chrome's connection.
@@ -113,6 +113,13 @@ def handoff_tab_allowed(requested, page, related_urls=()):
     if H.same_posting(requested, page.url):
         return True
     current = D.origin(page.url)
+    if (lease and target_id and lease.get('url') == requested and lease.get('target_id') == target_id
+            and current in lease.get('origins', [])):
+        from urllib.parse import urlsplit
+        original, redirected = urlsplit(requested), urlsplit(page.url)
+        same_origin_request = original._replace(scheme=redirected.scheme, netloc=redirected.netloc).geturl()
+        if H.same_posting(same_origin_request, page.url):
+            return True
     if (current == D.origin(requested) or
             current not in {D.origin(u) for u in related_urls if D.public_destination(u)}):
         return False
@@ -198,10 +205,18 @@ def application_context(mode, url, settings=None, *, related_urls=()):
                     raise RuntimeError('Dedicated application tab missing or ambiguous')
                 time.sleep(.25)
             page = pages[0]
-            if handoff:
-                if not handoff_tab_allowed(url,page,related_urls):
-                    raise RuntimeError('The handoff tab belongs to a different posting; return to the requested application')
             ctx = page.context
+            try:                                              # the exact target this task's lease is bound to
+                target_id = ctx.new_cdp_session(page).send('Target.getTargetInfo')['targetInfo']['targetId']
+            except Exception as exc:
+                from jobagent.tools.challenge import Blocked
+                raise Blocked('The identity of the application tab could not be verified; application stopped') from exc
+            lease_path = desktop_browser.agent_profile_root(path.parent, url) / 'approved.json'
+            if handoff:
+                try:lease=json.loads(lease_path.read_text())
+                except (OSError, ValueError):lease={}
+                if not handoff_tab_allowed(url,page,related_urls,lease=lease,target_id=target_id):
+                    raise RuntimeError('The handoff tab belongs to a different posting; return to the requested application')
             if handoff:ctx.jobagent_background=True
             if view_url:ctx.jobagent_desktop_view_url=view_url
             from jobagent.tools.shadow import install
@@ -209,15 +224,11 @@ def application_context(mode, url, settings=None, *, related_urls=()):
             from jobagent.tools.challenge import Blocked
             if not desktop_browser.public_destination(url):
                 raise Blocked('The requested application URL is not a public HTTPS destination')
-            try:                                              # the browser target this lease is bound to
-                target_id = ctx.new_cdp_session(page).send('Target.getTargetInfo')['targetInfo']['targetId']
-            except Exception as exc:
-                raise Blocked('The identity of the application tab could not be verified; application stopped') from exc
             if not reply.get('guarded'):                      # not started through the public-only proxy: not trusted
                 raise Blocked('This desktop browser was started without the public-only network proxy; stop it and restart '
                               'the host desktop bridge (PYTHONPATH=src python3 -m jobagent.tools.desktop_browser serve)')
             policy = desktop_browser.Scope(ctx, page, url, related_urls, fresh=fresh,
-                                           store=desktop_browser.agent_profile_root(path.parent, url) / 'approved.json',
+                                           store=lease_path,
                                            target_id=target_id)
             policy(page)
             ctx.jobagent_policy = policy

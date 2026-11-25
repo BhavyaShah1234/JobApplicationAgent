@@ -52,3 +52,23 @@ def test_unreadable_login_never_gets_the_exception(monkeypatch):
         url=LOGIN
         def evaluate(self,*args):raise RuntimeError('Navigation interrupted inspection')
     assert not browser.handoff_tab_allowed(POSTING,Page(),[LOGIN])
+
+
+@pytest.mark.parametrize('change,expected',[
+    ('none',True),('target',False),('missing_target',False),('task',False),
+    ('origin',False),('job',False),('unbound',False),
+])
+def test_redirected_job_can_resume_only_on_its_previously_approved_task_target(monkeypatch,change,expected):
+    monkeypatch.setattr(desktop_browser,'public_destination',lambda u:True)
+    class Page:
+        url='https://tenant.example.test/jobs/42/role/candidate?private=opaque'
+        def evaluate(self,*args):pytest.fail('Not a login-page exception')
+    page=Page();target='same-target'
+    lease={'url':POSTING,'target_id':target,'origins':['https://tenant.example.test']}
+    if change=='target':lease['target_id']='other-target'
+    if change=='missing_target':target=None
+    if change=='task':lease['url']='https://careers.example.test/jobs/99/job'
+    if change=='origin':lease['origins']=['https://unrelated.example.test']
+    if change=='job':page.url=page.url.replace('/42/','/99/')
+    if change=='unbound':lease={}
+    assert browser.handoff_tab_allowed(POSTING,page,lease=lease,target_id=target) is expected
