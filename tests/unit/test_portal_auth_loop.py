@@ -210,10 +210,11 @@ def test_genuine_visible_progress_resets_the_loading_wait_counter(monkeypatch):
 
 
 def test_one_unchanged_rejection_read_many_times_counts_once_and_registration_can_use_the_password(monkeypatch):
+    monkeypatch.setattr(PA, 'registration_extras', lambda log: {'COUNTRY_OF_RESIDENCE': 'United States'})
     script = LOGIN + [("wait", None, ""), ("wait", None, ""), ("wait", None, ""),      # the SAME error text, read three more times
                       ("click", "Create Account", ""),
                       ("fill", "First Name", "{FIRST_NAME}"), ("fill", "Last Name", "{LAST_NAME}"), ("fill", "Email", "{EMAIL}"),
-                      ("select", "Country", "United States (+1)"),                     # choose the offered dial code; invented literal fills are refused
+                      ("fill", "Country", "{COUNTRY_OF_RESIDENCE}"),                   # source-backed fill is converted to the actual native option
                       ("fill", "Phone", "{PHONE}"), ("fill", "Password", "{PASSWORD}"), ("fill", "Confirm", "{PASSWORD}"),
                       ("click", "Create Account", ""), ("signed_in", None, "")]
     out, driver, _ = run_portal(script, monkeypatch=monkeypatch)

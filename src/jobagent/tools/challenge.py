@@ -192,6 +192,7 @@ class Controller:
         path = out / f"challenge-{stamp}.json"
         path.write_text(json.dumps(diagnostic, indent=2))
         deadline = time.monotonic() + (900 if timeout_s is None else timeout_s)
+        last_deadline = deadline + 90
         stable, last = 0, float('-inf')
 
         def resolved():
@@ -225,7 +226,7 @@ class Controller:
                     raise Blocked("Human skipped verification")
                 # A person who answered 'done' just before the shared deadline still gets time for the three spaced readiness
                 # checks (SAP: 'done' came 30 s before expiry, the re-ask had 23 s left and the run ended blocked).
-                deadline = max(deadline, time.monotonic() + 90)
+                deadline = max(deadline, min(last_deadline, time.monotonic() + 90))
                 for _ in range(3):
                     if resolved():
                         diagnostic['state'] = 'ready'

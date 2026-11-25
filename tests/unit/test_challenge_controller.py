@@ -207,6 +207,21 @@ def test_a_done_answered_just_before_the_deadline_still_gets_its_readiness_check
     assert page.clock >= 899
 
 
+def test_repeated_done_cannot_extend_an_unresolved_challenge_indefinitely(monkeypatch, tmp_path):
+    calls = []
+    def ask(*args, **kwargs):
+        calls.append(1)
+        if len(calls) > 20:
+            raise HitlTimeout('test safety bound: readiness never became true')
+        return 'done'
+    page, controller = setup(monkeypatch, tmp_path, lambda page: challenge.Challenge('unknown', page.url, ''),
+                             SimpleNamespace(ask=ask), ready=lambda page: False)
+    with pytest.raises(challenge.Blocked, match='Verification deadline expired'):
+        controller.wait(page, challenge.Challenge('unknown', page.url, ''), timeout_s=5)
+    assert page.clock <= 101
+    assert len(calls) <= 20
+
+
 class _Frame:
     def __init__(self, url):
         self.url = url
