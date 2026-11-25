@@ -21,6 +21,7 @@ def field(label, kind='combobox', options=None, **kwargs):
     (field('Do you agree to the terms and conditions?'), 'Yes'),
     (field('I acknowledge that I accept the recruitment privacy notice', 'checkbox'), 'checked'),
     (field('I agree', 'checkbox', section='Terms and Conditions'), 'checked'),
+    (field('Signature By checking the box above you are applying your signature and you agree to this Applicant Statement.', 'checkbox', section='Applicant Statement'), 'checked'),
     (field('Do you agree to the Non Disclosure Agreement?', options=[
         'I have read and agree to the Non Disclosure Agreement',
         'I have read and DO NOT agree to the Non Disclosure Agreement']),

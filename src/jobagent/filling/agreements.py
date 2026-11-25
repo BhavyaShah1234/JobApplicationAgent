@@ -25,7 +25,7 @@ def agreement_value(field):
     action = re.search(r'\b(?:agree|disagree|accept|acknowledge|acknowledgement|acknowledgment|consent|certify|confirm|understand|read)\b', q)
     subject = re.search(r'\b(?:terms|conditions|agreements?|nda|arbitration|privacy|polic(?:y|ies)|notice|'
                         r'code of conduct|data processing|background check|communications|messages|'
-                        r'truthful(?:ly)?|accurate(?:ly)?|accuracy|at will)\b', q + ' ' + norm(field.section))
+                        r'truthful(?:ly)?|accurate(?:ly)?|accuracy|at will|applicant statement)\b', q + ' ' + norm(field.section))
     if not action or not subject:
         return None
     # Consent does not establish that a separate activity was completed or that

@@ -162,9 +162,13 @@ FIELDS_JS = r"""(start) => {
     let section=row ? (/^Emp/i.test(row[2])?'Work Experience':'Education')+' '+(Number(row[1])+1) : '';
     if(!section){
       const titles=[...e.getRootNode().querySelectorAll('strong,b')].filter(h=>before(h,e));
-      const heading=titles.reverse().find(h=>/^(?:Position Details|Personal Information|Current Address Information|Phone Number|Mutual Arbitration Agreement|Applicant Statement)$/i.test(clean(h.textContent)));
+      const heading=titles.reverse().find(h=>/^(?:Position Details|Personal Information|Current Address Information|Phone Number|Education|Work\s*Experience|Mutual Arbitration Agreement|Applicant Statement)$/i.test(clean(h.textContent)));
       section=heading ? clean(heading.textContent) : '';
+      const index=e.id.match(/^icims_(\d+)_/);
+      if(index && /^(?:Education|Work\s*Experience)$/i.test(section))
+        section=(/^Education$/i.test(section)?'Education':'Work Experience')+' '+(Number(index[1])+1);
     }
+    if(section==='Phone Number' && /^Number$/i.test(label))label='Phone Number';
     return {label,section,help:date?'':label};
   };
   const question = e => {
@@ -359,6 +363,10 @@ FIELDS_JS = r"""(start) => {
     if(f.calendar && !f.format)f.format='YYYY-MM-DD';
     if(!f.format && /\b(MM|YYYY|YY|DD)\b/i.test(e.placeholder||''))f.format=e.placeholder;
     f.section = section(e);
+    if(f.section==='Position Details' && /^Application Date (?:Month|Day|Year)$/i.test(f.label)){
+      const defaults=e.tagName==='SELECT' ? [...e.options].filter(o=>o.defaultSelected) : [];
+      f.initial_value=e.tagName==='SELECT' ? (defaults.length===1?clean(defaults[0].text):null) : e.defaultValue;
+    }
 
     const box = e.closest(
       '[data-field-path], [data-field-entry-id], ' +
@@ -638,6 +646,7 @@ class Field:
     options_state: str = 'complete'
     option_values: list[str] = field(default_factory=list)
     source_followup: bool = False  # assigned only by adjacent, same-section sourcing-question discovery
+    initial_value: str | None = None  # original generated application metadata; never generic evidence for personal answers
 
     def brief(self) -> str:
         opts = ""
@@ -798,7 +807,7 @@ def read_page(page: Page) -> PageView:
                                 identity=x.get('identity',''),frame_identity=x.get('frame_identity',''),invalid=bool(x.get('invalid')),
                                 calendar=bool(x.get('calendar')),locator_ref=x.get('locator_ref',''),
                                 options_state=x.get('options_state','partial' if x['kind']=='combobox' else 'complete'),
-                                option_values=x.get('option_values',[])))
+                                option_values=x.get('option_values',[]),initial_value=x.get('initial_value')))
         adds += [{**a, "frame": k} for a in snap.get("adds", [])]
         buttons += snap["buttons"]
         errors += snap["errors"]

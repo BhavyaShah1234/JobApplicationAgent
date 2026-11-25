@@ -16,7 +16,7 @@ SOURCE = re.compile(
     r"\b(?:how|where)\b.{0,60}"
     r"\b(?:hear|heard|learn|find|found|discover)\w*\b.{0,90}"
     r"\b(?:us|company|position|job|role|opening|opportunity|vacancy)\b"
-    r"|^\s*(?:(?:application|candidate|recruitment|referral)\s+)?source\b"
+    r"|^\s*(?:(?:application|candidate|recruitment|referral)\s+)?source\b(?!\s+(?:details?|information|info)\b)"
 )
 
 REFERRAL = re.compile(
@@ -42,12 +42,15 @@ SOURCE_CONTACT_FOLLOWUP = re.compile(
     r"(?:please\s+)?specify(?:\s+here)?\s*[:*?.]*\s*$"
 )
 GENERIC_SOURCE_INFO = re.compile(r'(?i)^\s*if applicable[,;:]?\s*(?:please\s+)?provide\s+(?:info(?:rmation)?|details)\s*[:*?.]*\s*$')
+SOURCE_DETAIL_LABEL = re.compile(r'(?i)^\s*(?:(?:application|candidate|recruitment|referral)\s+)?source\s+(?:details?|information|info)\s*[:*?.]*\s*$')
+ADJACENT_REFERRER_HINT = 'Employee referrer contact details for the adjacent sourcing question.'
 
 
 def contextualize(fields) -> None:
     """Bind adjacent sourcing follow-ups within the same frame and section."""
     parent = None
     for field in fields:
+        field.help=field.help.replace(ADJACENT_REFERRER_HINT,'').strip()
         field.source_followup = False
         field.referrer_details_requested = False
         conditional = SOURCE_CONTACT_FOLLOWUP.fullmatch(field.label)
@@ -61,13 +64,13 @@ def contextualize(fields) -> None:
             parent = field
         elif (parent is not None and field.frame == parent.frame
               and field.section == parent.section
-              and (SOURCE_FOLLOWUP.fullmatch(field.label) or GENERIC_SOURCE_INFO.fullmatch(field.label) or contact_followup)):
+              and (SOURCE_FOLLOWUP.fullmatch(field.label) or GENERIC_SOURCE_INFO.fullmatch(field.label) or SOURCE_DETAIL_LABEL.fullmatch(field.label) or contact_followup)):
             field.source_followup = True
             if _referral_option(parent.options):parent.referrer_details_requested = True
             if contact_followup or (field.kind in ('text','textarea') and
                     (_referral_option([parent.value]) or (not parent.value and _referral_option(parent.options)))):
                 parent.referrer_details_requested = True
-                hint='Employee referrer contact details for the adjacent sourcing question.'
+                hint=ADJACENT_REFERRER_HINT
                 if hint not in field.help:field.help = (field.help + ' ' + hint).strip()
         elif (parent is not None and field.frame == parent.frame
               and field.section == parent.section and _referral_option([parent.value])

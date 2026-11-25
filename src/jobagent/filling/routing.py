@@ -16,7 +16,7 @@ PURPOSE_BOUND=DECLARATIONS | {'owner_identifier','work_documentation','governmen
     'age_threshold','work_restrictions','citizenship_countries','citizenship_status','visa_history','veteran',
     'enterprise_software_experience','technical_skill_possession','opt_participation',
     'stem_opt_extension','nonimmigrant_employment','termination_history','relocation_origin'}
-DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys() | {'education_summary','read_ack','residency'}
+DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys() | {'education_summary','read_ack','residency','posting_title','application_date'}
 
 GOVERNMENT_HISTORY=frozenset({'current or former government employee',
     'are you a current or former government employee',
@@ -126,6 +126,9 @@ class Route:
 
 def field_family(field):
     """Use explicit office guidance to disambiguate a bare contact-style Location."""
+    if norm(field.section)=='position details':
+        if norm(field.label)=='position title':return 'posting_title'
+        if re.fullmatch(r'application date (?:month|day|year)',norm(field.label)):return 'application_date'
     if not entity_scope(field.section) and norm(field.label)=='location' and re.search(
             r'\boffice\b|\b(?:job|position|preferred work) locations?\b',
             norm(field.section+' '+field.help)):
@@ -298,6 +301,8 @@ def candidates(field,facts):
     projected=education_query_facts(field,facts,kind)
     if projected is not None:return projected
     allowed=[x for x in facts if scope_allows(field,x)]
+    if kind=='posting_title':return [x for x in allowed if x.id=='jd.job.title']
+    if kind=='application_date':return [x for x in allowed if x.id.startswith('portal.application_date.') and x.target_key==key(field)]
     if kind=='why_company' and re.search(r'\blocati?on\b|\bresid\w*|\brelocat\w*',norm(field.label)):
         exact=[x for x in allowed if norm(field.label) in map(norm,x.aliases)]
         if exact:return exact
@@ -382,7 +387,9 @@ def route(field,facts):
     catalogue={norm(o) for o in field.options}
     if kind in ('other','location') and re.search(r'(?i)location|located',field.label) and {'canada','india','japan'}<=catalogue:
         kind='country';found=candidates(replace(field,label='Country where you reside'),facts)
-    if kind=='skills':
+    if kind in ('posting_title','application_date'):
+        sources=['jd'] if kind=='posting_title' else ['portal']
+    elif kind=='skills':
         sources=['resume','owner_rules','jd']
     elif kind=='relocation_origin':
         sources=['owner','jd']
@@ -400,6 +407,8 @@ def route(field,facts):
 def resolve_routed(field,facts,route_info=None):
     r=route_info or route(field,facts);bank={x.id:x for x in facts};selected=[bank[i] for i in r.fact_ids]
     owner=[x for x in selected if x.authority=='owner']
+    if r.family in ('posting_title','application_date'):
+        return from_fact(field,selected[0]) if len(selected)==1 else Decision(None,reason='explicit portal metadata missing')
     if r.family=='opt_participation' and not owner:
         # A stated current OPT/CPT status proves participation. "No STEM
         # extension" and legal work authorization do not prove its negation.
@@ -620,11 +629,37 @@ def personal_facts(ctx):
         if address.get('city'):
             result.append(Fact('owner.residence.location',['Relocation origin'],f"{address['city']}, {address['state']}",'personal/address/city,state'))
     locations=(ctx.get('_jd') or {}).get('locations_resolved') or []
+    if title:=(ctx.get('_jd') or {}).get('title'):
+        result.append(Fact('jd.job.title',['Position Title'],str(title),'jd/title','Position Details',authority='document'))
     stated={(x.get('city'),x.get('state')) for x in locations if x.get('city') and x.get('state')}
     if len(stated)==1:
         city,state=next(iter(stated))
         result.append(Fact('jd.job.location',['Job location'],f'{city}, {state}','jd/locations_resolved',authority='document'))
     return result
+
+
+def review_metadata_facts(view):
+    """Bind the server's original application date, never learned employment dates.
+
+    Args:
+        view: The current form with original date defaults from its own controls.
+
+    Returns:
+        Three field-bound facts for a complete valid date, or no date evidence.
+    """
+    from datetime import datetime
+    if view is None:return []
+    fields=[f for f in view.fields if field_family(f)=='application_date']
+    parts={norm(f.label).rsplit(' ',1)[-1]:f for f in fields}
+    if len(fields)!=3 or set(parts)!={'month','day','year'} or len({f.frame for f in fields})!=1:return []
+    if any(f.initial_value is None for f in fields):return []
+    raw=' '.join(parts[p].initial_value for p in ('month','day','year'))
+    for fmt in ('%b %d %Y','%B %d %Y','%m %d %Y'):
+        try:datetime.strptime(raw,fmt);break
+        except ValueError:continue
+    else:return []
+    return [Fact('portal.application_date.'+part,[f.label],f.initial_value,'portal/application-date/default',
+                 f.section,authority='portal',target_key=key(f)) for part,f in parts.items()]
 
 
 def unlisted_school(field,view,facts):

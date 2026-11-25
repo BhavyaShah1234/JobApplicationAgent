@@ -42,7 +42,8 @@ def test_generated_iform_captions_dates_and_repeating_entity_rows():
     </div></td></tr>
     <tr><td><strong>Education</strong></td></tr>
     <tr><td><span>City<br><input class=iCIMS_Forms_Global id=icims_0_EducationCity aria-label=EducationCity value=Tempe></span>
-      <span>State/Province<br><input class=iCIMS_Forms_Global id=icims_0_EducationState aria-label=EducationState value=Arizona></span></td></tr>
+      <span>State/Province<br><input class=iCIMS_Forms_Global id=icims_0_EducatiionState_new aria-label=EducationState value=Arizona></span></td></tr>
+    <tr><td>Major/Area of Study<br><input class=iCIMS_Forms_Global id=icims_0_Major_new value=Computing></td></tr>
     <tr><td>Name of Employer<br><input class=iCIMS_Forms_Global id=icims_1_EmpName aria-label=EmpName value="Second Employer"></td></tr>
     <tr><td><strong>Applicant Statement</strong></td></tr>
     <tr><td><span><input class=iCIMS_Forms_Global id=icims_f_signature1 type=checkbox aria-label=Signature1 required>Signature</span>
@@ -60,9 +61,14 @@ def test_generated_iform_captions_dates_and_repeating_entity_rows():
             assert fields['icims_f_APPLICATION_DATE_Year'].label=='Application Date Year'
             assert fields['icims_0_EducationCity'].label=='City'
             assert fields['icims_0_EducationCity'].section=='Education 1'
-            assert fields['icims_0_EducationState'].label=='State/Province'
+            assert fields['icims_0_EducatiionState_new'].label=='State/Province'
+            assert fields['icims_0_EducatiionState_new'].section=='Education 1'
+            assert fields['icims_0_Major_new'].section=='Education 1'
             assert fields['icims_1_EmpName'].section=='Work Experience 2'
             assert 'agree to this Applicant Statement' in fields['icims_f_signature1'].label
             assert fields['icims_f_signature1'].section=='Applicant Statement'
             assert fields['ordinary'].label=='Unrelated field'
+            page.locator('#icims_f_APPLICATION_DATE_Year').fill('2020')
+            fresh=forms.read_page(page)
+            assert next(f for f in fresh.fields if f.label=='Application Date Year').initial_value=='2026'
         finally:browser.close()

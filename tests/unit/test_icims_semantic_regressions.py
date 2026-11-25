@@ -4,7 +4,7 @@ from dataclasses import replace
 import pytest
 
 from jobagent.filling.facts import Fact, choice
-from jobagent.filling.routing import route, resolve_routed, binding_valid, family, personal_facts
+from jobagent.filling.routing import route, resolve_routed, binding_valid, family, personal_facts,review_metadata_facts
 from jobagent.tools.forms import Field
 from jobagent.tools import referrals
 
@@ -133,8 +133,33 @@ def test_generic_referral_info_binds_only_to_the_adjacent_source():
     assert not child.source_followup
 
 
+def test_review_source_details_keeps_the_matching_employee_contact():
+    source=Field(id=0,kind='text',label='Source',value='Employee Referral')
+    child=Field(id=1,kind='text',label='Source Details')
+    referrals.contextualize([source,child])
+    answer=referrals.answer_for(child,{'name':'Casey Example','email':'casey@example.test'})
+    assert 'Casey Example' in answer['value'] and 'casey@example.test' in answer['value']
+    referrals.contextualize([child])
+    assert referrals.answer_for(child,{'name':'Casey Example','email':'casey@example.test'}) is None
+
+
 def test_unclassified_boolean_cannot_borrow_typed_visa_or_work_authorization_fact():
     field=binary('A previously unseen qualification?')
     fact=Fact('authorized',['Are you legally authorized to work in the United States?'],'Yes','applicant')
     r=route(field,[fact])
     assert not binding_valid(field,[fact],'Yes',r)
+
+
+def test_posting_title_and_application_date_cannot_borrow_employment_learned_answers():
+    from jobagent.tools.forms import PageView
+    title=Field(id=0,kind='text',label='Position Title',section='Position Details')
+    fields=[Field(id=i,kind='text',label='Application Date '+part,section='Position Details',
+                  value='wrong',initial_value=value) for i,(part,value) in enumerate([('Month','Nov'),('Day','23'),('Year','2026')],1)]
+    wrong=[Fact('learned:employer',['Title'],'Old Job','learned'),Fact('learned:date',['Start Date Month'],'May','learned')]
+    facts=personal_facts({'_jd':{'title':'Posted Engineer'}})+wrong
+    assert resolve_routed(title,facts).value=='Posted Engineer'
+    for f in fields:assert resolve_routed(f,facts).value is None
+    facts+=review_metadata_facts(PageView(fields,[],[],[],{}))
+    for f,expected in zip(fields,['Nov','23','2026']):assert resolve_routed(f,facts).value==expected
+    fields[1].initial_value='32'
+    assert not review_metadata_facts(PageView(fields,[],[],[],{}))

@@ -259,8 +259,9 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                 log(f"address: not prepared ({exc}); the fields that need it use the recorded facts or are asked")
         if '_experimental_compiled_facts' not in ctx:
             ctx['_experimental_compiled_facts']=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''),ctx.get('TODAY',''))
-        from .routing import personal_facts
-        facts=list(ctx['_experimental_compiled_facts'])+personal_facts(ctx)
+        from .routing import personal_facts,review_metadata_facts
+        live=getattr(ctx.get('_experimental_filler'),'_live',None)
+        facts=list(ctx['_experimental_compiled_facts'])+personal_facts(ctx)+review_metadata_facts(live.view if live else None)
         sheet=ctx.get('ANSWERS_FOR_THIS_APPLICATION','')
         from .routing import answer_sheet_facts
         facts+=answer_sheet_facts(sheet)
