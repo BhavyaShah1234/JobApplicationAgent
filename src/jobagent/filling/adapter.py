@@ -6,13 +6,22 @@ from .facts import compile_facts,Decision,Fact,key,norm,entity_scope
 from .planned import PlannedFiller,read_view
 
 
-def _split_name_for_middle_field(facts, fields):
-    """A form with its own Middle Name field (Dayforce) splits a multi-word first name itself, so the First Name box read back different from
-    what was typed. When the legal first name has several words and no middle name is recorded, the first word is the First Name and
-    the rest the Middle Name, both derived from the one recorded legal first name (same fact id, so the provenance stays)."""
+def _split_name_for_middle_field(facts, fields, *, split_first_name=False):
+    """Preserve recorded name components unless a known portal decomposes them.
+
+    Args:
+        facts: Original owner facts, including legal-name components.
+        fields: The current form's controls.
+        split_first_name: Explicitly enable the observed Dayforce decomposition;
+            merely having a middle-name field does not establish this behavior.
+
+    Returns:
+        The unchanged facts by default, or the source-preserving decomposition.
+    """
     import re
     from dataclasses import replace
     from .facts import Fact,entity_scope
+    if not split_first_name:return facts
     if not any(re.fullmatch(r'(?i)\s*middle\s*(?:name|initial)?\s*\*?\s*',f.label or '') and not entity_scope(f.section) for f in fields):
         return facts
     first=[x for x in facts if x.authority=='owner' and not x.record and not x.section and x.id.endswith('/Legal name/answer/first')]
@@ -271,8 +280,11 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
                         instructions='Leave blank' if conditional.value=='' else ''))
         from .education import selection_context
         from .employment import recent_employment_facts
-        facts=_split_name_for_middle_field(facts,fields)
         view = live.view if live else None
+        from urllib.parse import urlsplit
+        dayforce=bool(view and any((urlsplit(frame.url).hostname or '').lower().endswith(
+            ('.dayforcehcm.com','.dayforce.com')) for frame in view.frames.values()))
+        facts=_split_name_for_middle_field(facts,fields,split_first_name=dayforce)
         facts = facts+list(ctx.get('_experimental_learned_facts',{}).values())
         return selection_context(_portal_education_facts(recent_employment_facts(facts, view), view), view)
 
