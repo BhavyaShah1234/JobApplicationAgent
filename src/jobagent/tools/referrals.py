@@ -41,6 +41,7 @@ SOURCE_CONTACT_FOLLOWUP = re.compile(
     r"(?i)^\s*if\s+you\s+(?:answered|selected|chose)\s+(.+),\s*"
     r"(?:please\s+)?specify(?:\s+here)?\s*[:*?.]*\s*$"
 )
+GENERIC_SOURCE_INFO = re.compile(r'(?i)^\s*if applicable[,;:]?\s*(?:please\s+)?provide\s+(?:info(?:rmation)?|details)\s*[:*?.]*\s*$')
 
 
 def contextualize(fields) -> None:
@@ -60,7 +61,7 @@ def contextualize(fields) -> None:
             parent = field
         elif (parent is not None and field.frame == parent.frame
               and field.section == parent.section
-              and (SOURCE_FOLLOWUP.fullmatch(field.label) or contact_followup)):
+              and (SOURCE_FOLLOWUP.fullmatch(field.label) or GENERIC_SOURCE_INFO.fullmatch(field.label) or contact_followup)):
             field.source_followup = True
             if _referral_option(parent.options):parent.referrer_details_requested = True
             if contact_followup or (field.kind in ('text','textarea') and

@@ -14,7 +14,8 @@ DECLARATIONS=frozenset({'government_referral','government_relationship','ethics_
                         'outside_activity','employer_personal_ties','immigration_support'})
 PURPOSE_BOUND=DECLARATIONS | {'owner_identifier','work_documentation','government_employment',
     'age_threshold','work_restrictions','citizenship_countries','citizenship_status','visa_history','veteran',
-    'enterprise_software_experience','technical_skill_possession'}
+    'enterprise_software_experience','technical_skill_possession','opt_participation',
+    'stem_opt_extension','nonimmigrant_employment','termination_history','relocation_origin'}
 DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys() | {'education_summary','read_ack','residency'}
 
 GOVERNMENT_HISTORY=frozenset({'current or former government employee',
@@ -38,6 +39,14 @@ def family(text):
     if government_employment_question(text):return 'government_employment'
     if expanded_immigration_support(text):return 'immigration_support'
     rules=[
+      ('nonimmigrant_employment',r'\bnon immigrant status\b|\bnonimmigrant status\b'),
+      ('opt_participation',r'^(?:are|have|do|is|currently)\b(?=.*\b(?:currently|receiving|process)\b)(?=.*(?:(?<!stem )\bopt\b|\bcpt\b))'),
+      ('stem_opt_extension',r'\bstem opt\b.*\bextension\b|\b(?:currently|already)\b.*\bstem opt\b'),
+      ('visa_status',r'^(?:current )?visa status$'),
+      ('termination_history',r'^have you ever been (?:terminated|dismissed)|^have you ever.*(?:asked to resign|resigned.{0,30}terminat)'),
+      ('relocation_origin',r'\brelocat\w* from\b|^relocation origin$'),
+      ('salary',r'\b(?:desired|expected|expectations|expect|target|requested|anticipated)\b.{0,45}\b(?:salary|compensation|pay)\b|\b(?:salary|compensation|pay)\b.{0,35}\b(?:expectations|expect|desired)\b'),
+      ('gpa',r'\bgpa\b|grade point'),
       ('age_threshold',r'\bage (?:of )?\d+\b|\b\d+ years? (?:of age|old)\b'),
       ('work_restrictions',r'\bnon (?:compete|competition|disclosure|solicitation)\b|\bnoncompete\b|restrictive covenant|(?:contract|agreement).*?(?:restrict|impact|interfere|prevent|limit).*?(?:work|employ|colleague)'),
       ('visa_history',r'(?:in the past|\bever\b|previously|formerly|have you (?:been|held|had)).*?(?:\bvisas?\b|exchange visitor)'),
@@ -70,7 +79,7 @@ def family(text):
       ('pronouns',r'\bpronouns\b'),('gender',r'gender|^sex$'),('race',r'\brace\b|ethnicity'),
       ('veteran',r'veteran'),('disability',r'disability'),('hispanic',r'hispanic|latino|latinx'),
       ('technical_interests',r'technical (?:area|domain)|engineering (?:organization|preference)|engineer profile'),
-      ('why_company',r'why.*(?:work|join|interest)|why (?:this|our) company'),
+      ('why_company',r'why.*(?:work|join|interest)|why (?:this|our) company|motivat.*(?:work|join|appl|position|role|locat|resid)'),
       ('enterprise_software_experience',r'^(?!.*\b(?:years?|months?)\b)(?:(?:have you (?:ever )?(?:worked|been employed)|do you have (?:any )?experience|experience)\b.*\benterprise (?:software|saas) environment\b|enterprise (?:software|saas) environment$)'),
       ('technical_skill_possession',r'^(?!.*\b(?:years?|months?|degree|certification|licen[cs]e)\b)(?:do you (?:have|possess)|have you|are you (?:experienced|proficient))\b.*\b(?:technical skills|tech(?:nology)? stack|programming languages?|specific language)\b'),
       ('technical_experience',r'describe.*experience|technical experience question'),
@@ -219,6 +228,8 @@ def qualification_signature(text,kind):
 
 def same_qualification(field,fact):
     kind=family(field.label)
+    if kind in ('nonimmigrant_employment','opt_participation','stem_opt_extension'):
+        return any(norm(alias)==norm(field.label) for alias in fact.aliases)
     if kind in ('age_threshold','citizenship_countries'):
         return any(family(alias)==kind and qualification_signature(alias,kind)==
                    qualification_signature(field.label,kind) for alias in fact.aliases)
@@ -287,6 +298,17 @@ def candidates(field,facts):
     projected=education_query_facts(field,facts,kind)
     if projected is not None:return projected
     allowed=[x for x in facts if scope_allows(field,x)]
+    if kind=='why_company' and re.search(r'\blocati?on\b|\bresid\w*|\brelocat\w*',norm(field.label)):
+        exact=[x for x in allowed if norm(field.label) in map(norm,x.aliases)]
+        if exact:return exact
+        return [x for x in allowed if x.authority=='owner' and not x.record and any(
+            re.search(r'\bwilling to relocate\b|\bable to work on site\b',norm(a)) for a in x.aliases)]
+    if kind in ('relocation_origin','salary'):
+        explicit=[x for x in allowed if x.id.startswith('application.answer.') and norm(field.label) in map(norm,x.aliases)]
+        if explicit:return explicit
+        if kind=='relocation_origin':return [x for x in allowed if x.id in ('owner.residence.location','jd.job.location')]
+        rules=[x for x in allowed if x.authority=='owner' and fact_family(x)=='salary' and x.instructions]
+        if rules:return rules
     if kind=='owner_identifier':
         return [x for x in allowed if x.authority=='owner' and not x.record and same_qualification(field,x)]
     party=contact_party(field.label+' '+field.section+' '+field.help)
@@ -362,7 +384,9 @@ def route(field,facts):
         kind='country';found=candidates(replace(field,label='Country where you reside'),facts)
     if kind=='skills':
         sources=['resume','owner_rules','jd']
-    elif kind in ('why_company','project','technical_experience','technical_interests'):
+    elif kind=='relocation_origin':
+        sources=['owner','jd']
+    elif kind in ('why_company','project','technical_experience','technical_interests','salary'):
         sources=['owner_rules','resume','jd','company']
     elif kind in ('start_date','signature_date'):sources=['owner_rules','clock']
     elif kind in PURPOSE_BOUND or kind in ('external_sharing','privacy_consent','future_contact','ai_consent','demographic_consent','ai_policy_ack','sms_consent','arbitration','read_ack','event_history','account_status','clearance_eligibility','clearance_held','sponsorship','work_authorization','residency'):
@@ -376,6 +400,44 @@ def route(field,facts):
 def resolve_routed(field,facts,route_info=None):
     r=route_info or route(field,facts);bank={x.id:x for x in facts};selected=[bank[i] for i in r.fact_ids]
     owner=[x for x in selected if x.authority=='owner']
+    if r.family=='opt_participation' and not owner:
+        # A stated current OPT/CPT status proves participation. "No STEM
+        # extension" and legal work authorization do not prove its negation.
+        q=norm(field.label)
+        requested={program for program,pattern in [('opt',r'(?<!stem )\bopt\b'),('cpt',r'\bcpt\b'),('stem',r'\bstem opt\b')]
+                   if re.search(pattern,q)}
+        union=(len(requested)==1 or re.search(r'\bor\b|/',field.label,re.I)) and not re.search(r'\b(?:not|never)\b',q)
+        def participating(fact):
+            """Require the stated program to satisfy the question's explicit union."""
+            value=norm(fact.value)
+            actual='stem' if 'stem opt' in value else 'opt' if re.search(r'\bopt\b',value) else 'cpt' if re.search(r'\bcpt\b',value) else None
+            return union and (actual in requested or actual=='stem' and 'opt' in requested and 'initial' not in q)
+        statuses=[x for x in facts if x.authority=='owner' and not x.record and not x.instructions
+                  and fact_family(x)=='visa_status' and participating(x)
+                  and not re.search(r'\b(?:no|not|never|former|previous|eligible|future|planned|pending|awaiting)\b',norm(x.value))]
+        if len(statuses)==1:
+            fact=statuses[0]
+            return Decision(choice(field,['Yes']),fact.source,fact.id,'explicit current OPT/CPT status')
+    if r.family=='relocation_origin':
+        explicit=[x for x in owner if x.id.startswith('application.answer.')]
+        if len(explicit)==1:return from_fact(field,explicit[0])
+        origins=[x for x in owner if x.id=='owner.residence.location']
+        if len(origins)!=1:return Decision(None,reason='explicit residency evidence missing')
+        job=next((x for x in selected if x.id=='jd.job.location'),None)
+        def location_key(value):
+            """Compare a sourced city/state pair without changing its displayed wording."""
+            parts=value.rsplit(',',1)
+            if len(parts)!=2:return None
+            state=forms.US_STATES.get(norm(parts[1]),norm(parts[1]).upper())
+            return norm(parts[0]),state
+        origin=origins[0]
+        if job and location_key(origin.value)==location_key(job.value) and re.search(r'\bna\b|not applicable',norm(field.label)):
+            return Decision('NA',origin.source+'; '+job.source,origin.id+','+job.id,'same recorded residence and job city')
+        return from_fact(field,origin)
+    if r.family in ('why_company','project','technical_experience','technical_interests'):
+        exact=[x for x in owner if not x.record and not x.instructions and norm(field.label) in map(norm,x.aliases)]
+        if len(exact)==1:return from_fact(field,exact[0])
+        return Decision(None,reason='contextual narrative composition required')
     if r.family=='education_summary':
         from .education import highest_completed_summary
         return highest_completed_summary(field,owner)
@@ -497,7 +559,7 @@ def resolve_routed(field,facts,route_info=None):
             if whole in field.options:return Decision(whole,fact.source,fact.id,'completed whole years')
         if re.search(r'\byear\b',norm(field.label)) and entity_scope(field.section):
             return from_fact(replace(field,format='YYYY'),fact)
-        if r.family in ('government_referral','government_relationship','ethics_ack','school','degree','discipline','current_employer','current_title','country','on_site','offer_deadline','portfolio_link','pronouns','languages','gender','race','veteran','disability','hispanic','experience_years','clearance_eligibility','clearance_held','start_date','signature_date','email','phone','preferred_name','legal_name','location','gpa','work_authorization','external_sharing','privacy_consent','future_contact','sms_consent','ai_consent','demographic_consent','ai_policy_ack','arbitration','read_ack'):
+        if r.family in ('government_referral','government_relationship','ethics_ack','school','degree','discipline','current_employer','current_title','country','on_site','offer_deadline','portfolio_link','pronouns','languages','gender','race','veteran','disability','hispanic','experience_years','clearance_eligibility','clearance_held','start_date','signature_date','email','phone','preferred_name','legal_name','location','gpa','work_authorization','external_sharing','privacy_consent','future_contact','sms_consent','ai_consent','demographic_consent','ai_policy_ack','arbitration','read_ack','salary'):
             return from_fact(field,fact)
     return None
 
@@ -514,6 +576,10 @@ def evidence_allows(field,fact,route_info):
 def binding_valid(field,bound,value,route_info):
     if any(x.id not in route_info.fact_ids for x in bound):return False
     if not all(evidence_allows(field,x,route_info) for x in bound):return False
+    if (route_info.family=='other' and norm(value) in ('yes','no','true','false') and
+            not any(norm(field.label) in map(norm,x.aliases) for x in bound) and
+            any(fact_family(x)!='other' for x in bound)):
+        return False  # an unclassified predicate cannot borrow a typed neighbour's boolean
     protected=PURPOSE_BOUND | {'external_sharing','clearance_eligibility','clearance_held','arbitration','read_ack','privacy_consent','future_contact','sms_consent','ai_consent','demographic_consent','ai_policy_ack','sponsorship','work_authorization','residency'}
     if route_info.family in protected:
         if not bound or any(fact_family(x)!=route_info.family for x in bound):return False
@@ -544,9 +610,21 @@ def word_limits(field,facts):
 
 def personal_facts(ctx):
     address=ctx.get('_personal_address')
+    if address is None and not ctx.get('_application_address'):
+        from jobagent.tools import applicant
+        address=next((entry.get('answer') for _,entry in applicant.entries(ctx.get('_applicant') or {})
+                      if entry.get('question')=='Current address'),None)
+    result=[]
     if isinstance(address,dict) and address.get('state'):
-        return [Fact('owner.residence.state',['Actual residence state'],str(address['state']),'personal/address/state')]
-    return []
+        result.append(Fact('owner.residence.state',['Actual residence state'],str(address['state']),'personal/address/state'))
+        if address.get('city'):
+            result.append(Fact('owner.residence.location',['Relocation origin'],f"{address['city']}, {address['state']}",'personal/address/city,state'))
+    locations=(ctx.get('_jd') or {}).get('locations_resolved') or []
+    stated={(x.get('city'),x.get('state')) for x in locations if x.get('city') and x.get('state')}
+    if len(stated)==1:
+        city,state=next(iter(stated))
+        result.append(Fact('jd.job.location',['Job location'],f'{city}, {state}','jd/locations_resolved',authority='document'))
+    return result
 
 
 def unlisted_school(field,view,facts):

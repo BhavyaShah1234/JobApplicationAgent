@@ -64,6 +64,7 @@ def key(f):
 def owner_only(f):
     """A resume establishes experience, not preferences, consent or sensitive history."""
     return bool(re.search(r'(?i)enjoy|prefer|desired|would you like|consent|agree|acknowledg|convict|felony|misdemeanor|'
+                          r'(?:expect|desired).{0,30}(?:salary|compensation|pay)|(?:salary|compensation|pay).{0,30}(?:expect|desired)|'
                           r'pronouns|currently.*client|(?:opened|have) an? account|conferences?.*(?:attend|planning)|gatherings.*attend|citizen|sponsor|disab|medical|dismiss|religio|faith|gender|sexual|ethnic|\brace\b|birth|social security|\bssn\b|passport|clearance|resident|^legal name$|^full name$|^name$|\bemail\b|\bphone\b|share.*(?:external|partner)' , f.label))
 
 
@@ -226,6 +227,8 @@ def choice(f, values):
         for option in f.options:
             span=re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*',option)
             if span and float(span[1])<=number<=float(span[2]):hits.append(option)
+            elif (lower:=re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s+(?:or|and)\s+(?:above|higher|more)\s*',option,re.I)) and number>=float(lower[1]):hits.append(option)
+            elif (upper:=re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s+(?:or|and)\s+(?:below|lower|less)\s*',option,re.I)) and number<=float(upper[1]):hits.append(option)
         if len(hits)==1:return hits[0]
     target=percent_range(values[0])
     if target:
