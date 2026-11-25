@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
-from jobagent.filling.uploads import UploadProof
+from jobagent.filling.uploads import UploadProof,resume_parse_request
 
 
 URL='https://icims.test/jobs/1/candidate'
@@ -36,7 +36,7 @@ def env(tmp_path):
         browser.close()
 
 
-@pytest.mark.parametrize('case',['success','lexical_flag','wrong_bytes','wrong_filename','http_error','other_route','no_parse_flag','visible_error'])
+@pytest.mark.parametrize('case',['success','lexical_flag','duplicate_flag','conflicting_flag','wrong_bytes','wrong_filename','http_error','other_route','no_parse_flag','visible_error'])
 def test_parse_receipt_is_bound_to_dispatched_bytes_frame_route_and_server_result(env,case):
     page,path=env
     def route(r):
@@ -48,6 +48,8 @@ def test_parse_receipt_is_bound_to_dispatched_bytes_frame_route_and_server_resul
         else:
             body=profile(initial=True,flag=case!='no_parse_flag')
             if case=='lexical_flag':body=body.replace('window.icimsAllowResumeAutosubmit=true','const icimsAllowResumeAutosubmit=true')
+            if case=='duplicate_flag':body=body.replace('?uploadResume=1','?uploadResume=1&uploadResume=1')
+            if case=='conflicting_flag':body=body.replace('?uploadResume=1','?uploadResume=0&uploadResume=1')
             r.fulfill(content_type='text/html',body=body)
     page.route('https://icims.test/**',route)
     page.goto('https://icims.test/shell')
@@ -62,8 +64,8 @@ def test_parse_receipt_is_bound_to_dispatched_bytes_frame_route_and_server_resul
         with frame.expect_navigation(wait_until='domcontentloaded'):
             native.set_input_files(str(actual))
             assert proof.verify() is (case!='wrong_bytes')
-        assert proof.verify() is (case in ('success','lexical_flag'))
-        if case in ('success','lexical_flag'):
+        assert proof.verify() is (case in ('success','lexical_flag','duplicate_flag'))
+        if case in ('success','lexical_flag','duplicate_flag'):
             assert proof.method=='byte-verified dispatch and fresh resume-parse POST receipt'
             assert frame.locator('[id="PortalProfileFields.Resume_File"]').evaluate('e=>e.files.length')==0
             assert proof.can_rebind(frame.locator('[id="PortalProfileFields.Resume_File"]'))
@@ -111,3 +113,12 @@ def test_filler_retains_receipt_and_binding_after_embedded_profile_parse(env,acc
             assert result['state']=='blocked' and not rows
     finally:
         for proof in filler.upload_proofs.values():proof.close()
+
+
+@pytest.mark.parametrize('query,expected',[
+    ('uploadResume=1',True),('uploadResume=1&uploadResume=1',True),
+    ('uploadResume=0&uploadResume=1',False),('uploadResume=&uploadResume=1',False),
+    ('uploadResume=true',False),('other=1',False),
+])
+def test_parse_flag_is_unambiguous_even_after_repeated_entry(query,expected):
+    assert resume_parse_request(URL+'?'+query) is expected

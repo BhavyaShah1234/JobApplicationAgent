@@ -5,6 +5,13 @@ from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 
 
+def resume_parse_request(url):
+    # iCIMS appends this flag to an action that can already contain it after
+    # a previous parse. Identical flags are unambiguous; conflicts are not.
+    flags=parse_qs(urlsplit(url).query,keep_blank_values=True).get('uploadResume',[])
+    return bool(flags) and all(value=='1' for value in flags)
+
+
 class ResumeParseReceipt:
     """iCIMS' own resume-only POST can replace the document and clear FileList.
 
@@ -36,11 +43,11 @@ class ResumeParseReceipt:
 
     def requested(self, request):
         try:
-            if request.method=='POST' and parse_qs(urlsplit(request.url).query).get('uploadResume')==['1']:
+            if request.method=='POST' and 'uploadResume' in parse_qs(urlsplit(request.url).query,keep_blank_values=True):
                 self.observed_parse_posts.append({'same_frame':request.frame==self.frame,
                     'same_route':self.same_document_route(request.url),'navigation':request.is_navigation_request()})
             if (request.frame==self.frame and request.is_navigation_request() and request.method=='POST'
-                    and self.same_document_route(request.url) and parse_qs(urlsplit(request.url).query).get('uploadResume')==['1']):
+                    and self.same_document_route(request.url) and resume_parse_request(request.url)):
                 self.requests+=1
                 if self.requests==1:self.request=request
                 else:self.response_ok=False  # another upload invalidates the previous receipt
