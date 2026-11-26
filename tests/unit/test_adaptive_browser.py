@@ -16,6 +16,7 @@ def test_referral_evidence_survives_planning_subset_with_projected_agreements(wo
     import json
     monkeypatch.setattr(learned,'load',lambda:[{'question':agreements.POLICY_QUESTION,
         'company':'any','policy_context':agreements.POLICY_CONTEXT,'answer':'Yes'}])
+    monkeypatch.setattr(learned,'_vectors',lambda _:None)
     original=A.context
     def context(*args):
         ctx=original(*args);ctx['REFERRAL']={'name':'Employee Name','email':'employee@example.test'}
