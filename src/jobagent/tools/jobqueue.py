@@ -172,19 +172,9 @@ def claim(conn: sqlite3.Connection, worker: str, company: str | None = None, lea
     if conn.in_transaction:
         conn.commit()                                      # BEGIN IMMEDIATE cannot nest inside the caller's open transaction
     conn.create_function("employer_key", 1, lambda s: employer_key(s or ""), deterministic=True)
-    sql = "SELECT id FROM jobs WHERE status = 'queued'"
+    sql, args = _filtered("SELECT id FROM jobs WHERE status = 'queued'", company, exclude, companies)
     if not include_deferred:
         sql += " AND deferred_at IS NULL"
-    args: list = []
-    if company:
-        sql += " AND employer_key(COALESCE(NULLIF(company_slug, ''), company, '')) = ?"
-        args.append(employer_key(company))
-    if exclude:                                        # companies at their pacing limit (tools/pacing.py)
-        sql += f" AND employer_key(COALESCE(NULLIF(company_slug, ''), company, '')) NOT IN ({','.join('?' * len(exclude))})"
-        args += [employer_key(x) for x in exclude]
-    if companies is not None:
-        sql += f" AND employer_key(COALESCE(NULLIF(company_slug, ''), company, '')) IN ({','.join('?' * len(companies)) or 'NULL'})"
-        args += [employer_key(x) for x in companies]
     conn.execute("BEGIN IMMEDIATE")                       # takes the write lock before reading: the choice cannot go stale
     try:
         if pace:
@@ -206,6 +196,31 @@ def claim(conn: sqlite3.Connection, worker: str, company: str | None = None, lea
     except BaseException:
         conn.execute("ROLLBACK")
         raise
+
+
+def _filtered(sql: str, company, exclude, companies) -> tuple[str, list]:
+    """Add the runner's company filter, its pacing exclusions and its company list to `sql` (shared by `claim` and
+    `claimable_deferred`, so both see exactly the same jobs)."""
+    args: list = []
+    if company:
+        sql += " AND employer_key(COALESCE(NULLIF(company_slug, ''), company, '')) = ?"
+        args.append(employer_key(company))
+    if exclude:                                        # companies at their pacing limit (tools/pacing.py)
+        sql += f" AND employer_key(COALESCE(NULLIF(company_slug, ''), company, '')) NOT IN ({','.join('?' * len(exclude))})"
+        args += [employer_key(x) for x in exclude]
+    if companies is not None:
+        sql += f" AND employer_key(COALESCE(NULLIF(company_slug, ''), company, '')) IN ({','.join('?' * len(companies)) or 'NULL'})"
+        args += [employer_key(x) for x in companies]
+    return sql, args
+
+
+def claimable_deferred(conn: sqlite3.Connection, company: str | None = None, exclude: tuple[str, ...] | list[str] = (),
+                       companies: tuple[str, ...] | None = None) -> int:
+    """How many deferred jobs THIS runner could take once the candidate is back: same company filter, pacing exclusions and
+    company list as its claims (another company's deferred job, or one paced out, is not a reason for it to wait)."""
+    conn.create_function("employer_key", 1, lambda s: employer_key(s or ""), deterministic=True)
+    sql, args = _filtered("SELECT COUNT(*) FROM jobs WHERE status = 'queued' AND deferred_at IS NOT NULL", company, exclude, companies)
+    return conn.execute(sql, args).fetchone()[0]
 
 
 def renew(conn: sqlite3.Connection, url: str, worker: str, lease_s: int = LEASE_S, now: datetime | None = None) -> bool:

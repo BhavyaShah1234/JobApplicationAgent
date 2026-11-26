@@ -130,7 +130,6 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
     from jobagent.tools import pacing
     s = get_settings()
     announced: set[str] = set()
-    from datetime import UTC, datetime
     from jobagent.tools import presence
     said_waiting = False
     while taken < limit:
@@ -144,9 +143,10 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
         row = Q.claim(conn, worker, company, lease_s, exclude=tuple(paced), companies=companies,
                       pace=(s.pacing_max_per_company, s.pacing_window_days), include_deferred=here)
         if row is None:
-            if not here and Q.deferred_count(conn):
+            mine = Q.claimable_deferred(conn, company, tuple(paced), companies) if not here else 0
+            if mine:
                 if not said_waiting:
-                    log(f"queue: {Q.deferred_count(conn)} job(s) are waiting for you; resuming them when the dashboard shows you available")
+                    log(f"queue: {mine} job(s) are waiting for you; resuming them when the dashboard shows you available")
                     said_waiting = True
                 sleep(away_poll_s)
                 continue
@@ -154,7 +154,7 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
         said_waiting = False
         taken += 1
         url = row["url"]
-        job_started = datetime.now(UTC).isoformat(timespec="seconds")
+        cursor = presence.cursor(s.state_dir)          # only deferrals recorded after this claim belong to this attempt
 
         def deferred_now(job_dir: str = "") -> dict | None:
             """The deferral recorded for this job since it was claimed (the candidate was away when it needed them), or None."""
@@ -162,7 +162,7 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
             dirs = [job_dir]
             if now is not None and now["job_id"]:
                 dirs.append(str(outputs_dir / slug_of(now["company"] or row["company"]) / now["job_id"]))
-            return presence.deferred_since({url}, dirs, job_started, s.state_dir)
+            return presence.deferred_since({url}, dirs, cursor, s.state_dir)
 
         def requeue_for_candidate(why: dict) -> None:
             """Back to the end of the queue: it needs the candidate, who is away. Not counted against the run's limit."""

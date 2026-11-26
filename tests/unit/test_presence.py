@@ -55,9 +55,9 @@ def test_away_the_question_is_not_asked_and_the_job_is_recorded_as_deferred(stat
             h.ask("Desired salary?")
     assert isinstance(info.value, HitlTimeout)                 # existing `except HitlTimeout` handlers stop it the same way
     assert not list((state / "hitl" / "pending").glob("*.json"))
-    row = presence.deferred_since({"https://e.test/jobs/1"}, [], "2000-01-01T00:00:00+00:00", state)
+    row = presence.deferred_since({"https://e.test/jobs/1"}, [], 0, state)
     assert row["question"] == "Desired salary?"
-    by_folder = presence.deferred_since({"https://other.test/x"}, [str(state / "outputs" / "acme" / "1")], "2000-01-01T00:00:00+00:00", state)
+    by_folder = presence.deferred_since({"https://other.test/x"}, [str(state / "outputs" / "acme" / "1")], 0, state)
     assert by_folder == row                                       # the posting's own url can differ from the queue's
 
 
@@ -204,3 +204,11 @@ def test_the_dashboard_switches_presence_and_shows_how_many_jobs_wait(tmp_path):
     finally:
         ro.shutdown()
         ro.server_close()
+
+
+def test_a_deferral_written_before_the_claim_is_not_this_attempts(state):
+    presence.record_deferral({"url": "https://e.test/jobs/1"}, "an earlier attempt", state)
+    mark = presence.cursor(state)
+    assert presence.deferred_since({"https://e.test/jobs/1"}, [], mark, state) is None
+    presence.record_deferral({"url": "https://e.test/jobs/1"}, "this attempt", state)
+    assert presence.deferred_since({"https://e.test/jobs/1"}, [], mark, state)["question"] == "this attempt"
