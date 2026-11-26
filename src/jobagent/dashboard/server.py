@@ -6,8 +6,8 @@
 - POST, only with the cookie, a JSON body and the `X-Dashboard: 1` header: answer a question the agent is waiting on (never a secret:
   those are answered in a terminal), delete queued postings, start `jobagent run` up to `apply`, and switch the candidate's presence
   (`/api/presence`: available for questions, or away so jobs that need them wait at the end of the queue), and answer a saved
-  application question (`/api/saved-questions/answer`: written to that application's answers.md for its next run). There is no
-  route that approves or submits.
+  application question (`/api/saved-questions/answer`: kept in that application's questions.json and given to the agent the
+  next time that application asks it). There is no route that approves or submits.
 """
 
 import hmac
@@ -278,11 +278,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self._answer(s, body))
             if path == "/api/saved-questions/answer":
                 from jobagent.tools import saved_questions as SQ
-                job, key, value = body.get("job"), body.get("key"), body.get("value")
-                if not isinstance(job, str) or not isinstance(key, str) or not isinstance(value, str):
-                    raise ValueError("give the application, the question key and a text answer")
-                row = SQ.answer(SQ.job_dir_for(s.outputs_dir, job), key, value)
-                return self._json({"answered": key, "job": job, "sheet_row": row.get("sheet_row"), "sheet": row.get("sheet", "")})
+                job, qid, value = body.get("job"), body.get("qid"), body.get("value")
+                if not isinstance(job, str) or not isinstance(qid, str) or not isinstance(value, str):
+                    raise ValueError("give the application, the question id and a text answer")
+                SQ.answer(SQ.job_dir_for(s.outputs_dir, job), qid, value)
+                return self._json({"answered": qid, "job": job})
             if path == "/api/presence":
                 if not isinstance(body.get("available"), bool):
                     raise ValueError("give available: true or false")

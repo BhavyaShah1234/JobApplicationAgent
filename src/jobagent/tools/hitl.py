@@ -90,7 +90,11 @@ class Hitl:
         from jobagent.tools import presence
         context = metadata()
         state_dir = self.pending.parent.parent
-        saved = _saved_form_questions(prompt, context, secret or terminal_only)
+        form = _FormRequest.of(prompt, context, secret or terminal_only)
+        if form is not None:
+            if form.complete:                       # this application already answered every question: no prompt at all
+                return form.reply(None)
+            prompt = form.prompt                    # only the questions not answered yet
         if not presence.available(state_dir):
             presence.record_deferral(context, prompt, state_dir)
             raise CandidateAway(f"the candidate is away: not asked, the job is deferred: {prompt[:200]}")
@@ -117,8 +121,8 @@ class Hitl:
                 if answer_file.exists():
                     value = json.loads(answer_file.read_text())["value"]
                     answer_file.unlink()
-                    if saved:
-                        saved(value)
+                    if form is not None:
+                        return form.reply(value)
                     return default if value == "" and default is not None else value
                 if done_when is not None and done_when():
                     return ""
@@ -167,28 +171,56 @@ class Hitl:
         return req
 
 
-def _saved_form_questions(prompt: str, context: dict, private: bool):
-    """Save a job-application question request in its application's questions.json (open until answered). Returns a callback
-    that records the reply as that application's answers, or None when this request is not a form question (bot checks,
-    CAPTCHAs, passwords, submission approval) or no application folder is known. Saving never stops the question."""
-    job_dir = context.get("job_dir")
-    if private or not job_dir:
-        return None
-    try:
-        from jobagent.tools import saved_questions as SQ
-        questions = SQ.parse(prompt)
-        if not questions:
-            return None
-        SQ.record(Path(job_dir), questions)
-    except Exception:
-        return None
+class _FormRequest:
+    """A job-application question request (tools/saved_questions.py): the questions are saved for the application, the ones it
+    already answered are answered from there, and only the rest are asked. Bot checks, CAPTCHAs, passwords and approvals are
+    never one. Saving problems never stop the question: they make it an ordinary request."""
 
-    def answered(reply) -> None:
+    def __init__(self, job_dir: Path, questions: list[dict], prompt: str):
+        from jobagent.tools import saved_questions as SQ
+        self.SQ, self.job_dir, self.questions = SQ, job_dir, questions
+        self.known = SQ.saved_answers(job_dir, questions)
+        self.remaining = [q for q in questions if SQ.key_of(q) not in self.known]
+        self.complete = not self.remaining
+        if self.remaining:
+            SQ.record(job_dir, self.remaining)               # open until answered (also when the candidate is away)
+        self.prompt = SQ.smaller_prompt(prompt, self.remaining) if self.known and self.remaining else prompt
+
+    @classmethod
+    def of(cls, prompt: str, context: dict, private: bool):
+        job_dir = context.get("job_dir")
+        if private or not job_dir:
+            return None
         try:
-            SQ.record(Path(job_dir), questions, SQ.replies(questions, reply if isinstance(reply, str) else json.dumps(reply)), asked=False)
+            from jobagent.tools import saved_questions as SQ
+            questions = SQ.parse(prompt)
+            return cls(Path(job_dir), questions, prompt) if questions else None
+        except Exception:
+            return None
+
+    def reply(self, value):
+        """The reply for the WHOLE request: the saved answers plus what the candidate typed for the rest (kept as typed, rules
+        and skips included), in the shape the filler reads."""
+        if value is None:
+            return self.SQ.reply_for(self.questions, self.known)
+        try:
+            self.SQ.record(self.job_dir, self.remaining, self.SQ.values(self.remaining, value), asked=False)
         except Exception:
             pass
-    return answered
+        if not self.known:
+            return value
+        typed = value if isinstance(value, str) else json.dumps(value)
+        if typed.strip().lower() == "skip":
+            return self.SQ.reply_for(self.questions, self.known)
+        try:
+            parsed = json.loads(typed)
+        except ValueError:
+            parsed = None
+        if not isinstance(parsed, dict):               # plain text for the one remaining question: kept exactly as typed
+            parsed = {str(self.remaining[0]["id"]): typed} if len(self.remaining) == 1 else {}
+        merged = {str(q["id"]): self.known[self.SQ.key_of(q)] for q in self.questions if self.SQ.key_of(q) in self.known}
+        merged.update({str(k): v for k, v in parsed.items()})
+        return json.dumps(merged, ensure_ascii=False)
 
 
 def _write_atomic(path: Path, text: str) -> None:

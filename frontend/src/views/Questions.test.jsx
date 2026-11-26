@@ -52,9 +52,9 @@ test('submission approval cannot be entered in the ordinary answer box', async (
 });
 
 const SAVED = [
-  { job: "finthrive/6502", key: "k1", company: "FinThrive", title: "Software Engineer", label: "Do you have Angular experience?",
+  { job: "finthrive/6502", qid: "k1", company: "FinThrive", title: "Software Engineer", label: "Do you have Angular experience?",
     section: "Questions", required: true, options: ["Yes", "No"], status: "open", first_asked: "2026-11-26T09:00:00Z" },
-  { job: "finthrive/6502", key: "k2", company: "FinThrive", title: "Software Engineer", label: "What is your desired salary for this role?",
+  { job: "finthrive/6502", qid: "k2", company: "FinThrive", title: "Software Engineer", label: "What is your desired salary for this role?",
     section: "Questions", required: true, options: [], status: "open", first_asked: "2026-11-26T09:00:00Z" },
 ];
 
@@ -68,7 +68,7 @@ test("saved questions are grouped by application and an answer is saved for the 
   await userEvent.click(screen.getAllByRole("button", { name: "Save answer" })[1]);
   const call = fetch.mock.calls.find(([p]) => p === "/api/saved-questions/answer");
   expect(call[1].headers["X-Dashboard"]).toBe("1");
-  expect(JSON.parse(call[1].body)).toEqual({ job: "finthrive/6502", key: "k2", value: "135980" });
+  expect(JSON.parse(call[1].body)).toEqual({ job: "finthrive/6502", qid: "k2", value: "135980" });
   await waitFor(() => expect(screen.getByText("Saved for the next run.")).toBeInTheDocument());
 });
 

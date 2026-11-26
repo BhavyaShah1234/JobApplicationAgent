@@ -93,14 +93,16 @@ The header has an **Available** switch (also `jobagent hitl away`, `jobagent hit
 
 ## Saved application questions (2026-11-26)
 
-Every job-application question the agent sends through HITL (the filler's question batches; never bot checks, CAPTCHAs,
-passwords or submission approval) is saved in that application's `application/questions.json`: open until answered, with
-its section, kind, options and how often it was asked. Questions skipped while the candidate is away are saved open.
+Every job-application question the agent sends through HITL (the filler's question batches and the original filler's single
+question; never bot checks, CAPTCHAs, passwords or submission approval) is saved in that application's
+`application/questions.json` with its full identity: section, label, kind, help text, options, format and whether it is required.
+It is open until answered. Questions skipped while the candidate is away are saved open.
 
-The Questions page lists the open ones under **Saved for later**, grouped by application. An answer given there, or live,
-is written as a row of the application's own `application/answers.md`, which `apply` reads first on every run, so the next
-run of that application fills it without asking. A row is written only when a label-only row cannot be misapplied: answers
-for an employer, school or reference row, short repeated captions (City, Title, Start Date), a label used in two sections,
-a label the candidate already answered in their own row (theirs wins), multi-line answers or answers with `|`, and rows past
-the first 6000 characters apply reads are kept in `questions.json` with the reason in `sheet`, and the next run still asks.
-The candidate's own rows in `answers.md` are never changed.
+The Questions page lists the open ones under **Saved for later**, grouped by application; an answer can be given there at any
+time. Live answers are saved too, exactly as typed (an explicit blank for an optional field counts; null / skip does not).
+
+When the same application asks a question again (a rerun), `Hitl.ask` answers it from the saved answers without prompting,
+present or away, in the same reply shape as a live answer, so the filler handles it like one. Only the questions without a saved
+answer are asked. A question whose identity changed (other section or employer row, help, options, format, required) is a new
+question, and two fields of one request that the page does not tell apart are never saved or replayed: both are asked.
+The candidate's own `answers.md` is not touched. Live answers still reach `learned.yaml` as before.

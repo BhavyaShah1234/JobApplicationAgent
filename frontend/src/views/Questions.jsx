@@ -47,20 +47,18 @@ function Question({ q, readOnly, onDone }) {
   );
 }
 
-// A question an application asked earlier (saved while the candidate was away, or left unanswered). Its answer is written to
-// that application's answers.md, so the next run of the application fills it without asking.
+// A question an application asked earlier (saved while the candidate was away, or left unanswered). Its answer is kept for that
+// application, and the next time the application asks exactly this question the agent uses it without asking.
 function SavedQuestion({ q, readOnly, onDone }) {
   const [text, setText] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   async function send() {
-    if (busy || !text.trim()) return;
+    if (busy || (q.required && !text.trim())) return;
     setBusy(true);
     try {
-      const r = await post("/api/saved-questions/answer", { job: q.job, key: q.key, value: text });
-      setMsg(!r.ok ? r.body.error || "failed"
-        : (r.body.sheet || "").startsWith("not reused") ? `Saved, but ${r.body.sheet.replace(/^not reused automatically: /, "the next run will still ask: ")}.`
-        : "Saved for the next run.");
+      const r = await post("/api/saved-questions/answer", { job: q.job, qid: q.qid, value: text });
+      setMsg(r.ok ? "Saved for the next run." : r.body.error || "failed");
       if (r.ok) setTimeout(onDone, 600);
     } catch { setMsg("Could not save the answer. Check the connection before retrying."); }
     finally { setBusy(false); }
@@ -72,8 +70,9 @@ function SavedQuestion({ q, readOnly, onDone }) {
         {q.required && <span className="chip warn">required</span>}{" "}
         <span className="mut">{q.section ? q.section + " · " : ""}asked {ago(q.last_asked || q.first_asked)}</span>
       </div>
+      {q.help && <p className="mut">{q.help}</p>}
       {readOnly ? (
-        <p className="mut">This dashboard is read-only: write the answer in the application's answers.md.</p>
+        <p className="mut">This dashboard is read-only: answer saved questions from a dashboard that is not.</p>
       ) : (
         <div style={{ marginTop: 8 }}>
           {q.options?.length ? (
@@ -85,7 +84,7 @@ function SavedQuestion({ q, readOnly, onDone }) {
             <textarea rows={2} aria-label={`Answer: ${q.label}`} value={text} placeholder="your answer" onChange={(e) => setText(e.target.value)} />
           )}
           <div style={{ marginTop: 8 }}>
-            <button type="button" className="act" onClick={send} disabled={busy || !text.trim()}>Save answer</button>{" "}
+            <button type="button" className="act" onClick={send} disabled={busy || (q.required && !text.trim())}>Save answer</button>{" "}
             <span className="mut">{msg}</span>
           </div>
         </div>
@@ -111,7 +110,7 @@ function SavedQuestions({ readOnly }) {
       {groups.map((g) => (
         <div key={g.job}>
           <h3>{g.company}{g.title ? ` · ${g.title}` : ""}</h3>
-          {g.items.map((q) => <SavedQuestion key={q.key} q={q} readOnly={readOnly} onDone={reload} />)}
+          {g.items.map((q) => <SavedQuestion key={q.qid} q={q} readOnly={readOnly} onDone={reload} />)}
         </div>
       ))}
     </section>
