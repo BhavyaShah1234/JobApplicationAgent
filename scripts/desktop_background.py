@@ -46,6 +46,15 @@ def owned(container, record, directory):
                     for m in container.get('Mounts',[])))
 
 
+def vnc_ready():
+    """Require the desktop's RFB server, not just its static noVNC web page."""
+    try:
+        with socket.create_connection(('127.0.0.1',5903),timeout=2) as client:
+            return client.recv(12).startswith(b'RFB ')
+    except OSError:
+        return False
+
+
 def ensure_display(directory):
     """Reuse only our running GUI service; recreate our stopped service with current assets."""
     directory.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -89,7 +98,7 @@ def ensure_display(directory):
             client=http.client.HTTPConnection('127.0.0.1',6083,timeout=2)
             try:
                 client.request('HEAD','/vnc.html')
-                if client.getresponse().status==200:return env
+                if client.getresponse().status==200 and vnc_ready():return env
             finally:client.close()
         except (OSError,subprocess.SubprocessError):pass
         time.sleep(.25)

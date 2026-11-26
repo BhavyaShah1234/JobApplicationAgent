@@ -17,6 +17,6 @@ session.screen0.toolbar.visible: false
 CFG
 fluxbox -display :102 -rc /tmp/fluxbox-init > /tmp/fluxbox.log 2>&1 &
 python3 /display/x11relay.py > /tmp/xrelay.log 2>&1 &
-x11vnc -display :102 -auth "$XAUTHORITY" -nopw -forever -shared \
+x11vnc -display :102 -auth "$XAUTHORITY" -noshm -nopw -forever -shared \
   -rfbport 5903 -listen 127.0.0.1 -no6 > /tmp/x11vnc.log 2>&1 &
 exec websockify --web=/usr/share/novnc 127.0.0.1:6083 127.0.0.1:5903

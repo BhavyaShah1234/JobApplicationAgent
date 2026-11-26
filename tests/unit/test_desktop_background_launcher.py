@@ -59,5 +59,25 @@ def test_a_running_owned_display_is_checked_without_restarting_it(launcher,tmp_p
         def getresponse(self):return SimpleNamespace(status=200)
         def close(self):pass
     monkeypatch.setattr(launcher.http.client,'HTTPConnection',HTTP)
+    monkeypatch.setattr(launcher,'vnc_ready',lambda:True)
     assert launcher.ensure_display(directory)['DISPLAY']=='127.0.0.1:102'
     assert calls==[['docker','inspect',launcher.NAME],['xdpyinfo']]
+
+
+@pytest.mark.parametrize('banner,ready',[(b'RFB 003.008\n',True),(b'HTTP/1.1 200',False),(b'',False)])
+def test_vnc_readiness_requires_a_live_rfb_server(launcher,monkeypatch,banner,ready):
+    class Client:
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def recv(self,size):assert size==12;return banner
+    def connect(address,timeout):
+        assert address==('127.0.0.1',5903) and timeout==2
+        return Client()
+    monkeypatch.setattr(launcher.socket,'create_connection',connect)
+    assert launcher.vnc_ready() is ready
+
+
+def test_vnc_readiness_rejects_an_unavailable_server(launcher,monkeypatch):
+    def connect(*args,**kwargs):raise ConnectionRefusedError
+    monkeypatch.setattr(launcher.socket,'create_connection',connect)
+    assert launcher.vnc_ready() is False
