@@ -100,12 +100,18 @@ STATE_CITIES = {
 }
 
 
+def _location_text(label: str) -> str:
+    """Remove a US country suffix and trailing ZIP from an ATS location label."""
+    text = re.sub(r"(?i)\b(?:united states(?: of america)?|usa|us)\b", " ", label).strip(" ,")
+    return re.sub(r"(?:,\s*|\s+)\d{5}(?:-\d{4})?\s*$", "", text).strip(" ,")
+
+
 def _state_from_label(label: str) -> str | None:
     cleaned = re.sub(
         r"(?i)\b(?:remote|hybrid|on[- ]?site|"
         r"united states(?: of america)?|usa|us)\b",
         " ",
-        label,
+        _location_text(label),
     )
     normalized = _key(cleaned)
 
@@ -168,7 +174,7 @@ def _city_key(city: str) -> str:
 
 def _explicit_city(location: str, code: str) -> str:
     """Retain the explicit city in either city/state or state/city order."""
-    text = re.sub(r"(?i)\b(?:united states(?: of america)?|usa|us)\b", "", location).strip(" ,")
+    text = _location_text(location)
     state = STATE_CITIES[code][0]
     head, separator, tail = text.partition(",")
     tail_is_state = tail.strip(" ,").upper() == code or _key(tail) == _key(state)
@@ -201,7 +207,7 @@ def _target(locations: list[str], log, *, allow_geocode: bool = True) -> dict | 
             continue
         if re.search(r"(?i)\b(?:headquarters|corporate|remote|anywhere)\b", location):
             continue
-        city_query = re.sub(r"(?i)\b(?:united states(?: of america)?|usa|us)\b", "", location).strip(" ,-/")
+        city_query = _location_text(location).strip(" ,-/")
         if not city_query:
             continue
         city_seen = True

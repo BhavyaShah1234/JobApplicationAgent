@@ -13,6 +13,12 @@ from jobagent.tools import application_address as A
     ('Washington, DC', 'DC', 'Washington'),
     ('USA, DC, Washington', 'DC', 'Washington'),
     ('Colorado Springs, CO', 'CO', 'Colorado Springs'),
+    ('Wilmington, NC, US, 28405', 'NC', 'Wilmington'),
+    ('Wilmington, NC 28405', 'NC', 'Wilmington'),
+    ('Wilmington, North Carolina, United States, 28405-1234', 'NC', 'Wilmington'),
+    ('Wilmington, NC, 28405, US', 'NC', 'Wilmington'),
+    ('USA, NC, Wilmington 28405', 'NC', 'Wilmington'),
+    ('New York, NY 10001', 'NY', 'New York'),
 ])
 def test_explicit_city_survives_both_location_orders(label, code, city):
     assert A._state_from_label(label) == code
@@ -22,7 +28,7 @@ def test_explicit_city_survives_both_location_orders(label, code, city):
     }
 
 
-@pytest.mark.parametrize('label', ['Colorado', 'CO', 'USA, CO', 'Remote, Colorado'])
+@pytest.mark.parametrize('label', ['Colorado', 'CO', 'USA, CO', 'Remote, Colorado', 'CO 80001', 'CO, US, 80001'])
 def test_state_only_still_uses_its_configured_city(label):
     result = A._target([label], lambda *a: None, allow_geocode=False)
     assert result == {'city': A.STATE_CITIES['CO'][1], 'state': 'Colorado', 'state_code': 'CO'}
