@@ -1826,7 +1826,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         if f.value:_clear_search_picker(page,loc)
         for item in [x.strip() for x in answer.split(";") if x.strip()]:
             try:
-                one = Field(**{**f.__dict__, "options": [], "value": "", "multiple": False})
+                one = replace(f, options=[], value="", multiple=False)
                 added.append(fill_field(page, view, one, item, files, None, strict=True))
             except Exception:
                 page.keyboard.press("Escape")

@@ -158,7 +158,7 @@ def choice(f, values):
     if f.kind == 'combobox' and not f.options and f.options_state != 'complete':
         # Keep the known source value as a SEARCH, not a fabricated selection.
         # fill_field re-applies these rules to the real options once they load.
-        return values[0]
+        return '; '.join(forms.selection_parts(values[0],f.label)) if f.multiple else values[0]
     if f.kind=='checkboxes' or f.multiple:
         parts=forms.selection_parts(values[0],f.label)
         values=['; '.join(parts),*values[1:]]
