@@ -10,6 +10,36 @@ from test_filling_strategy import world, SourceModel, CONTACT
 import pytest
 
 
+def test_referral_evidence_survives_planning_subset_with_projected_agreements(world,monkeypatch):
+    from jobagent.tools import learned
+    from jobagent.filling import agreements
+    import json
+    monkeypatch.setattr(learned,'load',lambda:[{'question':agreements.POLICY_QUESTION,
+        'company':'any','policy_context':agreements.POLICY_CONTEXT,'answer':'Yes'}])
+    original=A.context
+    def context(*args):
+        ctx=original(*args);ctx['REFERRAL']={'name':'Employee Name','email':'employee@example.test'}
+        return ctx
+    monkeypatch.setattr(A,'context',context)
+    world.setup(CONTACT+'''<label for=s>How did you hear about this opportunity?</label>
+      <select id=s required><option value="">Choose</option><option>Employee Referral</option></select>
+      <label for=d>If applicable, please provide info.</label><input id=d>
+      <label for=a>I agree to the applicant terms and conditions</label><input id=a type=checkbox required>
+      <label for=x>Favourite editor</label><input id=x required>''')
+    class Hitl:
+        def ask(self,prompt,**kwargs):
+            questions=json.loads(prompt.split('\n',1)[1])
+            return json.dumps({str(q['id']):'Vim' for q in questions})
+    result=A.run(world.page,world.job,'fixture',model=SourceModel(),hitl=Hitl(),
+                 filling_strategy='adaptive',log=lambda _:None)
+    assert result['state']=='review',result.get('reason')
+    assert not any('round budget' in b for b in result.get('blockers',[]))
+    assert world.page.locator('#s').input_value()=='Employee Referral'
+    assert 'employee@example.test' in world.page.locator('#d').input_value()
+    assert world.page.locator('#a').is_checked()
+    assert not world.page.evaluate('!!window.sent')
+
+
 @pytest.mark.parametrize('reply',[None,'Asian: South Asian'])
 def test_unavailable_broad_race_asks_for_an_offered_choice_once_instead_of_repair_loop(world,tmp_path,reply):
     world.setup('''<label for=e>Email</label><input id=e required>

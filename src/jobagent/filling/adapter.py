@@ -246,6 +246,14 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
 
     def prepare(fields):
         refresh_adaptive_sources()
+        live=getattr(ctx.get('_experimental_filler'),'_live',None)
+        if live and live.view:
+            # Derived agreement/entity facts belong to the whole visible form.
+            # Planning just the unfinished controls must not remove facts from
+            # evidence snapshots and invalidate unrelated accepted decisions.
+            visible=list(live.view.fields)
+            visible_keys={key(f) for f in visible}
+            fields=visible+[f for f in fields if key(f) not in visible_keys]
         matches=A.match_entries(fields,ctx.get('_jd',{}).get('company',''),ctx.get('_applicant') or {})
         from .routing import family,field_family
         address_needed=any(e.get('question') in {'Current address','Current location (city)'} for _,e in matches.values()) or any(
