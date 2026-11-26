@@ -1434,6 +1434,42 @@ def hitl_done(req_id: str = typer.Argument(None)) -> None:
     console.print(f"marked {req.id} done")
 
 
+@hitl_app.command("away")
+def hitl_away() -> None:
+    """Tell the agent you are away (same as the dashboard toggle): it stops asking, moves a job that needs you to the end of
+    the queue and goes on with the next one."""
+    from jobagent.tools import presence
+
+    presence.set_available(False, by="terminal")
+    console.print("you are away: jobs that need you are moved to the end of the queue and resumed when you are back")
+
+
+@hitl_app.command("back")
+def hitl_back() -> None:
+    """Tell the agent you are available again: it asks its questions and resumes the jobs that waited for you."""
+    from jobagent.tools import presence
+
+    presence.set_available(True, by="terminal")
+    console.print("you are available: the agent asks again and resumes the jobs that waited for you")
+
+
+@hitl_app.command("status")
+def hitl_status() -> None:
+    """Show whether the agent thinks you are available, and how many queued jobs are waiting for you."""
+    from jobagent import db
+    from jobagent.tools import jobqueue as Q, presence
+
+    st = presence.status()
+    conn = db.connect()
+    try:
+        waiting = Q.deferred_count(conn)
+    finally:
+        conn.close()
+    console.print(f"{'available' if st['available'] else 'away'}"
+                  + (f" (since {st['changed_at']}, set from the {st['changed_by']})" if st['changed_at'] else "")
+                  + f"; {waiting} job(s) waiting for you")
+
+
 def _decides_submission(prompt: str) -> bool:
     """The step 13 review question: only ever answered by its id."""
     return "'approve' to SUBMIT" in prompt

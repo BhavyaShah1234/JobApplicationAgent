@@ -2,9 +2,11 @@
 
 - Every request needs the token (first visit `/?t=<token>` sets an HttpOnly, SameSite=Strict cookie) and a Host header that names this machine,
   so another website cannot read it or drive it (DNS rebinding, cross-site requests).
-- GET serves the page and read-only JSON (`/api/overview`, `queue`, `applications`, `review`, `hitl`, `runs`, `run/<id>`, `outcomes`).
-- POST does two things only, and only with the cookie, a JSON body and the `X-Dashboard: 1` header: answer a question the agent is waiting on
-  (never a secret: those are answered in a terminal) and start `jobagent run` up to `apply`. There is no route that approves or submits.
+- GET serves the page and read-only JSON (`/api/overview`, `queue`, `applications`, `review`, `hitl`, `runs`, `run/<id>`, `outcomes`, `presence`).
+- POST, only with the cookie, a JSON body and the `X-Dashboard: 1` header: answer a question the agent is waiting on (never a secret:
+  those are answered in a terminal), delete queued postings, start `jobagent run` up to `apply`, and switch the candidate's presence
+  (`/api/presence`: available for questions, or away so jobs that need them wait at the end of the queue). There is no route that
+  approves or submits.
 """
 
 import hmac
@@ -238,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"read_only": self.server.read_only, "novnc": self.server.novnc_url})
         routes = {"/api/overview": lambda: {**data.overview(s), "read_only": self.server.read_only}, "/api/queue": lambda: data.queue(s), "/api/applications": lambda: data.applications(s),
                   "/api/review": lambda: data.review(s), "/api/hitl": lambda: data.hitl_pending(s), "/api/runs": lambda: data.runs(s),
-                  "/api/outcomes": lambda: data.outcomes(s), "/api/pipeline": lambda: data.pipeline(s), "/api/analytics": lambda: data.analytics(s)}
+                  "/api/outcomes": lambda: data.outcomes(s), "/api/presence": lambda: data.presence(s), "/api/pipeline": lambda: data.pipeline(s), "/api/analytics": lambda: data.analytics(s)}
         if url.path in routes:
             return self._json(routes[url.path]())
         if url.path.startswith("/api/run/"):
@@ -272,6 +274,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/hitl/answer":
                 return self._json(self._answer(s, body))
+            if path == "/api/presence":
+                if not isinstance(body.get("available"), bool):
+                    raise ValueError("give available: true or false")
+                from jobagent.tools import presence
+                return self._json(presence.set_available(body["available"], by="dashboard", state_dir=s.state_dir))
             if path == "/api/queue/delete":
                 from jobagent import db
                 from jobagent.tools import queue_admin as QA

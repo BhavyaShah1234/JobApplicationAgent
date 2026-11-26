@@ -10,6 +10,7 @@ import Queue from "./views/Queue.jsx";
 import Review from "./views/Review.jsx";
 import Runs from "./views/Runs.jsx";
 import FetchError from "./components/FetchError.jsx";
+import PresenceToggle from "./components/PresenceToggle.jsx";
 
 const TABS = [["overview", "Overview"], ["jobs", "Jobs"], ["browser", "Browser"], ["questions", "Questions"], ["review", "Review"], ["queue", "Queue"], ["runs", "Runs"], ["outcomes", "Outcomes"]];
 
@@ -74,6 +75,7 @@ export default function App() {
             </a>
           ))}
         </nav>
+        <PresenceToggle presence={overview?.presence} deferred={overview?.deferred || 0} readOnly={config.read_only} onChange={reload} />
         <span className="live">
           <span className={`dot${live ? " on" : ""}`} />
           <span>{live && !overviewError ? "live · " : ""}{updatedAt ? `${overviewError ? 'last update' : 'updated'} ${new Date(updatedAt).toLocaleTimeString()}` : "connecting…"}</span>

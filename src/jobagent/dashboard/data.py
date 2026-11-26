@@ -47,7 +47,7 @@ def overview(settings) -> dict:
     conn = ro_conn(settings)
     out = {"now": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), "jobs": {}, "applications": {}, "outcomes": {}, "waiting": 0, "ready": 0,
            "questions": len(hitl_pending(settings)), "runs_active": sum(1 for r in runs(settings, 40) if r["running"]),
-           "jobs_active": sum(1 for j in pipeline(settings) if j["active"])}
+           "jobs_active": sum(1 for j in pipeline(settings) if j["active"]), "presence": presence(settings), "deferred": 0}
     if conn is None:
         return out
     try:
@@ -56,11 +56,18 @@ def overview(settings) -> dict:
         out["outcomes"] = _count(conn, "SELECT stage, COUNT(*) FROM outcome_events WHERE needs_review = 0 GROUP BY stage")
         rows = review(settings, conn)
         out["waiting"], out["ready"] = len(rows), sum(1 for r in rows if r["ready"])
+        out["deferred"] = conn.execute("SELECT COUNT(*) FROM jobs WHERE status = 'queued' AND deferred_at IS NOT NULL").fetchone()[0]
     except sqlite3.Error:
         pass
     finally:
         conn.close()
     return out
+
+
+def presence(settings) -> dict:
+    """Whether the candidate is available for questions (the dashboard toggle; tools/presence.py)."""
+    from jobagent.tools import presence as P
+    return P.status(settings.state_dir)
 
 
 def queue(settings, limit: int = 300) -> list[dict]:
@@ -77,7 +84,8 @@ def queue(settings, limit: int = 300) -> list[dict]:
     if conn is None:
         return []
     try:
-        keep = ("id", "company", "title", "location", "status", "notes", "role_id", "match_score", "claimed_by", "updated_at", "url", "has_application")
+        keep = ("id", "company", "title", "location", "status", "notes", "role_id", "match_score", "claimed_by", "updated_at", "url", "has_application",
+                "deferred_at")
         return [{k: (str(r[k])[:200] if isinstance(r.get(k), str) else r.get(k)) for k in keep if k in r}
                 for r in _rows(conn, "SELECT jobs.*, EXISTS(SELECT 1 FROM applications a WHERE a.job_id = jobs.id OR a.url = jobs.url) AS has_application "
                                      "FROM jobs ORDER BY updated_at DESC, id DESC LIMIT ?", (limit,))]

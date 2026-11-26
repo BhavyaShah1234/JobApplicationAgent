@@ -75,3 +75,18 @@ The score chart uses the same exact PDF/JD identity and complete required-provid
 If nothing loads, first check the harness is running, obtain the correct access link, and inspect `scripts/dashboard.sh logs`. Development fixtures remain separate: `jobagent.dashboard.demo.seed(root)` creates invented records only in the explicitly supplied test root.
 
 **Not in this step:** approving or submitting, editing data files, secrets, authentication beyond the local token, server-pushed updates (the page polls automatically).
+
+## Available / away toggle (2026-11-26)
+
+The header has an **Available** switch (also `jobagent hitl away`, `jobagent hitl back`, `jobagent hitl status` in a terminal).
+
+- **Available** (the default; a missing flag means available): the agent asks its questions and waits, as before.
+- **Away**: the agent does not ask. `Hitl.ask` records a deferral (`state/hitl/deferrals.jsonl`) and raises `CandidateAway`
+  (a `HitlTimeout`, so existing handlers stop the question exactly as they stop an unanswered one). A question already
+  waiting is withdrawn when the switch goes to away.
+- The queue runner puts a job that stopped on such a question back to `queued` with `jobs.deferred_at` set: it is taken
+  after every other queued job, not taken at all while away, and does not count against the run's limit. When only
+  deferred jobs are left the runner waits for the candidate and then resumes them, oldest deferral first, from their
+  saved checkpoints. A job that failed for its own reasons (a bot check, a closed posting) is not deferred.
+- The header shows "N waiting" while jobs wait for the candidate. A read-only dashboard cannot switch it.
+- Flag: `state/hitl/presence.json`. Nothing is submitted either way: submission still needs the typed approval in a terminal.

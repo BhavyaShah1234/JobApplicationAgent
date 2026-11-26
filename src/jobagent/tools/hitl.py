@@ -34,6 +34,11 @@ class HitlTimeout(TimeoutError):
     pass
 
 
+class CandidateAway(HitlTimeout):
+    """The candidate switched the dashboard toggle to "away": the question was not asked (or stopped waiting) and the job was
+    recorded as deferred (tools/presence.py); the queue runner puts it back at the end of the queue."""
+
+
 @dataclass
 class Request:
     id: str
@@ -82,7 +87,12 @@ class Hitl:
     ) -> str:
         """Block until the user answers (or `done_when()` turns true). Returns the answer ("" if auto-resolved)."""
         from jobagent.progress import metadata
+        from jobagent.tools import presence
         context = metadata()
+        state_dir = self.pending.parent.parent
+        if not presence.available(state_dir):
+            presence.record_deferral(context, prompt, state_dir)
+            raise CandidateAway(f"the candidate is away: not asked, the job is deferred: {prompt[:200]}")
         req = Request(id=uuid.uuid4().hex[:8], prompt=prompt, secret=secret, default=default, vault_target=vault_target,
                       terminal_only=terminal_only or submission_prompt(prompt), context=context,
                       pid_namespace=process_namespace())
@@ -109,6 +119,9 @@ class Hitl:
                     return default if value == "" and default is not None else value
                 if done_when is not None and done_when():
                     return ""
+                if not presence.available(state_dir):      # switched to away while this question was waiting
+                    presence.record_deferral(context, prompt, state_dir)
+                    raise CandidateAway(f"the candidate went away while HITL {req.id} was waiting: {prompt[:200]}")
                 if deadline is not None and time.monotonic() > deadline:
                     raise HitlTimeout(f"no answer to HITL {req.id} within {timeout_s}s: {prompt}")
                 time.sleep(poll_s)

@@ -27,6 +27,8 @@ def fake_world(monkeypatch, tmp_path, result):
     (job / "jd.json").write_text(json.dumps({"company": "Acme", "title": "Engineer", "apply_url": "https://e.test/a",
                                              "source_url": "https://e.test/a"}))
     monkeypatch.setenv("STATE_DIR", str(tmp_path))
+    import jobagent.llm as _L          # the model-service pre-flight needs the VPN; these tests are offline
+    monkeypatch.setattr(_L, "endpoint_status", lambda *a, **k: {"ok": True, "seconds": 0.0, "detail": "stubbed in tests"})
     data=tmp_path/'data';(data/'templates').mkdir(parents=True,exist_ok=True)
     (data/'templates/resume.tex').write_text('Current test template')
     monkeypatch.setenv('DATA_DIR',str(data))

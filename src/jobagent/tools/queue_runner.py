@@ -103,12 +103,18 @@ class Heartbeat:
 def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: str, limit: int, company: str | None, outputs_dir: Path,
               slug_of: Callable[[str], str], log: Callable[[str], None], worker: str | None = None, lease_s: int = Q.LEASE_S,
               connect: Callable | None = None, browser_mode: str = "docker", pipeline=None, companies: tuple[str, ...] | None = None,
-              pipeline_options: dict | None = None, results: list | None = None) -> int:
+              pipeline_options: dict | None = None, results: list | None = None, away_poll_s: float = 15.0,
+              sleep: Callable[[float], None] = time.sleep) -> int:
     """Claim and run up to `limit` queued jobs; returns how many were taken through `through` WITHOUT failing. `companies` (slugs)
     restricts the claims to those companies; `pipeline_options` (force, no_ats, filling_strategy) reach `Pipeline.run`; when `results`
     is a list, one dict per job (url, company, state, code, note) is appended to it. `step(cmd)` runs one
     `jobagent` command and returns its exit code. `browser_mode` (docker | desktop | auto) is passed to `apply` (F14); the queue
-    never submits, so there is no submit mode here."""
+    never submits, so there is no submit mode here.
+
+    Candidate presence (dashboard toggle, tools/presence.py): a job that stopped on a question while the candidate was away is
+    put back at the END of the queue (`Q.defer`), does not count against `limit`, and the runner goes on with the next job.
+    Deferred jobs are not taken while the candidate is away; when only they are left, the runner waits for the candidate to
+    come back (checking every `away_poll_s` seconds) and then resumes them, oldest deferral first."""
     from jobagent import db
 
     worker = worker or Q.worker_id()
@@ -124,6 +130,9 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
     from jobagent.tools import pacing
     s = get_settings()
     announced: set[str] = set()
+    from datetime import UTC, datetime
+    from jobagent.tools import presence
+    said_waiting = False
     while taken < limit:
         paced = pacing.excluded(conn, s.pacing_max_per_company, s.pacing_window_days)
         for slug_, n in paced.items():
@@ -131,12 +140,41 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
                 announced.add(slug_)
                 log(f"queue: pacing: {slug_} already has {n} application(s) in the last {s.pacing_window_days} days "
                     f"(limit {s.pacing_max_per_company}); its other jobs wait")
+        here = presence.available(s.state_dir)
         row = Q.claim(conn, worker, company, lease_s, exclude=tuple(paced), companies=companies,
-                      pace=(s.pacing_max_per_company, s.pacing_window_days))
+                      pace=(s.pacing_max_per_company, s.pacing_window_days), include_deferred=here)
         if row is None:
+            if not here and Q.deferred_count(conn):
+                if not said_waiting:
+                    log(f"queue: {Q.deferred_count(conn)} job(s) are waiting for you; resuming them when the dashboard shows you available")
+                    said_waiting = True
+                sleep(away_poll_s)
+                continue
             break
+        said_waiting = False
         taken += 1
         url = row["url"]
+        job_started = datetime.now(UTC).isoformat(timespec="seconds")
+
+        def deferred_now(job_dir: str = "") -> dict | None:
+            """The deferral recorded for this job since it was claimed (the candidate was away when it needed them), or None."""
+            now = conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
+            dirs = [job_dir]
+            if now is not None and now["job_id"]:
+                dirs.append(str(outputs_dir / slug_of(now["company"] or row["company"]) / now["job_id"]))
+            return presence.deferred_since({url}, dirs, job_started, s.state_dir)
+
+        def requeue_for_candidate(why: dict) -> None:
+            """Back to the end of the queue: it needs the candidate, who is away. Not counted against the run's limit."""
+            nonlocal taken
+            note = f"waiting for you (you were away): {why.get('question', '')[:160]}"
+            if Q.defer(conn, url, worker, note):
+                log(f"[yellow]queue: {row['company']} - {row['title']}: needs you and you are away; moved to the end of the queue[/]")
+            else:
+                log(f"[yellow]queue: {url} was taken over by another runner; it was not deferred[/]")
+            taken -= 1
+            if results is not None:
+                results.append({"url": url, "company": row["company"], "state": "deferred", "code": 0, "note": note})
         log(f"queue: {row['company']} - {row['title']}")
 
         def fin(status: str, note: str = "") -> None:
@@ -155,10 +193,19 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
                 try:
                     result = pipeline.run(url, through=through, browser_mode=browser_mode, **opts)
                 except Exception as exc:
+                    why = deferred_now()
+                    if why is not None:
+                        requeue_for_candidate(why)
+                        continue
                     fin("failed", f"pipeline: {type(exc).__name__}: {str(exc)[:200]}")
                     if results is not None:
                         results.append({"url": url, "company": row["company"], "state": "failed", "code": 1,
                                         "note": f"{type(exc).__name__}: {str(exc)[:120]}"})
+                    continue
+                unfinished = bool(result.code) or result.state in ("failed", "blocked", "needs_review", "needs_attention", "unavailable")
+                why = deferred_now(getattr(result, "job_dir", "") or "") if unfinished else None
+                if why is not None:
+                    requeue_for_candidate(why)
                     continue
                 fin(result.state, result.note)
                 if results is not None:
@@ -177,6 +224,10 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
                 release()
                 continue
             if code != 0:
+                why = deferred_now()
+                if why is not None:
+                    requeue_for_candidate(why)
+                    continue
                 fin("failed", "scrape failed")
                 continue
             job_dir = outputs_dir / slug_of(now["company"] or row["company"]) / (now["job_id"] or "")
@@ -187,6 +238,10 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
                 done += 1
                 continue
             if step(["research", now["company"] or row["company"]]) != 0 or step(["tailor", rel, co]) != 0:
+                why = deferred_now(str(job_dir))
+                if why is not None:
+                    requeue_for_candidate(why)
+                    continue
                 fin("failed", "research or tailor failed")
                 continue
             if through == "tailor":
@@ -196,6 +251,11 @@ def run_queue(conn, step: Callable[[list[str]], int] | None = None, *, through: 
             started = time.time()
             code = step(["apply", rel, co, "--browser-mode", browser_mode])
             outcome = outcome_of_apply(fresh_result(job_dir, started), code)
+        if outcome is not None and outcome[0] in ("blocked", "needs_attention", "failed"):
+            why = deferred_now()
+            if why is not None:
+                requeue_for_candidate(why)
+                continue
         if outcome is None:
             release()                                # the stop recorded closed / already applied itself
         else:

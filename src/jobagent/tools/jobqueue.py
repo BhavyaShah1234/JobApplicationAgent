@@ -134,16 +134,21 @@ def pending(conn: sqlite3.Connection, status: str = "queued", company: str | Non
         limit: At most this many rows.
 
     Returns:
-        Matching `jobs` rows ordered by match score, then id.
+        Matching `jobs` rows in the order the queue takes them: match score, then id; jobs deferred while the candidate was
+        away come last, in the order they were deferred.
     """
     sql, args = "SELECT * FROM jobs WHERE status = ?", [status]
     if company:
         sql += " AND company_slug = ?"
         args.append(slug(company))
-    sql += " ORDER BY COALESCE(match_score, 0) DESC, id"
+    sql += " ORDER BY " + QUEUE_ORDER
     if limit:
         sql += f" LIMIT {int(limit)}"
     return conn.execute(sql, args).fetchall()
+
+
+# deferred jobs (waiting for the candidate) after every other queued job, oldest deferral first
+QUEUE_ORDER = "(deferred_at IS NOT NULL), deferred_at, COALESCE(match_score, 0) DESC, id"
 
 
 def _iso(when: datetime) -> str:
@@ -157,16 +162,19 @@ def worker_id() -> str:
 
 def claim(conn: sqlite3.Connection, worker: str, company: str | None = None, lease_s: int = LEASE_S,
           now: datetime | None = None, exclude: tuple[str, ...] | list[str] = (), companies: tuple[str, ...] | None = None,
-          pace: tuple[int, int] | None = None) -> sqlite3.Row | None:
+          pace: tuple[int, int] | None = None, include_deferred: bool = True) -> sqlite3.Row | None:
     """Atomically take the best queued job for `worker`: choose it and mark it running in ONE write transaction, so two
     runners cannot take the same job. None when nothing is queued. `companies` (slugs) limits the choice to those companies;
     `pace` = (max applications per company, window days) is applied INSIDE the transaction, counting the applications already
-    started and the jobs other runners are working right now, so two runners cannot both take the last slot of one company."""
+    started and the jobs other runners are working right now, so two runners cannot both take the last slot of one company.
+    Jobs deferred while the candidate was away are taken last, and not at all when `include_deferred` is False (still away)."""
     now = now or datetime.now(UTC)
     if conn.in_transaction:
         conn.commit()                                      # BEGIN IMMEDIATE cannot nest inside the caller's open transaction
     conn.create_function("employer_key", 1, lambda s: employer_key(s or ""), deterministic=True)
     sql = "SELECT id FROM jobs WHERE status = 'queued'"
+    if not include_deferred:
+        sql += " AND deferred_at IS NULL"
     args: list = []
     if company:
         sql += " AND employer_key(COALESCE(NULLIF(company_slug, ''), company, '')) = ?"
@@ -185,7 +193,7 @@ def claim(conn: sqlite3.Connection, worker: str, company: str | None = None, lea
             if full:
                 sql += f" AND employer_key(COALESCE(NULLIF(company_slug, ''), company, '')) NOT IN ({','.join('?' * len(full))})"
                 args += list(full)
-        sql += " ORDER BY COALESCE(match_score, 0) DESC, id LIMIT 1"
+        sql += " ORDER BY " + QUEUE_ORDER + " LIMIT 1"
         row = conn.execute(sql, args).fetchone()
         if row is None:
             conn.execute("COMMIT")
@@ -214,9 +222,25 @@ def finish(conn: sqlite3.Connection, url: str, worker: str, status: str, note: s
     the job was taken from this worker (the outcome of a stale runner never overwrites the new owner's)."""
     with conn:
         cur = conn.execute("UPDATE jobs SET status = ?, notes = COALESCE(NULLIF(?, ''), notes), claimed_by = NULL, lease_until = NULL, "
-                           "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE url = ? AND claimed_by = ?",
+                           "deferred_at = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE url = ? AND claimed_by = ?",
                            (status, note, url, worker))
     return cur.rowcount == 1
+
+
+def defer(conn: sqlite3.Connection, url: str, worker: str, note: str = "", now: datetime | None = None) -> bool:
+    """Put a claimed job back in the queue at the END because it needs the candidate, who is away; only if `worker` still holds
+    the claim. It is resumed (from its saved checkpoint) when the candidate is available again."""
+    now = now or datetime.now(UTC)
+    with conn:
+        cur = conn.execute("UPDATE jobs SET status = 'queued', deferred_at = ?, notes = COALESCE(NULLIF(?, ''), notes), "
+                           "claimed_by = NULL, lease_until = NULL, updated_at = ? WHERE url = ? AND claimed_by = ?",
+                           (_iso(now), note, _iso(now), url, worker))
+    return cur.rowcount == 1
+
+
+def deferred_count(conn: sqlite3.Connection) -> int:
+    """How many queued jobs are waiting for the candidate."""
+    return conn.execute("SELECT COUNT(*) FROM jobs WHERE status = 'queued' AND deferred_at IS NOT NULL").fetchone()[0]
 
 
 def mark(conn: sqlite3.Connection, url: str, status: str, note: str = "") -> None:

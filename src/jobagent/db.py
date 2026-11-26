@@ -239,6 +239,7 @@ MIGRATIONS = [("applications", "job_id", "INTEGER REFERENCES jobs(id) ON DELETE 
               ("jobs", "role_id", "TEXT"), ("jobs", "match_stage", "TEXT"), ("jobs", "match_score", "REAL"),
               ("jobs", "source", "TEXT"),
               ("jobs", "claimed_by", "TEXT"), ("jobs", "lease_until", "TEXT"),      # F13: who is working on a running job, until when
+              ("jobs", "deferred_at", "TEXT"),      # set while a job waits for the candidate (dashboard toggle "away"): queued last
               # step 15: what the submitted resume was (frozen at submission): hash, checker scores, role family, skills
               ("applications", "resume_sha", "TEXT"), ("applications", "ats_average", "REAL"),
               ("applications", "ats_scores", "TEXT"), ("applications", "role_id", "TEXT"),
