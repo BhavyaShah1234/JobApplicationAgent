@@ -1285,12 +1285,19 @@ def _scroll_to_control(loc):
 def _open_options(frame: Frame, loc, page: Page) -> list[str]:
     _scroll_to_control(loc)
     loc.click(timeout=8000)
+    handle = loc.element_handle() if hasattr(loc, 'element_handle') else loc
     try:
         # Other closed pickers can retain hidden option nodes. Wait for actual
         # visible choices from this opening, not merely any option in the DOM.
-        frame.wait_for_function("pattern => {const skip=new RegExp(pattern,'i');return ("+OPTIONS_JS+")().some(t=>!skip.test(t));}",
-                                arg=_NO_OPTIONS.pattern.removeprefix('(?i)'),timeout=1500)
+        frame.wait_for_function("([control, pattern]) => {const skip=new RegExp(pattern,'i');"
+                                "const owned=("+_OWNED_OPTIONS_JS+")(control);"
+                                "const choices=owned===null?("+OPTIONS_JS+")():owned;"
+                                "return choices.some(t=>!skip.test(t));}",
+                                arg=[handle, _NO_OPTIONS.pattern.removeprefix('(?i)')],timeout=1500)
     except Exception:pass
+    finally:
+        if handle is not loc and handle is not None:
+            handle.dispose()
     return _options_for_control(frame, loc)
 
 
@@ -1308,6 +1315,15 @@ _OWNED_MENU_JS = r"""e => {
     return null;
 }"""
 
+_OWNED_OPTIONS_JS = r"""e => {
+    if (!(e.getAttribute('aria-controls') || e.getAttribute('aria-owns') || '').trim()) return null;
+    const menu = (__OWNED_MENU__)(e);
+    if (!menu) return [];
+    return [...new Set([...menu.querySelectorAll(__OPTION_SELECTOR__)]
+      .filter(o => o.getClientRects().length && getComputedStyle(o).visibility !== 'hidden' && getComputedStyle(o).display !== 'none')
+      .map(o => (o.innerText || o.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean))];
+}""".replace('__OWNED_MENU__', _OWNED_MENU_JS).replace('__OPTION_SELECTOR__', json.dumps(OPTION_SELECTOR))
+
 
 def _owned_menu(loc):
     try:
@@ -1323,28 +1339,17 @@ def _owned_menu(loc):
 def _owned_options(loc) -> list[str]:
     """The options of the list a combobox names with aria-controls / aria-owns (Ant Design, react-select, ...), or [] when it names none
     or the list holds no options. Reading only this list keeps unrelated menus (a header's links, another open picker) out."""
-    menu = None
     try:
-        menu = _owned_menu(loc)
-        if menu is None:
-            return []
-        return menu.evaluate("""(menu, selector) => [...new Set([...menu.querySelectorAll(selector)]
-            .filter(o => o.getClientRects().length && getComputedStyle(o).visibility !== 'hidden' && getComputedStyle(o).display !== 'none')
-            .map(o => (o.innerText || o.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean))]""", OPTION_SELECTOR) or []
+        return loc.evaluate(_OWNED_OPTIONS_JS) or []
     except Exception:
         return []
-    finally:
-        if menu is not None:
-            menu.dispose()
 
 
 def _options_for_control(frame, loc):
-    menu = _owned_menu(loc)
-    if menu is not None:
-        menu.dispose()
-        # An existing but empty owned menu is still authoritative. Another
-        # field's populated menu must not suppress typing into this search box.
-        return [o for o in _owned_options(loc) if not _NO_OPTIONS.match(o)]
+    owned = loc.evaluate(_OWNED_OPTIONS_JS)
+    if owned is not None:
+        # Ownership remains authoritative before a lazy menu is inserted too.
+        return [o for o in owned if not _NO_OPTIONS.match(o)]
     return [o for o in frame.evaluate(OPTIONS_JS) if not _NO_OPTIONS.match(o)]
 
 
@@ -2032,11 +2037,8 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
                 page.keyboard.press("Escape")
                 raise
         owned_option = _owned_option(loc, opt)
-        owned_menu = _owned_menu(loc)
-        if owned_menu is not None:
-            owned_menu.dispose()
-            if owned_option is None:
-                raise FillError('The chosen option is no longer available in this control\'s own menu')
+        if (loc.get_attribute('aria-controls') or loc.get_attribute('aria-owns') or '').strip() and owned_option is None:
+            raise FillError('The chosen option is no longer available in this control\'s own menu')
         option = frame.get_by_role("option", name=opt, exact=True)
         if not option.count():
             option = shadow_locator(frame, OPTION_SELECTOR).filter(has_text=re.compile(rf"^\s*{re.escape(opt)}\s*$"))
