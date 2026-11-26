@@ -129,11 +129,15 @@ def handoff_tab_allowed(requested, page, related_urls=(), *, lease=None, target_
           const shown=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);
             return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';};
           const controls=f=>[...Object.getOwnPropertyDescriptor(HTMLFormElement.prototype,'elements').get.call(f)];
-          const forms=[...document.forms].filter(f=>controls(f).some(shown));
+          let forms=[...document.forms].filter(f=>controls(f).some(shown));
+          if(allowIdentifier)forms=forms.filter(f=>!controls(f).every(e=>
+            e.tagName==='INPUT'&&e.type==='hidden' ||
+            e.tagName==='BUTTON'&&e.type==='submit'&&/^continue with\s+\S/i.test((e.innerText||'').trim())));
           if(forms.length!==1)return false;
           const form=forms[0], fields=controls(form).filter(e=>['INPUT','SELECT','TEXTAREA','BUTTON'].includes(e.tagName)).filter(shown)
             .filter(e=>!['hidden','submit','button','reset'].includes(e.type));
-          const identifier=allowIdentifier && fields.length===1 && !form.querySelector('input[type=password]') &&
+          const identifier=allowIdentifier && fields.length===1 &&
+            controls(form).filter(e=>e.tagName==='INPUT'&&e.type==='password').every(e=>!shown(e)&&!e.name) &&
             fields[0].tagName==='INPUT' && (fields[0].type==='email' ||
               fields[0].type==='text' && /^(?:username|email|login|identifier)$/i.test(fields[0].name||fields[0].autocomplete||'')) &&
             [...form.querySelectorAll('button,input[type=submit]')].filter(shown).some(e=>/^continue$/i.test((e.innerText||e.value||'').trim()));
@@ -208,7 +212,10 @@ def application_context(mode, url, settings=None, *, related_urls=()):
                 if len(pages) == 1 and desktop_browser.allowed(pages[0].url):
                     break
                 if time.monotonic() >= deadline:
-                    raise RuntimeError('Dedicated application tab missing or ambiguous')
+                    from urllib.parse import urlsplit
+                    # Never include callback paths, query tokens or the private CDP endpoint.
+                    tabs = [urlsplit(p.url).scheme + '://' + (urlsplit(p.url).hostname or '') for p in pages]
+                    raise RuntimeError(f'Dedicated application tab missing or ambiguous ({len(pages)} tabs: {tabs})')
                 time.sleep(.25)
             page = pages[0]
             ctx = page.context

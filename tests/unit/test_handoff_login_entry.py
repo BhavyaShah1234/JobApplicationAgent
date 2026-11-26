@@ -57,6 +57,8 @@ def test_unreadable_login_never_gets_the_exception(monkeypatch):
 @pytest.mark.parametrize('case,expected',[
     ('identifier',True),('undeclared',False),('wrong_host',False),('wrong_path',False),
     ('profile_heading',False),('extra_address',False),('hidden_password',False),('file',False),
+    ('actual_identifier_structure',True),('provider_extra_address',False),('two_credential_forms',False),
+    ('visible_unnamed_password',False),('autofill_wrong_host',False),
 ])
 def test_shared_identifier_handoff_stays_credential_only_and_explicitly_trusted(chrome,monkeypatch,case,expected):
     monkeypatch.setattr(desktop_browser,'public_destination',lambda u:True)
@@ -67,8 +69,16 @@ def test_shared_identifier_handoff_stays_credential_only_and_explicitly_trusted(
     if case=='wrong_path':url=url.replace('/identifier','/newsletter')
     if case=='profile_heading':html=html.replace('Welcome','Candidate Profile')
     if case=='extra_address':html=html.replace('<button>','<input name=address><button>')
-    if case=='hidden_password':html=html.replace('<button>','<input type=password hidden><button>')
+    if case=='hidden_password':html=html.replace('<button>','<input type=password name=password hidden><button>')
     if case=='file':html=html.replace('<button>','<input type=file hidden><button>')
+    if case in {'actual_identifier_structure','provider_extra_address','two_credential_forms','visible_unnamed_password','autofill_wrong_host'}:
+        html=html.replace('<button>','<input type=password style="display:none"><button>')
+        html+=''.join('<form><input type=hidden name=state><input type=hidden name=connection><button type=submit>Continue with '+provider+'</button></form>'
+                      for provider in ['Corporate Login','Linkedin','Apple','Facebook','Indeed','Microsoft','Google'])
+    if case=='provider_extra_address':html=html.replace('name=connection>','name=connection><input name=address>',1)
+    if case=='two_credential_forms':html+='<form><input name=email><button>Continue</button></form>'
+    if case=='visible_unnamed_password':html=html.replace('style="display:none"','')
+    if case=='autofill_wrong_host':url=url.replace('login.icims.com','other.example.test');related=[url]
     page=chrome.new_page()
     try:
         page.route('**/*',lambda r:r.fulfill(content_type='text/html',body=html));page.goto(url)
