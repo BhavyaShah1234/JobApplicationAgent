@@ -64,6 +64,12 @@ def overview(settings) -> dict:
     return out
 
 
+def saved_questions(settings) -> list[dict]:
+    """Job-application questions the agent asked and nobody answered yet, per application (tools/saved_questions.py)."""
+    from jobagent.tools import saved_questions as SQ
+    return SQ.open_questions(settings.outputs_dir)
+
+
 def presence(settings) -> dict:
     """Whether the candidate is available for questions (the dashboard toggle; tools/presence.py)."""
     from jobagent.tools import presence as P

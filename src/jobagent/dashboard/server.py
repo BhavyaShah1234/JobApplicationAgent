@@ -5,8 +5,9 @@
 - GET serves the page and read-only JSON (`/api/overview`, `queue`, `applications`, `review`, `hitl`, `runs`, `run/<id>`, `outcomes`, `presence`).
 - POST, only with the cookie, a JSON body and the `X-Dashboard: 1` header: answer a question the agent is waiting on (never a secret:
   those are answered in a terminal), delete queued postings, start `jobagent run` up to `apply`, and switch the candidate's presence
-  (`/api/presence`: available for questions, or away so jobs that need them wait at the end of the queue). There is no route that
-  approves or submits.
+  (`/api/presence`: available for questions, or away so jobs that need them wait at the end of the queue), and answer a saved
+  application question (`/api/saved-questions/answer`: written to that application's answers.md for its next run). There is no
+  route that approves or submits.
 """
 
 import hmac
@@ -240,7 +241,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"read_only": self.server.read_only, "novnc": self.server.novnc_url})
         routes = {"/api/overview": lambda: {**data.overview(s), "read_only": self.server.read_only}, "/api/queue": lambda: data.queue(s), "/api/applications": lambda: data.applications(s),
                   "/api/review": lambda: data.review(s), "/api/hitl": lambda: data.hitl_pending(s), "/api/runs": lambda: data.runs(s),
-                  "/api/outcomes": lambda: data.outcomes(s), "/api/presence": lambda: data.presence(s), "/api/pipeline": lambda: data.pipeline(s), "/api/analytics": lambda: data.analytics(s)}
+                  "/api/outcomes": lambda: data.outcomes(s), "/api/presence": lambda: data.presence(s),
+                  "/api/saved-questions": lambda: data.saved_questions(s), "/api/pipeline": lambda: data.pipeline(s), "/api/analytics": lambda: data.analytics(s)}
         if url.path in routes:
             return self._json(routes[url.path]())
         if url.path.startswith("/api/run/"):
@@ -274,6 +276,13 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/hitl/answer":
                 return self._json(self._answer(s, body))
+            if path == "/api/saved-questions/answer":
+                from jobagent.tools import saved_questions as SQ
+                job, key, value = body.get("job"), body.get("key"), body.get("value")
+                if not isinstance(job, str) or not isinstance(key, str) or not isinstance(value, str):
+                    raise ValueError("give the application, the question key and a text answer")
+                row = SQ.answer(SQ.job_dir_for(s.outputs_dir, job), key, value)
+                return self._json({"answered": key, "job": job, "sheet_row": row.get("sheet_row"), "sheet": row.get("sheet", "")})
             if path == "/api/presence":
                 if not isinstance(body.get("available"), bool):
                     raise ValueError("give available: true or false")

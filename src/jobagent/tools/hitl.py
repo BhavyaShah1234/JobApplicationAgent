@@ -90,6 +90,7 @@ class Hitl:
         from jobagent.tools import presence
         context = metadata()
         state_dir = self.pending.parent.parent
+        saved = _saved_form_questions(prompt, context, secret or terminal_only)
         if not presence.available(state_dir):
             presence.record_deferral(context, prompt, state_dir)
             raise CandidateAway(f"the candidate is away: not asked, the job is deferred: {prompt[:200]}")
@@ -116,6 +117,8 @@ class Hitl:
                 if answer_file.exists():
                     value = json.loads(answer_file.read_text())["value"]
                     answer_file.unlink()
+                    if saved:
+                        saved(value)
                     return default if value == "" and default is not None else value
                 if done_when is not None and done_when():
                     return ""
@@ -162,6 +165,30 @@ class Hitl:
             value = SECRET_MARKER
         _write_atomic(self.answers / f"{req.id}.json", json.dumps({"value": value}))
         return req
+
+
+def _saved_form_questions(prompt: str, context: dict, private: bool):
+    """Save a job-application question request in its application's questions.json (open until answered). Returns a callback
+    that records the reply as that application's answers, or None when this request is not a form question (bot checks,
+    CAPTCHAs, passwords, submission approval) or no application folder is known. Saving never stops the question."""
+    job_dir = context.get("job_dir")
+    if private or not job_dir:
+        return None
+    try:
+        from jobagent.tools import saved_questions as SQ
+        questions = SQ.parse(prompt)
+        if not questions:
+            return None
+        SQ.record(Path(job_dir), questions)
+    except Exception:
+        return None
+
+    def answered(reply) -> None:
+        try:
+            SQ.record(Path(job_dir), questions, SQ.replies(questions, reply if isinstance(reply, str) else json.dumps(reply)), asked=False)
+        except Exception:
+            pass
+    return answered
 
 
 def _write_atomic(path: Path, text: str) -> None:

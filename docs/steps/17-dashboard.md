@@ -90,3 +90,17 @@ The header has an **Available** switch (also `jobagent hitl away`, `jobagent hit
   saved checkpoints. A job that failed for its own reasons (a bot check, a closed posting) is not deferred.
 - The header shows "N waiting" while jobs wait for the candidate. A read-only dashboard cannot switch it.
 - Flag: `state/hitl/presence.json`. Nothing is submitted either way: submission still needs the typed approval in a terminal.
+
+## Saved application questions (2026-11-26)
+
+Every job-application question the agent sends through HITL (the filler's question batches; never bot checks, CAPTCHAs,
+passwords or submission approval) is saved in that application's `application/questions.json`: open until answered, with
+its section, kind, options and how often it was asked. Questions skipped while the candidate is away are saved open.
+
+The Questions page lists the open ones under **Saved for later**, grouped by application. An answer given there, or live,
+is written as a row of the application's own `application/answers.md`, which `apply` reads first on every run, so the next
+run of that application fills it without asking. A row is written only when a label-only row cannot be misapplied: answers
+for an employer, school or reference row, short repeated captions (City, Title, Start Date), a label used in two sections,
+a label the candidate already answered in their own row (theirs wins), multi-line answers or answers with `|`, and rows past
+the first 6000 characters apply reads are kept in `questions.json` with the reason in `sheet`, and the next run still asks.
+The candidate's own rows in `answers.md` are never changed.

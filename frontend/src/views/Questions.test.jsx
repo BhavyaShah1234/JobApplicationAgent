@@ -50,3 +50,31 @@ test('submission approval cannot be entered in the ordinary answer box', async (
   expect(await screen.findByText('This decision requires a terminal:')).toBeInTheDocument();
   expect(screen.queryByPlaceholderText('your answer')).toBeNull();
 });
+
+const SAVED = [
+  { job: "finthrive/6502", key: "k1", company: "FinThrive", title: "Software Engineer", label: "Do you have Angular experience?",
+    section: "Questions", required: true, options: ["Yes", "No"], status: "open", first_asked: "2026-11-26T09:00:00Z" },
+  { job: "finthrive/6502", key: "k2", company: "FinThrive", title: "Software Engineer", label: "What is your desired salary for this role?",
+    section: "Questions", required: true, options: [], status: "open", first_asked: "2026-11-26T09:00:00Z" },
+];
+
+test("saved questions are grouped by application and an answer is saved for the next run", async () => {
+  const fetch = mockFetch({ "/api/hitl": [], "/api/saved-questions": SAVED, "/api/saved-questions/answer": { answered: "k2" } });
+  render(<Questions config={{ read_only: false }} />);
+  expect(await screen.findByText("Saved for later")).toBeInTheDocument();
+  expect(screen.getByText("FinThrive · Software Engineer")).toBeInTheDocument();
+  await userEvent.selectOptions(screen.getByLabelText("Answer: Do you have Angular experience?"), "No");
+  await userEvent.type(screen.getByLabelText("Answer: What is your desired salary for this role?"), "135980");
+  await userEvent.click(screen.getAllByRole("button", { name: "Save answer" })[1]);
+  const call = fetch.mock.calls.find(([p]) => p === "/api/saved-questions/answer");
+  expect(call[1].headers["X-Dashboard"]).toBe("1");
+  expect(JSON.parse(call[1].body)).toEqual({ job: "finthrive/6502", key: "k2", value: "135980" });
+  await waitFor(() => expect(screen.getByText("Saved for the next run.")).toBeInTheDocument());
+});
+
+test("a read-only dashboard shows saved questions without an answer box", async () => {
+  mockFetch({ "/api/hitl": [], "/api/saved-questions": SAVED });
+  render(<Questions config={{ read_only: true }} />);
+  expect(await screen.findByText("Do you have Angular experience?")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Save answer" })).toBeNull();
+});
