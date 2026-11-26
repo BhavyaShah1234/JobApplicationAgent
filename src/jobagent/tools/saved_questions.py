@@ -123,6 +123,7 @@ def _locked(job_dir: Path):
 
 
 def load(job_dir: Path) -> list[dict]:
+    """Read this application's saved questions, or return an empty list if unavailable."""
     try:
         data = json.loads(_file(job_dir).read_text())
         return data.get("questions", []) if isinstance(data, dict) else []

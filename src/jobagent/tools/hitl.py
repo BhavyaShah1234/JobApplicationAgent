@@ -188,6 +188,7 @@ class _FormRequest:
 
     @classmethod
     def of(cls, prompt: str, context: dict, private: bool):
+        """Recognize a nonsecret form request with an application folder, or leave it as ordinary HITL."""
         job_dir = context.get("job_dir")
         if private or not job_dir:
             return None

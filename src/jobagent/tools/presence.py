@@ -41,10 +41,18 @@ def status(state_dir: Path | None = None) -> dict:
 
 
 def available(state_dir: Path | None = None) -> bool:
+    """Return whether the candidate is available for questions in this state directory."""
     return status(state_dir)["available"]
 
 
 def set_available(value: bool, by: str = "dashboard", state_dir: Path | None = None) -> dict:
+    """Atomically update candidate availability with a private file unique to this write.
+
+    Args:
+        value: Whether the candidate is available for questions.
+        by: The interface that requested the change.
+        state_dir: Optional state root; defaults to configured state.
+    """
     root = _root(state_dir)
     root.mkdir(parents=True, exist_ok=True)
     data = {"available": bool(value), "changed_at": _now(), "changed_by": by}
