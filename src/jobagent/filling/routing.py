@@ -64,6 +64,7 @@ def family(text):
       ('ai_consent',r'ai (?:notetaker|transcri)|use ai.*transcri'),
       ('ai_policy_ack',r'\bai (?:use |usage )?polic(?:y|ies)\b'),
       ('demographic_consent',r'demographic (?:data )?survey|voluntary (?:demographic|self identification)'),
+      ('phone',r'^(?:sms(?: text)?|text) country code\b'),
       ('sms_consent',r'sms|whatsapp|text messages'),
       ('future_contact',r'future (?:job |employment )?opportunit|talent community'),
       ('privacy_consent',r'privacy|data processing'),

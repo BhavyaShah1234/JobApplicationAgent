@@ -1058,7 +1058,8 @@ def lower_variant(want: str, got: str) -> bool:
     return not (_norm(first) == _norm(got) or close_option(first, [got]) == got)
 
 
-PHONE_CODE_Q = re.compile(r"(?i)country.*phone|phone.*country|(?:phone|calling|dial(?:l?ing)?)\s*(?:country\s*)?code")
+PHONE_CODE_Q = re.compile(r"(?i)country.*phone|phone.*country|(?:phone|calling|dial(?:l?ing)?)\s*(?:country\s*)?code|"
+                          r"^\W*(?:sms(?:\W+text)?|text)\s+country\s+code\b")
 
 
 def phone_code_option(answer: str, options: list[str]) -> str | None:

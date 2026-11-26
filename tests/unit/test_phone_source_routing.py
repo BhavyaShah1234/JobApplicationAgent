@@ -71,6 +71,44 @@ def test_conflicting_phone_codes_remain_unresolved():
     assert PlannedFiller(facts, no_human).plan([field], allow_human=False)[9].value is None
 
 
+@pytest.mark.parametrize('label', ['* SMS/Text Country Code (+1 - US, etc.)', 'SMS Country Code', 'Text Country Code'])
+def test_sms_dial_code_uses_the_phone_component_instead_of_message_consent(label):
+    consent = compile_facts({'consents': [{'question': 'SMS / WhatsApp messages about the application', 'answer': True}]}, '')
+    field = Field(9, 'text', label, required=True, value='Yes')
+    facts = [*phone_facts(), *consent]
+    assert route(field, facts).family == 'phone'
+    answer = PlannedFiller(facts, no_human).plan([field])[9]
+    assert answer.value == '+1'
+    assert answer.fact_id.endswith('/Phone/answer/country_code')
+
+
+def test_sms_permission_and_verification_are_not_dial_codes():
+    from jobagent.filling.routing import family
+    from jobagent.tools.forms import PHONE_CODE_Q
+    assert family('Do you consent to SMS/text messages about your application?') == 'sms_consent'
+    assert not PHONE_CODE_Q.search('Enter the SMS verification code')
+    assert not PHONE_CODE_Q.search('Text message security code')
+
+
+def test_native_filler_corrects_a_prefilled_sms_country_code_without_changing_consent():
+    from playwright.sync_api import sync_playwright
+    consent = compile_facts({'consents': [{'question': 'SMS / WhatsApp messages about the application', 'answer': True}]}, '')
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(channel='chrome', headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content('<label>SMS/Text Country Code (+1 - US, etc.)<input id=code required value=Yes></label>'
+                             '<label>SMS / WhatsApp messages about the application<input type=checkbox id=consent checked></label>')
+            filler = PlannedFiller([*phone_facts(), *consent], no_human)
+            result = filler.fill(page, advance_pages=False)
+            assert result['state'] == 'page_complete', result['blockers']
+            assert page.locator('#code').input_value() == '+1'
+            assert page.locator('#consent').is_checked()
+            assert filler.model_calls == filler.questions == 0
+        finally:
+            browser.close()
+
+
 def test_a_number_box_that_normalises_what_was_typed_still_reads_back_as_the_same_number():
     from jobagent.tools.forms import same_value
     assert same_value("4.0", "4", "spin") and same_value("4", "4.0", "number") and same_value("1,000", "1000", "spin")
