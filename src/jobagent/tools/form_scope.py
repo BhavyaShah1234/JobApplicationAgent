@@ -22,24 +22,27 @@ UTILITY_CONTROL_JS = r'''(() => {
   return element => {
     if (element.matches?.('input[type=password],input[type=file]')) return false;
     const form = formOwner(element);
-    if (!form) return false;
-    if (cache.has(form)) return cache.get(form);
+    // SuccessFactors also renders a standalone saved-search alert widget.
+    const scope = form || element.closest('.savesearch');
+    if (!scope) return false;
+    if (cache.has(scope)) return cache.get(scope);
     // A control named "elements" shadows form.elements in generated iForms.
     // The native getter also preserves controls associated via form="id".
-    const controls = Object.getOwnPropertyDescriptor(HTMLFormElement.prototype,'elements').get.call(form);
-    const nodes = [...new Set([...controls, ...form.querySelectorAll('button,a[role=button],input[type=submit]')])];
-    const names = nodes.filter(e => e.matches('button,a[role=button],input[type=submit]'))
+    const controls = form ? Object.getOwnPropertyDescriptor(HTMLFormElement.prototype,'elements').get.call(form) :
+      scope.querySelectorAll('input,select,textarea');
+    const nodes = [...new Set([...controls, ...scope.querySelectorAll('button,a[role=button],a[href],input[type=submit]')])];
+    const names = nodes.filter(e => e.matches('button,a[role=button],a[href],input[type=submit]'))
       .map(e => (e.innerText || e.value || e.getAttribute('aria-label') || '').trim());
     const application = names.some(t => /\b(?:apply|submit (?:your |my )?application|create (?:an? |your )?(?:account|profile))\b/i.test(t)) ||
-      !!form.querySelector('input[type=password],input[type=file]');
-    const search = form.getAttribute('role') === 'search' || !!form.closest('[role=search]');
+      !!scope.querySelector('input[type=password],input[type=file]');
+    const search = scope.getAttribute('role') === 'search' || !!scope.closest('[role=search]');
     const fields = nodes.filter(e => e.matches('input,select,textarea') &&
       !['hidden','submit','button','reset','image'].includes(e.type));
-    const alert = names.some(t => /^create (?:a |an? )?(?:job )?alert$/i.test(t)) && fields.length > 0 &&
+    const alert = names.some(t => /^(?:create (?:a |an? )?(?:job )?alert|email jobs to me)$/i.test(t)) && fields.length > 0 &&
       fields.every(e => ['number','email','checkbox','select-one','select-multiple'].includes(e.type) ||
         e.type === 'text' && /e-?mail/i.test([e.name,e.id,e.placeholder,e.getAttribute('aria-label')].join(' ')));
     const utility = !application && (search || alert);
-    cache.set(form, utility);
+    cache.set(scope, utility);
     return utility;
   };
 })()'''.replace('__FORM_OWNER__',FORM_OWNER_JS)

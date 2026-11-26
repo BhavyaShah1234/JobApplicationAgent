@@ -29,21 +29,37 @@ MAX_UNCHANGED_WAITS = 4
 CAPTCHA_FRAME = re.compile(r"(?i)hcaptcha|recaptcha|google\.com/recaptcha|challenges\.cloudflare|arkoselabs|funcaptcha")
 
 AUTH_LABEL_JS = r"""e => {
+    const secret = e.type === 'password' || /password/i.test(e.getAttribute('autocomplete') || '');
+    if (!secret && e.matches('button,a,[role=button],[role=link],input[type=button],input[type=submit],input[type=reset],input[type=image]')) {
+      const labelled = (e.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+        .map(id => document.getElementById(id)?.innerText || '').join(' ').trim();
+      return (labelled || e.getAttribute('aria-label') || e.title || e.innerText ||
+        e.querySelector('img[alt]')?.alt || e.value || e.name || e.id || '').trim();
+    }
     if (e.id) { const l = document.querySelector(`label[for="${CSS.escape(e.id)}"]`); if (l) return l.innerText.trim(); }
     const l = e.closest('label'); if (l) return l.innerText.trim();
-    const secret = e.type === 'password' || /password/i.test(e.getAttribute('autocomplete') || '');
     return (e.getAttribute('aria-label') || e.title || e.placeholder || e.name || e.innerText || (!secret && e.value) ||
             (secret ? 'Password' : '') ||
             e.querySelector('img[alt]')?.alt || e.id || '').trim(); };
 """
 
+AUTH_SCOPE_JS = r"""() => {
+  const dialogs = [...document.querySelectorAll('dialog[open],[role=dialog],[role=alertdialog]')].filter(e => {
+    const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none' &&
+      s.opacity !== '0' && e.getAttribute('aria-hidden') !== 'true';
+  });
+  return dialogs.at(-1) || document;
+}"""
+
 SNAPSHOT_JS = r"""(epoch) => {
   const utility = (__JOBAGENT_UTILITY__);
+  const scope = (__AUTH_SCOPE__)();
   const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
     return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
   const label = (__JOBAGENT_AUTH_LABEL__);
   const out = [];
-  document.querySelectorAll('input, select, textarea, button, a[href], [role=button], [role=checkbox], [role=link]').forEach(e => {
+  scope.querySelectorAll('input, select, textarea, button, a[href], [role=button], [role=checkbox], [role=link]').forEach(e => {
     if (!vis(e) || e.disabled || utility(e)) return;
     const t = (e.getAttribute('type') || '').toLowerCase();
     if (t === 'hidden') return;
@@ -57,33 +73,37 @@ SNAPSHOT_JS = r"""(epoch) => {
               options: e.tagName === 'SELECT' ? [...e.options].map(o => o.text.trim()).filter(Boolean).slice(0, 40) : null,
               chosen: e.tagName === 'SELECT' && e.selectedIndex >= 0 ? e.options[e.selectedIndex].text.trim() : null});
   });
-  const text = [...document.querySelectorAll('h1, h2, h3, [role=alert], [aria-live], .error, [class*=error i], ' +
+  const text = scope !== document ? ('ACTIVE_DIALOG: ' + scope.innerText.trim()).slice(0, 900) :
+    [...document.querySelectorAll('h1, h2, h3, [role=alert], [aria-live], .error, [class*=error i], ' +
       '[id*=error i], [data-testid*=error i], [class*=hint i], [class*=helper i], [id*=hint i], p')]
       .filter(vis).map(e => e.innerText.trim()).filter(Boolean).join(' | ').slice(0, 900);
-  const pw = [...document.querySelectorAll('input[type=password]')].filter(vis).length;
+  const pw = [...scope.querySelectorAll('input[type=password]')].filter(vis).length;
   return {items: out.slice(0, 80), text, pw};
-}""".replace('__JOBAGENT_UTILITY__', UTILITY_CONTROL_JS).replace('__JOBAGENT_AUTH_LABEL__', AUTH_LABEL_JS.rstrip(';\n'))
+}""".replace('__JOBAGENT_UTILITY__', UTILITY_CONTROL_JS).replace('__JOBAGENT_AUTH_LABEL__', AUTH_LABEL_JS.rstrip(';\n')).replace('__AUTH_SCOPE__', AUTH_SCOPE_JS)
 
 TARGET_MATCH_JS = r"""(e, expected) => {
   const utility = (__JOBAGENT_UTILITY__), label = (__JOBAGENT_AUTH_LABEL__);
+  const scope = (__AUTH_SCOPE__)();
+  if (scope !== document && !scope.contains(e)) return false;
   if (utility(e) || e.tagName.toLowerCase() !== expected.tag ||
       (e.getAttribute('type') || '').toLowerCase() !== expected.type || label(e).slice(0, 80) !== expected.label ||
       (e.id || '') !== expected.id || (e.name || '') !== expected.name || (e.getAttribute('href') || '') !== expected.href)
     return false;
   e.setAttribute('data-agent-target', '1');
   return true;
-}""".replace('__JOBAGENT_UTILITY__', UTILITY_CONTROL_JS).replace('__JOBAGENT_AUTH_LABEL__', AUTH_LABEL_JS.rstrip(';\n'))
+}""".replace('__JOBAGENT_UTILITY__', UTILITY_CONTROL_JS).replace('__JOBAGENT_AUTH_LABEL__', AUTH_LABEL_JS.rstrip(';\n')).replace('__AUTH_SCOPE__', AUTH_SCOPE_JS)
 
 ACTION_JS = r"""([i, kind, value]) => {
   const utility = (__JOBAGENT_UTILITY__);
+  const scope = (__AUTH_SCOPE__)();
   const vis = e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
     return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
-  const els = [...document.querySelectorAll('input, select, textarea, button, a[href], [role=button], [role=checkbox], [role=link]')]
+  const els = [...scope.querySelectorAll('input, select, textarea, button, a[href], [role=button], [role=checkbox], [role=link]')]
       .filter(e => vis(e) && !e.disabled && !utility(e) && (e.getAttribute('type') || '').toLowerCase() !== 'hidden');
   const e = els[i]; if (!e) return 'no such element';
   e.setAttribute('data-agent-target', '1');
   return 'ok';
-}""".replace('__JOBAGENT_UTILITY__', UTILITY_CONTROL_JS)
+}""".replace('__JOBAGENT_UTILITY__', UTILITY_CONTROL_JS).replace('__AUTH_SCOPE__', AUTH_SCOPE_JS)
 
 
 class AuthAction(BaseModel):
@@ -173,6 +193,20 @@ class _AuthFrames(dict):
         self.items_by_frame = {}
 
 
+def _frame_in_auth_scope(frame) -> bool:
+    """Keep background iframes out of a parent document's active dialog."""
+    while getattr(frame, 'parent_frame', None) is not None:
+        try:
+            element = frame.frame_element()
+            if not element.is_visible() or not element.evaluate(
+                    'e => {const scope = (' + AUTH_SCOPE_JS + ')(); return scope === document || scope.contains(e);} '):
+                return False
+        except PlaywrightError:
+            return False
+        frame = frame.parent_frame
+    return True
+
+
 def snapshot(page: Page) -> tuple[str, dict]:
     # CAPTCHA providers' frames are left out: invisible ones sit on many sign-in pages; a visible challenge is caught
     # by challenge.detect() and handed to the user before the model is asked anything
@@ -180,6 +214,8 @@ def snapshot(page: Page) -> tuple[str, dict]:
                                   and not CAPTCHA_FRAME.search(f.url)]
     parts, kept = [], _AuthFrames()
     for n, f in enumerate(frames):
+        if not _frame_in_auth_scope(f):
+            continue
         epoch = uuid4().hex
         try:
             snap = f.evaluate(SNAPSHOT_JS, epoch)
@@ -335,7 +371,7 @@ def _settle_unknown(page: Page, seconds: int = 20):
 
 def _target(frames: dict, a: AuthAction):
     f = frames.get(a.frame)
-    if f is None or a.element is None:
+    if f is None or a.element is None or not _frame_in_auth_scope(f):
         return None
     try:
         if isinstance(frames, _AuthFrames):

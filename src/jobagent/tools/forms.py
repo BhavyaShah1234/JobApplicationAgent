@@ -2401,10 +2401,13 @@ def _visible_buttons(view: PageView, text: str, *, include_links: bool = False):
             btn = frame.get_by_role("button", name=name).filter(visible=True)
             links = frame.get_by_role("link", name=name).filter(visible=True)
             if include_links:
-                for candidates in (btn, links):
+                # Choose an open menu's action before another responsive copy
+                # of its trigger closes the menu again.
+                menuitems = frame.get_by_role("menuitem", name=name).filter(visible=True)
+                for candidates in (menuitems, btn, links):
                     for index in range(candidates.count()):
                         yield candidates.nth(index)
-                if btn.count() or links.count():
+                if menuitems.count() or btn.count() or links.count():
                     continue
             elif not btn.count():
                 btn = links

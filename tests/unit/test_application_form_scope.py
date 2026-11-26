@@ -48,17 +48,54 @@ def test_a_real_collapsed_application_section_remains_a_coverage_blocker(page):
     assert not view.coverage.complete and view.coverage.collapsed == ['Work experience']
 
 
-def test_fieldless_public_application_chooser_keeps_client_navigation_state(page):
+@pytest.mark.parametrize('opener,closer,action', [
+    ('<form method=post action="/talentcommunity/subscribe/">', '</form>', '<input type=submit value="Email jobs to me">'),
+    ('<div class=savesearch>', '</div>', '<a class=savesearch-link href="#">Email jobs to me</a>'),
+])
+def test_email_jobs_frequency_is_not_a_candidate_question(page, opener, closer, action):
+    page.set_content(opener +
+                     '<label>Select how often (in days) to receive an alert:<input type=number required value=7></label>'
+                     + action + closer +
+                     '<form><label>First name<input required></label><button>Submit Application</button></form>')
+    view = forms.read_page(page)
+    assert [f.label for f in view.fields] == ['First name']
+    assert [f['label'] for f in page.evaluate(discovery.INVENTORY)] == ['First name']
+    auth = page.evaluate(portal_agent.SNAPSHOT_JS)
+    assert not any('receive an alert' in item['label'] for item in auth['items'])
+
+
+@pytest.mark.parametrize('candidate', [
+    '<label>Employer<input required></label>',
+    '<label>Resume<input type=file></label>',
+    '<label>Password<input type=password></label>',
+    '<button>Submit Application</button>',
+])
+@pytest.mark.parametrize('opener,closer', [('<form>', '</form>'), ('<div class=savesearch>', '</div>')])
+def test_email_jobs_caption_does_not_hide_an_application_form(page, candidate, opener, closer):
+    page.set_content(opener + '<label>Contact email<input type=email required></label>'
+                     '<a href="#">Email jobs to me</a>' + candidate + closer)
+    assert forms.read_page(page).fields
+
+
+@pytest.mark.parametrize('menu_role,footer', [('link', False), ('menuitem', False), ('menuitem', True)])
+def test_fieldless_public_application_chooser_keeps_client_navigation_state(page, menu_role, footer):
     source = 'https://jobs.example.test/job/123/'
     target = 'https://jobs.example.test/application/123/'
     requests = []
     def route(request):
         requests.append(request.request.url)
-        html = UTILITY + '''<h1>Software Engineer</h1>
+        html = UTILITY + '''<div class=savesearch>
+          <label>Select how often (in days) to receive an alert:<input type=number required value=7></label>
+          <a class=savesearch-link href="#">Email jobs to me</a></div><h1>Software Engineer</h1>
           <a hidden href="/talentcommunity/apply/123/">Apply now »</a>
           <div class=dropdown><button aria-haspopup=true aria-expanded=false href="/talentcommunity/apply/123/"
             onclick="this.setAttribute('aria-expanded','true');document.getElementById('options').hidden=false">Apply now</button>
-          <div id=options class=dropdown-menu hidden><a href="#" onclick="event.preventDefault();location.href='/application/123/'">Apply Now</a></div></div>'''
+          <div id=options class=dropdown-menu hidden><a role="''' + menu_role + '''" href="#" onclick="event.preventDefault();location.href='/application/123/'">Apply Now</a></div></div>'''
+        if footer:
+            html += '''<div class=dropdown><button aria-haspopup=true aria-expanded=false href="/talentcommunity/apply/123/"
+              onclick="document.getElementById('options').hidden=true;this.setAttribute('aria-expanded','true');document.getElementById('footer-options').hidden=false">Apply now</button>
+              <div id=footer-options class=dropdown-menu hidden><a role=menuitem href="#"
+                onclick="event.preventDefault();location.href='/application/123/'">Apply Now</a></div></div>'''
         if request.request.url == target:
             html = '<h1>Application</h1><form><input placeholder=Name><input type=email placeholder=Email><input type=tel placeholder=Phone><button>Submit Application</button></form>'
         request.fulfill(status=200, content_type='text/html', body=html)

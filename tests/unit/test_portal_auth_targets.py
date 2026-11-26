@@ -79,9 +79,83 @@ def test_reused_node_with_changed_question_or_type_is_not_the_observed_control(p
     assert agent._target(frames, action()) is None
 
 
-def test_unlabelled_password_value_never_becomes_the_auth_field_label(page):
-    page.set_content('<input type=password><button>Continue</button>')
+@pytest.mark.parametrize('attributes', ['type=password', 'type=password role=button', 'type=text role=button autocomplete=current-password'])
+def test_unlabelled_password_value_never_becomes_the_auth_field_label(page, attributes):
+    page.set_content('<input ' + attributes + '><button>Continue</button>')
     page.locator('input').fill('Synthetic-secret-not-a-label')
     view, frames = agent.snapshot(page)
     assert 'Synthetic-secret' not in view
     assert frames.items_by_frame[0][0]['label'] == 'Password'
+
+
+@pytest.mark.parametrize('html,expected', [
+    ('<button name="fbclc_dataPrivacyAcceptButton">Accept</button>', 'Accept'),
+    ('<input type=button name="fbclc_acceptButton" value="Accept">', 'Accept'),
+    ('<label for=terms>Terms of Use:*</label><a id=terms role=button aria-label="Read and accept the required privacy statement">Read statement</a>',
+     'Read and accept the required privacy statement'),
+    ('<span id=caption>Accept privacy terms</span><button name=internal aria-labelledby=caption>Continue</button>',
+     'Accept privacy terms'),
+])
+def test_action_caption_precedes_internal_machine_names_and_generic_labels(page, html, expected):
+    page.set_content(html)
+    view, frames = agent.snapshot(page)
+    items = frames.items_by_frame[0]
+    index = next(i for i, item in enumerate(items) if item['label'] == expected)
+    target = agent._target(frames, agent.AuthAction(thought='Use the captured action', action='click', element=index))
+    assert target is not None
+    assert expected in view
+
+
+def test_privacy_dialog_controls_and_text_are_not_drowned_by_background_registration(page):
+    page.set_content('<h1>Create an account</h1>' + ''.join(f'<button>Background {i}</button>' for i in range(90)) +
+                     '<div role=dialog aria-modal=true style="position:fixed;inset:10px;background:white;z-index:10">'
+                     '<h2>Data Privacy Consent Statement</h2><p>Required privacy terms for account creation.</p>'
+                     '<button name=accept onclick="window.accepted=true;this.parentElement.remove()">Accept</button>'
+                     '<button>Decline</button><button aria-label=Close>×</button></div>')
+    view, frames = agent.snapshot(page)
+    assert [x['label'] for x in frames.items_by_frame[0]] == ['Accept', 'Decline', 'Close']
+    assert 'ACTIVE_DIALOG:' in view and 'Required privacy terms' in view
+    assert 'Background 0' not in view and 'Create an account' not in view
+    target = agent._target(frames, agent.AuthAction(thought='Accept the required account terms', action='click', element=0))
+    target.click()
+    assert page.evaluate('window.accepted === true')
+    assert 'Background 0' in agent.snapshot(page)[0]
+
+
+def test_dialog_appearing_during_model_call_invalidates_background_action(page):
+    page.set_content('<label>First name<input id=first></label>')
+    _, frames = agent.snapshot(page)
+    page.evaluate("document.body.insertAdjacentHTML('beforeend', '<div role=dialog><h2>Privacy terms</h2><button>Accept</button></div>')")
+    assert agent._target(frames, action()) is None
+    assert page.locator('#first').input_value() == ''
+
+
+@pytest.mark.parametrize('hidden', ['hidden', 'style="display:none"', 'aria-hidden=true'])
+def test_inactive_dialog_does_not_hide_registration_controls(page, hidden):
+    page.set_content('<label>First name<input></label><button>Create Account</button>'
+                     '<div role=dialog ' + hidden + '><button>Accept</button></div>')
+    view, frames = agent.snapshot(page)
+    assert 'ACTIVE_DIALOG:' not in view
+    assert any(x['label'] == 'First name' for x in frames.items_by_frame[0])
+
+
+def test_parent_dialog_hides_and_invalidates_actions_in_a_background_frame(page):
+    page.route('https://auth.example.test/**', lambda r: r.fulfill(content_type='text/html', body='<label>First name<input id=first></label>'))
+    page.set_content('<iframe src="https://auth.example.test/form"></iframe>')
+    page.frame_locator('iframe').locator('#first').wait_for()
+    _, old = agent.snapshot(page)
+    assert 1 in old
+    page.evaluate("document.body.insertAdjacentHTML('beforeend', '<div role=dialog><button>Accept</button></div>')")
+    view, frames = agent.snapshot(page)
+    assert 'First name' not in view and 1 not in frames
+    assert agent._target(old, agent.AuthAction(thought='Old background answer', action='fill', frame=1, element=0)) is None
+
+
+def test_frame_inside_the_active_dialog_remains_available(page):
+    page.route('https://auth.example.test/**', lambda r: r.fulfill(content_type='text/html', body='<button>Accept required terms</button>'))
+    page.set_content('<div role=dialog><iframe src="https://auth.example.test/privacy"></iframe></div>')
+    page.frame_locator('iframe').get_by_role('button').wait_for()
+    view, frames = agent.snapshot(page)
+    assert 'Accept required terms' in view and 1 in frames
+    target = agent._target(frames, agent.AuthAction(thought='Use the visible dialog frame', action='click', frame=1, element=0))
+    assert target is not None
