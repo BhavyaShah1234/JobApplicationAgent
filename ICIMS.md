@@ -1,6 +1,20 @@
 # iCIMS portals: everything learned, what the agent does, what it cannot, and why
 
-## Current acceptance status — 2026-11-25
+## Current acceptance status — 2026-11-26
+
+**Not checked off yet.** Production image `bec2cb1` is deployed (`sha256:b22d834d8749335e59f605ff5f3ba07032a71b62f6d08099b4eac636a09f4140`). All 136 image Python files match that committed revision. Claude is independently implementing the dashboard presence toggle; its unfinished files are excluded from this pinned validation image. File/runtime reservations are recorded in `CHAT.md`.
+
+On resumption after the machine restart, the isolated desktop showed an entirely white Chrome window. Disabling remote Xvfb shared-memory rendering restored the visible posting; x11vnc also needed `-noshm`. The launcher now checks the actual RFB backend instead of treating the static noVNC page as sufficient readiness. Twelve launcher tests pass.
+
+A native run then signed in successfully with saved credentials and read back all 16 Garmin screening answers. It stopped before intermediate advancement because it repeatedly replanned the two referral fields. A real-browser regression reproduced the failure: saving a HITL answer changes the source fingerprint, after which projecting derived agreement facts from only unfinished controls makes the broad referral evidence oscillate. Commit `fc85762` projects against the full visible form, retaining applicable future hints. The regression failed before the fix and passes afterward. The round budget was not increased.
+
+The same approved connection captured the actual iCIMS identifier structure without field values or callback tokens: one email form with an unnamed invisible password control, plus seven button-only provider forms. Commit `bec2cb1` recognizes this structure only on the explicitly trusted, exact iCIMS identifier route; named/visible password additions, mixed forms, wrong hosts/routes and multiple credential forms remain rejected. It also adds origin-only diagnostics for ambiguous tabs. The related source-routing, adaptive, agreement, referral, identity and handoff group passed **274 tests in 250.99 seconds**. These checks overlap prior groups and are not a full-suite result.
+
+The first retry from the rebuilt image expired while awaiting Chrome Allow, before any form input. The browser is retained at `http://127.0.0.1:6083/vnc.html`, and the bounded supervisor is stopped. Corrected native screening → actual final review and independent semantic audit are still required. Earlier 80/80 counts failed the motivation audit and are not acceptance evidence. This remains assisted verification of an existing draft, with a recorded same-job screening navigation and explicitly supervised salary/test-motivation answers; it is not proof of fresh, unassisted portal coverage.
+
+No final application submission, new documents or ATS scans. Evidence: `outputs/verification/icims-final-review-20261125T082138Z/`, particularly `status.json`, `resumed-final-regressions.txt`, `referral-loop-before.txt`, `referral-loop-after.txt`, `resumed-committed-image-proof.json`, `actual-identifier-form-structure.json`, `native-final-bec2cb1.log` and `display-rendering-fix-proof.json`.
+
+## Previous acceptance status — 2026-11-25
 
 **Not checked off yet.** The production image is now `765aa15`; all136 installed Python files match this checkout. Garmin18475 has reached its actual Confirm Application / Application Review stage without final submission. The latest completed correction run read back80/80 fields, but failed the independent motivation check because it contained only a city name. Raw verification counts from that run are not acceptance evidence.
 
