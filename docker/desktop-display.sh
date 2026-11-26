@@ -2,7 +2,9 @@
 # A separate GUI only; Chrome and the public-only browser broker stay on the host.
 set -euo pipefail
 export DISPLAY=:102 XAUTHORITY=/display/Xauthority
-Xvfb :102 -screen 0 1440x1000x24 -auth "$XAUTHORITY" -nolisten tcp > /tmp/xvfb.log 2>&1 &
+# Chrome connects from the host through the TCP relay, outside this IPC
+# namespace. Shared-memory pixmaps cannot be exchanged over that connection.
+Xvfb :102 -screen 0 1440x1000x24 -auth "$XAUTHORITY" -nolisten tcp -extension MIT-SHM > /tmp/xvfb.log 2>&1 &
 for step in {1..100}; do
   if xdpyinfo -display :102 >/dev/null 2>&1; then break; fi
   sleep 0.1
