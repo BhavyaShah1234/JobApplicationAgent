@@ -67,17 +67,19 @@ def test_lazy_options_apply_the_same_source_choice_rules_as_upfront_options(page
     assert page.locator('#veteran').input_value() == 'I am not a protected veteran'
 
 
-def test_known_demographic_fact_searches_a_lazy_picker_without_reasking_the_owner(page):
+@pytest.mark.parametrize('asian_option', ['Asian', 'Asian (United States of America)'])
+def test_known_demographic_fact_searches_a_lazy_picker_without_reasking_the_owner(page, asian_option):
+    import json
     from jobagent.filling.facts import Fact
     from jobagent.filling.planned import PlannedFiller
     page.set_content('''<label for=race>Race/Ethnicity</label><input id=race role=combobox aria-controls=menu required>
       <div id=menu role=listbox></div><script>
-      race.oninput=()=>{menu.innerHTML='';for(const label of ['Asian','I choose not to self-identify']){
+      race.oninput=()=>{menu.innerHTML='';for(const label of OPTIONS){
         const item=document.createElement('div');item.setAttribute('role','option');item.textContent=label;
         item.onclick=()=>{race.value=label;menu.innerHTML=''};menu.append(item)}};
-      </script>''')
+      </script>'''.replace('OPTIONS', json.dumps([asian_option, 'I choose not to self-identify'])))
     filler = PlannedFiller([Fact('race', ['Race/Ethnicity'], 'Asian', 'applicant')],
                            lambda questions: pytest.fail('Race is already supplied by the owner'))
     result = filler.fill(page, advance_pages=False)
     assert result['state'] == 'page_complete', result['blockers']
-    assert page.locator('#race').input_value() == 'Asian'
+    assert page.locator('#race').input_value() == asian_option

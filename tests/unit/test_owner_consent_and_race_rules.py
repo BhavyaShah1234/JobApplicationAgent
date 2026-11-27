@@ -3,6 +3,7 @@ splits 'Asian' by region gets the decline option, else 'Other', never a region c
 from jobagent.filling import routing
 from jobagent.filling.facts import choice
 from jobagent.tools.forms import Field
+import pytest
 
 MONGO_CONSENT = ("By checking this box, I consent to MongoDB collecting, storing, and processing my responses to the demographic "
                  "data surveys above. *")
@@ -39,3 +40,28 @@ def test_without_a_decline_option_the_answer_is_other_and_without_either_nothing
 
 def test_a_plain_asian_option_is_used_as_it_is():
     assert race(["Asian", "Black or African American", "White", "I don't wish to answer"]) == "Asian"
+
+
+@pytest.mark.parametrize('country', ['United States of America', 'United States', 'Canada', 'United Kingdom'])
+def test_country_metadata_does_not_turn_broad_asian_into_a_regional_category(country):
+    option = f'Asian ({country})'
+    assert race([option, f'White ({country})', f'Decline to State ({country})']) == option
+
+
+@pytest.mark.parametrize('options', [
+    ['Decline to State (United States of America)'],
+    ['Asian (South Asian)', 'I don\'t wish to answer'],
+])
+def test_partial_options_do_not_activate_the_complete_regional_fallback(options):
+    field = Field(1, 'combobox', 'Race / ethnicity', options=options, options_state='partial')
+    assert choice(field, ['Asian']) == 'Asian'  # a search, revalidated against the actual menu
+
+
+def test_regional_parentheticals_still_use_the_owner_fallback():
+    assert race(['Asian (East Asian)', 'Asian (South Asian)', "I don't wish to answer"]) == "I don't wish to answer"
+    assert race(['Asian (South Asian)', 'Other']) == 'Other'
+
+
+def test_exact_broad_option_precedes_country_metadata_and_ambiguous_countries_are_not_guessed():
+    assert race(['Asian (United States of America)', 'Asian', 'Other']) == 'Asian'
+    assert race(['Asian (Canada)', 'Asian (United States of America)', 'Other']) is None

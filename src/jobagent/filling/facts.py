@@ -176,7 +176,17 @@ def choice(f, values):
         target={'male':'man','female':'woman'}[norm(values[0])]
         hits=[o for o in f.options if norm(o)==target]
         if len(hits)==1:return hits[0]
-    if re.search(r'\brace\b|ethnic',norm(f.label)) and norm(values[0])=='asian' and not any(norm(o)==norm(values[0]) for o in f.options):
+    if re.search(r'\brace\b|ethnic',norm(f.label)) and norm(values[0])=='asian':
+        broad=[o for o in f.options if norm(o)=='asian']
+        if len(broad)==1:return broad[0]
+        # These suffixes identify a form's country, not an Asian subregion.
+        # Do not treat parentheticals such as "South Asian" as equivalent.
+        qualified=[o for o in f.options if re.fullmatch(
+            r'Asian\s*\((?:United States(?: of America)?|U\.?S\.?(?:A\.?)?|Canada|United Kingdom|UK|Australia|New Zealand)\)',o,re.I)]
+        if len(qualified)==1:return qualified[0]
+        if len(qualified)>1:return None
+        if f.options_state!='complete':
+            return values[0] if f.kind=='combobox' else None
         # Owner decision 2026-11-24: a form that splits Asian by region gets the decline option, else 'Other'; never a region chosen for the candidate.
         decline=[o for o in f.options if re.search(r"(?i)don'?t wish|do not wish|prefer not|decline|don'?t want to self|choose not|not (?:wish|want) to (?:answer|disclose|self)",o)]
         if len(decline)==1:return decline[0]
