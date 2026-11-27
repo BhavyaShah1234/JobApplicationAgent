@@ -96,8 +96,10 @@ def test_the_cleanup_outcome_is_reported_separately_from_the_verification(tmp_pa
 # --- the generic portal agent: only the candidate the site accepted becomes the agent's ------------------------------------------------
 
 def code_index(page):
-    view, _ = PA.snapshot(page)
-    return next(int(m.group(1)) for m in re.finditer(r"\[(\d+)\] input", view))
+    """Use the current observation; taking another snapshot invalidates its targets."""
+    ref=page.locator('input[autocomplete=one-time-code]').get_attribute('data-agent-auth-ref')
+    assert ref, 'The native loop must have observed the code control before asking the model'
+    return int(ref.rsplit(':',1)[1])
 
 
 def run_agent(tmp_path, monkeypatch, page, script, html, extra_mail=None):

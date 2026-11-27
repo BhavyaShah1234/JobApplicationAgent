@@ -65,8 +65,16 @@ def test_pipeline_invokes_the_same_callbacks_in_process_and_closes_context(monke
     assert seen == [(os.getpid(), ["Acme"], 5), "closed"]
 
 
-def test_pipeline_resumes_scrape_and_research_without_spawning_processes(tmp_path):
+@pytest.mark.parametrize('resolver_upgrade',[False,True])
+def test_pipeline_resumes_scrape_and_research_without_spawning_processes(tmp_path,monkeypatch,resolver_upgrade):
     from jobagent.tools.pipeline import Pipeline
+    from jobagent.tools import places
+    resolved=[]
+    resolve_job=places.resolve_job
+    def observe_resolution(*args,**kwargs):
+        resolved.append(places.RESOLVER_VERSION)
+        return resolve_job(*args,**kwargs)
+    monkeypatch.setattr(places,'resolve_job',observe_resolution)
     url = "https://acme.test/jobs/1"
     s = SimpleNamespace(state_dir=tmp_path / "state", outputs_dir=tmp_path / "outputs")
     c = db.connect(tmp_path / "jobs.sqlite")
@@ -90,14 +98,57 @@ def test_pipeline_resumes_scrape_and_research_without_spawning_processes(tmp_pat
         return 0
     pipeline = Pipeline(c, s, log=lambda _: None, invoke=invoke)
     assert pipeline.run(url).state == "filled"
+    if resolver_upgrade:
+        monkeypatch.setattr(places,'RESOLVER_VERSION',places.RESOLVER_VERSION+1)
     assert pipeline.run(url).state == "filled"
     assert calls.count("scrape") == calls.count("research") == 1
     assert calls.count("apply") == 2  # reread browser state, never cache an external form as already filled
+    assert len(resolved)==(2 if resolver_upgrade else 1)
     assert {"scrape", "research"} <= json.loads((d / "workflow.json").read_text())["stages"].keys()
     stale = d / "application" / "application.json"
     os.utime(stale, (1, 1))
     pipeline.invoke = lambda stage, **kw: 1 if stage == "apply" else invoke(stage, **kw)
     assert pipeline.run(url).state == "failed"  # an earlier ready form cannot override a current pre-fill failure
+
+
+def test_refreshed_posting_content_still_invalidates_company_research(tmp_path):
+    """Ignoring derived location metadata must not hide a changed source posting."""
+    from jobagent.tools.pipeline import Pipeline
+    url='https://acme.test/jobs/1'
+    settings=SimpleNamespace(state_dir=tmp_path/'state',outputs_dir=tmp_path/'outputs')
+    conn=db.connect(tmp_path/'jobs.sqlite')
+    job=settings.outputs_dir/'acme'/'1'
+    posting={'source_url':url,'company':'Acme','title':'Engineer'}
+    calls=[]
+    def invoke(stage,**kwargs):
+        calls.append(stage)
+        if stage=='scrape':
+            job.mkdir(parents=True,exist_ok=True)
+            (job/'jd.json').write_text(json.dumps(posting))
+            (job/'jd.txt').write_text('Posting')
+            with conn:
+                conn.execute("INSERT INTO jobs(url,company,job_id,status) VALUES(?,'Acme','1','scraped') "
+                             "ON CONFLICT(url) DO UPDATE SET status='scraped'",(url,))
+        elif stage=='research':
+            directory=settings.state_dir/'companies';directory.mkdir(parents=True,exist_ok=True)
+            (directory/'acme.json').write_text(json.dumps({'name':'Acme'}))
+            (directory/'acme.md').write_text('Profile for '+posting['title'])
+        elif stage=='apply':
+            (job/'application').mkdir(exist_ok=True)
+            (job/'application/application.json').write_text(json.dumps({'state':'review','ready_to_submit':True}))
+        return 0
+    pipeline=Pipeline(conn,settings,log=lambda _:None,invoke=invoke)
+    try:
+        assert pipeline.run(url).state=='filled'
+        # An independent refresh changed the on-disk posting after the first run.
+        posting['title']='Platform Engineer'
+        (job/'jd.json').write_text(json.dumps(posting))
+        assert pipeline.run(url).state=='filled'
+        assert calls.count('scrape')==calls.count('research')==2
+        assert pipeline.run(url).state=='filled'
+        assert calls.count('scrape')==calls.count('research')==2
+    finally:
+        conn.close()
 
 
 def test_existing_closed_roots_remain_closed_and_are_read_and_filled(tmp_path):

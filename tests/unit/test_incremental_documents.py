@@ -271,6 +271,9 @@ def test_title_only_repairs_cannot_generate_paragraphs_or_edit_other_projects(tm
     (tmp_path/'projects.json').write_text(json.dumps(st))
     monkeypatch.setattr(M.llm,'writer',lambda *a,**kw:object())
     monkeypatch.setattr(M,'_context',lambda *a,**kw:'Sources')
+    # Exercise the model fallback's restricted schema. Deterministic own-card
+    # title selection is tested separately in test_interstitial_pages.py.
+    monkeypatch.setattr(M,'_readable_titles',lambda *a:None)
     captured=[]
     def generate(ctx,stage,model,schema,messages,**kwargs):
         captured.append(schema)

@@ -182,7 +182,8 @@ class Pipeline:
         company = row["company"]
         slug = research.slug(company)
         source = json.loads((d / "jd.json").read_text())
-        source.pop("locations_resolved", None)
+        for derived in ("locations_resolved", "locations_resolver_version"):
+            source.pop(derived, None)
         source_sha = W.fingerprint(source)
         profiles = [str((self.settings.state_dir / "companies" / (slug + ext)).resolve()) for ext in (".json", ".md")]
         result, _ = current.run("research", lambda: {"code": self.invoke("research", companies=[company], workers=1, posting=str(d / "jd.json"))},

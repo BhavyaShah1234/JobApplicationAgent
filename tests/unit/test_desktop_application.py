@@ -10,6 +10,16 @@ from jobagent.tools import browser, desktop_probe, desktop_browser, challenge
 from page_fakes import EventPage
 
 
+@pytest.fixture
+def isolated_cli_state(tmp_path, monkeypatch):
+    """Keep the mocked CLI's review registration out of the default database."""
+    from jobagent.config import get_settings
+    monkeypatch.setenv('STATE_DIR',str(tmp_path/'state'))
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.mark.parametrize('valid', [True, False])
 @pytest.mark.parametrize('handoff', [True, False])
 @pytest.mark.parametrize('url',['https://www.carvana.com/careers/apply?gh_jid=8188615',
@@ -105,7 +115,7 @@ def test_lazy_upload_is_discovered_and_filled(tmp_path,desktop):
     (True,'challenge',['docker','desktop']), (False,'challenge',['docker']),
     (True,'planner',['docker']), (True,'policy',['docker']), (True,None,['docker']),
 ])
-def test_apply_auto_falls_back_only_for_a_challenge_block(tmp_path,monkeypatch,resumable,blocked_by,expected):
+def test_apply_auto_falls_back_only_for_a_challenge_block(tmp_path,monkeypatch,resumable,blocked_by,expected,isolated_cli_state):
     from typer.testing import CliRunner
     from jobagent import main
     from jobagent.steps import apply
@@ -126,7 +136,9 @@ def test_apply_auto_falls_back_only_for_a_challenge_block(tmp_path,monkeypatch,r
     monkeypatch.setattr(inbox,'open_inbox',lambda:nullcontext(None))
     monkeypatch.setattr(vault,'open_vault',lambda:SimpleNamespace(get=lambda key:{'email':'candidate@example.com'}))
     monkeypatch.setattr(apply,'run',run)
-    result=CliRunner().invoke(main.app,['apply',str(tmp_path),'carvana','--browser-mode','auto'])
+    # This test replaces the browser and filler; the model preflight has its
+    # own tests and must not require a live Voyager connection here.
+    result=CliRunner().invoke(main.app,['apply',str(tmp_path),'carvana','--browser-mode','auto','--skip-model-check'])
     # F03: a run that ends blocked is a nonzero exit (4) for shell chains and the queue; the desktop retry that ends on
     # a ready review screen is 0
     assert result.exit_code==(0 if len(expected)==2 else 4),result.output
