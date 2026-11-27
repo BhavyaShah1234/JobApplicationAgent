@@ -1681,6 +1681,20 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
     if f.kind=='combobox' and f.multiple:answer='; '.join(selection_parts(answer,f.label))
     tagged=loc.get_attribute('data-jf')
     if tagged is not None and tagged.isdigit() and int(tagged)!=f.id:f=replace(f,id=int(tagged))
+    if (f.kind == 'combobox' and answer == '' and f.value == '' and not f.required and not f.invalid
+            and loc.evaluate("e => e.tagName !== 'SELECT'")):
+        # An optional empty picker needs no selection. Re-read the entire owned
+        # widget: its input alone can be empty while selected chips remain.
+        live = read_page(page)
+        matches = [g for g in live.fields
+                   if (g.frame, g.identity, g.kind, g.label, g.section, g.slot) ==
+                   (f.frame, f.identity, f.kind, f.label, f.section, f.slot)]
+        if len(matches) != 1:
+            raise FillError('The optional empty picker is no longer uniquely identifiable')
+        current = matches[0]
+        if current.value == '' and not current.required and not current.invalid:
+            return ''
+        raise FillError('The optional picker changed before its empty answer could be verified')
     if f.kind in TEXT_KINDS and loc.evaluate("e => (e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') && e.readOnly"):
         current = loc.input_value()
         if not f.invalid and current.strip() == answer.strip() and loc.get_attribute('aria-invalid') != 'true':
