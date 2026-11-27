@@ -76,6 +76,69 @@ def test_completed_resume_and_cover_slots_remain_in_the_upload_inventory(world,t
         ('Resume/CV','resume.pdf'),('Cover Letter','cover_letter.pdf')]
 
 
+@pytest.mark.parametrize('strategy',['experimental','adaptive'])
+@pytest.mark.parametrize('reload_after',['delete','upload'])
+def test_native_application_coverage_retains_owned_proof_when_attachment_ids_change(world,tmp_path,monkeypatch,strategy,reload_after):
+    from jobagent.steps import apply
+    from test_filling_strategy import SourceModel
+    original_setup=world.setup
+    def rerendering_setup(html):
+        html=html.replace("const n=role==='resume'?'62':'64'", "const n=role==='resume'?(sessionStorage.getItem('parsed')?'300':'62'):'64'")
+        html=html.replace("(role==='resume'?'62':'64')", "(role==='resume'?(sessionStorage.getItem('parsed')?'300':'62'):'64')")
+        html=html.replace("render('resume',true);render('cover',true);",
+                          "render('resume',!sessionStorage.getItem('deleted'));render('cover',true);")
+        html=html.replace('render(role,false);d.remove()',
+                          "render(role,false);if(role==='resume')sessionStorage.setItem('deleted','1');d.remove()")
+        html=html.replace('names[role]=f.name;render(role,true)',
+                          "names[role]=f.name;if(role==='resume')sessionStorage.removeItem('deleted');render(role,true)")
+        marker="sessionStorage.setItem('deleted','1');d.remove()};" if reload_after=='delete' else "style.display='block';d.remove()};"
+        html=html.replace(marker,marker[:-2]+";if(role==='resume'&&!sessionStorage.getItem('parsed')){sessionStorage.setItem('parsed','1');location.reload()}};")
+        original_setup(html)
+    monkeypatch.setattr(world,'setup',rerendering_setup)
+    page,path,server=setup(world,tmp_path,monkeypatch)
+    (world.job/'resume.pdf').write_bytes(path.read_bytes())
+    # A successful parser POST replaces the document and renumbers its slot;
+    # current server bytes and the owning caption remain independently readable.
+    monkeypatch.setattr(apply,'_start',lambda *a,**k:forms.read_page(page))
+    result=apply.run(page,world.job,'fixture',model=SourceModel(),log=lambda _:None,
+                     filling_strategy=strategy)
+    assert result['state']=='review',{
+        'blockers':result.get('blockers'),'fields':result.get('fields'),
+        'attempts':[e for p in result.get('experimental_pages',[]) for e in p.get('attempts',[]) if e.get('kind')=='file']}
+    assert server['uploads']==server['deletes']==['resume']
+    assert server['resume']==path.read_bytes()
+    assert page.evaluate('window.sent')==0
+    held=[f for f in result['fields'] if f['kind']=='file' and f['label']=='Resume/CV']
+    assert len(held)==1 and held[0]['verified']
+
+
+@pytest.mark.parametrize('change',['none','bytes','caption','route','duplicate','neighbor'])
+def test_refreshed_attachment_requires_current_bytes_and_the_original_owner(world,tmp_path,monkeypatch,change):
+    from jobagent.filling.uploads import UploadProof
+    page,path,server=setup(world,tmp_path,monkeypatch,same=True)
+    view,field=resume_field(page)
+    proof=UploadProof(path,forms.locate(view,field))
+    assert proof.verify()
+    page.reload()
+    assert not proof.verify()  # Old document handles never become fresh proof.
+    if change=='bytes':server['resume']=b'%PDF-1.4 different server bytes'
+    if change=='caption':page.locator('#resumeLabel').evaluate("e=>e.textContent='Different document'")
+    if change=='route':page.evaluate("history.pushState({},'', '/different-application')")
+    if change=='duplicate':page.locator('#resumeOwner').evaluate('e=>e.after(e.cloneNode(true))')
+    element=page.locator('[id="64:_attach"]' if change=='neighbor' else '[id="62:_attach"]').first.element_handle()
+    refreshed=proof.refreshed_attachment(element)
+    try:
+        if change=='none':
+            assert refreshed is not None and refreshed.verify()
+            assert refreshed.expected==proof.expected and refreshed.reused_existing
+        else:assert refreshed is None
+        assert not server['deletes'] and not server['uploads']
+        assert not page.evaluate('window.sent')
+    finally:
+        if refreshed is not None:refreshed.close()
+        proof.close()
+
+
 @pytest.mark.parametrize('old_name',['resume.pdf','older_resume.pdf'])
 def test_only_the_owned_stale_resume_is_replaced_and_current_bytes_are_verified(world,tmp_path,monkeypatch,old_name):
     page,path,server=setup(world,tmp_path,monkeypatch,old_name=old_name);view,field=resume_field(page)

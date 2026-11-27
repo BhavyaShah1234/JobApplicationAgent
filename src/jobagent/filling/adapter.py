@@ -241,6 +241,8 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         previous=documents.get(ident,{})
         documents[ident]={'role':role,'label':previous.get('label',field.label),
                           'field_key':key(field), 'identity':field.identity,
+                          'frame':view.frames[field.frame],'route':view.frames[field.frame].url,
+                          'section':field.section,
                           'ambiguous':previous.get('ambiguous',False) or count!=1 or
                           previous.get('role',role)!=role}
 
@@ -411,7 +413,9 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         proof=filler.upload_proofs.get((page_no,key(f))) if f.kind=='file' else None
         if f.kind=='file' and not entry:
             entry,rebound=_parsed_upload_entry(filler,page_no,view,f,history)
-            if rebound is not None:proof=rebound
+            if rebound is not None:
+                proof=rebound
+                filler.upload_proofs[(page_no,key(f))]=proof
         if f.kind=='file' and proof is None:proof=filler.uploaded_labels.get((page_no,f.label))      # a same-label input satisfied by a verified upload
         success=entry.get('outcome')=='verified' and not f.invalid and (proof.verify() if proof else forms.same_value(entry.get('readback',''),f.value,f.kind,f.label))
         value=entry.get('answer','')
@@ -443,7 +447,29 @@ def fill_page(page,ctx,files,model,log,record,page_no,env,known=None,errors=()):
         duplicates_ok=len(same_label)>1 and all(r.get('verified') and r.get('answer')==role for r in same_label)
         if not row and duplicates_ok:row=same_label[0]
         proof=filler.upload_proofs.get((page_no,doc['field_key']))
+        if not doc['ambiguous'] and not (row.get('verified') and proof and proof.verify()):
+            # A failed delete/upload attempt can be followed by a successful
+            # fresh inventory under a different ID. Reconcile the old intent
+            # only to one current, byte-proven owner in the same application.
+            candidates=[f for f in view.fields if f.kind=='file' and f.label==label and
+                        f.section==doc['section'] and view.frames[f.frame]==doc['frame'] and
+                        view.frames[f.frame].url==doc['route']]
+            if len(candidates)==1:
+                field=candidates[0]
+                current=filler.upload_proofs.get((page_no,key(field)))
+                current_row=done[key(field)]
+                if (current and current_row.get('verified') and current_row.get('answer')==role and
+                        current_row.get('held_file_sha256')==current.expected and
+                        current.can_rebind(forms.locate(view,field))):
+                    row=current_row;proof=current
         if not matches and not doc['ambiguous'] and proof and proof.verify():
+            # The portal may replace its document/attachment ID after parsing.
+            # The intent's retained proof must own the exact current slot; a
+            # caption or filename match is insufficient.
+            current=[done[key(f)] for f in view.fields if f.kind=='file' and
+                     proof.can_rebind(forms.locate(view,f))]
+            if len(current)==1:row=current[0]
+        if not row and not matches and not doc['ambiguous'] and proof and proof.verify():
             entry=next((e for e in reversed(history) if e.get('step')==page_no and e.get('identity')==doc['identity'] and e.get('outcome')=='verified'),{})
             if entry:
                 row={**entry,'page':page_no,'verified':True,'filled':files[role],'answered':True,

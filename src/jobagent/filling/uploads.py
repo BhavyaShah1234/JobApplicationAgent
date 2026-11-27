@@ -465,6 +465,35 @@ class UploadProof:
         return bool(self.parse_receipt and self.parse_receipt.verify(self.name,self.dispatched_bytes_verified)
                     and self.parse_receipt.owns(element))
 
+    def refreshed_attachment(self, element):
+        """Independently prove a refreshed server slot without dispatching a file.
+
+        Document replacement invalidates the old proof. Only an exact current
+        attachment owner in the same frame, route and caption can establish a
+        new proof, using its actual Download action and the supplied file hash.
+        A matching filename alone never authorizes reuse or replacement.
+        """
+        prior=self.attachment_download
+        if prior is None or not prior.caption:return None
+        fresh=None;handle=None
+        try:
+            handle=element.element_handle() if hasattr(element,'element_handle') else element
+            if handle.owner_frame()!=prior.frame or prior.frame.url!=prior.route:return None
+            fresh=UploadProof(self.path,element,role_caption=self.role_caption)
+            current=fresh.attachment_download
+            if (current is not None and current.caption==prior.caption and
+                    fresh.expected==self.expected and fresh.can_rebind(element)):
+                fresh.reused_existing=True
+                fresh.method='current owned server attachment download bytes'
+                return fresh
+        except Exception:pass
+        finally:
+            if handle is not None and handle is not element:
+                try:handle.dispose()
+                except Exception:pass
+        if fresh is not None:fresh.close()
+        return None
+
     def diagnostic(self):
         """Return bounded upload-proof diagnostics without endpoint or authentication values."""
         receipt=self.parse_receipt

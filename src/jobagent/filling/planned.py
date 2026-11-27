@@ -694,13 +694,31 @@ class PlannedFiller:
                             if f.kind=='file':
                                 if value not in files:raise ValueError('no role-specific file provided')
                                 prior=self.uploaded.get((self.step,f.identity)) or self.uploaded_labels.get((self.step,f.label))
-                                if prior is not None and prior.verify():
+                                prior_valid=prior is not None and prior.verify()
+                                if prior is not None and not prior_valid:
+                                    refresh=getattr(prior,'refreshed_attachment',None)
+                                    refreshed=refresh(forms.locate(fresh,f)) if refresh else None
+                                    if refreshed is not None:
+                                        # Retain every original intent key, while
+                                        # replacing its stale document proof with
+                                        # independently checked current bytes.
+                                        for registry in (self.upload_proofs,self.uploaded,self.uploaded_labels):
+                                            for ident,held in list(registry.items()):
+                                                if held is prior:registry[ident]=refreshed
+                                        proofs=getattr(page,'_jobagent_upload_proofs',[])
+                                        proofs.append(refreshed)
+                                        prior=refreshed
+                                        prior_valid=True
+                                if prior_valid:
                                     # the same document was just verified on an input carrying this very label: not sent a second time
                                     self.cache[key(f)]=d;self.rendered[key(f)]=Path(files[value]).name;changed=True
+                                    self.upload_proofs[(self.step,key(f))]=prior
+                                    if f.identity:self.uploaded[(self.step,f.identity)]=prior
+                                    self.uploaded_labels[(self.step,f.label)]=prior
                                     row={'step':self.step,'field_key':key(f),'identity':f.identity,'label':f.label,'section':f.section,'answer':value,
                                          'readback':Path(files[value]).name,'frame':f.frame,'kind':f.kind,'slot':f.slot,'required':f.required,'before':f.value,
                                          'chosen':value,'source':d.source,'fact_id':d.fact_id,'outcome':'verified','held_file_sha256':prior.expected,
-                                         'upload_verification':'same label as an upload already verified on this page','replaced_attachment_count':0}
+                                         'upload_verification':prior.method,'replaced_attachment_count':0}
                                     records.append(row);self.record_state[(self.step,key(f))]=row
                                     self.trace(ev='field',ok=True,label=f.label[:40],kind='file',secs=0,note='same label as a verified upload')
                                     continue
@@ -757,6 +775,7 @@ class PlannedFiller:
                                 proof.frame=f.frame_identity;proof.identity=f.identity
                             readback=proof.name if f.kind=='file' and proof is not None else actual.value
                             if f.kind=='file' and proof is not None:
+                                self.upload_proofs[(self.step,key(f))]=proof
                                 if f.identity:self.uploaded[(self.step,f.identity)]=proof
                                 self.uploaded_labels[(self.step,f.label)]=proof
                             self.trace(ev='field',ok=True,label=f.label[:40],kind=f.kind,secs=round(time.monotonic()-_t0,1))
