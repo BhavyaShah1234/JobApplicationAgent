@@ -1,5 +1,14 @@
 # UKG / UltiPro: what the agent found, what it fixed, and where it stopped
 
+## Current retest — 26 November 2026
+
+One registration-only native attempt on verified production revision `1d27879` followed DOWL Apply → Sign up → email/password → Continue → Almost there. After filling the first-name field, the server returned **“Too many attempts were detected from this network. Please try again later.”** The run stopped at that explicit restriction. There were no password sign-in attempts, no reset, no cookie/network changes and no further UKG attempt. Account creation and application filling did not complete; **UKG remains unchecked**.
+
+The previous six-hour local hold having elapsed did not establish that the server restriction had expired. This is direct live evidence that the block persisted or recurred; its cause and server-side expiry are unknown. Do not retry merely because a local timer has elapsed. Owner or service assistance is required before another live attempt; a CAPTCHA may still be required afterward.
+
+Evidence: `outputs/verification/successfactors-corning-20261126/matrix/current-image-ukg-dowl/` (native log, passive DOM readback, explicit restriction screenshot and revalidation status). Historical findings below are retained; the earlier suggestion to change networks is not part of the current procedure.
+
+
 ## Latest attempt — 2026-11-25 01:42 UTC: explicit lockout, stopped
 
 A paced native-agent retry with the stale-control fix again reached signup step 2, then UKG explicitly reported too many attempts/account locked. No account creation or application submission is confirmed. Further server attempts are stopped. A separate persistent restriction record now blocks **both sign-in and registration** before contacting a model or submitting credentials; `--register-account` cannot bypass it. The local six-hour hold ends no earlier than 07:42:53 UTC; this is a minimum local hold, not evidence of UKG's expiry. Tests: 91 auth cases passed in 88.62s. No password reset, network change or cookie clearing was performed.

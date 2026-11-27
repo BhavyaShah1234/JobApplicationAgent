@@ -1,5 +1,12 @@
 # SAP: what the agent found, what it fixed, and where it stopped
 
+## Current retest — 26 November 2026
+
+One normal native attempt from verified production revision `1d27879` followed SAP’s published Apply action to SmartRecruiters. It stopped at a visible DataDome human-verification challenge before any application fields were filled. The owner is away, so the private test was deferred through native presence handling. No puzzle was solved by automation, no reload/retry followed, and no application was submitted. The City option fix remains locally tested but not revalidated live. **SmartRecruiters remains unchecked**; neither the second SAP role nor a different-employer acceptance run can substitute for this missing initial pass.
+
+Evidence: `outputs/verification/successfactors-corning-20261126/matrix/current-image-smartrecruiters-sap/` (native log, application record, passive screenshot and DOM readback). SAP’s current Developer posting uses SmartRecruiters; the separate Corning/Teradyne work in `PORTAL_VALIDATION.md` tests SuccessFactors. Historical findings below are retained.
+
+
 ## Latest live check — 2026-11-25: human verification cleared, then service restriction
 
 The owner solved the visible DataDome challenge. SmartRecruiters then displayed its own **application form temporarily unavailable** error inside a web component. One normal reload of that fieldless error page triggered a new visible challenge; after the owner solved it, the service displayed **Access is temporarily restricted**. All SmartRecruiters attempts stopped, including other employers. No application was submitted and City was not reached in this revalidation.

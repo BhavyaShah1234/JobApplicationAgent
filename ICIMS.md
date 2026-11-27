@@ -1,5 +1,11 @@
 # iCIMS portals: everything learned, what the agent does, what it cannot, and why
 
+## Fresh retest — 26 November 2026 (Phoenix)
+
+One normal Docker attempt on Garmin18475 using verified image `9474ecc` reached a **visible hCaptcha at login**. The owner was away, so the native presence handler deferred without solving or retrying the challenge. This fresh retest **did not pass application filling**. The earlier staged ordinary-Chrome-assisted review acceptance below remains valid only in its documented scope; a new assisted connection requires real Chrome approval. No application was submitted or new documents generated.
+
+Evidence: `outputs/verification/successfactors-corning-20261126/retests/icims-garmin/` (native log, visible challenge screenshot, private deferral and revalidation status). The consolidated matrix, current runtime provenance and other portal retests are in `PORTAL_VALIDATION.md`.
+
 ## Current acceptance status — 2026-11-26
 
 **[x] Assisted iCIMS filling to actual application review — passed on Garmin 18475.** The corrected native Voyager run on production `bec2cb1` signed in with the saved account, revisited the recorded screening route, saved the screening step, filled the generated review form and stopped without final submission. The portal reported **Confirm Application, stage 3 of 3**; the visible page was **Application Review / Confirm Application (1/2)**. The agent read back **80/80 observed fields** across 16 screening questions and 64 review fields, including all 28 required fields. No flags remained; the deliberate borrowed-document guard prevents submission.
