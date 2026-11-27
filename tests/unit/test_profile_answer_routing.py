@@ -1,6 +1,6 @@
 """Observed employer/availability variants use owner facts without model or HITL."""
 import pytest
-from jobagent.filling.facts import compile_facts, declaration_notes_only
+from jobagent.filling.facts import Fact,compile_facts, declaration_notes_only
 from jobagent.filling.planned import PlannedFiller
 from jobagent.filling.routing import family
 from jobagent.tools.forms import Field
@@ -51,3 +51,77 @@ def test_conditions_and_output_changes_are_not_discarded_as_confirmation_notes(n
 ])
 def test_availability_does_not_answer_employment_history_or_school_dates(label):
     assert family(label)!='start_date'
+
+
+@pytest.mark.parametrize('label',[
+    'Current Title', 'Current job title', 'Your current position title',
+    'What is your current (or most recent) title? *',
+    'Please provide your current title', 'Most recent job title',
+])
+def test_current_title_questions_select_the_role_not_the_company(label):
+    # The current job deliberately is not the first source record.
+    facts=compile_facts({'work':[
+        {'question':'Current company','answer':'Current Lab'},
+        {'question':'Work history','answer':[
+            {'company':'Prior Company','title':'Prior Engineer','end':'May 2025'},
+            {'company':'Current Lab','title':'Robotics Researcher','end':'Present','current':True}]}]},'')
+    filler=PlannedFiller(facts,forbidden,model=object());filler.invoke=forbidden
+    decision=filler.plan([Field(1,'text',label,required=True)])[1]
+    assert family(label)=='current_title'
+    assert decision.value=='Robotics Researcher' and decision.fact_id.endswith('/1/title')
+    assert filler.questions==filler.model_calls==0
+
+
+def test_most_recent_title_uses_evidenced_dates_when_no_job_is_current():
+    facts=compile_facts({'work':[{'question':'Work history','answer':[
+        {'company':'Earlier','title':'Earlier Engineer','end':'May 2026'},
+        {'company':'Latest','title':'Latest Engineer','end':'August 2026'}]}]},'')
+    filler=PlannedFiller(facts,forbidden,model=object());filler.invoke=forbidden
+    assert filler.plan([Field(1,'text','What is your current or most recent title?')])[1].value=='Latest Engineer'
+
+
+@pytest.mark.parametrize('rows',[
+    [],
+    [{'company':'Only Company','end':'Present','current':True}],
+    [{'title':'One','current':True},{'title':'Two','current':True}],
+    [{'title':'One','end':'2026'},{'title':'Two','end':'2026'}],
+])
+def test_missing_or_ambiguous_title_cannot_be_filled_with_a_company(rows):
+    facts=compile_facts({'work':[{'question':'Current company','answer':'Company Is Not A Title'},
+                               {'question':'Work history','answer':rows}]},'')
+    filler=PlannedFiller(facts,forbidden,model=object());filler.invoke=forbidden
+    decision=filler.plan([Field(1,'text','What is your current or most recent title?')],allow_human=False)[1]
+    assert decision.value is None
+
+
+def test_an_employment_row_keeps_its_own_title_despite_another_current_role():
+    facts=compile_facts({'work':[{'question':'Work history','answer':[
+        {'title':'Prior Engineer','end':'May 2025'},
+        {'title':'Current Engineer','current':True}]}]},'')
+    filler=PlannedFiller(facts,forbidden,model=object());filler.invoke=forbidden
+    decision=filler.plan([Field(1,'text','Job Title',section='Work Experience 1')])[1]
+    assert decision.value=='Prior Engineer' and decision.fact_id.endswith('/0/title')
+
+
+def test_current_title_uses_the_normal_resume_projection_pipeline():
+    from jobagent.tools import applicant
+    data={'experience':[{'question':'Work history','answer':'',
+                         'instructions':'One entry per role, in order; current only for the current role.'},
+                        {'question':'Current company','answer':''}]}
+    tex=r'''\section{Experience}
+        \resumeSubheading{Prior Engineer}{May 2025 -- May 2026}{Earlier Company}{Phoenix, Arizona}
+        \resumeSubheading{Robotics Researcher}{January 2026 -- Present}{Current Lab}{Tempe, Arizona}
+        \section{Technical Skills}'''
+    facts=compile_facts(applicant.with_resume(data,applicant.resume_experience(tex)),'')
+    filler=PlannedFiller(facts,forbidden,model=object());filler.invoke=forbidden
+    decision=filler.plan([Field(1,'text','What is your current (or most recent) title? *')])[1]
+    assert decision.value=='Robotics Researcher' and decision.fact_id.endswith('/1/title')
+    assert next(x for x in facts if x.id==decision.fact_id).authority=='resume'
+
+
+@pytest.mark.parametrize('authority',['document','lookup','portal'])
+def test_a_posting_or_web_title_does_not_establish_the_applicants_current_title(authority):
+    facts=[Fact('foreign-title',['Job Title'],'Posting Role','outside',section='Work Experience 1',authority=authority),
+           Fact('foreign-current',['Current'],'True','outside',section='Work Experience 1',authority=authority)]
+    filler=PlannedFiller(facts,forbidden,model=object());filler.invoke=forbidden
+    assert filler.plan([Field(1,'text','Current Title')],allow_human=False)[1].value is None

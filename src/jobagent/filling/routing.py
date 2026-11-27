@@ -16,7 +16,7 @@ PURPOSE_BOUND=DECLARATIONS | {'owner_identifier','work_documentation','governmen
     'age_threshold','work_restrictions','citizenship_countries','citizenship_status','visa_history','veteran',
     'enterprise_software_experience','technical_skill_possession','opt_participation',
     'stem_opt_extension','nonimmigrant_employment','termination_history','relocation_origin'}
-DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys() | {'education_summary','read_ack','residency','posting_title','application_date'}
+DETERMINISTIC_BOUND=PURPOSE_BOUND | STUDY_COMPONENTS.keys() | {'education_summary','read_ack','residency','posting_title','application_date','current_title','current_employer'}
 
 GOVERNMENT_HISTORY=frozenset({'current or former government employee',
     'are you a current or former government employee',
@@ -90,8 +90,8 @@ def family(text):
       ('account_status',r'currently.*client|(?:opened|have) an? account'),
       ('event_history',r'conferences?.*(?:attend|planning)|gatherings.*attend'),
       ('test_score',r'\b(?:sat|act|gre|gmat|toefl|ielts)\b.*(?:score|result)|(?:score|result).*\b(?:sat|act|gre|gmat|toefl|ielts)\b'),
-      ('current_employer',r'^(?:\d+[a-z]? )?(?:(?:(?:what|who) (?:is|was) |(?:please )?(?:provide|enter|state) |name of )?(?:your )?(?:current (?:or previous )?(?:company|employer)|employer name|employer))(?: optional)?$'),
-      ('current_title',r'(?:current|previous).*job title'),
+      ('current_employer',r'^(?:\d+[a-z]? )?(?:(?:(?:what|who) (?:is|was) |(?:please )?(?:provide|enter|state) |name of )?(?:your )?(?:current (?:or (?:previous|most recent) )?(?:company|employer)|employer name|employer))(?: optional)?$'),
+      ('current_title',r'^(?:\d+[a-z]? )?(?:(?:what is|which is|(?:please )?(?:provide|enter|state)) )?(?:your )?(?:current(?: or (?:most recent|previous))?|most recent) (?:job |position )?title(?: optional)?$'),
       ('languages',r'language skill|^languages$|^language$'),
       ('education_summary',r'(?=.*\bhighest\b)(?=.*\b(?:degree|education)\b)(?=.*\b(?:field of study|major|subject)\b)'),
       ('education_level',r'highest.*(?:education|degree)'),
@@ -299,8 +299,55 @@ def needs_entity_binding(label,section='',help_text='',kind=''):
                 (is_identity(label) and family(label) not in ('current_employer','current_title')))
 
 
+def _current_employment_candidates(field,facts,kind):
+    """Select an explicit current role, or a uniquely dated most recent role.
+
+    List position never establishes which employer is current. Preserve the
+    original record IDs so a title cannot be justified by its company name.
+    """
+    from datetime import datetime
+
+    if (kind not in ('current_title','current_employer') or entity_scope(field.section) or
+            contact_party(field.label+' '+field.section+' '+field.help)!='applicant'):return None
+    direct=[x for x in facts if x.authority in ('owner','resume') and not x.record and not x.section and x.value.strip() and
+            (norm(field.label) in map(norm,x.aliases) or fact_family(x)==kind)]
+    exact=[x for x in direct if x.id.startswith('application.answer.') and norm(field.label) in map(norm,x.aliases)]
+    profile=[x for x in direct if not x.id.startswith('learned:')]
+    if exact or profile:return exact or profile
+    groups={entity_scope(x.section) for x in facts if x.authority in ('owner','resume') and
+            (entity_scope(x.section) or ('',))[0]=='employment'}
+    current=[];ranks={}
+    for group in groups:
+        row=[x for x in facts if x.authority in ('owner','resume') and not x.record and entity_scope(x.section)==group]
+        flags={norm(x.value) for x in row if 'Current' in x.aliases}
+        positive=bool(flags & {'true','yes','current','present'})
+        negative=bool(flags & {'false','no','prior','previous'})
+        ends={x.value.strip() for x in row if 'End Date' in x.aliases and x.value.strip()}
+        ongoing=bool({norm(value) for value in ends} & {'present','current','ongoing'})
+        if positive and negative or ongoing and negative or positive and ends and not ongoing:return []
+        if positive or ongoing:current.append(group)
+        if len(ends)==1 and not ongoing:
+            end=next(iter(ends))
+            for fmt in ('%B %Y','%b %Y','%Y-%m','%m/%Y','%Y-%m-%d','%m/%d/%Y'):
+                try:
+                    date=datetime.strptime(end,fmt);ranks[group]=(date.year,date.month);break
+                except ValueError:pass
+    if len(current)>1:return []
+    if current:chosen=current[0]
+    elif 'most recent' in norm(field.label) and groups and len(ranks)==len(groups):
+        newest=max(ranks.values());latest=[g for g,rank in ranks.items() if rank==newest]
+        if len(latest)!=1:return []
+        chosen=latest[0]
+    else:return direct
+    component='Job Title' if kind=='current_title' else 'Company Name'
+    return [x for x in facts if x.authority in ('owner','resume') and not x.record and x.value.strip() and
+            entity_scope(x.section)==chosen and component in x.aliases]
+
+
 def candidates(field,facts):
     kind=field_family(field)
+    current=_current_employment_candidates(field,facts,kind)
+    if current is not None:return current
     projected=education_query_facts(field,facts,kind)
     if projected is not None:return projected
     allowed=[x for x in facts if scope_allows(field,x)]
@@ -412,6 +459,10 @@ def route(field,facts):
 def resolve_routed(field,facts,route_info=None):
     r=route_info or route(field,facts);bank={x.id:x for x in facts};selected=[bank[i] for i in r.fact_ids]
     owner=[x for x in selected if x.authority=='owner']
+    if r.family in ('current_title','current_employer'):
+        employment=[x for x in selected if x.authority in ('owner','resume')]
+        if len(employment)!=1:return Decision(None,reason='explicit current employment evidence missing or ambiguous')
+        return from_fact(field,employment[0])
     if r.family in ('posting_title','application_date'):
         return from_fact(field,selected[0]) if len(selected)==1 else Decision(None,reason='explicit portal metadata missing')
     if r.family=='opt_participation' and not owner:
@@ -580,6 +631,10 @@ def resolve_routed(field,facts,route_info=None):
 
 def evidence_allows(field,fact,route_info):
     if scope_allows(field,fact):return True
+    if (fact.target_key is None and not entity_scope(field.section) and fact.authority in ('owner','resume') and
+            (entity_scope(fact.section) or ('',))[0]=='employment' and
+            route_info.family in ('current_title','current_employer') and fact.id in route_info.fact_ids):
+        return True  # selected from explicit current markers or unique sourced end dates
     # Explicitly named global degree questions are the sole cross-row
     # projection here. Their candidates were selected from that degree above.
     return bool(fact.target_key is None and not entity_scope(field.section) and fact.authority=='owner' and

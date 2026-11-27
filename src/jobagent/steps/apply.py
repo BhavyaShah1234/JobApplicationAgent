@@ -927,18 +927,22 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
     from jobagent.filling.facts import compile_facts,resolve as resolve_fact
     evidence=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''),ctx.get('TODAY',''))
     from jobagent.filling.routing import route,resolve_routed,personal_facts,answer_sheet_facts
-    evidence+=personal_facts(ctx)+answer_sheet_facts(ctx.get('ANSWERS_FOR_THIS_APPLICATION',''))
+    application_facts=answer_sheet_facts(ctx.get('ANSWERS_FOR_THIS_APPLICATION',''))
+    evidence+=personal_facts(ctx)+application_facts
     for field in todo:
         answer=answers.get(field.id)
         if answer is None or answer.source in ('human','learned'):continue
         routing=route(field,evidence)
-        if routing.family not in ('start_date','preferred_name','portfolio_link','external_sharing','residency','clearance_eligibility','clearance_held','arbitration','read_ack','event_history','account_status','privacy_consent','future_contact','sms_consent','ai_consent','demographic_consent','ai_policy_ack'):continue
+        exact_application_answer=any(not fact.record and forms._norm(field.label) in map(forms._norm,fact.aliases)
+                                     for fact in application_facts)
+        if routing.family not in ('start_date','preferred_name','portfolio_link','external_sharing','residency','clearance_eligibility','clearance_held','arbitration','read_ack','event_history','account_status','privacy_consent','future_contact','sms_consent','ai_consent','demographic_consent','ai_policy_ack','location','race','discipline','current_title','current_employer') and not exact_application_answer:continue
         decision=resolve_routed(field,evidence,routing)
+        if decision is None and exact_application_answer:decision=resolve_fact(field,evidence)
         if decision is None:continue
         if decision.value is not None:
-            answers[field.id]=answer.model_copy(update={'value':decision.value,'source':'applicant','why':decision.reason or decision.source,'ask_human':False,'flag':''})
+            answers[field.id]=answer.model_copy(update={'value':decision.value,'source':'applicant','why':decision.reason or decision.source,'ask_human':False,'flag':'','lookup':''})
         elif decision.reason.startswith('explicit'):
-            answers[field.id]=answer.model_copy(update={'value':'','ask_human':True,'flag':decision.reason})
+            answers[field.id]=answer.model_copy(update={'value':'','ask_human':True,'flag':decision.reason,'lookup':''})
 
 
     for field in todo:
