@@ -1855,6 +1855,11 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         return answer
     if f.kind == "select":
         if answer == '':
+            if f.required:
+                raise UnavailableOption('A required select cannot be answered with a blank')
+            if loc.evaluate('''e=>{const o=e.options[e.selectedIndex];return !!o &&
+                    !o.text.trim() && ['', '-1', '0'].includes(o.value)}'''):
+                return ''  # already unselected, including a disabled empty placeholder
             empty = loc.evaluate('''e=>[...e.options].map((o,index)=>({index,text:o.text.trim(),value:o.value,disabled:o.disabled}))
                 .filter(o=>!o.disabled && !o.text && ['', '-1', '0'].includes(o.value))''')
             if len(empty) != 1:
@@ -1927,6 +1932,8 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             except UnavailableOption:
                 if candidate==candidates[-1]:raise
     if f.kind == "combobox" and loc.evaluate("e => e.tagName === 'SELECT'"):
+        if answer == '':
+            return fill_field(page, view, replace(f, kind='select'), answer, files, strict=strict)
         # A native <select> the page reports as a combobox (iCIMS): its options cannot be clicked like a custom list; read the live
         # options (the reader may have seen only the first screenful) and select one.
         live = loc.evaluate("e => [...e.options].filter(o => !o.disabled && !o.hidden).map(o => ({t: (o.textContent || '').replace(/\\s+/g, ' ').trim(), v: o.value}))")
