@@ -1,5 +1,25 @@
 # Portal validation — 26 November 2026 (Phoenix)
 
+## Correction candidate — 27 November 2026 (Phoenix)
+
+The current validation container is built from **`de2841a01de3f36e214d1589c86c81a851ab54c2`**. All **145 installed source/assets match** the committed build snapshot. Voyager returned HTTP200 and the authenticated dashboard checks returned200. Production presence remains Away; the database remains20 filled applications and0 submission attempts. No application was submitted, no new application documents were generated, and no ATS scans were performed during this correction phase.
+
+Two commits contain the corrections: `cec3135` preserves owner provenance and live field ownership; `de2841a` fixes unnecessary research on retry and repairs stale test fixtures. The runtime corrections cover:
+
+- Confirmation notes on a saved employer name no longer force unnecessary model/HITL resolution; additional start-date wordings use the saved availability rule.
+- Preparing a job-specific postal address preserves actual current-location evidence. Generated address facts are marked as lookup evidence and cannot prove actual residency.
+- A terminal account-agent failure can be corrected by independently verified current profile identity. A name or Sign Out link alone is insufficient, and authentication holds remain enforced.
+- Optional “If Other” source explanations follow the current parent choice, including cached decisions, answer-sheet values and the original filler's final repair. Required or unrelated fields are not automatically cleared.
+- Completed SuccessFactors attachment slots remain visible to the reader. Exact current server bytes can be reused; wrong attachments are replaced only through their owned delete/upload controls and confirmed dialog. Ambiguous controls or refused byte verification stop replacement.
+- File uploads retain authored identity through reordering and stay within their document/section. A generic Upload a file control under Cover Letter receives cover-letter bytes. One clearly owned previous primary document can be replaced even when its filename differs; ambiguous document lists remain untouched.
+- Company-research fingerprints exclude both derived location values and their resolver version. An unchanged retry reuses research; a resolver upgrade refreshes locations; genuinely changed posting content still invalidates research.
+
+**Verification is qualified, not a new full-suite pass.** The complete isolated offline unit run on immutable `cec3135`, including browser and simulation tests, finished **4,019 passed /18 failed in5,943.82s** (runner wall5,946.70s). Its145 runtime source/assets remained unchanged. Twelve failures were stale fixture assumptions (offline CLI preflight, model-fallback title schema and a context mock's optional third argument); four verification fixtures invalidated their own observed target by taking another snapshot; two failures exposed the research fingerprint defect. The corrected surrounding group passed **288 tests in430.05s**, including all18 failures and new positive/negative cache cases. Earlier focused groups passed96 tests in196.07s, six final upload-boundary cases in23.85s, and338 surrounding cases in881.52s. These groups overlap and must not be summed. A fresh complete suite on the final corrected revision is **still pending**.
+
+**No fresh live portal acceptance or controlled speed result is claimed for this candidate yet.** The portal results below remain historical results on their stated revisions. Next are current-code unsubmitted checks and three paired original/experimental comparisons using identical inputs and separate fresh private browser/checkpoint/HITL state. Prepared cases are Ashby/Coram, Lever/Arrive Logistics and Greenhouse/Everpure. Existing documents are borrowed under the non-submittable guard. The SuccessFactors replacement check uses another existing valid packet with different bytes; no document generation is needed. Human-assisted iCIMS/SmartRecruiters checks await current owner availability; UKG restriction clearance is unknown and UKG remains deferred.
+
+Evidence: `outputs/verification/correctness-closeout-20261127/`, especially `final-cec3135/suite.log`, `suite-junit.xml` in that folder, `repair-verification-v7.txt`, `deployment-proof-current.json`, `post-deploy-runtime-proof.json`, and `paired-benchmark-plan.json`. Failed before-fix cases and the verification-target diagnostic are retained. The test-only fixes preserve the production model preflight, stale-target checks and verification-mail ownership rules.
+
 ## Result and scope
 
 - [x] SuccessFactors **supervised filling to the review boundary**: two Teradyne roles plus a different employer, Ericsson. See the exact matrix below.
