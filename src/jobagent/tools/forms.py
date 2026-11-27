@@ -1115,6 +1115,8 @@ def selection_parts(value: str, question: str = "") -> list[str]:
 
 def same_value(want: str, got: str, kind: str, question: str = "", multiple: bool = False) -> bool:
     """The page shows the value that was meant (read-back check)."""
+    if kind in ('combobox', 'select', 'radio', 'buttons') and not (want or '').strip() and (got or '').strip():
+        return False  # an empty string is a substring of every option, not proof that it was cleared
     if kind in ('combobox', 'select', 'radio', 'buttons') and _NO_OPTIONS.fullmatch((got or '').strip()):
         return False
     if kind in ('combobox', 'select') and PHONE_CODE_Q.search(question):
@@ -1965,7 +1967,12 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
             """Resolve only an option actually offered by this picker using sourced answer variants."""
             if option_resolver is not None and options:
                 resolved = option_resolver(options)
-                if resolved in options:
+                # A searchable institution picker may offer Other before a
+                # named search has run. Its approved fallback must not skip
+                # the bounded searches below; explicit Other stays direct.
+                premature_other = (is_identity(f.label) and not OTHER_OPTION.match(answer or '')
+                                     and OTHER_OPTION.match(resolved or ''))
+                if resolved in options and not premature_other:
                     return resolved
             return next((hit for candidate in candidates if (hit:=pick(candidate,options)[0]) is not None
                          and (not PHONE_CODE_Q.search(f.label) or phone_code_option(answer, [hit]) is not None)),None)

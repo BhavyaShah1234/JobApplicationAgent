@@ -12,6 +12,13 @@ def test_no_selection_does_not_verify_a_no_answer(kind):
     assert forms.match_option('No', ['No Selection'])[0] is None
 
 
+@pytest.mark.parametrize('kind', ['combobox', 'select', 'radio', 'buttons'])
+def test_an_explicit_blank_never_verifies_an_existing_nonempty_choice(kind):
+    assert not forms.same_value('', 'Information Technology', kind, 'Type of Business')
+    assert not forms.same_value(' ', 'Other', kind, 'Type of Business')
+    assert forms.same_value('', '', kind, 'Type of Business')
+
+
 @pytest.mark.parametrize('complete', [False, True])
 def test_placeholder_only_options_keep_a_search_or_require_an_answer(complete):
     field = forms.Field(0, 'combobox', 'Disability Status', options=['No Selection'],
