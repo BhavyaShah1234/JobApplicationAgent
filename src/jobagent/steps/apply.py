@@ -931,10 +931,11 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
     evidence+=personal_facts(ctx)+application_facts
     for field in todo:
         answer=answers.get(field.id)
-        if answer is None or answer.source in ('human','learned'):continue
+        if answer is None or answer.source=='human':continue
         routing=route(field,evidence)
         exact_application_answer=any(not fact.record and forms._norm(field.label) in map(forms._norm,fact.aliases)
                                      for fact in application_facts)
+        if answer.source=='learned' and not exact_application_answer:continue
         if routing.family not in ('start_date','preferred_name','portfolio_link','external_sharing','residency','clearance_eligibility','clearance_held','arbitration','read_ack','event_history','account_status','privacy_consent','future_contact','sms_consent','ai_consent','demographic_consent','ai_policy_ack','location','race','discipline','current_title','current_employer') and not exact_application_answer:continue
         decision=resolve_routed(field,evidence,routing)
         if decision is None and exact_application_answer:decision=resolve_fact(field,evidence)

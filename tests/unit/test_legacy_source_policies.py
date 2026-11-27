@@ -89,3 +89,15 @@ def test_missing_current_role_evidence_asks_instead_of_searching_for_a_company_t
 def test_a_current_human_literal_is_not_overridden():
     answer=enforce(Field(1,'text','Location'),'Owner-confirmed temporary location',source='human')
     assert answer.value=='Owner-confirmed temporary location'
+
+
+def test_an_explicit_application_answer_precedes_an_older_learned_location():
+    ctx=context()
+    ctx['ANSWERS_FOR_THIS_APPLICATION']+='\n| 2 | Location | Tempe, Arizona, United States |'
+    answer=enforce(Field(1,'text','Location'),'Sunnyvale, California, United States',ctx,source='learned')
+    assert answer.value=='Tempe, Arizona, United States' and not answer.ask_human
+
+
+def test_an_unrelated_worksheet_does_not_discard_a_saved_owner_clarification():
+    answer=enforce(Field(1,'text','Location'),'Saved temporary location',source='learned')
+    assert answer.value=='Saved temporary location'
