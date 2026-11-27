@@ -107,7 +107,7 @@ Clearing cookies (`portal-forget`) cannot remove this block: it is held on UKG's
 
 ## 7. What is needed to finish UKG
 
-1. **Wait** for the rate limit to expire (hours, not minutes), or use a different network for one attempt.
+1. **Wait for legitimate clearance** of the portal's rate limit. A local cooldown expiring does not establish that UKG's server restriction has cleared. On 27 November the owner reported they had not monitored the screen and could not confirm clearance; UKG therefore remains deferred. Do not change networks to evade this restriction.
 2. **One attempt**, run with `apply ... --browser-mode docker --register-account --documents-from <any valid job>` and the owner at **http://localhost:6080/vnc.html**:
    the agent fills step 1, fills step 2 and asks for the Turnstile; the owner passes it and answers `done`; the agent presses **Create account**.
 3. If a verification email is sent, the agent reads it from its own inbox and opens the link.
