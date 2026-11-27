@@ -2042,7 +2042,11 @@ def _run(page: Page, job_dir: str | Path, company: str, ensure_signed_in=None, l
             continue
         if verdict == "same":
             # the site refused Next on this page (its error banner may be out of view: the page just didn't move)
-            same += 1
+            # A server can reveal the next required follow-up only after Next.
+            # Keep it on this logical page, replacing its earlier records, but
+            # count a refusal only when the retained question schema is stable.
+            changing = bool(before.fields & _after.fields) and before.fields != _after.fields
+            same = 0 if changing else same + 1
             if same >= 2:
                 result["state"] = "blocked"
                 result["blocked_by"] = "page"

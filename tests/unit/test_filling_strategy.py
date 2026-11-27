@@ -88,6 +88,46 @@ CONTACT=('<label for=f>Given Name</label><input id=f required><label for=l>Famil
          '<label for=e>Email</label><input id=e type=email required><button type=button onclick="window.sent=true">Apply</button>')
 
 
+@pytest.mark.parametrize('reveal', [True, False])
+def test_conditional_expansion_is_not_repeated_unchanged_next_refusal(world, monkeypatch, reveal):
+    """Keep one question group through several server-style required followups."""
+    world.data['Contact'].append({'question': 'Favorite editor', 'answer': 'Vim'})
+    world.setup('''<h1>Application</h1><h2>Application Questions</h2><div id=summary></div>
+        <label>Given Name<input id=first required></label><div id=more></div>
+        <button id=next type=button>Save and Continue</button>
+        <script>
+        let n=0;
+        const labels=['Family Name','Email','Favorite editor'];
+        document.getElementById('next').onclick=()=>{
+            document.getElementById('summary').innerHTML='<h2>Errors Found</h2>';
+            if (!REVEAL) return;
+            if(n<labels.length){
+                const label=labels[n++];
+                document.getElementById('more').insertAdjacentHTML('beforeend',
+                    '<label>'+label+'<input id="q'+n+'" required></label>');
+            } else {
+                const button=document.getElementById('next');button.textContent='Submit application';
+                button.onclick=()=>{window.sent=true;};
+            }
+        };
+        </script>'''.replace('REVEAL', 'true' if reveal else 'false'))
+    from jobagent.tools import wizard
+    wait = wizard.wait_for_progress
+    monkeypatch.setattr(wizard, 'wait_for_progress', lambda page, before:
+                        wait(page, before, attempts=1, wait_ms=30, settle_ms=30))
+    result = A.run(world.page, world.job, 'fixture', model=SourceModel(),
+                   filling_strategy='experimental', log=lambda _: None)
+    assert not world.page.evaluate('!!window.sent')
+    if reveal:
+        assert result['state'] == 'review'
+        assert result['ready_to_submit']
+        assert len(result['fields']) == result['verified'] == 4
+        assert {f['section'] for f in result['fields']} == {'Application Questions'}
+    else:
+        assert result['state'] == 'blocked'
+        assert 'keeps refusing Next' in result['reason']
+
+
 @pytest.mark.parametrize('mode',['explicit','resume','default'])
 def test_planned_runs_inside_real_workflow_and_preserves_approval_boundary(world,monkeypatch,mode):
     world.setup(CONTACT)
