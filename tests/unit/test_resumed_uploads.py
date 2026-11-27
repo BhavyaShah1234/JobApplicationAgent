@@ -103,3 +103,34 @@ def test_every_same_named_card_is_validated_before_removing_the_first(upload_pag
         forms.fill_field(page, view, field, str(pdf), {})
     assert page.evaluate('window.uploads') == 0
     assert page.evaluate('window.deleted') == []
+
+
+def test_one_differently_named_primary_resume_is_replaced(upload_page,tmp_path):
+    page=upload_page;widget(page,count=0)
+    page.locator('#cards').evaluate('e=>e.innerHTML=""')
+    page.evaluate("card('previous_resume.pdf')")
+    pdf=tmp_path/'resume.pdf';pdf.write_bytes(b'%PDF-1.4 new intended resume')
+    view=forms.read_page(page);field=next(f for f in view.fields if f.identity=='id:upload')
+    forms.fill_field(page,view,field,str(pdf),{})
+    assert page.evaluate('window.deleted')==['previous_resume.pdf']
+    assert page.evaluate('window.uploads')==1 and page.evaluate('window.otherDeletes')==0
+    assert page._jobagent_upload_proofs[-1].verify()
+
+
+def test_unknown_multiple_prior_documents_are_not_emptied_or_appended_to(upload_page,tmp_path):
+    page=upload_page;widget(page,count=0)
+    page.evaluate("card('previous_resume.pdf')")
+    pdf=tmp_path/'resume.pdf';pdf.write_bytes(b'%PDF-1.4 new intended resume')
+    view=forms.read_page(page);field=next(f for f in view.fields if f.identity=='id:upload')
+    with pytest.raises(ValueError,match='unambiguous primary document'):
+        forms.fill_field(page,view,field,str(pdf),{})
+    assert page.evaluate('window.deleted')==[] and page.evaluate('window.uploads')==0
+
+
+def test_one_known_cover_letter_in_the_resume_group_is_preserved(upload_page,tmp_path):
+    page=upload_page;widget(page,count=0)
+    pdf=tmp_path/'resume.pdf';pdf.write_bytes(b'%PDF-1.4 new intended resume')
+    view=forms.read_page(page);field=next(f for f in view.fields if f.identity=='id:upload')
+    with pytest.raises(ValueError,match='unambiguous primary document'):
+        forms.fill_field(page,view,field,str(pdf),{})
+    assert page.evaluate('window.deleted')==[] and page.evaluate('window.uploads')==0

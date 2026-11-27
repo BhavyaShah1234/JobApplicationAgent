@@ -24,7 +24,8 @@ def schema(field):
     return {'label': field.label, 'help': field.help, 'section': field.section,
             'kind': field.kind, 'required': field.required, 'options': list(field.options),
             'options_state': field.options_state, 'format': field.format,
-            'multiple': field.multiple, 'maxlength': field.maxlength}
+            'multiple': field.multiple, 'maxlength': field.maxlength,
+            'source_other_only':field.source_other_only,'source_parent_value':field.source_parent_value}
 
 
 class AdaptiveFiller(PlannedFiller):
@@ -232,7 +233,7 @@ class AdaptiveFiller(PlannedFiller):
         bound = self.bindings.get(key(planned))
         # File decisions are created by the shared executor after planning.
         if planned.kind == 'file': return self.signature(planned) == self.signature(current)
-        valid = bool(bound and bound['schema'] == self.signature(current)
+        valid = bool(super().can_execute(planned,current,decision) and bound and bound['schema'] == self.signature(current)
                      and bound['evidence'] == self.evidence(decision))
         if not valid:
             self.cache.pop(key(planned), None)
@@ -241,7 +242,7 @@ class AdaptiveFiller(PlannedFiller):
 
     def can_reuse(self, field):
         """A restored proposal still needs a fresh execution/readback record."""
-        return key(field) not in self.resumed_keys
+        return key(field) not in self.resumed_keys and super().can_reuse(field)
 
     def accepted(self, view, field, decision, row):
         """Checkpoint verified answers without serializing uploads or browser objects."""

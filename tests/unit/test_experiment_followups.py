@@ -78,6 +78,14 @@ def test_a_role_is_decided_by_the_caption_never_by_surrounding_words():
     assert A.upload_role("CV") == "resume" and A.upload_role("Curriculum Vitae") == "resume"
 
 
+@pytest.mark.parametrize('section,expected', [('Resume/CV','resume'),('Cover Letter','cover_letter'),
+    ('Resume and Cover Letter',''),('', 'resume')])
+def test_generic_upload_respects_its_explicit_document_section(section,expected):
+    assert A.upload_role('Upload a file (5MB max) / Drop files here or Select files',section)==expected
+    assert A.upload_role('Resume / upload a file',section)=='resume'
+    assert A.upload_role('Cover Letter / upload a file',section)=='cover_letter'
+
+
 # --- 2. email is not a postal address ----------------------------------------------------------------------------------------
 
 def test_an_email_address_field_is_not_a_postal_address():

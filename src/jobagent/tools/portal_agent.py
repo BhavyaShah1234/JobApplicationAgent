@@ -631,6 +631,13 @@ def _run(page: Page, url: str, values: dict, inbox, hitl, host: str, log, model,
                 hitl.ask(f"{host}: {a.thought} Please handle it in noVNC (http://localhost:6080), then answer 'done'.")
                 history.append(f"user handled: {a.thought[:80]}")
                 continue
+            if a.action == 'failed' and goal in ('sign_in','register') and _verified_profile_identity(page, values.get('EMAIL','')):
+                # Registration can land on a signed-in profile while the model
+                # calls the now-unnecessary registration task a failure.
+                state['state']='signed_in'
+                history.append('Model reported failure, but the current same-origin profile independently verified the saved email and signed-in controls')
+                log(f'portal {host}: current profile identity verified; continuing as signed in')
+                break
             if a.action == "signed_in" and not signed_in_evidence(page, values):
                 unconfirmed_claims[view] = unconfirmed_claims.get(view, 0) + 1
                 if unconfirmed_claims[view] >= 3:
@@ -1008,6 +1015,28 @@ def signed_in_evidence(page: Page, values: dict) -> bool:
                     page.goto(original, wait_until="domcontentloaded")
             except Exception:
                 return False
+    return False
+
+
+def _verified_profile_identity(page: Page, email: str) -> bool:
+    """Read exact current profile identity without navigating or trusting a name alone."""
+    origin=urlparse(page.url)
+    if not email or origin.scheme!='https' or not origin.hostname:return False
+    if _readonly_application_identity(page,email):return True
+    for frame in page.frames:
+        current=urlparse(frame.url)
+        if (current.scheme,current.netloc)!=(origin.scheme,origin.netloc):continue
+        try:
+            if frame.evaluate(r'''email=>{
+                const visible=e=>!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
+                const shown=s=>[...document.querySelectorAll(s)].filter(visible);
+                return !document.querySelector('input[type=password]') &&
+                    shown('h1,h2,h3,[role=heading]').some(e=>/^(?:(?:my|candidate|applicant)\s+profile|profile\s+information)$/i.test(e.innerText.trim())) &&
+                    shown('a,button,[role=button]').some(e=>/^(?:sign|log)\s*out$/i.test(e.innerText.trim())) &&
+                    [...document.querySelectorAll('input[type=email],input[name*=email i],input[id*=email i]')].some(e=>
+                        e.type!=='hidden'&&e.value.trim().toLowerCase()===email.toLowerCase());
+            }''',email):return True
+        except Exception:continue
     return False
 
 

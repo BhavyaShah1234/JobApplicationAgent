@@ -598,6 +598,19 @@ FIELDS_JS = r"""(start) => {
   const headings = all('h1, h2, h3, [data-automation-id=pageHeader], [aria-current=step]')
       .filter(vis).map(h => clean(h.innerText)).filter(Boolean).slice(0, 8);
   // Upload controls may mount a native input only after a button is clicked.
+  // A saved attachment is still an applicant document field. Its Download
+  // action proves the current bytes; its Delete action is never an upload.
+  for (const box of all('.successBtn[id$=":_attach"]')) {
+    const owner=box.closest('.RCMFormField.attachmentField');
+    const labels=owner?.querySelectorAll(':scope > label');
+    const names=box.querySelectorAll('[id$=":_attachDownloadLabelLink"]');
+    const downloads=box.querySelectorAll('[id$=":_attachDownloadLabel"][role=button]');
+    if(!/^\d+:_attach$/.test(box.id)||!vis(box)||!shown(box)||box.hasAttribute('data-jf')||
+       labels?.length!==1||names.length!==1||downloads.length!==1||!clean(names[0].textContent)||
+       owner.querySelector('input:not([type=hidden]),select,textarea,[role=combobox]'))continue;
+    const caption=clean(labels[0].textContent);
+    add(box,{kind:'file',label:caption,required:required(box,caption),value:clean(names[0].textContent),accept:''});
+  }
   for (const button of all('button,[role=button],a')) {      // legacy portals use links: "Click here to attach your Resume"
     const names=[button.innerText,button.getAttribute('aria-label'),
       ...(button.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>byIds(id,button))];
@@ -608,7 +621,8 @@ FIELDS_JS = r"""(start) => {
     const box = button.closest('[data-field-path],[data-field-entry-id]') || button.closest('[class*=upload i],fieldset,.form-group,.form-field') || button.parentElement;
     if (!box || box.querySelector('input[type=file]')) continue;
     const label = box.querySelector('label,legend');
-    const caption = (label && clean(label.innerText)) || question(button) || text;
+    const attachmentLabel=button.closest('.RCMFormField.attachmentField')?.querySelector(':scope > label');
+    const caption = (attachmentLabel && clean(attachmentLabel.textContent)) || (label && clean(label.innerText)) || question(button) || text;
     add(button, {kind:'file',label:caption,required:required(button,caption),value:'',accept:''});
   }
   // a visible custom element with no light children and no open shadow root: its content, if any, is in a closed shadow root
@@ -649,6 +663,8 @@ class Field:
     options_state: str = 'complete'
     option_values: list[str] = field(default_factory=list)
     source_followup: bool = False  # assigned only by adjacent, same-section sourcing-question discovery
+    source_other_only: bool = False
+    source_parent_value: str = ''
     initial_value: str | None = None  # original generated application metadata; never generic evidence for personal answers
 
     def brief(self) -> str:
@@ -1666,10 +1682,26 @@ def _fill_icims_dropdown(page, frame, loc, f, answer, strict, close) -> str:
         raise
 
 
+def _current_upload_controls(previous: Field, fields: list[Field]) -> list[Field]:
+    """Prefer authored identity; a replacement needs one uniquely named slot."""
+    candidates=[g for g in fields if g.kind=='file' and g.frame==previous.frame
+                and g.section==previous.section
+                and (not previous.frame_identity or g.frame_identity==previous.frame_identity)]
+    identified=[g for g in candidates if previous.identity and g.identity==previous.identity]
+    if identified:return [g for g in identified if
+                          _norm(g.label.split(' / ',1)[0])==_norm(previous.label.split(' / ',1)[0])]
+    return [g for g in candidates if g.label==previous.label]
+
+
 def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[str, str], tie_break=None,
                strict: bool = False, close: bool = False, before_upload=None, upload_confirmation=None, alternatives=(),
-               option_resolver=None) -> str:
-    """Put `answer` into the field. Returns what was chosen (the option text for choice fields)."""
+               option_resolver=None, prepare_upload=None) -> str:
+    """Put `answer` into the field and return the chosen value.
+
+    For uploads, prepare_upload may replace the owned old attachment. Rediscover
+    its control afterward. upload_confirmation can prove existing server bytes
+    before a new dispatch, and must prove the supplied bytes after dispatch.
+    """
     from jobagent.tools import challenge
     if challenge.guard(page):
         view = read_page(page)
@@ -1714,7 +1746,7 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         # an index from the earlier read could now name another widget's. The widget is identified by its own caption (and slot);
         # if that is not exactly one control now, nothing is attached.
         live = read_page(page)
-        same = [g for g in live.fields if g.kind == "file" and g.frame==f.frame and g.label == f.label and g.slot == f.slot]
+        same = _current_upload_controls(f,live.fields)
         if len(same) != 1:
             raise FillError(f"the upload {f.label[:60]!r} is not exactly one control on the page now ({len(same)}); not attaching "
                             f"{name} to a control that might be another widget")
@@ -1722,10 +1754,23 @@ def fill_field(page: Page, view: PageView, f: Field, answer: str, files: dict[st
         frame, loc = view.frames[f.frame], locate(view, f)
         if before_upload is None:
             from jobagent.filling.uploads import UploadProof
-            proof=UploadProof(path,loc);proof.identity=f.identity;proof.frame=f.frame_identity
+            proof=UploadProof(path,loc,role_caption=f.section);proof.identity=f.identity;proof.frame=f.frame_identity
             proofs=getattr(page,'_jobagent_upload_proofs',None)
             if proofs is None:proofs=[];page._jobagent_upload_proofs=proofs
-            proofs.append(proof);proof.prepare();before_upload=proof.bind;upload_confirmation=proof.verify
+            proofs.append(proof);prepare_upload=proof.prepare;before_upload=proof.bind;upload_confirmation=proof.verify
+        reused_existing=False
+        if prepare_upload:
+            reused_existing=prepare_upload() is True
+            # A native replacement can replace the entire completed widget.
+            live=read_page(page)
+            same=_current_upload_controls(f,live.fields)
+            if len(same)!=1:raise FillError('The prepared upload is no longer uniquely identifiable')
+            f,view=same[0],live
+            frame,loc=view.frames[f.frame],locate(view,f)
+        if upload_confirmation and upload_confirmation():
+            return path  # exact current server bytes; no fresh dispatch claimed
+        if reused_existing:
+            raise FillError('The existing attachment changed after its bytes were verified')
         if loc.evaluate("e => e.tagName !== 'INPUT'"):
             # Associate the clicked control with its chooser/new input, without assuming a caption or input ID.
             choosers = []

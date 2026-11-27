@@ -43,7 +43,13 @@ SOURCE_CONTACT_FOLLOWUP = re.compile(
 )
 GENERIC_SOURCE_INFO = re.compile(r'(?i)^\s*if applicable[,;:]?\s*(?:please\s+)?provide\s+(?:info(?:rmation)?|details)\s*[:*?.]*\s*$')
 SOURCE_DETAIL_LABEL = re.compile(r'(?i)^\s*(?:(?:application|candidate|recruitment|referral)\s+)?source\s+(?:details?|information|info)\s*[:*?.]*\s*$')
+SOURCE_CATEGORY_FOLLOWUP = re.compile(r'(?i)^\s*(?:specific|detailed|additional) source\s*[:*?.]*\s*$')
 ADJACENT_REFERRER_HINT = 'Employee referrer contact details for the adjacent sourcing question.'
+
+
+def _other_selected(value: str) -> bool:
+    """Read the final offered category, including an explicit specify qualifier."""
+    return bool(re.match(r'(?i)^\s*other\b',value.rsplit(' > ',1)[-1]))
 
 
 def contextualize(fields) -> None:
@@ -52,6 +58,8 @@ def contextualize(fields) -> None:
     for field in fields:
         field.help=field.help.replace(ADJACENT_REFERRER_HINT,'').strip()
         field.source_followup = False
+        field.source_other_only = False
+        field.source_parent_value = ''
         field.referrer_details_requested = False
         conditional = SOURCE_CONTACT_FOLLOWUP.fullmatch(field.label)
         contact_followup = bool(conditional and REFERRAL.search(conditional.group(1)))
@@ -64,14 +72,20 @@ def contextualize(fields) -> None:
             parent = field
         elif (parent is not None and field.frame == parent.frame
               and field.section == parent.section
-              and (SOURCE_FOLLOWUP.fullmatch(field.label) or GENERIC_SOURCE_INFO.fullmatch(field.label) or SOURCE_DETAIL_LABEL.fullmatch(field.label) or contact_followup)):
+              and (SOURCE_FOLLOWUP.fullmatch(field.label) or GENERIC_SOURCE_INFO.fullmatch(field.label) or SOURCE_DETAIL_LABEL.fullmatch(field.label) or SOURCE_CATEGORY_FOLLOWUP.fullmatch(field.label) or contact_followup)):
             field.source_followup = True
+            field.source_parent_value = parent.value
+            field.source_other_only = bool(SOURCE_FOLLOWUP.fullmatch(field.label) and re.match(
+                r'(?i)^\s*(?:if\s+)?["\'“”‘’]?other\b',field.label))
+            if field.source_other_only:continue  # an Other explanation is not an employee-contact request
             if _referral_option(parent.options):parent.referrer_details_requested = True
             if contact_followup or (field.kind in ('text','textarea') and
                     (_referral_option([parent.value]) or (not parent.value and _referral_option(parent.options)))):
                 parent.referrer_details_requested = True
                 hint=ADJACENT_REFERRER_HINT
                 if hint not in field.help:field.help = (field.help + ' ' + hint).strip()
+            if field.kind in ('select','combobox','radio','buttons'):
+                parent=field
         elif (parent is not None and field.frame == parent.frame
               and field.section == parent.section and _referral_option([parent.value])
               and PRONOMINAL_CONTACT.search(field.label)):
@@ -253,6 +267,9 @@ def answer_for(field, contact: dict, company: str = "") -> dict | None:
     help_text = getattr(field, "help", "")
     context = f"{label} {help_text} {field.section}"
     source = bool(SOURCE.search(label) or getattr(field, "source_followup", False))
+    if getattr(field,'source_other_only',False) and not _other_selected(getattr(field,'source_parent_value','')):
+        if field.required:return _answer('', 'Other-only field is required although its source is not Other; review the dependency')
+        return {**_answer(''), 'clear':True, 'why':'optional Other-only sourcing field is not applicable to the current source'}
 
     name_requested = bool(NAME.search(context))
     email_requested = bool(EMAIL.search(context))

@@ -693,12 +693,19 @@ def prepare(ctx: dict, out_dir, model, log=print) -> dict:
         import copy
         original=next((e.get('answer') for _,e in applicant.entries(data) if e['question']=='Current address'),None)
         ctx['_personal_address']=copy.deepcopy(original)
-    values = {
-        "Current address": selected["address"],
-        "Current location (city)": (
-            f"{selected['address']['city']}, {selected['address']['state']}"
-        ),
-    }
+    # Resolve the owner's "same as Current Address" rule BEFORE installing the
+    # job-specific postal address. A lookup cannot establish actual residence.
+    location=next((e for _,e in applicant.entries(data) if e['question']=='Current location (city)'),None)
+    personal=ctx.get('_personal_address')
+    if isinstance(personal,dict) and all(personal.get(k) for k in ('city','state')):
+        if location is None:
+            location={'question':'Current location (city)',
+                      'seen':['Location (City)','Current location','Where are you located?']}
+            data.setdefault('address',[]).append(location)
+        if not location.get('answer') and re.fullmatch(
+                r'(?i)\s*(?:same as (?:the )?current address[.]?)?\s*',location.get('instructions','')):
+            location.update(answer=f"{personal['city']}, {personal['state']}",instructions='',tools=[])
+    values = {"Current address": selected["address"]}
 
     for question, value in values.items():
         entry = next(
@@ -713,19 +720,11 @@ def prepare(ctx: dict, out_dir, model, log=print) -> dict:
         if entry is None:
             entry = {
                 "question": question,
-                "seen": (
-                    [
+                "seen": [
                         "Address", "Address Line 1", "Address Line 2",
                         "Street Address", "City", "State", "Province",
                         "Postal Code", "ZIP Code", "County", "Country",
-                    ]
-                    if question == "Current address"
-                    else [
-                        "Location (City)",
-                        "Current location",
-                        "Where are you located?",
-                    ]
-                ),
+                    ],
             }
             data.setdefault("address", []).append(entry)
 
@@ -733,6 +732,7 @@ def prepare(ctx: dict, out_dir, model, log=print) -> dict:
             answer=value,
             instructions="Use this job's selected address consistently.",
             tools=[],
+            source='application_address_lookup',
         )
 
     ctx["APPLICANT"] = yaml.safe_dump(
@@ -746,6 +746,6 @@ def prepare(ctx: dict, out_dir, model, log=print) -> dict:
 
     log(
         f"address: using {values['Current address']['line1']}, "
-        f"{values['Current location (city)']}"
+        f"{selected['address']['city']}, {selected['address']['state']}"
     )
     return selected

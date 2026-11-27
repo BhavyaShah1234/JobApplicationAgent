@@ -130,6 +130,32 @@ class _AttachmentDownload:
         }''')
         if self.caption:self.document=self.frame.evaluate_handle('document')
 
+    def current_widget(self):
+        """Find the unique same-document attachment owner after an ordinary edit."""
+        if (self.document is None or self.frame.url!=self.route or
+                not self.frame.evaluate('old=>document===old',self.document)):return None
+        handle=self.frame.evaluate_handle(r'''caption=>{
+            const visible=e=>!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
+            const owners=[...document.querySelectorAll('.RCMFormField.attachmentField')].filter(e=>visible(e)&&
+                e.querySelectorAll(':scope > label').length===1&&
+                e.querySelector(':scope > label').textContent.replace(/\s+/g,' ').trim()===caption);
+            if(owners.length!==1)return null;
+            const owner=owners[0];
+            if(owner.querySelector('input:not([type=hidden]):not([type=file]),select,textarea,[role=combobox]'))return null;
+            const boxes=[...owner.querySelectorAll('.attachmentBtn,.successBtn')].filter(e=>visible(e)&&/^\d+:_attach$/.test(e.id));
+            return boxes.length===1?boxes[0]:null;
+        }''',self.caption)
+        widget=handle.as_element()
+        if widget is None:handle.dispose()
+        return widget
+
+    def owns(self, element, name):
+        """Bind a current control to the exact owner of this download action."""
+        action=self._action(name)
+        if action is None:return False
+        try:return bool(element.evaluate('(e,a)=>{const box=a.closest(".successBtn");return !!box&&(e===box||box.contains(e))}',action))
+        finally:action.dispose()
+
     def _action(self, name):
         if (self.refused or self.document is None or self.frame.url!=self.route or
                 not self.frame.evaluate('old=>document===old',self.document)):return None
@@ -146,6 +172,7 @@ class _AttachmentDownload:
             const box=widgets[0],get=suffix=>box.querySelector('[id="'+CSS.escape(box.id.replace(/_attach$/,suffix))+'"]');
             const action=get('_attachDownloadLabel'),filename=get('_attachDownloadLabelLink');
             if(!/^\d+:_attach$/.test(box.id)||!visible(action)||action.getAttribute('role')!=='button'||
+               box.querySelectorAll('[id$="_attachDownloadLabelLink"]').length!==1||
                filename?.textContent.trim()!==args.name||box.matches('[aria-invalid=true],[aria-busy=true]'))return null;
             if([...owner.querySelectorAll('[aria-invalid=true],[aria-busy=true],[role=alert],[role=progressbar],progress')].some(e=>visible(e)&&
                 !(e.id===box.id.replace(/_attach$/,'_attachSuccess')&&e.getAttribute('aria-invalid')!=='true'&&
@@ -220,7 +247,8 @@ class _AttachmentDownload:
 
 
 class UploadProof:
-    def __init__(self, path, trigger=None):
+    def __init__(self, path, trigger=None, *, role_caption=''):
+        """Bind a supplied document to its widget and explicit DOM section caption."""
         self.path=Path(path)
         content=self.path.read_bytes()
         self.expected=hashlib.sha256(content).hexdigest();self.size=len(content);self.name=self.path.name
@@ -228,6 +256,8 @@ class UploadProof:
         self.method='';self.replaced_count=0
         self.server_failures={}
         self.parse_receipt=None;self.dispatched_bytes_verified=False;self.parse_receipt_disabled_reason=''
+        self.reused_existing=False
+        self.role_caption=role_caption
         self.attachment_download=None
         if trigger:
             self.widget=self.widget_for(trigger)
@@ -242,10 +272,10 @@ class UploadProof:
         handle=element.evaluate_handle(r'''e=>{
             // SuccessFactors keeps the acknowledgement and progress next to
             // attachActions, not inside it. Bind only this exact component.
-            const match=(e.id||'').match(/^(\d+):_attachIcon$/);
+            const match=(e.id||'').match(/^(\d+):_attach(?:Icon)?$/);
             const attachment=e.closest('.attachmentBtn,.successBtn');
             if(match && attachment?.id===match[1]+':_attach' &&
-               attachment.querySelectorAll('[id$=":_attachIcon"]').length===1 &&
+               attachment.querySelectorAll('[id$=":_attachIcon"]').length<=1 &&
                !attachment.querySelector('input:not([type=hidden]):not([type=file]),select,textarea,[role=combobox]'))return attachment;
             const field=e.parentElement?.closest('fieldset,.ant-form-item,[data-field-path],[data-field-entry-id],[data-automation-id^=formField-],.file-upload,.document-upload,.form-field,.form-group');
             if(field && field.querySelectorAll('input[type=file]').length<=1 &&
@@ -262,20 +292,38 @@ class UploadProof:
         return handle.as_element()
 
     def prepare(self):
-        """Replace only same-named entries with an explicit, non-submitting delete control.
+        """Prepare the owned primary document before staging new bytes.
 
-        Workday retains server attachments between visits. Its cleared native input
-        cannot prove their bytes, and adding again would leave duplicates. Other
-        filenames and other widgets are outside this operation's scope.
+        Shared lists require an exact filename. One prior file in an explicit
+        resume/cover-letter slot may have a different name; ambiguous lists and
+        recognizable documents of another role are left untouched.
         """
         if not self.widget:return
+        if self.attachment_download and self.attachment_download.caption:
+            if self._prepare_existing_attachment():return True
         for _ in range(9):
             if not self.widget.evaluate('box=>box.isConnected'):
                 raise ValueError('Upload widget changed while preparing its attachments')
+            all_cards=self.widget.query_selector_all('[data-automation-id=file-upload-item]')
             cards=[]
-            for card in self.widget.query_selector_all('[data-automation-id=file-upload-item]'):
+            for card in all_cards:
                 caption=card.query_selector('[data-automation-id=file-upload-item-name]')
                 if caption and caption.inner_text().strip()==self.name:cards.append(card)
+            if not cards and all_cards and not self.replaced_count:
+                # One old primary document can have a different filename.
+                # A shared/ambiguous document list is not safe to empty.
+                import re
+                labels=self.widget.query_selector_all('label,legend')
+                caption=labels[0].inner_text().strip(' *:') if len(labels)==1 else ''
+                pattern=r'(?i)(?:upload |attach )?(?:a |your )?(resume(?:\s*/\s*cv)?|cv|curriculum vitae|cover\s*letter)'
+                role=re.fullmatch(pattern,caption) or re.fullmatch(pattern,self.role_caption.strip(' *:'))
+                old=all_cards[0].query_selector('[data-automation-id=file-upload-item-name]') if len(all_cards)==1 else None
+                old_name=old.inner_text().strip() if old else ''
+                cover=bool(role and re.search(r'(?i)cover',role[1]))
+                other_role=bool(re.search(r'(?i)resume|\bcv\b',old_name)) if cover else bool(re.search(r'(?i)cover.?letter|\bcover\b',old_name))
+                if not role or not old_name or other_role:
+                    raise ValueError('Existing attachments are not one unambiguous primary document; not replacing them')
+                cards=all_cards
             if not cards:
                 self.before=self.widget.inner_text()
                 return
@@ -283,9 +331,10 @@ class UploadProof:
                 raise ValueError('Too many same-named attachments to replace safely')
             actions=[]
             for card in cards:
+                old_name=card.query_selector('[data-automation-id=file-upload-item-name]').inner_text().strip()
                 buttons=card.query_selector_all('button[data-automation-id=delete-file]')
                 if len(buttons)!=1 or buttons[0].get_attribute('type')!='button' or \
-                        buttons[0].get_attribute('aria-label')!='Delete '+self.name or \
+                        buttons[0].get_attribute('aria-label')!='Delete '+old_name or \
                         not buttons[0].is_visible() or buttons[0].is_disabled():
                     raise ValueError('Existing attachment has no unambiguous non-submitting delete control')
                 actions.append((card,buttons[0],card.owner_frame()))
@@ -295,6 +344,73 @@ class UploadProof:
             frame.wait_for_function('(card)=>!card.isConnected',arg=card,timeout=8000)
             self.replaced_count+=1
         raise ValueError('Same-named attachments did not settle after replacement')
+
+    def _prepare_existing_attachment(self):
+        """Reuse exact server bytes, or replace only the current owned attachment."""
+        download=self.attachment_download
+        widget=download.current_widget()
+        if widget is None:raise ValueError('The attachment owner is no longer unique in this document')
+        if not widget.evaluate("e=>e.matches('.successBtn')"):
+            widget.dispose();return
+        names=widget.query_selector_all('[id$=":_attachDownloadLabelLink"]')
+        if len(names)!=1:
+            for name in names:name.dispose()
+            widget.dispose();raise ValueError('Completed attachment has no unique filename')
+        current=names[0]
+        old_name=current.inner_text().strip();current.dispose()
+        page=download.frame.page
+        if policy:=getattr(page.context,'jobagent_policy',None):policy(page)
+        from jobagent.tools import challenge
+        if challenge.detect(page) is not None:
+            widget.dispose();raise ValueError('Human verification blocks attachment replacement')
+        if download.frame.locator('[role=dialog]').filter(visible=True).count():
+            widget.dispose();raise ValueError('An existing dialog blocks attachment replacement')
+        if old_name==self.name:
+            if download.verify(self.name,self.expected,self.size):
+                self.method='current owned server attachment download bytes';self.reused_existing=True;widget.dispose();return True
+            if download.failure_reason!='current server bytes differ from the supplied document':
+                widget.dispose();raise ValueError('Existing attachment bytes could not be verified; not deleting it')
+        deletes=widget.query_selector_all('[id$=":_attachIcon"].removeAttachments[role=button]')
+        delete=deletes[0] if len(deletes)==1 else None
+        valid=bool(delete and delete.is_visible() and not delete.is_disabled() and delete.evaluate(r'''(e,args)=>{
+            const box=e.closest('.successBtn'),text=n=>n.textContent.replace(/\s+/g,' ').trim();
+            const labels=(e.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>e.ownerDocument.getElementById(id)).filter(Boolean);
+            const action='Delete document '+args.name+' Opens a dialog';
+            return box && e.id===box.id.replace(/_attach$/,'_attachIcon') &&
+                labels.some(n=>box.contains(n)&&text(n)===action) &&
+                labels.every(n=>text(n)===args.caption||text(n)===action);
+        }''',{'name':old_name,'caption':download.caption}))
+        if not valid:
+            for item in deletes:item.dispose()
+            widget.dispose();raise ValueError('No unambiguous delete action belongs to this attachment')
+        try:
+            delete.click(timeout=5000)
+            dialog=download.frame.locator('[role=dialog]').filter(visible=True)
+            try:dialog.first.wait_for(state='visible',timeout=2000)
+            except Exception:pass
+            if dialog.count()!=1 or 'Are you sure you want to delete this file?' not in dialog.inner_text() or \
+                    dialog.locator('input:not([type=hidden]),select,textarea').count():
+                raise ValueError('The attachment delete confirmation is missing or ambiguous')
+            import re
+            ok=dialog.get_by_role('button',name=re.compile('^OK$',re.I))
+            cancel=dialog.get_by_role('button',name=re.compile('^Cancel$',re.I))
+            if ok.count()!=1 or cancel.count()!=1 or ok.is_disabled():
+                raise ValueError('The attachment delete confirmation has unexpected controls')
+            ok.click(timeout=5000)
+            dialog.wait_for(state='hidden',timeout=8000)
+            replacement=download.current_widget()
+            if replacement is None:raise ValueError('The cleared attachment owner changed documents or became ambiguous')
+            icon=replacement.query_selector('[id$=":_attachIcon"].addAttachments[role=button]')
+            if icon is None or replacement.query_selector('[id$=":_attachDownloadLabelLink"]'):
+                replacement.dispose();raise ValueError('The owned attachment did not clear to an upload control')
+            icon.dispose()
+            self.widget.dispose();self.widget=replacement
+            if self.form:self.form.dispose()
+            self.form=replacement.evaluate_handle('e=>e.form||e.closest("form")').as_element()
+            download.close();self.attachment_download=_AttachmentDownload(replacement)
+            self.replaced_count+=1;self.before=replacement.inner_text()
+        finally:
+            delete.dispose();widget.dispose()
 
     def bind(self, native):
         self.native=native.element_handle() if hasattr(native,'element_handle') else native
@@ -341,7 +457,11 @@ class UploadProof:
         except Exception:return False
 
     def can_rebind(self, element):
-        """Only a verified parse receipt can bridge a replaced document's upload control."""
+        """Require a parser receipt or actual current bytes from the exact owned download."""
+        try:
+            if self.attachment_download and self.attachment_download.owns(element,self.name) and \
+                    self.attachment_download.verify(self.name,self.expected,self.size):return True
+        except Exception:pass  # a navigation invalidates this ownership, never grants it
         return bool(self.parse_receipt and self.parse_receipt.verify(self.name,self.dispatched_bytes_verified)
                     and self.parse_receipt.owns(element))
 
@@ -389,7 +509,7 @@ class UploadProof:
     def verify(self):
         """Verify dispatched bytes, or recheck the current owned server download."""
         if self._verify_dispatched():return True
-        if self.native and self.attachment_download and self.attachment_download.verify(self.name,self.expected,self.size):
+        if self.attachment_download and self.attachment_download.verify(self.name,self.expected,self.size):
             self.method='current owned server attachment download bytes'
             return True
         return False

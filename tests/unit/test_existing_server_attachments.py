@@ -1,0 +1,155 @@
+"""Existing completed attachment slots must prove the requested bytes, not a filename."""
+import json
+from types import SimpleNamespace
+import pytest
+from playwright.sync_api import APIRequestContext
+from jobagent.tools import forms
+from test_filling_strategy import world
+
+HTML=r'''<h1>Application</h1><form id=application onsubmit="window.sent++;return false">
+<div class="RCMFormField attachmentField" id=resumeOwner><label id=resumeLabel>Resume/CV</label><div class=attachmentComponentInput></div></div>
+<div class="RCMFormField attachmentField" id=coverOwner><label id=coverLabel>Cover Letter</label><div class=attachmentComponentInput></div></div>
+<button type=submit>Apply</button></form>
+<style>[role=button]{display:inline-block;min-width:24px;min-height:24px}.hiddenAriaContent{display:none}[role=dialog]{display:block;position:fixed;background:white;inset:20px;z-index:20}</style>
+<script>
+window.sent=0;window.dialogMode='normal';window.names={resume:'resume.pdf',cover:'cover_letter.pdf'};
+function render(role,complete){
+ const n=role==='resume'?'62':'64',root=document.querySelector('#'+role+'Owner .attachmentComponentInput');
+ root.innerHTML='<div id="'+n+':_attach" class="'+(complete?'successBtn':'attachmentBtn')+'">'+
+ (complete?'<div role=button id="'+n+':_attachDownloadLabel" onclick="location.href=\'/attachmentdownload?role='+role+'\'"><span id="'+n+':_attachDownloadLabelLink">'+names[role]+'</span></div>':'')+
+ '<div id="'+n+':_attachSuccess" role=alert style="display:none">File is uploaded successfully</div>'+
+ '<div class=attachActions><span role=button tabindex=0 id="'+n+':_attachIcon" class="'+(complete?'removeAttachments':'addAttachments')+'" aria-labelledby="'+role+'Label '+role+'Action" onclick="'+(complete?'removeDoc':'uploadDoc')+'(\''+role+'\')">'+(complete?'Delete':'+')+'</span></div>'+
+ '<span class=hiddenAriaContent id='+role+'Action>'+(complete?'Delete document '+names[role]+' Opens a dialog':'Upload '+(role==='resume'?'a Resume':'a Cover Letter')+' Opens a dialog')+'</span></div>';
+}
+function removeDoc(role){
+ const d=document.createElement('div');d.setAttribute('role','dialog');d.setAttribute('aria-modal','true');
+ d.innerHTML='<p>'+(dialogMode==='wrong'?'Delete all account information?':'Are you sure you want to delete this file?')+'</p><button type=button>Cancel</button><button type=button>OK</button>';
+ d.querySelector('button').onclick=()=>d.remove();d.querySelectorAll('button')[1].onclick=async()=>{await fetch('/delete',{method:'POST',body:JSON.stringify({role})});render(role,false);d.remove()};
+ if(dialogMode==='input')d.insertAdjacentHTML('beforeend','<input aria-label="Unrelated applicant answer">');
+ document.body.append(d);
+ if(dialogMode==='duplicate')document.body.append(d.cloneNode(true));
+}
+function uploadDoc(role){
+ const d=document.createElement('div');d.setAttribute('role','dialog');d.setAttribute('aria-modal','true');d.setAttribute('aria-label','Select a source for your file upload');
+ d.innerHTML='<input type=file name=fileData form=application aria-label="Upload from Device">';
+ d.querySelector('input').onchange=async e=>{const f=e.target.files[0];const bytes=Array.from(new Uint8Array(await f.arrayBuffer()));await fetch('/upload',{method:'POST',body:JSON.stringify({role,name:f.name,bytes})});names[role]=f.name;render(role,true);document.getElementById((role==='resume'?'62':'64')+':_attachSuccess').style.display='block';d.remove()};
+ document.body.append(d);
+}
+render('resume',true);render('cover',true);
+</script>'''
+
+
+def setup(world,tmp_path,monkeypatch,*,same=False,old_name='resume.pdf'):
+    world.setup(HTML);page=world.page;page.goto('https://fixture.test/apply')
+    path=tmp_path/'resume.pdf';path.write_bytes(b'%PDF-1.4 intended current resume bytes')
+    server={'resume':path.read_bytes() if same else b'%PDF-1.4 stale resume bytes',
+            'cover':b'%PDF-1.4 untouched cover letter','deletes':[],'uploads':[],'status':200}
+    page.evaluate('(name)=>{names.resume=name;render("resume",true)}',old_name)
+    def dispatch(route):
+        req=route.request
+        if req.url.endswith('/delete'):
+            role=json.loads(req.post_data)['role'];server['deletes'].append(role);server[role]=b''
+            route.fulfill(status=200,body='ok')
+        elif req.url.endswith('/upload'):
+            data=json.loads(req.post_data);server[data['role']]=bytes(data['bytes']);server['uploads'].append(data['role']);route.fulfill(status=200,body='ok')
+        else:
+            role=req.url.rsplit('=',1)[-1];name=path.name if role=='resume' and server['uploads'] else old_name if role=='resume' else 'cover_letter.pdf'
+            route.fulfill(status=200,content_type='application/pdf',body=server[role],headers={'content-disposition':f'attachment; filename="{name}"'})
+    for pattern in ['**/delete','**/upload','**/attachmentdownload?*']:page.route(pattern,dispatch)
+    def get(self,url,**kwargs):
+        role=url.rsplit('=',1)[-1];content=server[role]
+        assert kwargs.get('max_redirects')==0
+        return SimpleNamespace(ok=server['status']==200,status=server['status'],headers={'content-length':str(len(content))},body=lambda:content,dispose=lambda:None)
+    monkeypatch.setattr(APIRequestContext,'get',get)
+    return page,path,server
+
+
+def resume_field(page):
+    view=forms.read_page(page);fields=[f for f in view.fields if f.kind=='file' and f.label=='Resume/CV']
+    assert len(fields)==1
+    return view,fields[0]
+
+
+def test_completed_resume_and_cover_slots_remain_in_the_upload_inventory(world,tmp_path,monkeypatch):
+    page,_,_=setup(world,tmp_path,monkeypatch)
+    assert [(f.label,f.value) for f in forms.read_page(page).fields if f.kind=='file']==[
+        ('Resume/CV','resume.pdf'),('Cover Letter','cover_letter.pdf')]
+
+
+@pytest.mark.parametrize('old_name',['resume.pdf','older_resume.pdf'])
+def test_only_the_owned_stale_resume_is_replaced_and_current_bytes_are_verified(world,tmp_path,monkeypatch,old_name):
+    page,path,server=setup(world,tmp_path,monkeypatch,old_name=old_name);view,field=resume_field(page)
+    assert forms.fill_field(page,view,field,'resume',{'resume':str(path)})==str(path)
+    proof=page._jobagent_upload_proofs[-1]
+    assert proof.verify() and proof.replaced_count==1
+    assert server['resume']==path.read_bytes() and server['deletes']==server['uploads']==['resume']
+    assert server['cover']==b'%PDF-1.4 untouched cover letter'
+    assert page.evaluate('window.sent')==0
+
+
+def test_matching_current_bytes_are_reused_without_delete_or_upload(world,tmp_path,monkeypatch):
+    page,path,server=setup(world,tmp_path,monkeypatch,same=True);view,field=resume_field(page)
+    assert forms.fill_field(page,view,field,'resume',{'resume':str(path)})==str(path)
+    proof=page._jobagent_upload_proofs[-1]
+    assert proof.verify() and proof.replaced_count==0 and not proof.dispatched_bytes_verified
+    assert not server['deletes'] and not server['uploads']
+    server['resume']=b'%PDF-1.4 changed after review'
+    assert not proof.verify()
+
+
+@pytest.mark.parametrize('mode',['wrong','input','duplicate'])
+def test_unexpected_delete_confirmation_does_not_delete_anything(world,tmp_path,monkeypatch,mode):
+    page,path,server=setup(world,tmp_path,monkeypatch);page.evaluate('(mode)=>window.dialogMode=mode',mode)
+    view,field=resume_field(page)
+    with pytest.raises(ValueError,match='confirmation'):forms.fill_field(page,view,field,'resume',{'resume':str(path)})
+    assert server['deletes']==server['uploads']==[]
+    assert not page.evaluate('window.sent')
+
+
+def test_refused_download_stops_before_deleting_a_same_named_file(world,tmp_path,monkeypatch):
+    page,path,server=setup(world,tmp_path,monkeypatch);server['status']=403;view,field=resume_field(page)
+    with pytest.raises(ValueError,match='not deleting'):forms.fill_field(page,view,field,'resume',{'resume':str(path)})
+    assert not server['deletes'] and not server['uploads']
+
+
+def test_a_neighboring_document_delete_label_is_not_accepted(world,tmp_path,monkeypatch):
+    page,path,server=setup(world,tmp_path,monkeypatch)
+    page.locator('#resumeAction').evaluate("e=>e.textContent='Delete document cover_letter.pdf Opens a dialog'")
+    view,field=resume_field(page)
+    with pytest.raises(ValueError,match='delete action'):forms.fill_field(page,view,field,'resume',{'resume':str(path)})
+    assert not server['deletes'] and not server['uploads']
+
+
+@pytest.mark.parametrize('engine_name',['planned','adaptive'])
+@pytest.mark.parametrize('same',[False,True])
+def test_native_filler_proves_the_completed_resume_without_reupload_loops(world,tmp_path,monkeypatch,engine_name,same):
+    from jobagent.filling.planned import PlannedFiller
+    from jobagent.filling.adaptive import AdaptiveFiller
+    page,path,server=setup(world,tmp_path,monkeypatch,same=same)
+    engine=PlannedFiller if engine_name=='planned' else AdaptiveFiller
+    agent=engine([],lambda *_:pytest.fail('Only a provided document is needed'))
+    result=agent.fill(page,{'resume':str(path)},advance_pages=False,max_rounds=5)
+    assert result['state']=='page_complete',result['blockers']
+    records=[r for r in result['records'] if r.get('held_file_sha256')]
+    assert len(records)==1 and records[0]['outcome']=='verified'
+    assert server['uploads']==([] if same else ['resume'])
+    assert server['deletes']==server['uploads']
+    assert not page.evaluate('window.sent')
+
+
+def test_duplicate_owners_stop_before_any_replacement(world,tmp_path,monkeypatch):
+    from jobagent.filling.uploads import UploadProof
+    page,path,server=setup(world,tmp_path,monkeypatch)
+    proof=UploadProof(path,page.locator('[id="62:_attach"]').element_handle())
+    page.locator('#resumeOwner').evaluate('e=>e.after(e.cloneNode(true))')
+    with pytest.raises(ValueError,match='unique'):proof.prepare()
+    assert server['deletes']==server['uploads']==[]
+    proof.close()
+
+
+def test_an_unrelated_open_dialog_prevents_attachment_actions(world,tmp_path,monkeypatch):
+    page,path,server=setup(world,tmp_path,monkeypatch)
+    page.locator('body').evaluate('e=>e.insertAdjacentHTML("beforeend", "<div role=dialog><p>Unrelated action</p></div>")')
+    view,field=resume_field(page)
+    with pytest.raises(ValueError,match='existing dialog'):forms.fill_field(page,view,field,'resume',{'resume':str(path)})
+    assert server['deletes']==server['uploads']==[]

@@ -129,10 +129,11 @@ Rules:
 - Do not claim source human, learned or lookup: those labels are assigned by the runtime after an actual event.
   Use the supplied file's source, or source none with value '' and ask_human true when no supplied fact answers it.
   To request an external lookup, set lookup and leave value '' until its results are supplied.
-- Application address fields and current location: use APPLICANT's job-specific
-  "Current address" and "Current location (city)" entries consistently. These
-  were prepared before opening the application. Correct prefilled address
-  components that differ. Do not request additional address lookups.
+- Postal address fields: use APPLICANT's prepared job-specific "Current address".
+  Correct prefilled postal components that differ; do not request another lookup.
+  Standalone current-location and actual-residency questions use the owner's
+  "Current location (city)" or original personal-residence evidence. The selected
+  job-city postal address does not establish where the owner actually lives.
 - Other personal facts (name, contact, education, work authorization,
   sponsorship, citizenship, self-identification) ONLY from APPLICANT, exactly.
   Never invent a date of birth, SSN or another personal fact it doesn't hold:
@@ -761,11 +762,12 @@ COVER_WORD = re.compile(r"(?i)cover")
 RESUME_WORD = re.compile(r"(?i)resume|r\u00e9sum\u00e9|\bcv\b|curriculum")
 
 
-def upload_role(label: str) -> str:
+def upload_role(label: str, section: str = "") -> str:
     """'resume', 'cover_letter' or '' for an upload, from its OWN caption: the label's parts in order (the explicit caption first,
     then a fallback container text, then the input's id or name). A part that names exactly one role decides; a part naming both
     ("Resume and Cover Letter") or neither is passed over; if no part decides the role is left to the planner, never guessed. Only a
-    generic "upload a file" is taken as the resume. Surrounding text can no longer turn a Resume caption into a cover letter."""
+    generic "upload a file" defaults to the resume after checking its explicit section caption. Surrounding text can no longer turn
+    a Resume caption into a cover letter."""
     parts = [p for p in re.split(r"\s/\s", label or "") if p.strip()]
     for part in parts:
         cover, resume = bool(COVER_WORD.search(part)), bool(RESUME_WORD.search(part))
@@ -773,7 +775,16 @@ def upload_role(label: str) -> str:
             return "cover_letter"
         if resume and not cover:
             return "resume"
-    return "resume" if re.search(r"(?i)upload a file", label or "") else ""
+    if re.search(r"(?i)upload a file", label or ""):
+        cover, resume = bool(COVER_WORD.search(section)), bool(RESUME_WORD.search(section))
+        if cover and not resume:
+            return "cover_letter"
+        if resume and not cover:
+            return "resume"
+        if cover and resume:
+            return ""
+        return "resume"
+    return ""
 
 
 NOT_POSTAL = re.compile(r"(?i)e-?mail|\burl\b|web\s?site|\bip address\b|\bmac address\b|\blinkedin\b|\bgithub\b|\bportfolio\b")
@@ -851,9 +862,7 @@ def enforce_selected_address(todo: list[forms.Field], answers: dict, ctx: dict) 
             continue                      # an email / link / phone field is never filled from the postal address (a tel-typed ZIP is not skipped)
         question = matched.get(f.id, ("", {}))[1].get("question")
 
-        if question == "Current location (city)":
-            variants = [f"{address['city']}, {address['state']}"]
-        elif question == "Current address":
+        if question == "Current address":
             label = f.label.lower()
 
             if re.search(r"line\s*2|address\s*2|apartment|suite|\bunit\b", label):
@@ -1420,7 +1429,7 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
                 answers[f.id] = Answer(id=f.id, why="an autofill box would overwrite filled answers", value="",
                                        source="applicant")
             elif f.kind == "file":
-                kind = upload_role(f.label)
+                kind = upload_role(f.label, f.section)
                 if kind:
                     answers[f.id] = Answer(id=f.id, why="upload by its caption", value=kind, source="applicant")
         deferred: list[forms.Field] = []
@@ -1507,6 +1516,15 @@ def fill_page(page: Page, ctx: dict, files: dict, model, log, record: list, page
     # e.g. the address after the country changed) is filled once more
     view = forms.read_page(page)
     now_shown = {_key(g): g for g in view.fields}
+    # The source may have changed after this page's plan was made. Its optional
+    # Other-only explanation is no longer applicable, even when prefilled.
+    contact=ctx.get('REFERRAL')
+    contact=contact if isinstance(contact,dict) else {}
+    for field in view.fields:
+        policy=referrals.answer_for(field,contact,ctx.get('_jd',{}).get('company',''))
+        if policy and policy.get('clear') and not field.required and field.kind in ('text','textarea'):
+            entry=done.setdefault(_key(field),_blank_entry(field,page_no,field.value))
+            entry.update(answer='',filled='',source='lookup',why=policy['why'],clear=True,answered=True,flag='',error='')
     for key, e in done.items():
         g = now_shown.get(key)
         want = "" if e.get("clear") else e["filled"] or e["answer"]

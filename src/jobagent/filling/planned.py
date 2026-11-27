@@ -202,10 +202,17 @@ class PlannedFiller:
 
     def can_execute(self, planned, current, decision):
         """Whether a planned decision remains bound to the current control."""
+        if decision.source=='saved referral policy' and self.referral_context is not None:
+            from jobagent.tools import referrals
+            policy=referrals.answer_for(current,self.referral_context.get('contact',{}),self.referral_context.get('company',''))
+            value=(policy['value'] if policy['value'] or policy.get('clear') else None) if policy else None
+            return policy is not None and decision.value==value
         return True
 
     def can_reuse(self, field):
         """Whether an in-memory accepted decision already has live verification."""
+        cached=self.cache.get(key(field))
+        if cached and cached.source=='saved referral policy':return self.can_execute(field,field,cached)
         return True
 
     def accepted(self, view, field, decision, row):
@@ -295,12 +302,13 @@ class PlannedFiller:
         self.routes.extend(asdict(r) for r in routes.values())
         for f in fields:
             d=self.human_answers.get((self.step,key(f))) or self.cache.get(key(f)) or self.prepared.get(self.question_key(f)) or resolve(f,self.facts)
-            if self.referral_context is not None and d.source!='human' and not d.fact_id.startswith('application.answer.'):
+            if self.referral_context is not None:
                 from jobagent.tools import referrals
                 company=self.referral_context.get('company','')
                 policy=referrals.answer_for(f,self.referral_context.get('contact',{}),company)
-                if policy is not None:
-                    d=Decision(policy.get('value') or None,'saved referral policy',reason=policy.get('flag',''))
+                if policy is not None and (policy.get('clear') or d.source!='human' and not d.fact_id.startswith('application.answer.')):
+                    d=Decision(policy['value'] if policy['value'] or policy.get('clear') else None,
+                               'saved referral policy',reason=policy.get('flag',''))
                     label=re.sub(re.escape(company),'company',f.label,flags=re.I) if company else f.label
                     unavailable_contact = bool(getattr(f,'referrer_details_requested',False) and policy.get('ask_human'))
                     saved=self._saved_source_fallback(f) if referrals.SOURCE.search(label) else None
@@ -547,7 +555,7 @@ class PlannedFiller:
                 if files.get('resume'):
                     from jobagent.steps.apply import upload_role
                     for field in view.fields:
-                        if field.kind!='file' or upload_role(getattr(field,'upload_caption',field.label))!='resume':continue
+                        if field.kind!='file' or upload_role(getattr(field,'upload_caption',field.label),field.section)!='resume':continue
                         prior=self.uploaded.get((self.step,field.identity)) or self.uploaded_labels.get((self.step,field.label))
                         if prior is None or not prior.verify():
                             pending_resume=True
@@ -652,7 +660,7 @@ class PlannedFiller:
                             # the role comes from the upload's OWN caption, part by part (a Resume field whose help text also says
                             # "Cover letters can be added below" is still the resume): the shared rule of the original filler
                             from jobagent.steps.apply import upload_role
-                            role=upload_role(f.label) or ('cover_letter' if 'cover' in caption and 'resume' not in caption else 'resume' if any(x in caption for x in ('resume','cv')) and 'cover' not in caption else None)
+                            role=upload_role(f.label,f.section) or ('cover_letter' if 'cover' in caption and 'resume' not in caption else 'resume' if any(x in caption for x in ('resume','cv')) and 'cover' not in caption else None)
                             # The same context used to infer a role must also exclude
                             # a resume parser. Its generic "Upload file" trigger is
                             # not the separately labelled Resume attachment.
@@ -701,8 +709,7 @@ class PlannedFiller:
                                 if self.upload_observer:self.upload_observer(fresh,f,value)
                                 old_proof=self.upload_proofs.get((self.step,key(f)))
                                 if old_proof:old_proof.close()
-                                proof=UploadProof(files[value],forms.locate(fresh,f));self.upload_proofs[(self.step,key(f))]=proof
-                                proof.prepare()
+                                proof=UploadProof(files[value],forms.locate(fresh,f),role_caption=f.section);self.upload_proofs[(self.step,key(f))]=proof
                                 proof.identity=f.identity;proof.frame=f.frame_identity
                                 proofs=getattr(page,'_jobagent_upload_proofs',[])
                                 if not proofs:page._jobagent_upload_proofs=proofs
@@ -713,14 +720,14 @@ class PlannedFiller:
                                 **({'alternatives':alternatives} if alternatives and f.kind=='combobox' else {}),
                                 **({'option_resolver': lambda options: choice(replace(f, options=options, options_state='complete'),
                                                                             [value, *alternatives])} if f.kind=='combobox' else {}),
-                                **({'before_upload':proof.bind,'upload_confirmation':proof.verify} if proof else {}))
+                                **({'prepare_upload':proof.prepare,'before_upload':proof.bind,'upload_confirmation':proof.verify} if proof else {}))
                             if f.kind=='file':
                                 # fill_field returned only after byte-backed
                                 # dispatch verification. Preserve that attempt
                                 # even if the later parser invalidates its input.
                                 self.uploaded_labels[(self.step,f.label)]=proof
                                 if f.identity:self.uploaded[(self.step,f.identity)]=proof
-                            if f.kind=='file':settle_after_upload(page,log=getattr(self,'log',None))
+                            if f.kind=='file' and not proof.reused_existing:settle_after_upload(page,log=getattr(self,'log',None))
                             if f.kind=='file' or live.changed():
                                 after=live.capture();actual=next((x for x in after.fields if key(x)==key(f)),None)
                             else:

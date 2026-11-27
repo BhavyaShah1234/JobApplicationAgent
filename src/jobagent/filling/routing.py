@@ -105,7 +105,9 @@ def family(text):
       ('gpa',r'\bgpa\b|grade point'),
       ('skills',r'^(?:type to add |add |technical |your )?skills(?: optional)?$'),
       ('country',r'country.*(?:resid|live)|country where'),
-      ('start_date',r'when can you start|earliest start|available start|date available|available to start'),
+      ('start_date',r'when can you start|earliest start|available start|date available|available to start|'
+                    r'when (?:are you (?:looking|available|able)|would you like) to start '
+                    r'(?:a |the |your )?(?:new |next )?(?:position|role|job)\b'),
       ('signature_date',r'^(?:\d+[a-z]? )?(?:date|signature date|date signed|(?:please )?(?:enter )?today s date)(?: mm dd yyyy| yyyy mm dd)?$'),
       ('portfolio_link',r'portfolio|(?:personal|other) website|^website$'),('email',r'\bemail\b|e mail'),
       ('phone',forms.PHONE_CODE_Q.pattern+r'|\bphone\b|telephone|\bmobile\b'),
@@ -334,6 +336,8 @@ def candidates(field,facts):
         values=[x for x in allowed if x.section=='Work Experience 1' and not x.record and any(norm(a)=='job title' for a in x.aliases)]
         if values:return values
     if kind=='country':
+        if re.search(r'\bresiden\w*\b|\blive\b',norm(field.label)):
+            return [x for x in allowed if x.id=='owner.residence.country']
         return [x for x in allowed if x.id.endswith('/Current address/answer/country')]
     if entity_scope(field.section) and re.search(r'\b(start|from|end|to)\b',norm(field.label)):
         end=bool(re.search(r'\b(end|to)\b',norm(field.label)))
@@ -515,7 +519,7 @@ def resolve_routed(field,facts,route_info=None):
         stated=[code for name,code in US_STATES.items() if re.search(r'\b'+re.escape(name)+r'\b',norm(field.label))]
         party=contact_party(field.label+' '+field.section+' '+field.help)
         if party=='applicant':
-            state=[x for x in facts if x.id=='owner.residence.state'] or [x for x in facts if x.id.endswith('/state') and '/Current address/' in x.id and not x.section]
+            state=[x for x in facts if x.id=='owner.residence.state'] or [x for x in facts if x.authority=='owner' and x.id.endswith('/state') and '/Current address/' in x.id and not x.section]
         else:
             state=[x for x in facts if scope_allows(field,x) and contact_party(' '.join(x.aliases)+' '+x.section)==party and any(norm(a)=='state' for a in x.aliases)]
         if len(set(stated))==1 and len(state)==1:
@@ -627,9 +631,12 @@ def personal_facts(ctx):
         address=next((entry.get('answer') for _,entry in applicant.entries(ctx.get('_applicant') or {})
                       if entry.get('question')=='Current address'),None)
     result=[]
+    if isinstance(address,dict) and address.get('country'):
+        result.append(Fact('owner.residence.country',['Country of residence','Current country of residence'],str(address['country']),'personal/address/country'))
     if isinstance(address,dict) and address.get('state'):
-        result.append(Fact('owner.residence.state',['Actual residence state'],str(address['state']),'personal/address/state'))
+        result.append(Fact('owner.residence.state',['Actual residence state','State of residence'],str(address['state']),'personal/address/state'))
         if address.get('city'):
+            result.append(Fact('owner.residence.city',['City of residence'],str(address['city']),'personal/address/city'))
             result.append(Fact('owner.residence.location',['Relocation origin'],f"{address['city']}, {address['state']}",'personal/address/city,state'))
     locations=(ctx.get('_jd') or {}).get('locations_resolved') or []
     if title:=(ctx.get('_jd') or {}).get('title'):

@@ -265,9 +265,13 @@ def declaration_notes_only(instructions):
     """
     if not instructions:return False
     clauses=[x.strip() for x in re.split(r'[.;\n]+',instructions) if x.strip()]
-    if not clauses or not any(re.match(r'(?i)^Owner (?:has )?confirmed\b',x) for x in clauses):return False
-    if re.search(r'(?i)\b(?:if|unless|except|otherwise|instead|until|when|must|use|enter|answer|select|choose|leave|change|replace)\b',instructions):return False
-    return all(re.fullmatch(r'(?i)(?:Owner (?:has )?confirmed\s+.+|Do not (?:invent|guess|fabricate)\s+.+)',x)
+    confirmation=r'Owner(?:[ -])(?:has )?confirmed'
+    reference=r'use (?:this|the) (?:shorter|confirmed|saved|provided) (?:name|value|answer)'
+    if not clauses or not any(re.match(r'(?i)^'+confirmation+r'\b',x) for x in clauses):return False
+    operative=' '.join(x for x in clauses if not re.fullmatch(reference,x,re.I))
+    if re.search(r'(?i)\b(?:if|unless|except|otherwise|instead|until|when|must|use|enter|answer|select|choose|leave|change|replace)\b',operative):return False
+    return all(re.fullmatch(r'(?i)(?:'+confirmation+r'\s+.+|Do not (?:invent|guess|fabricate)\s+.+'
+                            r'|'+reference+r')',x)
                for x in clauses)
 
 
@@ -520,7 +524,9 @@ def compile_facts(data, raw_jd, reference_date=''):
             facts.append(Fact('travel.fallback',['Willingness to travel','Percentage of travel'],'100%',
                               'applicant travel instruction; original jd.txt searched in full'))
 
-    origins={f'applicant/{sec}/{e["question"]}/answer':'resume' for sec,e in entries(data) if 'resume' in str(e.get('source','')).lower()}
+    origins={f'applicant/{sec}/{e["question"]}/answer':
+             'lookup' if e.get('source')=='application_address_lookup' else 'resume'
+             for sec,e in entries(data) if e.get('source')=='application_address_lookup' or 'resume' in str(e.get('source','')).lower()}
     for fact in facts:
         fact.reference_date=reference_date
         fact.authority=next((origin for prefix,origin in origins.items() if fact.source.startswith(prefix)), 'owner')
