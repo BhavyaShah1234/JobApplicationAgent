@@ -1,5 +1,5 @@
 """Evidence-bound resolution: models may select facts, never manufacture factual values."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import re
 from datetime import datetime,timedelta
 from jobagent.tools import forms
@@ -145,6 +145,8 @@ def percent_range(text):
 def choice(f, values):
     if f.kind not in ('select', 'combobox', 'radio', 'buttons', 'checkboxes'):
         return values[0]
+    if f.options:
+        f = replace(f, options=[o for o in f.options if not forms._NO_OPTIONS.fullmatch(o.strip())])
     if forms.PHONE_CODE_Q.search(f.label):
         specific = [v for v in values if re.search(r'[A-Za-z].*\+\d', v)]
         for value in specific or values:
@@ -192,8 +194,9 @@ def choice(f, values):
         if len(hits)==1:return hits[0]
         if f.kind=='combobox' and not f.options and f.options_state!='complete':return values[0]
         return None
-    if re.search(r'(?i)disability',f.label) and norm(values[0]).startswith('no '):
-        hits=[o for o in f.options if norm(o).startswith('no ')]
+    if re.search(r'(?i)disability',f.label) and (norm(values[0]) == 'no' or norm(values[0]).startswith('no ')):
+        hits=[o for o in f.options if norm(o) == 'no' or re.match(
+            r'^(?:no )?(?:i )?(?:do not|don t) have (?:a )?disability\b', norm(o))]
         if len(hits)==1:return hits[0]
     # Quarter choices denote a date interval, not a literal spelling of the
     # owner's available date. Select only the unique interval containing it.
@@ -237,7 +240,7 @@ def choice(f, values):
               (target[0]==target[1] and percent_range(o) and percent_range(o)[0]<=target[0]<=percent_range(o)[1])]
         if len(hits)==1:return hits[0]
     # Searchable pickers must search the actual identity, not pick the closest initial result.
-    if f.kind == 'combobox' and (not f.options or f.options_state in ('partial','search_required','stale')):
+    if f.kind == 'combobox' and f.options_state != 'complete' and (not f.options or f.options_state in ('partial','search_required','stale')):
         return values[0]
     return None
 

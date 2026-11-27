@@ -541,8 +541,19 @@ class PlannedFiller:
                                 self.cache.pop(key(field),None)
                                 self.rendered.pop(key(field),None)
                 # Add missing source-backed entity rows using the existing discovered controls.
+                # A resume parser can create these records or replace their
+                # entire owner. Upload it before queuing any empty Add rows.
+                pending_resume=False
+                if files.get('resume'):
+                    from jobagent.steps.apply import upload_role
+                    for field in view.fields:
+                        if field.kind!='file' or upload_role(getattr(field,'upload_caption',field.label))!='resume':continue
+                        prior=self.uploaded.get((self.step,field.identity)) or self.uploaded_labels.get((self.step,field.label))
+                        if prior is None or not prior.verify():
+                            pending_resume=True
+                            break
                 added=False
-                for button in view.adds:
+                for button in (() if pending_resume else view.adds):
                     group=norm(button.get('section','')+' '+button.get('text',''))
                     prefix=next((x for x in ('education','work experience') if x in group),None)
                     if not prefix or prefix in skipped_rows:continue

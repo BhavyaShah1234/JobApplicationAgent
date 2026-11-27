@@ -72,8 +72,26 @@ def test_portaled_native_bytes_need_the_original_widget_ack_and_support_same_nam
  assert p.evaluate('window.sent') is False
 
 
-def test_staging_inside_the_same_form_and_an_old_success_cannot_acknowledge_a_new_upload(env):
+def test_completed_widget_class_keeps_its_byte_backed_upload_proof(env):
+ p,path=env
+ p.evaluate('''()=>{const original=window.openUpload;window.openUpload=()=>{
+  original();const input=document.querySelector('[role=dialog] input');const accepted=input.onchange;
+  input.onchange=event=>{accepted(event);setTimeout(()=>document.getElementById('62:_attach').className='successBtn',40)};
+ }}''')
+ assert upload(p,path)==str(path)
+ proof=p._jobagent_upload_proofs[-1]
+ assert proof.widget.get_attribute('class')=='successBtn'
+ assert proof.verify() and proof.method=='dispatched bytes and fresh widget success'
+ assert forms.read_page(p).errors==[]
+ p.locator('[id="62:_attachSuccess"]').evaluate("e=>e.setAttribute('aria-invalid','true')")
+ assert not proof.verify(), 'completed styling must not hide a real error'
+ assert not p.evaluate('window.sent')
+
+
+@pytest.mark.parametrize('completed', [False, True])
+def test_staging_inside_the_same_form_and_an_old_success_cannot_acknowledge_a_new_upload(env,completed):
  p,path=env;p.evaluate("window.mode='no_ack'")
+ if completed:p.locator('[id="62:_attach"]').evaluate("e=>e.className='successBtn'")
  p.locator('[id="62:_filename"]').evaluate('(e,n)=>e.textContent=n',path.name)
  p.locator('[id="62:_attachSuccess"]').evaluate("e=>e.style.display='block'")
  with pytest.raises(forms.FillError,match='never showed'):upload(p,path)

@@ -117,6 +117,108 @@ class ResumeParseReceipt:
         except Exception:return False
 
 
+class _AttachmentDownload:
+    """Verify a refreshed attachment through its current, ordinary Download action."""
+
+    def __init__(self, widget):
+        self.frame=widget.owner_frame();self.route=self.frame.url;self.document=None;self.refused=False;self.failure_reason=''
+        self.caption=widget.evaluate(r'''e=>{
+            const owner=e.closest('.RCMFormField.attachmentField');
+            const labels=owner?.querySelectorAll(':scope > label');
+            return /^\d+:_attach$/.test(e.id)&&e.closest('.attachmentComponentInput')&&labels?.length===1
+                ?labels[0].textContent.replace(/\s+/g,' ').trim():'';
+        }''')
+        if self.caption:self.document=self.frame.evaluate_handle('document')
+
+    def _action(self, name):
+        if (self.refused or self.document is None or self.frame.url!=self.route or
+                not self.frame.evaluate('old=>document===old',self.document)):return None
+        handle=self.frame.evaluate_handle(r'''args=>{
+            const visible=e=>!!e&&e.getBoundingClientRect().width>2&&e.getBoundingClientRect().height>2&&getComputedStyle(e).visibility!=='hidden';
+            const owners=[...document.querySelectorAll('.RCMFormField.attachmentField')].filter(e=>visible(e)&&
+                e.querySelectorAll(':scope > label').length===1&&
+                e.querySelector(':scope > label').textContent.replace(/\s+/g,' ').trim()===args.caption);
+            if(owners.length!==1)return null;
+            const owner=owners[0];
+            if(owner.querySelector('input:not([type=file]):not([type=hidden]),select,textarea,[role=combobox]'))return null;
+            const widgets=[...owner.querySelectorAll('.successBtn[id$=":_attach"]')].filter(visible);
+            if(widgets.length!==1)return null;
+            const box=widgets[0],get=suffix=>box.querySelector('[id="'+CSS.escape(box.id.replace(/_attach$/,suffix))+'"]');
+            const action=get('_attachDownloadLabel'),filename=get('_attachDownloadLabelLink');
+            if(!/^\d+:_attach$/.test(box.id)||!visible(action)||action.getAttribute('role')!=='button'||
+               filename?.textContent.trim()!==args.name||box.matches('[aria-invalid=true],[aria-busy=true]'))return null;
+            if([...owner.querySelectorAll('[aria-invalid=true],[aria-busy=true],[role=alert],[role=progressbar],progress')].some(e=>visible(e)&&
+                !(e.id===box.id.replace(/_attach$/,'_attachSuccess')&&e.getAttribute('aria-invalid')!=='true'&&
+                  e.getAttribute('aria-busy')!=='true'&&(e.innerText||'').trim()==='File is uploaded successfully')))return null;
+            return action;
+        }''',{'caption':self.caption,'name':name})
+        action=handle.as_element()
+        if action is None:handle.dispose()
+        return action
+
+    def verify(self, name, expected, size):
+        """Hash the bounded same-origin URL produced by this exact visible action.
+
+        Args:
+            name: Filename expected in the current attachment widget.
+            expected: SHA-256 digest of the supplied application document.
+            size: Exact byte length of that document.
+        """
+        action=None;download=None;response=None;current=None
+        try:
+            from jobagent.tools import challenge
+            page=self.frame.page
+            policy=getattr(page.context,'jobagent_policy',None)
+            if policy:policy(page)
+            if challenge.detect(page) is not None:return False
+            action=self._action(name)
+            if action is None:
+                if not self.failure_reason:self.failure_reason='current owned download action unavailable'
+                return False
+            with page.expect_download(timeout=5000) as event:action.click(timeout=5000)
+            download=event.value
+            target,origin=urlsplit(download.url),urlsplit(self.route)
+            if (target.scheme not in ('https','http') or target.netloc!=origin.netloc or target.scheme!=origin.scheme or
+                    target.username or target.password or target.path!='/attachmentdownload' or
+                    download.suggested_filename!=name):
+                self.refused=True;self.failure_reason='download origin, endpoint or filename did not match';return False
+            # Browser download bodies are not exposed by Response.body(). Read
+            # the URL that this action produced with the same browser cookies,
+            # a fixed timeout and no redirects; never guess a file endpoint.
+            response=page.request.get(download.url,timeout=5000,max_redirects=0)
+            if not response.ok:self.refused=True;self.failure_reason=f'attachment download HTTP {response.status}';return False
+            length=response.headers.get('content-length')
+            if length and int(length)>5_000_000:self.refused=True;self.failure_reason='attachment download exceeds size limit';return False
+            content=response.body()
+            current=self._action(name)
+            matched=len(content)==size and hashlib.sha256(content).hexdigest()==expected
+            if not matched:self.refused=True;self.failure_reason='current server bytes differ from the supplied document'
+            valid=bool(matched and current is not None and current.evaluate('(e,old)=>e===old',action))
+            if valid:self.failure_reason=''
+            return valid
+        except Exception as exc:
+            self.refused=True;self.failure_reason='attachment download '+type(exc).__name__
+            return False
+        finally:
+            if response is not None:
+                try:response.dispose()
+                except Exception:pass
+            if download is not None:
+                try:download.cancel()
+                except Exception:pass
+            for handle in (action,current):
+                if handle is not None:
+                    try:handle.dispose()
+                    except Exception:pass
+
+    def close(self):
+        """Release the original document identity retained for download validation."""
+        if self.document is not None:
+            try:self.document.dispose()
+            except Exception:pass
+        self.document=None
+
+
 class UploadProof:
     def __init__(self, path, trigger=None):
         self.path=Path(path)
@@ -126,10 +228,14 @@ class UploadProof:
         self.method='';self.replaced_count=0
         self.server_failures={}
         self.parse_receipt=None;self.dispatched_bytes_verified=False;self.parse_receipt_disabled_reason=''
+        self.attachment_download=None
         if trigger:
             self.widget=self.widget_for(trigger)
             self.form=trigger.evaluate_handle('e=>e.form||e.closest("form")').as_element()
         self.before=self.widget.inner_text() if self.widget else ''
+        if self.widget:
+            try:self.attachment_download=_AttachmentDownload(self.widget)
+            except Exception:pass
 
     @staticmethod
     def widget_for(element):
@@ -137,7 +243,7 @@ class UploadProof:
             // SuccessFactors keeps the acknowledgement and progress next to
             // attachActions, not inside it. Bind only this exact component.
             const match=(e.id||'').match(/^(\d+):_attachIcon$/);
-            const attachment=e.closest('.attachmentBtn');
+            const attachment=e.closest('.attachmentBtn,.successBtn');
             if(match && attachment?.id===match[1]+':_attach' &&
                attachment.querySelectorAll('[id$=":_attachIcon"]').length===1 &&
                !attachment.querySelector('input:not([type=hidden]):not([type=file]),select,textarea,[role=combobox]'))return attachment;
@@ -243,6 +349,7 @@ class UploadProof:
         """Return bounded upload-proof diagnostics without endpoint or authentication values."""
         receipt=self.parse_receipt
         return {'parse_receipt_enabled':receipt is not None,'disabled_reason':self.parse_receipt_disabled_reason,
+                **({'attachment_download_failure':self.attachment_download.failure_reason} if self.attachment_download and self.attachment_download.caption else {}),
                 'dispatched_bytes_verified':self.dispatched_bytes_verified,
                 **({'parse_posts':receipt.requests,'response_ok':receipt.response_ok,
                     'observed_parse_posts':receipt.observed_parse_posts[:3],'failure_reason':receipt.failure_reason} if receipt else {})}
@@ -280,6 +387,14 @@ class UploadProof:
             return False
 
     def verify(self):
+        """Verify dispatched bytes, or recheck the current owned server download."""
+        if self._verify_dispatched():return True
+        if self.native and self.attachment_download and self.attachment_download.verify(self.name,self.expected,self.size):
+            self.method='current owned server attachment download bytes'
+            return True
+        return False
+
+    def _verify_dispatched(self):
         if not self.native:return False
         if self.parse_receipt and self.parse_receipt.verify(self.name,self.dispatched_bytes_verified):
             self.method='byte-verified dispatch and fresh resume-parse POST receipt'
@@ -288,7 +403,7 @@ class UploadProof:
             if self.widget and self.widget.evaluate('''(box,args)=>{
                 const visible=e=>!!(e.getBoundingClientRect().width&&e.getBoundingClientRect().height)&&getComputedStyle(e).visibility!=='hidden';
                 const success=e=>e.getAttribute('role')==='alert' && e.getAttribute('aria-invalid')!=='true' &&
-                    e.getAttribute('aria-busy')!=='true' && box.matches('.attachmentBtn') && e.id===box.id.replace(/_attach$/,'_attachSuccess') &&
+                    e.getAttribute('aria-busy')!=='true' && box.matches('.attachmentBtn,.successBtn') && e.id===box.id.replace(/_attach$/,'_attachSuccess') &&
                     (e.innerText||'').trim()==='File is uploaded successfully';
                 return !box.isConnected || (args.inside&&args.native.isConnected&&!box.contains(args.native)) ||
                     [...box.querySelectorAll('input[type=file]')].some(e=>e!==args.native&&e.files?.length) ||
@@ -308,7 +423,7 @@ class UploadProof:
                 }
                 const widget=state?.widget;
                 const success=widget?.querySelector('[id="'+CSS.escape(widget.id.replace(/_attach$/,'_attachSuccess'))+'"]');
-                const acknowledged=!!(state?.busySeen && widget?.isConnected && widget.matches('.attachmentBtn') &&
+                const acknowledged=!!(state?.busySeen && widget?.isConnected && widget.matches('.attachmentBtn,.successBtn') &&
                     /^\d+:_attach$/.test(widget.id) && success &&
                     success.getBoundingClientRect().width && success.getBoundingClientRect().height &&
                     getComputedStyle(success).visibility!=='hidden' && (success.innerText||'').trim()==='File is uploaded successfully' &&
@@ -319,6 +434,7 @@ class UploadProof:
             if not evidence or evidence['invalid']:return False
             actual=evidence.get('sha256') or hashlib.sha256(base64.b64decode(evidence['bytes'])).hexdigest()
             if actual!=self.expected:return False
+            self.dispatched_bytes_verified=True
             self.name=evidence['name']
             form_owned=bool(getattr(self,'form_owned',False) and self.native.evaluate('(n,form)=>form.isConnected && n.form===form && !!n.name && !n.disabled',self.form))
             if evidence['retained'] and (not self.widget or getattr(self,'initially_inside',False) or form_owned):
@@ -329,7 +445,7 @@ class UploadProof:
             if evidence['name'] not in self.before and self.widget and self.widget.evaluate('''(box,name)=>{
                 const visible=e=>!!(e.getBoundingClientRect().width&&e.getBoundingClientRect().height)&&getComputedStyle(e).visibility!=='hidden';
                 const success=e=>e.getAttribute('role')==='alert' && e.getAttribute('aria-invalid')!=='true' &&
-                    e.getAttribute('aria-busy')!=='true' && box.matches('.attachmentBtn') && e.id===box.id.replace(/_attach$/,'_attachSuccess') &&
+                    e.getAttribute('aria-busy')!=='true' && box.matches('.attachmentBtn,.successBtn') && e.id===box.id.replace(/_attach$/,'_attachSuccess') &&
                     (e.innerText||'').trim()==='File is uploaded successfully';
                 return box.isConnected && (box.innerText||'').includes(name) &&
                     ![...box.querySelectorAll('[aria-invalid=true],[role=alert]')].some(e=>visible(e)&&!success(e));
@@ -342,6 +458,8 @@ class UploadProof:
         return False
 
     def close(self):
+        if self.attachment_download:
+            self.attachment_download.close();self.attachment_download=None
         if self.parse_receipt:
             self.parse_receipt.close();self.parse_receipt=None
         if self.native:

@@ -266,11 +266,11 @@ FIELDS_JS = r"""(start) => {
     const row=ae.closest('.rcmSectionComponent[id$=":_sectionComponent"]');
     const group=row && row.closest('[role=group][aria-labelledby]');
     const title=group && byIds(group.getAttribute('aria-labelledby'),group);
-    const entity=title && title.match(/^(Education|Work Experience|Employment History)(?:\s*\([^)]*\))?$/i);
+    const entity=title && title.match(/^(Formal Education|Education|Work Experience|Employment History)(?:\s*\([^)]*\))?$/i);
     const number=row && row.getRootNode().getElementById(row.id.replace(/_sectionComponent$/,'_rowNum'));
     const index=number && clean(number.textContent).match(/^Row number (\d+)$/i);
     if(entity && index && Number(index[1])>0 && number.parentElement===row.parentElement)
-      return (/^Education$/i.test(entity[1])?'Education':'Work Experience')+' '+Number(index[1]);
+      return (/Education$/i.test(entity[1])?'Education':'Work Experience')+' '+Number(index[1]);
     // the nearest heading above the field (e.g. "Work Experience 2", "Voluntary Self-Identification")
     // headings only: a legend is a field's own label (Workday's "To*" date), not a section
     const hs = all('h1, h2, h3, h4, h5, [role=heading], [class*=header] > p, [class*=title] > p').filter(h => vis(h)
@@ -548,8 +548,8 @@ FIELDS_JS = r"""(start) => {
     let ownedSection=section(b) || clean(b.getAttribute('aria-label'));
     const group=b.closest('[role=group][aria-labelledby]');
     const title=group && byIds(group.getAttribute('aria-labelledby'),group);
-    const entity=title && title.match(/^(Education|Work Experience|Employment History)(?:\s*\([^)]*\))?$/i);
-    if(entity)ownedSection=entity[1];
+    const entity=title && title.match(/^(Formal Education|Education|Work Experience|Employment History)(?:\s*\([^)]*\))?$/i);
+    if(entity)ownedSection=/Education$/i.test(entity[1])?'Education':'Work Experience';
     // A shared Add another toolbar may sit outside the entry header's owner.
     // Associate it with the nearest ancestor containing only one entity group.
     for(let owner=b.parentElement;owner && !owner.matches('form,body,html');owner=owner.parentElement){
@@ -582,12 +582,12 @@ FIELDS_JS = r"""(start) => {
       return status && vis(status) && shown(status) && status.getAttribute('aria-invalid')!=='true' &&
         status.getAttribute('aria-busy')!=='true' && clean(status.innerText)==='File is uploaded successfully';
     };
-    const box=e.closest('.attachmentBtn');
+    const box=e.closest('.attachmentBtn,.successBtn');
     if(box && accepted(box) && e.id===box.id.replace(/_attach$/,'_attachSuccess'))return true;
     // The same accepted upload also emits a global toast with a filename.
     // Exclude it only when that exact filename has its own accepted widget.
     const toast=clean(e.innerText).match(/^(?:[\uE000-\uF8FF]\s*)?(.+?) File uploaded successfully\.$/);
-    return !!toast && all('.attachmentBtn').some(b=>accepted(b) &&
+    return !!toast && all('.attachmentBtn,.successBtn').some(b=>accepted(b) &&
       (b.innerText||'').split(/\r?\n/).map(clean).includes(toast[1]));
   };
   const errors = all('[role=alert], [aria-invalid=true], [class*=error i], [id*=error i], [data-automation-id*=error i]')
@@ -995,7 +995,8 @@ def literal_identity_option(answer,options,person=False):
 def match_option(answer: str, options: list[str], cutoff: int = 80) -> tuple[str | None, int]:
     """The page option that means `answer` (e.g. "USA" -> "United States of America"); (None, best score) when no
     option is close enough for code to decide."""
-    opts = [o for o in options if o and not re.match(r"(?i)^\s*(select|choose|--|please select)\b.*", o)]
+    opts = [o for o in options if o and not _NO_OPTIONS.fullmatch(o.strip())
+            and not re.match(r"(?i)^\s*(select|choose|--|please select)\b.*", o)]
     if not answer or not opts:
         return None, 0
     picked, numeric = interval_option(answer, opts)
@@ -1111,6 +1112,8 @@ def selection_parts(value: str, question: str = "") -> list[str]:
 
 def same_value(want: str, got: str, kind: str, question: str = "", multiple: bool = False) -> bool:
     """The page shows the value that was meant (read-back check)."""
+    if kind in ('combobox', 'select', 'radio', 'buttons') and _NO_OPTIONS.fullmatch((got or '').strip()):
+        return False
     if kind in ('combobox', 'select') and PHONE_CODE_Q.search(question):
         if phone_code_option(want, [got]) is not None:
             return True
@@ -1164,7 +1167,7 @@ OPTIONS_JS = r"""() => [...new Set([...(window.__jobagentAll ? window.__jobagent
   .map(e => (e.innerText || e.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean))]""".replace('OPTION_SELECTOR', OPTION_SELECTOR)
 
 _NO_OPTIONS = re.compile(r"(?i)^(no (options|results|items|matches)( found)?\.?|loading\.*|type to search|start typing.*|"
-                         r"select one)$")
+                         r"select one|no selection)$")
 
 
 SUGGEST_JS = r"""() => [...document.querySelectorAll('.dropdown-results > *, [class*=dropdown-location], .pac-item, ' +
@@ -1466,6 +1469,7 @@ class UnavailableOption(FillError):
 
 
 def _choose(question: str, answer: str, options: list[str], tie_break) -> str:
+    options = [o for o in options if not _NO_OPTIONS.fullmatch(o.strip())]
     if is_identity(question):
         # a fact about WHO: the named institution or nothing; the "Other" choice (whose name the form then asks for) when the list
         # lacks it; never a neighbour that merely looks alike, and never a model's idea of "closest" (F29)

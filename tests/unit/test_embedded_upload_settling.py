@@ -6,6 +6,7 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 from jobagent.filling.planned import PlannedFiller, settle_after_upload, read_view
+from jobagent.filling.facts import Fact
 
 
 @pytest.fixture
@@ -52,3 +53,21 @@ def test_lost_upload_proof_blocks_redispatch_without_claiming_file_verified(page
     assert not any('password' in str(b).lower() for b in result['blockers'])
     assert not any(r.get('kind') == 'file' and r.get('outcome') == 'verified' for r in result['records'])
     assert any('not uploading it again automatically' in r.get('error', '') for r in result['records'])
+
+
+def test_resume_parser_records_are_discovered_before_adding_empty_entity_rows(page,tmp_path):
+    page.set_content('''<h1>Application</h1><form onsubmit="window.sent=true;return false">
+      <label>Resume<input type=file id=resume></label><h2>Work Experience</h2><div id=rows></div>
+      <button type=button id=add>Add</button><button>Submit application</button></form>
+      <script>window.sent=false;window.adds=0;window.uploads=0;
+      add.onclick=()=>{window.adds++;rows.innerHTML='<h3>Work Experience 1</h3><label>Employer<input></label>'};
+      resume.onchange=()=>{window.uploads++;rows.innerHTML='<h3>Work Experience 1</h3><label>Employer<input></label>'};</script>''')
+    pdf=tmp_path/'resume.pdf';pdf.write_bytes(b'%PDF-1.4 supplied resume')
+    filler=PlannedFiller([Fact('employer',['Employer'],'Example Employer','profile','Work Experience 1')],
+                         lambda _:pytest.fail('The employer is in the saved profile'))
+    result=filler.fill(page,files={'resume':str(pdf)},max_rounds=4,advance_pages=False)
+    assert result['state']=='page_complete'
+    assert page.evaluate('window.adds')==0
+    assert page.evaluate('window.uploads')==1
+    assert page.locator('#rows input').input_value()=='Example Employer'
+    assert not page.evaluate('window.sent')
