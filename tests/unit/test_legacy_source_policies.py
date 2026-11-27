@@ -25,6 +25,30 @@ def test_original_location_does_not_accept_the_job_city_as_actual_residence():
     assert answer.value=='Tempe, Arizona, United States' and not answer.ask_human
 
 
+def test_an_empty_autocomplete_catalogue_cannot_leave_the_models_job_city_in_place():
+    field=Field(1,'combobox','Location',section='Autofill from resume',options=[],options_state='complete')
+    answer=enforce(field,'Sunnyvale, California, United States')
+    assert answer.value=='Tempe, Arizona, United States' and not answer.ask_human
+
+
+def test_a_fixed_location_list_without_the_actual_residence_needs_clarification():
+    field=Field(1,'select','Location',options=['Sunnyvale, California, United States'])
+    answer=enforce(field,'Sunnyvale, California, United States')
+    assert answer.value=='' and answer.ask_human
+
+
+def test_unknown_actual_location_cannot_borrow_the_job_city():
+    ctx=context()
+    ctx['_applicant']['contact'][0].update(answer='',instructions='Same as Current Address.')
+    answer=enforce(Field(1,'combobox','Location'),'Sunnyvale, California, United States',ctx)
+    assert answer.value=='' and answer.ask_human
+
+
+def test_a_race_list_without_an_allowed_fallback_is_not_guessed():
+    answer=enforce(Field(1,'radio','Race',options=['South Asian']),'South Asian')
+    assert answer.value=='' and answer.ask_human
+
+
 def test_original_race_honors_the_same_privacy_fallback():
     answer=enforce(Field(1,'radio','Race',options=['Asian (Not Hispanic or Latino)','Decline to self-identify']), 'Asian')
     assert answer.value=='Decline to self-identify' and not answer.ask_human

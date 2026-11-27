@@ -926,7 +926,7 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
     company = ctx.get("_jd", {}).get("company", "")
     from jobagent.filling.facts import compile_facts,resolve as resolve_fact
     evidence=compile_facts(ctx.get('_applicant') or {},ctx.get('_jd_text',''),ctx.get('TODAY',''))
-    from jobagent.filling.routing import route,resolve_routed,personal_facts,answer_sheet_facts
+    from jobagent.filling.routing import route,resolve_routed,personal_facts,answer_sheet_facts,contact_party
     application_facts=answer_sheet_facts(ctx.get('ANSWERS_FOR_THIS_APPLICATION',''))
     evidence+=personal_facts(ctx)+application_facts
     for field in todo:
@@ -938,10 +938,23 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
         if routing.family not in ('start_date','preferred_name','portfolio_link','external_sharing','residency','clearance_eligibility','clearance_held','arbitration','read_ack','event_history','account_status','privacy_consent','future_contact','sms_consent','ai_consent','demographic_consent','ai_policy_ack','location','race','discipline','current_title','current_employer') and not exact_application_answer:continue
         decision=resolve_routed(field,evidence,routing)
         if decision is None and exact_application_answer:decision=resolve_fact(field,evidence)
-        if decision is None:continue
+        actual_location=routing.family=='location' and contact_party(field.label+' '+field.section+' '+field.help)=='applicant'
+        if (actual_location and decision is not None and decision.value is None and
+                decision.reason=='source value not offered' and field.kind=='combobox'):
+            # An autocomplete's initial suggestions are not its whole city
+            # catalogue. Search the known owner value; fill_field must still
+            # accept and verify a real offered option before marking success.
+            from dataclasses import replace
+            decision=resolve_routed(replace(field,options=[],options_state='partial'),evidence,routing)
+        if decision is None:
+            if actual_location:
+                answers[field.id]=answer.model_copy(update={'value':'','ask_human':True,
+                    'flag':'actual residence is not established by the available sources','lookup':''})
+            continue
         if decision.value is not None:
             answers[field.id]=answer.model_copy(update={'value':decision.value,'source':'applicant','why':decision.reason or decision.source,'ask_human':False,'flag':'','lookup':''})
-        elif decision.reason.startswith('explicit'):
+        elif (decision.reason.startswith('explicit') or actual_location or
+              routing.family in ('race','discipline') and decision.reason=='source value not offered'):
             answers[field.id]=answer.model_copy(update={'value':'','ask_human':True,'flag':decision.reason,'lookup':''})
 
 
