@@ -6,6 +6,40 @@ from jobagent.filling.planned import PlannedFiller,Mapping,Mappings,Supported
 from jobagent.tools.forms import Field
 
 
+@pytest.mark.parametrize('row,school,degree', [
+    (1, 'Graduate University', 'Masters'),
+    (2, 'Undergraduate Institute', 'Bachelors'),
+])
+@pytest.mark.parametrize('label,component', [
+    ('School or University *', 'school'),
+    ('Overall Result (GPA)', 'gpa'),
+])
+def test_workday_education_captions_keep_school_and_gpa_with_the_profile_degree(row, school, degree, label, component):
+    """Opposite-order prefills and unrelated global answers cannot split a degree."""
+    facts = compile_facts({
+        'education': [
+            {'question': 'Degrees', 'answer': [
+                {'school': 'Graduate University', 'degree': 'Masters', 'gpa': '4.0'},
+                {'school': 'Undergraduate Institute', 'degree': 'Bachelors', 'gpa': '3.8'},
+            ]},
+            {'question': 'GPA', 'answer': '2.0'},
+        ],
+        'employment': [{'question': 'Would you require CPT authorization from your school?', 'answer': 'No'}],
+    }, '')
+    expected = school if component == 'school' else '4.0' if row == 1 else '3.8'
+    other_school = 'Undergraduate Institute' if row == 1 else 'Graduate University'
+    field = Field(id=0, kind='combobox' if component == 'school' else 'text', label=label,
+                  section=f'Education {row}', value=other_school if component == 'school' else '2.0',
+                  options=[other_school] if component == 'school' else [], options_state='partial')
+    degree_field = Field(id=1, kind='select', label='Degree *', section=f'Education {row}',
+                         options=['Masters', 'Bachelors'])
+    decisions = PlannedFiller(facts, lambda _: pytest.fail('Known education facts must not ask'), None).plan(
+        [field, degree_field], allow_human=False)
+    assert decisions[0].value == expected
+    assert decisions[0].fact_id.endswith(f'/{row - 1}/{component}')
+    assert decisions[1].value == degree
+
+
 class Model:
     model_name='fixture'
     def __init__(self,mapping):self.mapping=mapping

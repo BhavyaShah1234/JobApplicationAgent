@@ -275,6 +275,9 @@ FIELDS_JS = r"""(start) => {
     // headings only: a legend is a field's own label (Workday's "To*" date), not a section
     const hs = all('h1, h2, h3, h4, h5, [role=heading], [class*=header] > p, [class*=title] > p').filter(h => vis(h)
       && (/^H[1-5]$/.test(h.tagName) || h.getAttribute('role')==='heading' || /^(education|work experience|employment history|languages)(?: \d+)?$/i.test(clean(h.innerText)))
+      // Validation summaries describe errors; they do not change which
+      // question group owns the existing fields or create a new wizard step.
+      && !/^(?:errors? found|error summary|\d+ errors?)\s*[:.!]?$/i.test(clean(h.innerText))
       && !h.closest('[role=dialog],[role=listbox],[role=menu],[class*=datepicker i],[class*=calendar i]'));
     let best = '';
     for (const h of hs) {

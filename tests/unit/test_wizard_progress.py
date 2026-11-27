@@ -49,6 +49,27 @@ def test_tracking_noise_does_not_look_like_a_new_address():
 
 # --- real pages ------------------------------------------------------------------------------------------------------------
 
+def test_error_summary_does_not_rename_unchanged_questionnaire_fields():
+    """A conditional question/error summary is not a new application page."""
+    with sync_playwright() as p:
+        browser = p.chromium.launch(channel='chrome', headless=True, args=['--no-sandbox'])
+        page = browser.new_page()
+        page.set_content('''<h1>Application</h1><h2>Application Questions</h2>
+            <div id="errors"></div>
+            <label>Work authorization<input id="authorization"></label>
+            <label>Citizenship<input id="citizenship"></label>
+            <div id="followup"></div><button>Save and Continue</button>''')
+        before = wizard.state_of(page, forms.read_page(page))
+        page.locator('#errors').evaluate("e => e.innerHTML='<h2>Errors Found</h2><p>Please answer the follow-up</p>'")
+        page.locator('#followup').evaluate("e => e.innerHTML='<label>Visa status<input id=visa required></label>'")
+        view = forms.read_page(page)
+        assert {f.section for f in view.fields} == {'Application Questions'}
+        assert judge(before, wizard.state_of(page, view))[0] == 'same'
+        page.set_content('<h2>Error Analysis Experience</h2><label>Describe your work<textarea></textarea></label>')
+        assert forms.read_page(page).fields[0].section == 'Error Analysis Experience'
+        browser.close()
+
+
 WIZARD = """<html><body><h1>Job application</h1><div id=steps></div><div id=err style="color:red"></div>
 <script>
 const steps = [

@@ -71,8 +71,9 @@ def owner_only(f):
 ENTITY_HEADER = re.compile(r'^(?:(?:previous|prior|past)\s*)?(work\s*experience|employment(?:\s*history)?|professional\s*experience|education(?:\s*(?:history|details|information))?|academic(?:\s*(?:history|qualifications))?|references?|referrals?)\s*(?:entry\s*)?(\d+)?$')
 ENTITY_COMPONENTS = {
     'employer','employer name','name of employer','company','company name','title','job title','your job title','position title',
-    'school','university','institute','school institution name','other school institution name',
+    'school','university','institute','school or university','school institution name','other school institution name',
     'degree','major','field of study','major area of study','other major area of study','did you graduate',
+    'gpa','g p a','grade point average','overall result gpa',
     'from date','start date','end date','from year','start year','end year',
     'first name','given name','middle name','last name','family name','surname','full name','name',
     'email','email address','phone','phone number','primary phone','telephone','mobile',
@@ -454,11 +455,11 @@ def compile_facts(data, raw_jd, reference_date=''):
             for i,row in enumerate(value,1):
                 group='Education' if q=='Degrees' else 'Work Experience' if q=='Work history' else 'Reference' if norm(q) in ('reference','references') else 'Referral' if norm(q) in ('referral','referrals') else ''
                 row_section=f'{group} {i}' if group else ''
-                aliases={'school':['School','University','Institute','School/Institution Name'], 'degree':['Degree'], 'field':['Field of Study','Major','Major/Area of Study'],
+                aliases={'school':['School','University','Institute','School/Institution Name','School or University'], 'degree':['Degree'], 'field':['Field of Study','Major','Major/Area of Study'],
                          'from':['From Date','Start Date'], 'start':['From Date','Start Date'],
                          'end':['End Date'], 'to':['End Date'], 'company':['Company','Company Name','Employer','Employer Name','Name of Employer'], 'title':['Job Title','Position Title','Title','Your Job Title'],
                          'current':['Current','Currently work here','I currently work here','Current position'],
-                         'description':['Description','Responsibilities','Role Description'], 'gpa':['GPA','G.P.A.','Grade Point Average'],
+                         'description':['Description','Responsibilities','Role Description'], 'gpa':['GPA','G.P.A.','Grade Point Average','Overall Result (GPA)'],
                          'city':['City'], 'state':['State','Province','State/Province','Province/State','State or Province'], 'country':['Country'], 'region':['Region','World region'],
                          'first_name':['First Name','Given Name'], 'last_name':['Last Name','Family Name','Surname'], 'prefix':['Prefix','Title'],
                          'phone':['Phone','Phone Number','Business Phone','Mobile Phone','Work Phone'], 'email':['Email','Email Address']}
