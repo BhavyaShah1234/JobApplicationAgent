@@ -1825,6 +1825,19 @@ def _guarded_run(page: Page, job_dir: str | Path, company: str, *args, **kwargs)
 
     def ready(p):
         view = forms.read_page(p)
+        if len(view.fields) == 1:
+            field = view.fields[0]
+            identifier = field.kind == 'email' or (field.kind == 'text' and
+                re.search(r'(?i)\b(e-?mail|user\s*name)\b', field.label))
+            if identifier and field.value.strip() and not field.invalid:
+                # A puzzle can expire and leave the filled identifier behind
+                # while its continuation is still disabled. Footer links and
+                # that old value do not prove the destination is usable.
+                return any(control.is_enabled()
+                    for label in view.buttons
+                    if any(pattern.search(label) for pattern in (*START, forms.NEXT, forms.SUBMIT))
+                        or re.match(r'(?i)^\s*(?:log|sign)[\s-]*in\b', label)
+                    for control in forms._visible_buttons(view, label))
         return bool(view.fields or any(START_PATTERN.search(b) for START_PATTERN in START for b in view.buttons)
                     or _temporary_form_error(p, view))
 

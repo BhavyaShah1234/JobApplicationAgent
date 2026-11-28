@@ -1,5 +1,13 @@
 # iCIMS portals: everything learned, what the agent does, what it cannot, and why
 
+## Fresh human-available retest — 27 November 2026 (Phoenix)
+
+A fresh Docker Garmin18475 run on tested `f566c45` reached a visible hCaptcha. Before the owner answered, the native challenge controller treated the puzzle's disappearance as readiness because its application predicate accepted an already-filled email field. Next was still blank/disabled. The run closed as **stuck1/1**, not application review; the owner subsequently reported seeing an empty VNC screen. Nothing was submitted and no password retry/reset was performed.
+
+The correction keeps the human handoff open on a completed email/username-only screen until a real enabled continuation is present. Empty/invalid identifiers, new credential/application fields and existing temporary-error handling retain their normal paths. Readiness queries never click a CAPTCHA or continuation. Both native and ARIA-disabled buttons are rejected, including inside an iframe. Matched regressions reproduce **5 failures/8 passes** before the fix; the corrected surrounding challenge/desktop/wizard group passed **118 tests in56.86s**. A fresh built-image live retest is pending. The previous complete4,080-test pass is for `f566c45`, not this later correction.
+
+Evidence: `outputs/verification/correctness-closeout-20261127/live/icims-garmin-20261128T040221Z/`, `hcaptcha-readiness-before-final.txt`, `hcaptcha-readiness-after.txt`, `hcaptcha-readiness-result.json`. Existing broader service-acceptance limitations below remain open.
+
 ## Fresh retest — 26 November 2026 (Phoenix)
 
 One normal Docker attempt on Garmin18475 using verified image `9474ecc` reached a **visible hCaptcha at login**. The owner was away, so the native presence handler deferred without solving or retrying the challenge. This fresh retest **did not pass application filling**. The earlier staged ordinary-Chrome-assisted review acceptance below remains valid only in its documented scope; a new assisted connection requires real Chrome approval. No application was submitted or new documents generated.
