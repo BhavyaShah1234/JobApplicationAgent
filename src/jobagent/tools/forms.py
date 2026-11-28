@@ -874,6 +874,35 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s+.]", " ", s.lower())).strip()
 
 
+def is_disclosure_refusal(value: str) -> bool:
+    """Recognize explicit nondisclosure, including neutral country captions.
+
+    Full phrases only: a factual No, Other, or a longer statement about a
+    demographic trait must never count as declining to disclose that trait.
+    """
+    value = re.sub(r'\s*\((?:United States(?: of America)?|U\.?S\.?(?:A\.?)?|Canada|United Kingdom|UK|Australia|New Zealand)\)\s*$', '', value, flags=re.I)
+    return _norm(value) in {
+        'prefer not to say', 'prefer not to answer', 'prefer not to disclose',
+        'i prefer not to say', 'i prefer not to answer', 'i prefer not to disclose',
+        'decline to answer', 'decline to disclose', 'decline to self identify',
+        'i decline to answer', 'i decline to disclose', 'i decline to self identify',
+        'i do not wish to answer', 'i don t wish to answer',
+        'i do not want to answer', 'i don t want to answer',
+        'i do not wish to disclose', 'i don t wish to disclose',
+        'i do not want to self identify', 'i don t want to self identify',
+        'i choose not to disclose', 'i choose not to answer',
+        'i choose not to self identify', 'rather not say', 'i would rather not say',
+    }
+
+
+def disclosure_refusal_option(answer: str, options: list[str]) -> str | None:
+    """Return an offered refusal wording, with an exact wording preferred."""
+    if not is_disclosure_refusal(answer):
+        return None
+    hits = [o for o in options if is_disclosure_refusal(o)]
+    return next((o for o in hits if _norm(o) == _norm(answer)), hits[0] if hits else None)
+
+
 # --- numeric ranges: matched by meaning, never by spelling (F30) -----------------------------------------------------------
 
 _N = r"(\d+(?:\.\d+)?)"
@@ -1018,6 +1047,9 @@ def match_option(answer: str, options: list[str], cutoff: int = 80) -> tuple[str
             and not re.match(r"(?i)^\s*(select|choose|--|please select)\b.*", o)]
     if not answer or not opts:
         return None, 0
+    if is_disclosure_refusal(answer):
+        hit = disclosure_refusal_option(answer, opts)
+        return (hit, 100 if _norm(hit) == _norm(answer) else 95) if hit else (None, 0)
     picked, numeric = interval_option(answer, opts)
     if numeric:
         return (picked, 97) if picked else (None, 0)         # a percentage question is answered by meaning or not at all
@@ -1058,6 +1090,8 @@ def already_shows(want: str, got: str, kind: str) -> bool:
     answer ("United States Minor Outlying Islands")."""
     if not got:
         return False
+    if is_disclosure_refusal(want):
+        return is_disclosure_refusal(got)
     if " | " in want:
         return same_value(want, got, kind) and not lower_variant(want, got)
     if kind in ("tel", "date_parts", "checkbox", "checkboxes", "file"):

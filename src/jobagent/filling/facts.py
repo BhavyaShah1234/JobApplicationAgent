@@ -148,6 +148,15 @@ def choice(f, values):
         return values[0]
     if f.options:
         f = replace(f, options=[o for o in f.options if not forms._NO_OPTIONS.fullmatch(o.strip())])
+    if forms.is_disclosure_refusal(values[0]):
+        hit = forms.disclosure_refusal_option(values[0], f.options)
+        if hit is not None:
+            return hit
+        # A lazy picker may search the saved wording. A complete catalogue
+        # without a refusal requires clarification, never a demographic guess.
+        if f.kind == 'combobox' and f.options_state != 'complete':
+            return values[0]
+        return None
     if forms.PHONE_CODE_Q.search(f.label):
         specific = [v for v in values if re.search(r'[A-Za-z].*\+\d', v)]
         for value in specific or values:

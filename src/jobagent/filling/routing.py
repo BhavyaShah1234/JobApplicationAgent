@@ -601,6 +601,13 @@ def resolve_routed(field,facts,route_info=None):
     # Typed personal questions can use an unambiguous same-purpose source even
     # when the portal rewords it. Records still require a checked transformation.
     scalar=[x for x in selected if not x.record]
+    if (r.family in {'gender','race','veteran','disability','hispanic'} and len(scalar)>1 and
+            all(x.authority=='owner' and not x.instructions and forms.is_disclosure_refusal(x.value) for x in scalar)):
+        # Several same-purpose sources may share an explicit privacy preference
+        # (e.g. gender and transgender identity). This is not factual inference.
+        result=from_fact(field,scalar[0])
+        return Decision(result.value,'; '.join(x.source for x in scalar),','.join(x.id for x in scalar),
+                        'all same-purpose owner declarations explicitly decline disclosure')
     if len(scalar)==1:
         fact=scalar[0]
         if r.family=='email' and re.fullmatch(r"On portals with an account the form shows the account's email \(the agent's Gmail\): keep that\.",fact.instructions):

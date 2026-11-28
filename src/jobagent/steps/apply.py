@@ -936,9 +936,9 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
         exact_application_answer=any(not fact.record and forms._norm(field.label) in map(forms._norm,fact.aliases)
                                      for fact in application_facts)
         if answer.source=='learned' and not exact_application_answer:continue
-        if routing.family not in ('start_date','preferred_name','portfolio_link','external_sharing','residency','clearance_eligibility','clearance_held','arbitration','read_ack','event_history','account_status','privacy_consent','future_contact','sms_consent','ai_consent','demographic_consent','ai_policy_ack','location','race','discipline','current_title','current_employer') and not exact_application_answer:continue
+        if routing.family not in ('start_date','preferred_name','portfolio_link','external_sharing','residency','clearance_eligibility','clearance_held','arbitration','read_ack','event_history','account_status','privacy_consent','future_contact','sms_consent','ai_consent','demographic_consent','ai_policy_ack','location','gender','race','veteran','disability','hispanic','sponsorship','discipline','current_title','current_employer') and not exact_application_answer:continue
         decision=resolve_routed(field,evidence,routing)
-        if decision is None and exact_application_answer:decision=resolve_fact(field,evidence)
+        if decision is None and (exact_application_answer or routing.family=='sponsorship'):decision=resolve_fact(field,evidence)
         actual_location=routing.family=='location' and contact_party(field.label+' '+field.section+' '+field.help)=='applicant'
         if (actual_location and decision is not None and decision.value is None and
                 decision.reason=='source value not offered' and field.kind=='combobox'):
@@ -955,7 +955,7 @@ def enforce(todo: list[forms.Field], answers: dict, ctx: dict, log) -> None:
         if decision.value is not None:
             answers[field.id]=answer.model_copy(update={'value':decision.value,'source':'applicant','why':decision.reason or decision.source,'ask_human':False,'flag':'','lookup':''})
         elif (decision.reason.startswith('explicit') or actual_location or
-              routing.family in ('race','discipline') and decision.reason=='source value not offered'):
+              routing.family in ('gender','race','veteran','disability','hispanic','sponsorship','discipline') and decision.reason=='source value not offered'):
             answers[field.id]=answer.model_copy(update={'value':'','ask_human':True,'flag':decision.reason,'lookup':''})
 
 
