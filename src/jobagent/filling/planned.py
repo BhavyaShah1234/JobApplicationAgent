@@ -159,7 +159,27 @@ class PlannedFiller:
     live_view_class = LiveView
 
     def observe_view(self, view):
-        """Strategy hook for source/schema invalidation; legacy execution is unchanged."""
+        """A reused row ID does not preserve evidence after its entity changes."""
+        contexts={}
+        for field in view.fields:
+            scope=entity_scope(field.section)
+            if scope and scope not in contexts:
+                context=self.question_record_context(field,view.fields,prefer_live=False)
+                contexts[scope]=tuple(sorted((k,norm(v)) for k,v in context.items()))
+        for scope,context in contexts.items():
+            if self.record_contexts.get(scope) and self.record_contexts[scope]!=context:
+                for bank in (self.cache,self.rendered,self.failures,self.technical_failures):
+                    for field_key in list(bank):
+                        if field_key[-1]==scope:bank.pop(field_key,None)
+                self.human_answers={k:v for k,v in self.human_answers.items() if k[1][-1]!=scope}
+                self.declined={k for k in self.declined if k[1][-1]!=scope}
+                self.prepared={k:v for k,v in self.prepared.items() if entity_scope(k[1])!=scope}
+                removed={i for i,f in self.session_facts.items() if entity_scope(f.section)==scope}
+                for ident in removed:
+                    self.session_facts.pop(ident,None);self.session_fact_steps.pop(ident,None)
+                    getattr(self,'human_scopes',{}).pop(ident,None)
+                self.facts=[f for f in self.facts if f.id not in removed]
+            self.record_contexts[scope]=context
 
     def save_unresolved_evidence(self,page,items):
         """Write the HTML around each unresolved required control to `unresolved-fields.json` so the next fix is built on the real page.
@@ -202,6 +222,8 @@ class PlannedFiller:
 
     def can_execute(self, planned, current, decision):
         """Whether a planned decision remains bound to the current control."""
+        if not self._session_decision_in_scope(current, decision):
+            return False
         if decision.source=='saved referral policy' and self.referral_context is not None:
             from jobagent.tools import referrals
             policy=referrals.answer_for(current,self.referral_context.get('contact',{}),self.referral_context.get('company',''))
@@ -212,7 +234,18 @@ class PlannedFiller:
     def can_reuse(self, field):
         """Whether an in-memory accepted decision already has live verification."""
         cached=self.cache.get(key(field))
+        if cached and not self._session_decision_in_scope(field, cached):return False
         if cached and cached.source=='saved referral policy':return self.can_execute(field,field,cached)
+        return True
+
+    def _session_decision_in_scope(self, field, decision):
+        """A cached proposal cannot outlive the page/control its human evidence names."""
+        if decision is None:return False
+        for ident in decision.fact_id.split(','):
+            fact=self.session_facts.get(ident)
+            if fact is not None and (self.session_fact_steps.get(ident) not in (None,self.step)
+                                     or not scope_allows(field,fact)):
+                return False
         return True
 
     def accepted(self, view, field, decision, row):
@@ -241,6 +274,7 @@ class PlannedFiller:
         self.uploaded_labels={}   # (page step, label) -> the same proof: two inputs of one page can carry one label (and one HTML id)
         self.lookup_resolver=None;self.lookup_cache={}
         self.dom_reads=0;self.routes=[];self.technical_failures={};self.session_facts={};self.session_fact_steps={}
+        self.record_contexts={}
 
     def _report_progress(self, view):
         # Observability must never turn an accepted field into a fill failure.
@@ -274,6 +308,29 @@ class PlannedFiller:
     def question_key(f):
         return norm(f.label),norm(f.section),f.kind
 
+    def question_record_context(self, field, fields, *, prefer_live=True):
+        """Describe the actual employer/school behind an ordinal HITL row."""
+        scope=entity_scope(field.section)
+        if not scope:return {}
+        anchors={
+            'employment': {'employer':{'employer','employer name','name of employer','company','company name'},
+                           'title':{'title','job title','your job title','position title'}},
+            'education': {'school':{'school','school or university','school institution name','university','institution'},
+                          'degree':{'degree'}},
+            'reference': {'name':{'name','full name'},'email':{'email','email address'}},
+            'referral': {'name':{'name','full name'},'email':{'email','email address'}},
+        }.get(scope[0],{})
+        view=getattr(getattr(self,'_live',None),'view',None) if prefer_live else None
+        current=view.fields if view is not None else fields
+        context={'type':scope[0]}
+        for name,labels in anchors.items():
+            values={norm(f.value):f.value.strip() for f in current
+                    if entity_scope(f.section)==scope and norm(f.label) in labels
+                    and f.value.strip() and not f.prompt and not f.invalid}
+            if len(values)!=1:return {}
+            context[name]=next(iter(values.values()))
+        return context if anchors else {}
+
     def _saved_source_fallback(self, field):
         """Reuse only this employer's explicit, currently offered source answer."""
         from jobagent.tools import referrals
@@ -301,7 +358,9 @@ class PlannedFiller:
         routes={f.id:route(f,self.facts) for f in fields}
         self.routes.extend(asdict(r) for r in routes.values())
         for f in fields:
-            d=self.human_answers.get((self.step,key(f))) or self.cache.get(key(f)) or self.prepared.get(self.question_key(f)) or resolve(f,self.facts)
+            saved=(self.human_answers.get((self.step,key(f))), self.cache.get(key(f)),
+                   self.prepared.get(self.question_key(f)))
+            d=next((item for item in saved if self._session_decision_in_scope(f,item)),None) or resolve(f,self.facts)
             if self.referral_context is not None:
                 from jobagent.tools import referrals
                 company=self.referral_context.get('company','')
@@ -486,7 +545,8 @@ class PlannedFiller:
             self.events.append({'event':'human_questions','fields':[{'label':f.label,'section':f.section} for f in unresolved],'classification':'unclassified'})
             self.batches+=1;self.questions+=len(unresolved);started=time.monotonic()
             supplied=self.ask([{'id':f.id,'label':f.label,'section':f.section,'required':f.required,
-                                'kind':f.kind,'options':f.options,'format':f.format,'help':f.help} for f in unresolved])
+                                'kind':f.kind,'options':f.options,'format':f.format,'help':f.help,
+                                'record_context':self.question_record_context(f,fields)} for f in unresolved])
             self.human_wait_s+=time.monotonic()-started
             rules=[]
             for f in unresolved:
@@ -496,7 +556,10 @@ class PlannedFiller:
                 if isinstance(value,Decision):
                     answers[f.id]=value;self.human_answers[(self.step,key(f))]=value;continue
                 fact=value if isinstance(value,Fact) else Fact('human:'+repr((self.step,key(f))),[f.label],str(value),'human')
-                local=not entity_scope(f.section) and (len(norm(f.label).split())<3 or needs_entity_binding(f.label,f.section,f.help))
+                # UI ordinals can refer to different employers/schools on the
+                # next page. A row-only clarification has no persistent entity
+                # identity; keep it on this page and this actual control.
+                local=bool(entity_scope(f.section)) or (len(norm(f.label).split())<3 or needs_entity_binding(f.label,f.section,f.help))
                 ident=(self.step,key(f)) if local else (norm(f.label),entity_scope(f.section))
                 fact.id='human:'+hashlib.sha256(repr(ident).encode()).hexdigest()[:24]
                 fact.section=f.section if entity_scope(f.section) else ''

@@ -31,6 +31,18 @@ SINGLE = re.compile(r'application asks: "(?P<label>[^"]{1,250})"', re.I)
 IDENTITY = ("section", "label", "kind", "help", "options", "format", "required")
 
 
+def record_context(q: dict) -> dict:
+    """Only explicit entity anchors can make an ordinal row safe to replay."""
+    from jobagent.filling.facts import entity_scope
+    scope=entity_scope(q.get('section',''))
+    context=q.get('record_context')
+    if not scope or not isinstance(context,dict) or context.get('type')!=scope[0]:return {}
+    names={'employment':('employer','title'),'education':('school','degree'),
+           'reference':('name','email'),'referral':('name','email')}.get(scope[0],())
+    if not names or any(not isinstance(context.get(n),str) or not context[n].strip() for n in names):return {}
+    return {'type':scope[0],**{n:context[n].strip() for n in names}}
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -38,8 +50,9 @@ def _now() -> str:
 def identity(q: dict) -> str:
     """A stable id for exactly this question: any change in its section, wording, kind, help, options, format or whether it is
     required is a new id."""
-    blob = json.dumps({k: (bool(q.get(k)) if k == "required" else q.get(k) or ([] if k == "options" else "")) for k in IDENTITY},
-                      sort_keys=True, ensure_ascii=False)
+    data={k: (bool(q.get(k)) if k == "required" else q.get(k) or ([] if k == "options" else "")) for k in IDENTITY}
+    if context:=record_context(q):data['record_context']=context
+    blob = json.dumps(data, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode()).hexdigest()[:20]
 
 
@@ -63,6 +76,7 @@ def parse(prompt: str) -> list[dict] | None:
                 row = {"id": q["id"], "label": str(q["label"]), "section": str(q.get("section") or ""),
                        "kind": str(q.get("kind") or ""), "required": bool(q.get("required")), "help": str(q.get("help") or ""),
                        "options": [str(o) for o in (q.get("options") or [])], "format": str(q.get("format") or ""), "raw": q}
+                if context:=record_context(q):row['record_context']=context
                 row["qid"] = identity(row)
                 out.append(row)
             return out
@@ -160,6 +174,7 @@ def record(job_dir: Path, questions: list[dict], answers: dict[str, str] | None 
             if row is None:
                 row = {"qid": qid, **{k: q.get(k) for k in ("label", "section", "kind", "help", "options", "format", "required")}}
                 row["options"] = row["options"] or []
+                if context:=record_context(q):row['record_context']=context
                 row.update(status="open", answer=None, first_asked=_now(), times_asked=0)
                 rows.append(row)
                 index[qid] = row
@@ -188,7 +203,9 @@ def saved_answers(job_dir: Path, questions: list[dict]) -> dict[str, str]:
     for a question the request does not tell apart from another)."""
     known = {r["qid"]: r for r in load(job_dir) if r.get("status") == "answered" and r.get("answer") is not None}
     twice = ambiguous(questions)
-    return {key_of(q): known[key_of(q)]["answer"] for q in questions if key_of(q) in known and key_of(q) not in twice}
+    from jobagent.filling.facts import entity_scope
+    return {key_of(q): known[key_of(q)]["answer"] for q in questions if key_of(q) in known and key_of(q) not in twice
+            and (not entity_scope(q.get('section','')) or bool(record_context(q)))}
 
 
 def reply_for(questions: list[dict], answers: dict[str, str]) -> str:

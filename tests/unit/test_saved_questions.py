@@ -190,11 +190,18 @@ def test_the_real_filler_reruns_an_application_away_and_fills_saved_answers_per_
     """The filler asks through Hitl exactly as the adapter does; the candidate is away; the two employer rows share the label
     City and get their own saved answers; nothing is prompted and nothing is deferred."""
     from jobagent.filling.planned import PlannedFiller
+    from jobagent.filling.facts import compile_facts
     state = tmp_path / "state"
     form = '''<h1>Application</h1>
-      <section><h2>Work Experience 1</h2><label for=c1>City</label><input id=c1 required></section>
-      <section><h2>Work Experience 2</h2><label for=c2>City</label><input id=c2 required></section>
+      <section><h2>Work Experience 1</h2>
+        <label>Employer<input value="First Co"></label><label>Title<input value="First Title"></label>
+        <label for=c1>City</label><input id=c1 required></section>
+      <section><h2>Work Experience 2</h2>
+        <label>Employer<input value="Second Co"></label><label>Title<input value="Second Title"></label>
+        <label for=c2>City</label><input id=c2 required></section>
       <label for=s>What is your desired salary for this role?</label><input id=s required>'''
+    facts=compile_facts({'Experience':[{'question':'Work history','answer':[
+        {'company':'First Co','title':'First Title'}, {'company':'Second Co','title':'Second Title'}]}]},'')
     page.set_content(form)
     h = Hitl(state / "hitl", lambda m: None)
 
@@ -210,14 +217,14 @@ def test_the_real_filler_reruns_an_application_away_and_fills_saved_answers_per_
         answering(h, json.dumps(answer))
         return ask(questions)
     with progress.execution(new=True, url="https://e.test/6502", job_dir=str(job)):
-        PlannedFiller([], first_ask).fill(page, advance_pages=False)
+        PlannedFiller(facts, first_ask).fill(page, advance_pages=False)
     assert replies and page.locator("#c1").input_value() == "Tempe"
 
     page.set_content(form)                                # the rerun starts from an empty form
     presence.set_available(False, state_dir=state)
     h.notify = no_prompt
     with progress.execution(new=True, url="https://e.test/6502", job_dir=str(job)):
-        result = PlannedFiller([], ask).fill(page, advance_pages=False)
+        result = PlannedFiller(facts, ask).fill(page, advance_pages=False)
     assert result["state"] == "page_complete", result
     assert [page.locator(x).input_value() for x in ("#c1", "#c2", "#s")] == ["Tempe", "Phoenix", "135980"]
     assert not (state / "hitl" / "deferrals.jsonl").exists()

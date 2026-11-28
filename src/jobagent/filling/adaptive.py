@@ -135,6 +135,7 @@ class AdaptiveFiller(PlannedFiller):
 
     def observe_view(self, view):
         """Invalidate dependent decisions and restore only unique source-valid proposals."""
+        super().observe_view(view)
         for field in view.fields:
             if field.kind=='combobox' and (field.options or field.options_state=='complete'):
                 self.option_inventory[key(field)]=(list(field.options),field.options_state)
